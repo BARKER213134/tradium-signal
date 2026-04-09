@@ -77,10 +77,11 @@ logger = logging.getLogger(__name__)
 
 async def _serve_admin():
     """Запуск uvicorn в том же event loop."""
+    port = int(os.getenv("PORT", "8000"))
     config = uvicorn.Config(
         "admin:app",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         log_level="info",
         loop="asyncio",
         lifespan="on",
