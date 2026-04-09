@@ -1,10 +1,32 @@
 import asyncio
+import base64
 import logging
+import os
 
 import uvicorn
 
 from database import init_db
 from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT2_BOT_TOKEN
+
+
+def _bootstrap_session():
+    """Если TELETHON_SESSION_B64 задан в env И session-файла нет — декодируем."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    session_path = os.path.join(here, "session_userbot.session")
+    if os.path.exists(session_path):
+        return
+    b64 = os.getenv("TELETHON_SESSION_B64")
+    if not b64:
+        return
+    try:
+        with open(session_path, "wb") as f:
+            f.write(base64.b64decode(b64))
+        logging.info(f"✅ Session восстановлен из TELETHON_SESSION_B64 ({len(b64)} B64 bytes)")
+    except Exception as e:
+        logging.error(f"Не удалось декодировать TELETHON_SESSION_B64: {e}")
+
+
+_bootstrap_session()
 
 logging.basicConfig(
     level=logging.INFO,

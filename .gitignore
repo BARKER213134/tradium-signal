@@ -46,3 +46,4 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+_session_b64.txt
