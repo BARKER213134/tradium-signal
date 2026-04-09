@@ -10,20 +10,60 @@ from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT2_BOT_TOKEN
 
 
 def _bootstrap_session():
-    """Если TELETHON_SESSION_B64 задан в env И session-файла нет — декодируем."""
+    """Session можно восстановить из:
+    1) env TELETHON_SESSION_B64 (быстро, но ограничен размером)
+    2) MongoDB collection 'system' документ _id='telethon_session'
+    """
     here = os.path.dirname(os.path.abspath(__file__))
     session_path = os.path.join(here, "session_userbot.session")
     if os.path.exists(session_path):
         return
+
+    # 1) env var
     b64 = os.getenv("TELETHON_SESSION_B64")
-    if not b64:
+    if b64:
+        try:
+            with open(session_path, "wb") as f:
+                f.write(base64.b64decode(b64))
+            logging.info(f"✅ Session восстановлен из TELETHON_SESSION_B64 ({len(b64)} chars)")
+            return
+        except Exception as e:
+            logging.error(f"TELETHON_SESSION_B64 decode failed: {e}")
+
+    # 2) MongoDB
+    try:
+        from database import _get_db
+        col = _get_db().system
+        doc = col.find_one({"_id": "telethon_session"})
+        if doc and "data" in doc:
+            with open(session_path, "wb") as f:
+                f.write(doc["data"])
+            logging.info(f"✅ Session восстановлен из Mongo ({len(doc['data'])} bytes)")
+            return
+    except Exception as e:
+        logging.error(f"Mongo session load failed: {e}")
+
+
+def _persist_session_to_mongo():
+    """Сохраняет текущий session-файл в Mongo (вызывается после авторизации
+    или при старте если файл есть а в Mongo нет)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    session_path = os.path.join(here, "session_userbot.session")
+    if not os.path.exists(session_path):
         return
     try:
-        with open(session_path, "wb") as f:
-            f.write(base64.b64decode(b64))
-        logging.info(f"✅ Session восстановлен из TELETHON_SESSION_B64 ({len(b64)} B64 bytes)")
+        from database import _get_db
+        col = _get_db().system
+        with open(session_path, "rb") as f:
+            data = f.read()
+        col.update_one(
+            {"_id": "telethon_session"},
+            {"$set": {"data": data, "size": len(data)}},
+            upsert=True,
+        )
+        logging.info(f"✅ Session сохранён в Mongo ({len(data)} bytes)")
     except Exception as e:
-        logging.error(f"Не удалось декодировать TELETHON_SESSION_B64: {e}")
+        logging.error(f"Mongo session save failed: {e}")
 
 
 _bootstrap_session()
