@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Сигналы — Tradium Signal{% endblock %}
+{% block title %}Сигналы — Tradium Screener{% endblock %}
 {% block page_title %}Сигналы{% endblock %}
 
 {% block content %}
@@ -323,6 +323,35 @@ if (sa) sa.onchange = () => {
 
 updatePricesAndPnl();
 setInterval(updatePricesAndPnl, 10000);
+
+// ── WebSocket для live-обновлений Cryptovizor ──
+(function connectCvWS() {
+  let ws;
+  let reconnectTimer;
+  function open() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws`);
+    ws.onopen = () => console.log('[cv-ws] connected');
+    ws.onmessage = (e) => {
+      try {
+        const m = JSON.parse(e.data);
+        if (m.type === 'signal_new' || m.type === 'signal_update' || m.type === 'signal_deleted') {
+          // Перезагружаем страницу чтобы подтянуть новые данные из БД
+          location.reload();
+        }
+      } catch {}
+    };
+    ws.onclose = () => {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(open, 3000);
+    };
+    ws.onerror = () => ws.close();
+  }
+  open();
+})();
+
+// Fallback: перезагружаем каждые 30 секунд на случай пропущенных broadcast
+setInterval(() => location.reload(), 30000);
 </script>
 
 {% else %}

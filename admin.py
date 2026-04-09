@@ -17,7 +17,7 @@ from config import ADMIN_USERNAME, ADMIN_PASSWORD, SECRET_KEY, BOTS
 from database import get_db, Signal, Session, desc, func, get_events
 from exchange import get_prices as _sync_get_prices, get_all_usdt_symbols as _sync_get_all_usdt_symbols
 
-app = FastAPI(title="Tradium Signal Admin")
+app = FastAPI(title="Tradium Screener Admin")
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates"))
 
 
