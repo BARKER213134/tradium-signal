@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Сигнал #{{ signal.id }} — Tradium Signal{% endblock %}
+{% block page_title %}Сигнал #{{ signal.id }}{% endblock %}
+
+{% block content %}
+<div style="margin-bottom:20px;">
+  <a href="/signals" class="btn btn-ghost btn-sm">← К списку</a>
+</div>
+
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-bottom:24px;">
+
+  <!-- Итоговые данные -->
+  <div class="panel">
+    <div class="panel-header"><h3>Итоговые данные</h3></div>
+    <div style="padding: 8px 24px 20px;">
+      <table style="width:100%;">
+        <tbody>
+          {% macro row(label, val, cls='') %}
+          <tr>
+            <td style="padding:11px 0;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;border:none;">{{ label }}</td>
+            <td class="mono {{ cls }}" style="padding:11px 0;font-weight:600;text-align:right;border:none;">{{ val or '—' }}</td>
+          </tr>
+          {% endmacro %}
+          {{ row("Пара", signal.pair, "text-accent") }}
+          <tr>
+            <td style="padding:11px 0;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;border:none;">Направление</td>
+            <td style="padding:11px 0;text-align:right;border:none;">
+              {% if signal.direction == 'BUY' %}<span class="badge badge-buy">BUY</span>
+              {% elif signal.direction == 'SELL' %}<span class="badge badge-sell">SELL</span>
+              {% else %}—{% endif %}
+            </td>
+          </tr>
+          {{ row("Вход", signal.entry) }}
+          {{ row("Stop Loss", signal.sl, "text-sell") }}
+          {{ row("TP1", signal.tp1, "text-buy") }}
+          {{ row("TP2", signal.tp2, "text-buy") }}
+          {{ row("TP3", signal.tp3, "text-buy") }}
+          <tr>
+            <td style="padding:11px 0;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;border:none;">График</td>
+            <td style="padding:11px 0;text-align:right;border:none;">
+              {% if signal.has_chart %}<span class="badge badge-yes">Есть</span>{% else %}<span class="badge badge-no">Нет</span>{% endif %}
+              {% if signal.chart_analyzed %}&nbsp;<span class="badge badge-ai">AI</span>{% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:11px 0;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;border:none;">Отправлен</td>
+            <td style="padding:11px 0;text-align:right;border:none;">
+              {% if signal.is_forwarded %}<span class="badge badge-yes">{{ signal.forwarded_at.strftime('%H:%M:%S') if signal.forwarded_at else 'Да' }}</span>
+              {% else %}<span class="badge badge-no">Нет</span>{% endif %}
+            </td>
+          </tr>
+          {{ row("Получен", signal.received_at.strftime('%d.%m.%Y %H:%M:%S') if signal.received_at else None) }}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- График -->
+  <div class="panel">
+    <div class="panel-header"><h3>График</h3></div>
+    <div style="padding: 20px 24px 24px;">
+      {% if signal.chart_path %}
+        <img src="/chart/{{ signal.id }}" style="width:100%;border-radius:var(--radius-sm);border:1px solid var(--border);" alt="График">
+        {% if signal.chart_notes %}
+        <div style="margin-top:14px;padding:14px;background:var(--surface-alt);border-radius:var(--radius-sm);border:1px solid var(--border);font-size:13px;line-height:1.6;color:var(--text);">
+          {{ signal.chart_notes }}
+        </div>
+        {% endif %}
+      {% else %}
+        <div style="height:240px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:14px;border:1px dashed var(--border-strong);border-radius:var(--radius-sm);background:var(--surface-alt);">
+          График не получен
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Сравнение источников -->
+{% if signal.has_chart %}
+<div class="panel" style="margin-bottom:24px;">
+  <div class="panel-header"><h3>Сравнение: текст vs график</h3></div>
+  <table>
+    <thead>
+      <tr>
+        <th>Поле</th>
+        <th>Из текста</th>
+        <th>Из графика (AI)</th>
+        <th>Итог</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for field, t_val, c_val, f_val in [
+        ("Пара", signal.text_pair, signal.chart_pair, signal.pair),
+        ("Направление", signal.text_direction, signal.chart_direction, signal.direction),
+        ("Entry", signal.text_entry, signal.chart_entry, signal.entry),
+        ("SL", signal.text_sl, signal.chart_sl, signal.sl),
+        ("TP1", signal.text_tp1, signal.chart_tp1, signal.tp1),
+        ("TP2", signal.text_tp2, signal.chart_tp2, signal.tp2),
+        ("TP3", signal.text_tp3, signal.chart_tp3, signal.tp3),
+      ] %}
+      <tr>
+        <td class="mono text-muted" style="font-size:11px;">{{ field }}</td>
+        <td class="mono">{{ t_val or '—' }}</td>
+        <td class="mono" style="color:var(--info);">{{ c_val or '—' }}</td>
+        <td class="mono text-accent fw-700">{{ f_val or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Оригинальный текст + AI raw -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+  <div class="panel">
+    <div class="panel-header"><h3>Текст сигнала</h3></div>
+    <pre style="margin:20px 24px 24px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;font-family:var(--font-mono);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:var(--text);max-height:320px;overflow-y:auto;">{{ signal.raw_text or 'Нет текста' }}</pre>
+  </div>
+  <div class="panel">
+    <div class="panel-header"><h3>Ответ AI</h3></div>
+    <pre style="margin:20px 24px 24px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px;font-family:var(--font-mono);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:var(--info);max-height:320px;overflow-y:auto;">{{ signal.chart_ai_raw or 'AI анализ не выполнен' }}</pre>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,22 @@
+services:
+  tradium:
+    build: .
+    container_name: tradium-signal
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      # Session Telethon (создаётся один раз через bootstrap)
+      - ./data/session_userbot.session:/app/session_userbot.session
+      # Графики (кэш изображений)
+      - ./charts:/app/charts
+      # Логи
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

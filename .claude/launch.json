@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tradium-signal",
+      "runtimeExecutable": "C:\\Users\\супер\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "runtimeArgs": ["main.py"],
+      "port": 8000
+    }
+  ]
+}

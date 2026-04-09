@@ -1,0 +1,45 @@
+# Секреты — ни в коем случае в образ
+.env
+*.session
+*.session-journal
+.auth_state.json
+
+# Кэш / артефакты
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Данные локальной разработки
+charts/*.jpg
+charts/*.png
+signals.db
+signals.db-*
+data/
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Отладочные/тестовые скрипты
+debug_*.py
+_score_*.py
+test_alerts.py
+test_bots.py
+session_check.py
+cryptovizor_dump.txt
+main_out.log
+
+# Tests — не нужны в prod образе
+tests/

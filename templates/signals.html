@@ -1,0 +1,1261 @@
+{% extends "base.html" %}
+{% block title %}Сигналы — Tradium Signal{% endblock %}
+{% block page_title %}Сигналы{% endblock %}
+
+{% block content %}
+<style>
+/* ── Общие стили (таблица, вкладки, бейджи) доступные для всех bot ── */
+.tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 6px;
+  background: linear-gradient(180deg, rgba(23,27,36,0.85), rgba(17,20,27,0.85));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 22px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.tab {
+  padding: 10px 18px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.15s;
+  border: 1px solid transparent;
+  text-decoration: none;
+}
+.tab:hover { color: var(--text-2); background: rgba(255,255,255,0.03); }
+.tab.active {
+  color: var(--cyan);
+  background: rgba(0,102,255,0.12);
+  border-color: rgba(0,255,255,0.35);
+  box-shadow: 0 0 0 1px rgba(0,102,255,0.25), 0 0 16px rgba(0,102,255,0.2);
+}
+.tab-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-2);
+  font-size: 10px;
+  min-width: 20px;
+  text-align: center;
+}
+.tab.active .tab-badge {
+  background: rgba(0,255,255,0.2);
+  color: var(--cyan);
+}
+.select-all {
+  padding: 12px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.select-all label { cursor: pointer; }
+.delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  background: rgba(255,77,109,0.1);
+  border: 1px solid rgba(255,77,109,0.4);
+  border-radius: 8px;
+  color: var(--sell);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.delete-btn:hover { background: rgba(255,77,109,0.2); }
+.table-wrap {
+  background: linear-gradient(180deg, rgba(23,27,36,0.85), rgba(17,20,27,0.85));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead { background: rgba(0,102,255,0.06); }
+th {
+  padding: 14px 18px;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  color: var(--text-2);
+}
+tr:last-child td { border-bottom: none; }
+tbody tr { transition: background 0.12s; }
+tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.badge-buy { background: rgba(0,229,160,0.12); color: var(--buy); border: 1px solid rgba(0,229,160,0.3); }
+.badge-sell { background: rgba(255,77,109,0.12); color: var(--sell); border: 1px solid rgba(255,77,109,0.3); }
+.badge-status { background: rgba(0,102,255,0.15); color: var(--cyan); border: 1px solid rgba(0,255,255,0.35); }
+.badge-ai { background: rgba(0,255,255,0.1); color: var(--cyan); border: 1px solid rgba(0,255,255,0.3); }
+.trend-cell { white-space: nowrap; }
+.dot-r, .dot-g {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  margin-right: 2px;
+}
+.dot-r { background: #ff4d6d; box-shadow: 0 0 6px rgba(255,77,109,0.5); }
+.dot-g { background: #00e5a0; box-shadow: 0 0 6px rgba(0,229,160,0.5); }
+.ai-score-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+}
+.ai-good { background: rgba(0,229,160,0.18); color: var(--buy); border: 1px solid rgba(0,229,160,0.4); }
+.ai-ok   { background: rgba(255,210,62,0.15); color: #ffd23e; border: 1px solid rgba(255,210,62,0.35); }
+.ai-bad  { background: rgba(255,77,109,0.15); color: var(--sell); border: 1px solid rgba(255,77,109,0.35); }
+.mono { font-family: var(--font-mono); }
+.text-muted { color: var(--muted); }
+.text-buy { color: var(--buy); font-weight: 600; }
+.text-sell { color: var(--sell); font-weight: 600; }
+.text-accent { color: var(--cyan); font-weight: 600; }
+.fw-700 { font-weight: 700; }
+.row-check { accent-color: var(--cyan); cursor: pointer; }
+</style>
+
+{% if bot == 'cryptovizor' %}
+<!-- ── Cryptovizor tabs ───────────────────────────────────────────── -->
+<div class="tabs">
+  <a href="/signals?bot=cryptovizor&tab=watching" class="tab {% if cv_tab == 'watching' %}active{% endif %}">Следим <span class="tab-badge">{{ cv_stats.watching }}</span></a>
+  <a href="/signals?bot=cryptovizor&tab=active" class="tab {% if cv_tab == 'active' %}active{% endif %}">Сигнал <span class="tab-badge">{{ cv_stats.active }}</span></a>
+</div>
+
+<div class="select-all">
+  <label><input type="checkbox" id="selectAll"> Выбрать все ({{ total }})</label>
+  <button id="deleteBtn" class="delete-btn" onclick="deleteSelected()" style="display:none;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+    <span id="deleteBtnLabel">Удалить</span>
+  </button>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:32px;"></th>
+        <th>Время</th>
+        <th>Пара</th>
+        <th>Напр.</th>
+        <th>Тренд</th>
+        <th>Цена сигнала</th>
+        <th>Цена сейчас</th>
+        <th>PnL %</th>
+        <th>S1</th>
+        <th>R1</th>
+        <th>Паттерн</th>
+        <th>AI</th>
+        <th>Статус</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in signals %}
+      <tr class="signal-row" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}">
+        <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
+        <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at else '—' }}</td>
+        <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT','') }}</td>
+        <td>
+          {% if s.direction == 'LONG' %}<span class="badge badge-buy">LONG</span>
+          {% elif s.direction == 'SHORT' %}<span class="badge badge-sell">SHORT</span>
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="trend-cell">
+          {% if s.trend %}{% for c in s.trend %}<span class="dot-{{ 'r' if c == 'R' else 'g' }}"></span>{% endfor %}{% else %}—{% endif %}
+        </td>
+        <td class="mono">{{ s.entry or '—' }}</td>
+        <td class="mono price-cell text-muted">—</td>
+        <td class="mono pnl-cell text-muted">—</td>
+        <td class="mono text-buy">{{ s.dca1 or '—' }}</td>
+        <td class="mono text-sell">{{ s.dca2 or '—' }}</td>
+        <td class="mono">{{ s.pattern_name or '—' }}</td>
+        <td>
+          {% if s.ai_score is not none %}
+            <span class="ai-score-pill ai-{{ 'good' if s.ai_score >= 70 else 'ok' if s.ai_score >= 40 else 'bad' }}">{{ s.ai_score }}</span>
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td>
+          {% if s.status == 'ПАТТЕРН' %}<span class="badge badge-ai">ПАТТЕРН</span>
+          {% else %}<span class="badge badge-status">СЛЕЖУ</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="13" style="text-align:center;padding:80px;" class="text-muted">Сигналов не найдено</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+const CURRENT_BOT = "cryptovizor";
+const CURRENT_TAB = "{{ cv_tab }}";
+
+function fmt(n) {
+  if (n == null || isNaN(n)) return '—';
+  if (n >= 1000) return n.toFixed(2);
+  if (n >= 1) return n.toFixed(4);
+  if (n >= 0.01) return n.toFixed(5);
+  return n.toFixed(7);
+}
+
+async function updatePricesAndPnl() {
+  const rows = Array.from(document.querySelectorAll('tr[data-pair]')).filter(r => r.dataset.pair);
+  const pairs = [...new Set(rows.map(r => r.dataset.pair))];
+  if (!pairs.length) return;
+  try {
+    const r = await fetch('/api/prices?pairs=' + encodeURIComponent(pairs.join(',')));
+    const data = await r.json();
+    rows.forEach(row => {
+      const price = data[row.dataset.pair];
+      const entry = parseFloat(row.dataset.entry);
+      const dir = row.dataset.direction;
+      const priceCell = row.querySelector('.price-cell');
+      const pnlCell = row.querySelector('.pnl-cell');
+      if (price != null && priceCell) {
+        priceCell.textContent = fmt(price);
+        priceCell.classList.remove('text-muted');
+        priceCell.classList.add('text-accent');
+        if (pnlCell && !isNaN(entry) && entry > 0 && dir) {
+          const raw = ((price - entry) / entry) * 100;
+          const pnl = dir === 'SHORT' ? -raw : raw;
+          pnlCell.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%';
+          pnlCell.classList.remove('text-muted');
+          pnlCell.classList.toggle('text-buy', pnl >= 0);
+          pnlCell.classList.toggle('text-sell', pnl < 0);
+        }
+      }
+    });
+  } catch (e) { console.error(e); }
+}
+
+function getSelectedIds() {
+  const ids = [];
+  document.querySelectorAll('tr.signal-row').forEach(row => {
+    const cb = row.querySelector('.row-check');
+    if (cb && cb.checked) ids.push(row.dataset.id);
+  });
+  return ids;
+}
+
+function refreshDeleteBtn() {
+  const btn = document.getElementById('deleteBtn');
+  const label = document.getElementById('deleteBtnLabel');
+  if (!btn) return;
+  const ids = getSelectedIds();
+  if (ids.length > 0) {
+    btn.style.display = 'inline-flex';
+    label.textContent = `Удалить (${ids.length})`;
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+async function deleteSelected() {
+  const ids = getSelectedIds();
+  if (!ids.length) return;
+  if (!confirm(`Удалить ${ids.length} сигнал(ов)?`)) return;
+  const r = await fetch('/api/signals/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: ids.map(Number) }),
+  });
+  const d = await r.json();
+  if (d.ok) location.reload();
+}
+
+document.querySelectorAll('tr.signal-row').forEach(row => {
+  const cb = row.querySelector('.row-check');
+  if (cb) {
+    cb.onclick = (e) => e.stopPropagation();
+    cb.onchange = refreshDeleteBtn;
+  }
+});
+const sa = document.getElementById('selectAll');
+if (sa) sa.onchange = () => {
+  document.querySelectorAll('.row-check').forEach(c => c.checked = sa.checked);
+  refreshDeleteBtn();
+};
+
+updatePricesAndPnl();
+setInterval(updatePricesAndPnl, 10000);
+</script>
+
+{% else %}
+{% if tab == 'results' %}
+<!-- ── Results summary ────────────────────────────────────────────── -->
+<div class="results-summary">
+  <div class="res-card">
+    <div class="res-label">Всего сделок</div>
+    <div class="res-value">{{ summary.total }}</div>
+  </div>
+  <div class="res-card">
+    <div class="res-label">Win rate</div>
+    <div class="res-value {% if summary.win_rate >= 50 %}text-buy{% else %}text-sell{% endif %}">{{ summary.win_rate }}%</div>
+    <div class="res-sub">{{ summary.tp }} TP / {{ summary.sl }} SL</div>
+  </div>
+  <div class="res-card">
+    <div class="res-label">Суммарный PnL</div>
+    <div class="res-value {% if summary.total_pnl >= 0 %}text-buy{% else %}text-sell{% endif %}">{% if summary.total_pnl >= 0 %}+{% endif %}{{ '%.2f'|format(summary.total_pnl) }}%</div>
+  </div>
+  <div class="res-card">
+    <div class="res-label">Средняя прибыль</div>
+    <div class="res-value text-buy">+{{ '%.2f'|format(summary.avg_win) }}%</div>
+  </div>
+  <div class="res-card">
+    <div class="res-label">Средний убыток</div>
+    <div class="res-value text-sell">{{ '%.2f'|format(summary.avg_loss) }}%</div>
+  </div>
+  <div class="res-card">
+    <div class="res-label">Profit factor</div>
+    <div class="res-value">{{ '%.2f'|format(summary.profit_factor) if summary.profit_factor else '—' }}</div>
+  </div>
+  <div class="res-card">
+    <div class="res-label">Лучшая / Худшая</div>
+    <div class="res-value-row">
+      <span class="text-buy">+{{ '%.2f'|format(summary.best) }}%</span>
+      <span class="text-sell">{{ '%.2f'|format(summary.worst) }}%</span>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Tabs ───────────────────────────────────────────────────────── -->
+<div class="tabs">
+  <a href="/signals?bot={{ bot }}&tab=tradium" class="tab {% if tab == 'tradium' %}active{% endif %}">Tradium <span class="tab-badge">{{ stats.watching }}</span></a>
+  <a href="/signals?bot={{ bot }}&tab=dca4" class="tab {% if tab == 'dca4' %}active{% endif %}">DCA #4 <span class="tab-badge">{{ stats.dca4 }}</span></a>
+  <a href="/signals?bot={{ bot }}&tab=reversal" class="tab {% if tab == 'reversal' %}active{% endif %}">Вход + Разворот <span class="tab-badge">{{ stats.reversal }}</span></a>
+  <a href="/signals?bot={{ bot }}&tab=results" class="tab {% if tab == 'results' %}active{% endif %}">Результаты <span class="tab-badge">{{ stats.results }}</span></a>
+  <a href="/signals?bot={{ bot }}&tab=archive" class="tab {% if tab == 'archive' %}active{% endif %}">Архив <span class="tab-badge">{{ stats.archive }}</span></a>
+</div>
+
+<div class="select-all">
+  <label><input type="checkbox" id="selectAll"> Выбрать все ({{ total }})</label>
+  <button id="deleteBtn" class="delete-btn" onclick="deleteSelected()" style="display:none;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+    <span id="deleteBtnLabel">Удалить</span>
+  </button>
+</div>
+
+<!-- ── Table ──────────────────────────────────────────────────────── -->
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:32px;"></th>
+        <th>Время</th>
+        <th>Пара</th>
+        <th>TF</th>
+        <th>Направление</th>
+        <th>DCA #4</th>
+        <th>Entry</th>
+        {% if tab == 'results' %}
+        <th>Exit</th>
+        <th>PnL</th>
+        {% else %}
+        <th>Цена</th>
+        {% endif %}
+        <th>TP</th>
+        <th>SL</th>
+        <th>R:R</th>
+        <th>AI</th>
+        <th>Тренд</th>
+        <th>Статус</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in signals %}
+      <tr class="signal-row" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}">
+        <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
+        <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at else '—' }}</td>
+        <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT', '') }}</td>
+        <td class="mono text-muted">{{ s.timeframe or '—' }}</td>
+        <td>
+          {% if s.direction == 'LONG' or s.direction == 'BUY' %}<span class="badge badge-buy">LONG</span>
+          {% elif s.direction == 'SHORT' or s.direction == 'SELL' %}<span class="badge badge-sell">SHORT</span>
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="mono text-accent">{{ s.dca4 or '—' }}</td>
+        <td class="mono">{{ s.entry or '—' }}</td>
+        {% if tab == 'results' %}
+        <td class="mono">{{ s.exit_price or '—' }}</td>
+        <td class="mono {% if s.pnl_percent and s.pnl_percent >= 0 %}text-buy{% else %}text-sell{% endif %}">
+          {% if s.pnl_percent is not none %}{{ '%+.2f'|format(s.pnl_percent) }}%{% else %}—{% endif %}
+        </td>
+        {% else %}
+        <td class="mono price-cell text-muted">—</td>
+        {% endif %}
+        <td class="mono text-buy">{{ s.tp1 or '—' }}</td>
+        <td class="mono text-sell">{{ s.sl or '—' }}</td>
+        <td class="mono">{{ s.risk_reward or '—' }}</td>
+        <td>
+          {% if s.ai_score is not none %}
+            <span class="ai-score-pill ai-{{ 'good' if s.ai_score >= 70 else 'ok' if s.ai_score >= 40 else 'bad' }}">{{ s.ai_score }}</span>
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="trend-cell">
+          {% if s.trend %}
+            {% for c in s.trend %}<span class="dot-{{ 'r' if c == 'R' else 'g' }}"></span>{% endfor %}
+          {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td>
+          {% if s.status == 'TP' %}<span class="badge badge-buy">TP</span>
+          {% elif s.status == 'SL' %}<span class="badge badge-sell">SL</span>
+          {% else %}<span class="badge badge-status">{{ s.status or 'СЛЕЖУ' }}</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="{{ 15 if tab == 'results' else 14 }}" style="text-align:center;padding:80px;" class="text-muted">Сигналов не найдено</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}<a href="?page={{ page-1 }}">←</a>{% endif %}
+  {% for p in range(1, pages+1) %}
+    {% if p == page %}<span class="current">{{ p }}</span>
+    {% elif p <= 3 or p >= pages-2 or (p >= page-2 and p <= page+2) %}
+    <a href="?page={{ p }}">{{ p }}</a>
+    {% endif %}
+  {% endfor %}
+  {% if page < pages %}<a href="?page={{ page+1 }}">→</a>{% endif %}
+</div>
+{% endif %}
+
+<!-- ── Modal ──────────────────────────────────────────────────────── -->
+<div id="modal" class="modal">
+  <div class="modal-backdrop" onclick="closeModal()"></div>
+  <div class="modal-content">
+    <div class="modal-header" id="modalHeader">
+      <div class="modal-header-left">
+        <span id="modalDir" class="badge">—</span>
+        <h3 id="modalTitle">—</h3>
+        <span id="modalTf" class="modal-tf">—</span>
+        <span id="modalStatus" class="badge badge-status">СЛЕЖУ</span>
+      </div>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div id="modalBody" class="modal-body">Загрузка…</div>
+  </div>
+</div>
+
+<style>
+/* ── Bot placeholder ── */
+.bot-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 480px;
+}
+.bot-placeholder-inner {
+  text-align: center;
+  padding: 50px 60px;
+  background: linear-gradient(180deg, rgba(23,27,36,0.6), rgba(17,20,27,0.6));
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--muted);
+  max-width: 480px;
+}
+.bot-placeholder-inner svg { color: var(--electric); opacity: 0.5; }
+.bot-placeholder-inner h3 {
+  margin-top: 18px;
+  font-family: var(--font-head);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+}
+.bot-placeholder-inner p {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* ── Results summary ── */
+.results-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+.res-card {
+  background: linear-gradient(180deg, rgba(23,27,36,0.85), rgba(17,20,27,0.85));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+}
+.res-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.res-value {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text);
+}
+.res-sub {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+.res-value-row {
+  display: flex;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* ── Tabs ── */
+.tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 6px;
+  background: linear-gradient(180deg, rgba(23,27,36,0.85), rgba(17,20,27,0.85));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 22px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.tab {
+  padding: 10px 18px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.15s;
+  border: 1px solid transparent;
+}
+.tab:hover { color: var(--text-2); background: rgba(255,255,255,0.03); }
+.tab.active {
+  color: var(--cyan);
+  background: rgba(0,102,255,0.12);
+  border-color: rgba(0,255,255,0.35);
+  box-shadow: 0 0 0 1px rgba(0,102,255,0.25), 0 0 16px rgba(0,102,255,0.2);
+}
+.tab-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-2);
+  font-size: 10px;
+  min-width: 20px;
+  text-align: center;
+}
+.tab.active .tab-badge {
+  background: rgba(0,255,255,0.2);
+  color: var(--cyan);
+}
+
+.select-all {
+  padding: 12px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.select-all label { cursor: pointer; }
+.delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  background: rgba(255,77,109,0.1);
+  border: 1px solid rgba(255,77,109,0.4);
+  border-radius: 8px;
+  color: var(--sell);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.delete-btn:hover {
+  background: rgba(255,77,109,0.2);
+  box-shadow: 0 0 16px rgba(255,77,109,0.25);
+}
+.delete-btn svg { flex-shrink: 0; }
+.select-all input[type=checkbox],
+.row-check {
+  accent-color: var(--cyan);
+  cursor: pointer;
+}
+
+/* ── Trend dots ── */
+.ai-score-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+}
+.ai-good { background: rgba(0,229,160,0.18); color: var(--buy); border: 1px solid rgba(0,229,160,0.4); }
+.ai-ok   { background: rgba(255,210,62,0.15); color: #ffd23e; border: 1px solid rgba(255,210,62,0.35); }
+.ai-bad  { background: rgba(255,77,109,0.15); color: var(--sell); border: 1px solid rgba(255,77,109,0.35); }
+
+.trend-cell { white-space: nowrap; }
+.dot-r, .dot-g {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  margin-right: 2px;
+}
+.dot-r { background: #ff4d6d; box-shadow: 0 0 6px rgba(255,77,109,0.5); }
+.dot-g { background: #00e5a0; box-shadow: 0 0 6px rgba(0,229,160,0.5); }
+
+.badge-status {
+  background: rgba(0,102,255,0.15);
+  color: var(--cyan);
+  border: 1px solid rgba(0,255,255,0.35);
+}
+
+.signal-row { cursor: pointer; }
+
+/* ── Modal ── */
+.modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+.modal.open { display: flex; }
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(6px);
+}
+.modal-content {
+  position: relative;
+  background: var(--dark-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  width: min(780px, 94vw);
+  max-height: 92vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(0,102,255,0.15);
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header-left {
+  display: flex; align-items: center; gap: 12px;
+}
+.modal-header h3 {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+}
+.modal-tf {
+  padding: 4px 10px;
+  background: var(--dark-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-2);
+  font-weight: 600;
+}
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 28px;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 8px;
+  transition: color 0.15s;
+}
+.modal-close:hover { color: var(--text); }
+.modal-body {
+  padding: 0;
+  overflow-y: auto;
+}
+.modal-chart-wrap {
+  padding: 0;
+  background: #0a0a0a;
+}
+.modal-chart-wrap img {
+  width: 100%;
+  display: block;
+}
+.modal-chart-empty {
+  height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 14px;
+  background: var(--dark-2);
+}
+.modal-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  border-top: 1px solid var(--border);
+}
+.modal-stat {
+  padding: 16px 20px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.modal-stat:nth-child(4n) { border-right: none; }
+.modal-stat-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.modal-stat-value {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.modal-stat-value.buy { color: var(--buy); }
+.modal-stat-value.sell { color: var(--sell); }
+.modal-stat-value.cyan { color: var(--cyan); }
+.modal-stat-value.orange { color: #ffa24e; }
+.modal-stat .trend-cell { line-height: 1; padding-top: 2px; }
+.modal-ai {
+  margin: 16px 20px;
+  padding: 18px;
+  background: linear-gradient(180deg, rgba(0,102,255,0.08), rgba(0,255,255,0.03));
+  border: 1px solid rgba(0,102,255,0.25);
+  border-radius: var(--radius-sm);
+}
+.modal-ai-head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.modal-ai-meta { flex: 1; }
+.modal-ai-verdict {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--cyan);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.modal-ai-reasoning {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.modal-ai-risks {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(0,102,255,0.2);
+}
+.modal-ai-risks-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.modal-ai-risk {
+  font-size: 12px;
+  color: var(--text-2);
+  padding: 3px 0;
+}
+
+.modal-events {
+  margin: 20px;
+  padding: 16px;
+  background: var(--dark-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.modal-events-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.modal-event {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 12px;
+}
+.modal-event:last-child { border-bottom: none; }
+.modal-event-icon { font-size: 14px; width: 20px; text-align: center; }
+.modal-event-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  min-width: 110px;
+}
+.modal-event-type {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--cyan);
+  text-transform: uppercase;
+  min-width: 120px;
+}
+.modal-event-price {
+  color: var(--text);
+  font-size: 11px;
+}
+.modal-event-msg {
+  color: var(--text-2);
+  font-size: 12px;
+  flex: 1;
+}
+
+.modal-comment {
+  margin: 16px 20px;
+  padding: 14px;
+  background: var(--dark-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.6;
+}
+</style>
+
+<script>
+const CURRENT_TAB = "{{ tab }}";
+const CURRENT_BOT = "{{ bot }}";
+const IS_RESULTS = CURRENT_TAB === 'results';
+
+function fmt(n) {
+  if (n == null || isNaN(n)) return '—';
+  if (n >= 1000) return n.toFixed(2);
+  if (n >= 1) return n.toFixed(4);
+  if (n >= 0.01) return n.toFixed(5);
+  return n.toFixed(7);
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}.${pad(d.getMonth()+1)}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function renderAiScore(score) {
+  if (score == null) return '<span class="text-muted">—</span>';
+  const cls = score >= 70 ? 'ai-good' : score >= 40 ? 'ai-ok' : 'ai-bad';
+  return `<span class="ai-score-pill ${cls}">${score}</span>`;
+}
+
+function renderTrend(t) {
+  if (!t) return '<span class="text-muted">—</span>';
+  return [...t].map(c => `<span class="dot-${c === 'R' ? 'r' : 'g'}"></span>`).join('');
+}
+
+function renderBadgeDir(d) {
+  if (d === 'LONG' || d === 'BUY') return '<span class="badge badge-buy">LONG</span>';
+  if (d === 'SHORT' || d === 'SELL') return '<span class="badge badge-sell">SHORT</span>';
+  return '<span class="text-muted">—</span>';
+}
+
+function renderStatus(st) {
+  if (st === 'TP') return '<span class="badge badge-buy">TP</span>';
+  if (st === 'SL') return '<span class="badge badge-sell">SL</span>';
+  return `<span class="badge badge-status">${st || 'СЛЕЖУ'}</span>`;
+}
+
+function renderRow(s) {
+  const pairBase = (s.pair || '—').replace('/USDT', '');
+  const middle = IS_RESULTS
+    ? `<td class="mono">${fmt(s.exit_price)}</td>
+       <td class="mono ${s.pnl_percent != null && s.pnl_percent >= 0 ? 'text-buy' : 'text-sell'}">${s.pnl_percent != null ? (s.pnl_percent >= 0 ? '+' : '') + s.pnl_percent.toFixed(2) + '%' : '—'}</td>`
+    : `<td class="mono price-cell text-muted">—</td>`;
+  return `
+    <tr class="signal-row" data-id="${s.id}" data-pair="${s.pair || ''}" data-entry="${s.entry || ''}" data-direction="${s.direction || ''}">
+      <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
+      <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">${fmtDate(s.received_at)}</td>
+      <td class="mono text-accent fw-700">${pairBase}</td>
+      <td class="mono text-muted">${s.timeframe || '—'}</td>
+      <td>${renderBadgeDir(s.direction)}</td>
+      <td class="mono text-accent">${fmt(s.dca4)}</td>
+      <td class="mono">${fmt(s.entry)}</td>
+      ${middle}
+      <td class="mono text-buy">${fmt(s.tp1)}</td>
+      <td class="mono text-sell">${fmt(s.sl)}</td>
+      <td class="mono">${s.risk_reward ?? '—'}</td>
+      <td>${renderAiScore(s.ai_score)}</td>
+      <td class="trend-cell">${renderTrend(s.trend)}</td>
+      <td>${renderStatus(s.status)}</td>
+    </tr>`;
+}
+
+async function updateLive() {
+  try {
+    const r = await fetch('/api/signals-live?tab=' + CURRENT_TAB + '&bot=' + CURRENT_BOT);
+    const data = await r.json();
+
+    const s = data.stats;
+
+    // Бейджи табов
+    const tabBadges = document.querySelectorAll('.tab .tab-badge');
+    if (tabBadges.length >= 4) {
+      tabBadges[0].textContent = s.watching;
+      tabBadges[1].textContent = s.dca4;
+      tabBadges[2].textContent = s.reversal;
+      tabBadges[3].textContent = s.results;
+    }
+
+    // Перерисовка таблицы
+    const tbody = document.querySelector('.table-wrap tbody');
+    if (tbody) {
+      if (data.signals.length) {
+        tbody.innerHTML = data.signals.map(renderRow).join('');
+      } else {
+        const cols = IS_RESULTS ? 15 : 14;
+        tbody.innerHTML = `<tr><td colspan="${cols}" style="text-align:center;padding:80px;" class="text-muted">Сигналов не найдено</td></tr>`;
+      }
+      attachRowHandlers();
+      updatePrices();
+    }
+
+    // Счётчик "Выбрать все"
+    const sa = document.querySelector('.select-all label');
+    if (sa) sa.firstChild.nextSibling && (sa.lastChild.textContent = ` Выбрать все (${data.signals.length})`);
+  } catch (e) { console.error('live update', e); }
+}
+
+async function updatePrices() {
+  const rows = Array.from(document.querySelectorAll('tr[data-pair]')).filter(r => r.dataset.pair);
+  const pairs = [...new Set(rows.map(r => r.dataset.pair))];
+  if (!pairs.length) return;
+  try {
+    const r = await fetch('/api/prices?pairs=' + encodeURIComponent(pairs.join(',')));
+    const data = await r.json();
+    rows.forEach(row => {
+      const price = data[row.dataset.pair];
+      const cell = row.querySelector('.price-cell');
+      if (cell && price != null) {
+        cell.textContent = fmt(price);
+        cell.classList.remove('text-muted');
+        cell.classList.add('text-accent');
+      }
+    });
+  } catch (e) { console.error(e); }
+}
+
+function getSelectedIds() {
+  const ids = [];
+  document.querySelectorAll('tr.signal-row').forEach(row => {
+    const cb = row.querySelector('.row-check');
+    if (cb && cb.checked) ids.push(row.dataset.id);
+  });
+  return ids;
+}
+
+function refreshDeleteBtn() {
+  const btn = document.getElementById('deleteBtn');
+  const label = document.getElementById('deleteBtnLabel');
+  if (!btn) return;
+  const ids = getSelectedIds();
+  if (ids.length > 0) {
+    btn.style.display = 'inline-flex';
+    label.textContent = `Удалить (${ids.length})`;
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+async function deleteSelected() {
+  const ids = getSelectedIds();
+  if (!ids.length) return;
+  if (!confirm(`Удалить ${ids.length} сигнал(ов)?`)) return;
+  try {
+    const r = await fetch('/api/signals/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids.map(Number) }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      updateLive();
+      const sa = document.getElementById('selectAll');
+      if (sa) sa.checked = false;
+      refreshDeleteBtn();
+    } else {
+      alert('Ошибка: ' + (d.error || ''));
+    }
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  }
+}
+
+function attachRowHandlers() {
+  document.querySelectorAll('tr.signal-row').forEach(row => {
+    row.onclick = () => openModal(row.dataset.id);
+    const cb = row.querySelector('.row-check');
+    if (cb) {
+      cb.onclick = (e) => e.stopPropagation();
+      cb.onchange = refreshDeleteBtn;
+    }
+  });
+  const sa = document.getElementById('selectAll');
+  if (sa) {
+    sa.onchange = () => {
+      document.querySelectorAll('.row-check').forEach(c => c.checked = sa.checked);
+      refreshDeleteBtn();
+    };
+  }
+  refreshDeleteBtn();
+}
+
+attachRowHandlers();
+updatePrices();
+updateLive();
+
+// ── WebSocket: мгновенные обновления вместо polling ──
+(function connectWS() {
+  let ws;
+  let reconnectTimer;
+  function open() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws`);
+    ws.onopen = () => console.log('[ws] connected');
+    ws.onmessage = (e) => {
+      try {
+        const m = JSON.parse(e.data);
+        if (m.type === 'signal_new' || m.type === 'signal_update' || m.type === 'signal_deleted') {
+          updateLive();
+        }
+      } catch {}
+    };
+    ws.onclose = () => {
+      console.log('[ws] disconnected, retry in 3s');
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(open, 3000);
+    };
+    ws.onerror = () => ws.close();
+  }
+  open();
+})();
+
+// Fallback polling раз в минуту на случай пропущенных broadcasts
+setInterval(updateLive, 60000);
+setInterval(updatePrices, 10000);
+
+async function openModal(id) {
+  const modal = document.getElementById('modal');
+  const body = document.getElementById('modalBody');
+  modal.classList.add('open');
+  body.innerHTML = '<div style="padding:40px;text-align:center;" class="text-muted">Загрузка…</div>';
+  try {
+    const r = await fetch('/api/signal/' + id);
+    const s = await r.json();
+    renderSignal(s);
+  } catch (e) {
+    body.innerHTML = '<div style="padding:40px;text-align:center;" class="text-muted">Ошибка загрузки</div>';
+  }
+}
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+document.addEventListener('keydown', e => e.key === 'Escape' && closeModal());
+
+function renderSignal(s) {
+  const fmt = v => (v == null || v === '') ? '—' : v;
+
+  // Header
+  const dirEl = document.getElementById('modalDir');
+  const title = document.getElementById('modalTitle');
+  const tfEl = document.getElementById('modalTf');
+  const statusEl = document.getElementById('modalStatus');
+  const pairBase = (s.pair || '—').replace('/USDT', '');
+  const pairQuote = s.pair && s.pair.includes('/') ? '/' + s.pair.split('/')[1] : '';
+  title.innerHTML = `${pairBase}<span style="color:var(--muted);font-weight:500;">${pairQuote}</span>`;
+  if (s.direction === 'LONG' || s.direction === 'BUY') {
+    dirEl.className = 'badge badge-buy';
+    dirEl.textContent = 'LONG';
+  } else if (s.direction === 'SHORT' || s.direction === 'SELL') {
+    dirEl.className = 'badge badge-sell';
+    dirEl.textContent = 'SHORT';
+  } else {
+    dirEl.className = 'badge badge-no';
+    dirEl.textContent = '—';
+  }
+  tfEl.textContent = s.timeframe || '—';
+  statusEl.textContent = s.status || 'СЛЕЖУ';
+
+  // Chart
+  const chartHtml = s.has_chart
+    ? `<div class="modal-chart-wrap"><img src="/chart/${s.id}" alt="chart"></div>`
+    : `<div class="modal-chart-empty">График отсутствует</div>`;
+
+  // Trend dots
+  const trendHtml = s.trend
+    ? s.trend.split('').map(c => `<span class="dot-${c === 'R' ? 'r' : 'g'}"></span>`).join('')
+    : '—';
+
+  // Date
+  const dateStr = s.received_at
+    ? new Date(s.received_at).toLocaleString('ru', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(',', '')
+    : '—';
+
+  const stats = [
+    ['DCA #4', fmt(s.dca4), 'cyan'],
+    ['Entry', fmt(s.entry), ''],
+    ['Take Profit', fmt(s.tp1), 'buy'],
+    ['Stop Loss', fmt(s.sl), 'sell'],
+    ['R:R', fmt(s.risk_reward), ''],
+    ['Тренд', trendHtml, 'trend'],
+    ['Risk %', s.risk_percent ? s.risk_percent + '%' : '—', ''],
+    ['Amount', fmt(s.amount), ''],
+    ['TP %', s.tp_percent ? s.tp_percent + '%' : '—', 'buy'],
+    ['SL %', s.sl_percent ? s.sl_percent + '%' : '—', 'sell'],
+    ['Setup №', fmt(s.setup_number), 'orange'],
+    ['Время', dateStr, ''],
+  ];
+  const statsHtml = stats.map(([label, val, cls]) => `
+    <div class="modal-stat">
+      <div class="modal-stat-label">${label}</div>
+      <div class="modal-stat-value ${cls === 'trend' ? '' : cls}">${cls === 'trend' ? '<div class="trend-cell">' + val + '</div>' : val}</div>
+    </div>`).join('');
+
+  const commentHtml = s.comment ? `<div class="modal-comment">${s.comment}</div>` : '';
+
+  // AI verdict block
+  let aiHtml = '';
+  if (s.ai_score != null) {
+    const cls = s.ai_score >= 70 ? 'ai-good' : s.ai_score >= 40 ? 'ai-ok' : 'ai-bad';
+    const risks = Array.isArray(s.ai_risks) ? s.ai_risks : [];
+    aiHtml = `
+      <div class="modal-ai">
+        <div class="modal-ai-head">
+          <span class="ai-score-pill ${cls}" style="font-size:14px;min-width:48px;padding:6px 12px;">${s.ai_score}</span>
+          <div class="modal-ai-meta">
+            <div class="modal-ai-verdict">${s.ai_verdict || '—'} <span class="text-muted">·</span> уверенность ${s.ai_confidence || '—'}</div>
+            <div class="modal-ai-reasoning">${s.ai_reasoning || '—'}</div>
+          </div>
+        </div>
+        ${risks.length ? `<div class="modal-ai-risks"><div class="modal-ai-risks-title">Риски</div>${risks.map(r => `<div class="modal-ai-risk">⚠ ${r}</div>`).join('')}</div>` : ''}
+      </div>`;
+  }
+
+  document.getElementById('modalBody').innerHTML = `
+    ${chartHtml}
+    <div class="modal-stats">${statsHtml}</div>
+    ${aiHtml}
+    ${commentHtml}
+    <div class="modal-events" id="modalEvents">
+      <div class="modal-events-title">📋 События</div>
+      <div class="modal-events-list">Загрузка…</div>
+    </div>
+  `;
+  loadEvents(s.id);
+}
+
+async function loadEvents(id) {
+  try {
+    const r = await fetch('/api/events/' + id);
+    const events = await r.json();
+    const list = document.querySelector('#modalEvents .modal-events-list');
+    if (!list) return;
+    if (!events.length) {
+      list.innerHTML = '<div class="text-muted" style="padding:8px 0;">Нет событий</div>';
+      return;
+    }
+    const ICON = {
+      created: '🆕', ai_analyzed: '🤖', ai_failed: '⚠️', ai_retry: '🔄', ai_recovered: '✅',
+      dca4_hit: '💠', pattern_detected: '🎴', tp_hit: '🎯', sl_hit: '🛑',
+    };
+    list.innerHTML = events.map(e => `
+      <div class="modal-event">
+        <span class="modal-event-icon">${ICON[e.type] || '•'}</span>
+        <span class="modal-event-time">${new Date(e.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span>
+        <span class="modal-event-type">${e.type}</span>
+        ${e.price != null ? `<span class="modal-event-price mono">${e.price}</span>` : ''}
+        ${e.message ? `<span class="modal-event-msg">${e.message}</span>` : ''}
+      </div>
+    `).join('');
+  } catch (err) { console.error(err); }
+}
+</script>
+{% endif %}
+{% endblock %}

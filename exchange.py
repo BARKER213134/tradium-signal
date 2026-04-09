@@ -1,0 +1,177 @@
+"""Интеграция с Binance public API — список пар и текущие цены."""
+import logging
+import time
+import httpx
+
+logger = logging.getLogger(__name__)
+
+BINANCE_BASE = "https://data-api.binance.vision"
+
+# кэш
+_symbols_cache: set[str] = set()
+_symbols_cache_ts: float = 0
+_SYMBOLS_TTL = 3600  # 1 час
+
+_price_cache: dict[str, tuple[float, float]] = {}  # symbol -> (price, ts)
+_PRICE_TTL = 5  # 5 секунд
+
+
+def _normalize(pair: str) -> str:
+    """BTC/USDT -> BTCUSDT"""
+    if not pair:
+        return ""
+    return pair.replace("/", "").replace("-", "").replace(" ", "").upper()
+
+
+def get_all_usdt_symbols() -> set[str]:
+    """Возвращает все активные торговые пары *USDT на Binance."""
+    global _symbols_cache, _symbols_cache_ts
+    now = time.time()
+    if _symbols_cache and (now - _symbols_cache_ts) < _SYMBOLS_TTL:
+        return _symbols_cache
+    try:
+        r = httpx.get(f"{BINANCE_BASE}/api/v3/exchangeInfo", timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        symbols = {
+            s["symbol"]
+            for s in data.get("symbols", [])
+            if s.get("status") == "TRADING" and s.get("quoteAsset") == "USDT"
+        }
+        _symbols_cache = symbols
+        _symbols_cache_ts = now
+        logger.info(f"Binance: загружено {len(symbols)} USDT-пар")
+        return symbols
+    except Exception as e:
+        logger.error(f"Ошибка загрузки пар Binance: {e}")
+        return _symbols_cache
+
+
+def get_price(pair: str) -> float | None:
+    """Возвращает текущую цену пары (BTC/USDT или BTCUSDT)."""
+    symbol = _normalize(pair)
+    if not symbol:
+        return None
+    now = time.time()
+    cached = _price_cache.get(symbol)
+    if cached and (now - cached[1]) < _PRICE_TTL:
+        return cached[0]
+    try:
+        r = httpx.get(
+            f"{BINANCE_BASE}/api/v3/ticker/price",
+            params={"symbol": symbol},
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return None
+        price = float(r.json().get("price", 0))
+        _price_cache[symbol] = (price, now)
+        return price
+    except Exception as e:
+        logger.debug(f"Ошибка цены {symbol}: {e}")
+        return None
+
+
+# Маппинг ТФ из формата сигнала в формат Binance
+TF_MAP = {
+    "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m",
+    "1h": "1h", "2h": "2h", "4h": "4h", "6h": "6h", "8h": "8h", "12h": "12h",
+    "1d": "1d", "1D": "1d", "3d": "3d", "1w": "1w", "1W": "1w", "1M": "1M",
+}
+
+
+def get_klines(pair: str, timeframe: str, limit: int = 50) -> list[dict]:
+    """Получает свечи с Binance. Возвращает [{'t','o','h','l','c','v'}, ...] старые→новые."""
+    symbol = _normalize(pair)
+    interval = TF_MAP.get(timeframe, timeframe.lower() if timeframe else "1h")
+    if not symbol:
+        return []
+    try:
+        r = httpx.get(
+            f"{BINANCE_BASE}/api/v3/klines",
+            params={"symbol": symbol, "interval": interval, "limit": limit},
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return []
+        return [
+            {
+                "t": int(k[0]),
+                "o": float(k[1]),
+                "h": float(k[2]),
+                "l": float(k[3]),
+                "c": float(k[4]),
+                "v": float(k[5]),
+            }
+            for k in r.json()
+        ]
+    except Exception as e:
+        logger.debug(f"klines {symbol}: {e}")
+        return []
+
+
+def _fetch_batch(symbols: list[str]) -> dict[str, float] | None:
+    """Внутренняя batch-функция. Возвращает None при 400 (плохой символ в наборе)."""
+    if not symbols:
+        return {}
+    try:
+        import json as _json
+        r = httpx.get(
+            f"{BINANCE_BASE}/api/v3/ticker/price",
+            params={"symbols": _json.dumps(symbols, separators=(",", ":"))},
+            timeout=8,
+        )
+        if r.status_code == 400:
+            return None  # один из символов не торгуется — вернём None для fallback
+        if r.status_code != 200:
+            return {}
+        now = time.time()
+        out = {}
+        for item in r.json():
+            sym = item["symbol"]
+            price = float(item["price"])
+            _price_cache[sym] = (price, now)
+            out[sym] = price
+        return out
+    except Exception as e:
+        logger.debug(f"Batch prices error: {e}")
+        return {}
+
+
+def _fetch_single(symbol: str) -> float | None:
+    try:
+        r = httpx.get(
+            f"{BINANCE_BASE}/api/v3/ticker/price",
+            params={"symbol": symbol},
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return None
+        price = float(r.json().get("price", 0))
+        _price_cache[symbol] = (price, time.time())
+        return price
+    except Exception:
+        return None
+
+
+def get_prices(pairs: list[str]) -> dict[str, float]:
+    """Batch: цены для списка пар. При 400 падает на per-symbol fallback,
+    чтобы один мусорный символ не ломал все остальные."""
+    known = get_all_usdt_symbols()
+    symbols = [_normalize(p) for p in pairs if p]
+    symbols = [s for s in symbols if s and (not known or s in known)]
+    if not symbols:
+        return {}
+
+    batch = _fetch_batch(symbols)
+    if batch is not None:
+        return batch
+
+    # Batch вернул 400 — ищем плохой символ поштучно
+    logger.warning("Binance 400 on batch, fallback to per-symbol fetch")
+    out: dict[str, float] = {}
+    for s in symbols:
+        p = _fetch_single(s)
+        if p is not None:
+            out[s] = p
+    return out
