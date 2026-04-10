@@ -239,11 +239,17 @@ def get_price_any(pair: str) -> float | None:
 def get_prices_any(pairs: list[str]) -> dict[str, float]:
     """Batch: сначала spot, пропущенные — через futures."""
     result = get_prices(pairs)
+    # Все пары без цены на spot — пробуем через futures
     missing = [p for p in pairs if _normalize(p) not in result]
     if missing:
         futures = get_futures_prices(missing)
         result.update(futures)
     return result
+
+
+def get_futures_prices_only(pairs: list[str]) -> dict[str, float]:
+    """Только futures, без spot. Для Cryptovizor перпетуалов."""
+    return get_futures_prices(pairs)
 
 
 def get_klines_any(pair: str, timeframe: str, limit: int = 50) -> list[dict]:

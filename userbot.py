@@ -14,7 +14,7 @@ from database import SessionLocal, Signal, utcnow, log_event
 from parser import parse_signal, format_signal_message
 from parser_cryptovizor import parse_cryptovizor_message
 from ai_analyzer import analyze_chart, analyze_signal_quality, merge_signal_data
-from exchange import get_prices, get_prices_any
+from exchange import get_prices, get_prices_any, get_futures_prices_only
 
 logger = logging.getLogger(__name__)
 
@@ -412,9 +412,9 @@ async def handle_cryptovizor_message(text: str, message_id: int):
     if not signals_data:
         return
 
-    # Забираем цены: spot → futures fallback (Cryptovizor = перпетуалы)
+    # Cryptovizor = перпетуалы → сразу futures API
     pairs = [s["pair"] for s in signals_data]
-    prices_raw = await asyncio.to_thread(get_prices_any, pairs)
+    prices_raw = await asyncio.to_thread(get_futures_prices_only, pairs)
 
     db = SessionLocal()
     try:

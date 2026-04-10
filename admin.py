@@ -557,7 +557,7 @@ async def api_sync_cv(limit: int = 500):
     import userbot as _ub
     from parser_cryptovizor import parse_cryptovizor_message
     from config import BOT2_NAME
-    from exchange import get_prices_any as _gp
+    from exchange import get_futures_prices_only as _gp
 
     client = _ub._tg_client
     if client is None:
