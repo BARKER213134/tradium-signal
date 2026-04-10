@@ -44,7 +44,6 @@ BOT3_BOT_TOKEN = os.getenv("BOT3_BOT_TOKEN", "")
 BOTS = [
     {"id": "tradium", "label": "Tradium"},
     {"id": BOT2_NAME, "label": BOT2_LABEL},
-    {"id": "polymarket", "label": "Polymarket"},
 ]
 
 # Админка
