@@ -73,7 +73,6 @@ async def handle_text_message(event, client):
             text_tp1=parsed.get("tp1"),
             text_tp2=parsed.get("tp2"),
             text_tp3=parsed.get("tp3"),
-            # Финальные данные пока из текста
             pair=parsed.get("pair"),
             direction=parsed.get("direction"),
             entry=parsed.get("entry"),
@@ -81,6 +80,15 @@ async def handle_text_message(event, client):
             tp1=parsed.get("tp1"),
             tp2=parsed.get("tp2"),
             tp3=parsed.get("tp3"),
+            timeframe=parsed.get("timeframe"),
+            risk_reward=parsed.get("risk_reward"),
+            risk_percent=parsed.get("risk_percent"),
+            amount=parsed.get("amount"),
+            tp_percent=parsed.get("tp_percent"),
+            sl_percent=parsed.get("sl_percent"),
+            trend=parsed.get("trend"),
+            comment=parsed.get("comment"),
+            setup_number=parsed.get("setup_number"),
             has_chart=False,
             chart_analyzed=False,
             received_at=utcnow()
