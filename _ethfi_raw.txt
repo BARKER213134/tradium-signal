@@ -1,0 +1,26 @@
+Автор: Setup Screener 🏆№30
+#сетап
+
+$ETHFI 4h Binance #Futures
+
+TREND 🟢🔴🔴🔴🔴
+MA 🔴 RSI 🟠 00:00 10.04.2026
+Volume 1D       8.25 M
+CD Week         -2.57 M
+
+Short 📉
+LIMIT
+⌛️ Entry: 0.4568
+☑️ TP: 0.4181 8.47%
+✖️ SL: 0.4762 4.25%
+🎲 Risk-reward: 1.99
+🛡 Risk: 2.0%
+💰 Amount: 1973.24
+
+From Cryptovizor Screener
+
+Comment: Получен сигнал о начале коррекции, сгенерирован торговый сетап и отправлен в терминал. | Key levels: RESISTANCE 0.4624 - 0.4664 | Current: 0.4415 (+5.19%)
+
+⌛️ Waiting
+
+10.04.26 06:06

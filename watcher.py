@@ -16,7 +16,7 @@ def _broadcast(event: str, data: dict | None = None):
         broadcast_event(event, data)
     except Exception:
         pass
-from exchange import get_prices as _sync_get_prices, get_klines as _sync_get_klines
+from exchange import get_prices as _sync_get_prices, get_klines as _sync_get_klines, get_prices_any as _sync_get_prices_any, get_klines_any as _sync_get_klines_any
 from patterns import detect_patterns
 
 
@@ -26,6 +26,14 @@ async def get_prices(pairs):
 
 async def get_klines(pair, timeframe, limit=50):
     return await asyncio.to_thread(_sync_get_klines, pair, timeframe, limit)
+
+
+async def get_prices_any(pairs):
+    return await asyncio.to_thread(_sync_get_prices_any, pairs)
+
+
+async def get_klines_any(pair, timeframe, limit=50):
+    return await asyncio.to_thread(_sync_get_klines_any, pair, timeframe, limit)
 
 logger = logging.getLogger(__name__)
 
@@ -561,7 +569,7 @@ async def _check_cryptovizor(db):
 
     for s in signals:
         try:
-            candles = await get_klines(s.pair, "30m", limit=60)
+            candles = await get_klines_any(s.pair, "30m", limit=60)
             if not candles or len(candles) < 10:
                 continue
 
@@ -579,7 +587,7 @@ async def _check_cryptovizor(db):
             current_price = candles[-1]["c"]
 
             # Pivot уровни из 1h klines
-            h1 = await get_klines(s.pair, "1h", limit=80)
+            h1 = await get_klines_any(s.pair, "1h", limit=80)
             s1, r1 = nearest_levels(h1, current_price, left=3, right=3) if h1 else (None, None)
 
             # AI оценка

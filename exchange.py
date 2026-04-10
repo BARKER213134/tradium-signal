@@ -6,6 +6,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 BINANCE_BASE = "https://data-api.binance.vision"
+BINANCE_FUTURES = "https://fapi.binance.com"
 
 # кэш
 _symbols_cache: set[str] = set()
@@ -152,6 +153,105 @@ def _fetch_single(symbol: str) -> float | None:
         return price
     except Exception:
         return None
+
+
+# ─── Futures API ───────────────────────────────────────────────────────
+
+_futures_cache: dict[str, tuple[float, float]] = {}
+_FUTURES_TTL = 5
+
+
+def get_futures_price(pair: str) -> float | None:
+    """Цена с USDT-M Futures."""
+    symbol = _normalize(pair)
+    if not symbol:
+        return None
+    now = time.time()
+    cached = _futures_cache.get(symbol)
+    if cached and (now - cached[1]) < _FUTURES_TTL:
+        return cached[0]
+    try:
+        r = httpx.get(
+            f"{BINANCE_FUTURES}/fapi/v1/ticker/price",
+            params={"symbol": symbol},
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return None
+        price = float(r.json().get("price", 0))
+        _futures_cache[symbol] = (price, now)
+        return price
+    except Exception:
+        return None
+
+
+def get_futures_prices(pairs: list[str]) -> dict[str, float]:
+    """Batch цены с Binance Futures. Per-symbol (futures batch endpoint ненадёжный)."""
+    out: dict[str, float] = {}
+    for p in pairs:
+        norm = _normalize(p)
+        if not norm:
+            continue
+        price = get_futures_price(p)
+        if price is not None:
+            out[norm] = price
+    return out
+
+
+def get_futures_klines(pair: str, timeframe: str, limit: int = 50) -> list[dict]:
+    """Свечи с Binance USDT-M Futures."""
+    symbol = _normalize(pair)
+    interval = TF_MAP.get(timeframe, timeframe.lower() if timeframe else "30m")
+    if not symbol:
+        return []
+    try:
+        r = httpx.get(
+            f"{BINANCE_FUTURES}/fapi/v1/klines",
+            params={"symbol": symbol, "interval": interval, "limit": limit},
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return []
+        return [
+            {
+                "t": int(k[0]),
+                "o": float(k[1]),
+                "h": float(k[2]),
+                "l": float(k[3]),
+                "c": float(k[4]),
+                "v": float(k[5]),
+            }
+            for k in r.json()
+        ]
+    except Exception as e:
+        logger.debug(f"futures klines {symbol}: {e}")
+        return []
+
+
+def get_price_any(pair: str) -> float | None:
+    """Пробует spot → если нет → futures."""
+    price = get_price(pair)
+    if price is not None:
+        return price
+    return get_futures_price(pair)
+
+
+def get_prices_any(pairs: list[str]) -> dict[str, float]:
+    """Batch: сначала spot, пропущенные — через futures."""
+    result = get_prices(pairs)
+    missing = [p for p in pairs if _normalize(p) not in result]
+    if missing:
+        futures = get_futures_prices(missing)
+        result.update(futures)
+    return result
+
+
+def get_klines_any(pair: str, timeframe: str, limit: int = 50) -> list[dict]:
+    """Сначала spot klines, если пусто → futures."""
+    candles = get_klines(pair, timeframe, limit)
+    if candles:
+        return candles
+    return get_futures_klines(pair, timeframe, limit)
 
 
 def get_prices(pairs: list[str]) -> dict[str, float]:

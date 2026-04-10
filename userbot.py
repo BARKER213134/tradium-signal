@@ -14,7 +14,7 @@ from database import SessionLocal, Signal, utcnow, log_event
 from parser import parse_signal, format_signal_message
 from parser_cryptovizor import parse_cryptovizor_message
 from ai_analyzer import analyze_chart, analyze_signal_quality, merge_signal_data
-from exchange import get_prices
+from exchange import get_prices, get_prices_any
 
 logger = logging.getLogger(__name__)
 
@@ -412,9 +412,9 @@ async def handle_cryptovizor_message(text: str, message_id: int):
     if not signals_data:
         return
 
-    # Забираем текущие цены всех тикеров одним batch запросом
+    # Забираем цены: spot → futures fallback (Cryptovizor = перпетуалы)
     pairs = [s["pair"] for s in signals_data]
-    prices_raw = await asyncio.to_thread(get_prices, pairs)
+    prices_raw = await asyncio.to_thread(get_prices_any, pairs)
 
     db = SessionLocal()
     try:
@@ -423,6 +423,11 @@ async def handle_cryptovizor_message(text: str, message_id: int):
             pair = sd["pair"]
             norm = pair.replace("/", "").upper()
             current_price = prices_raw.get(norm)
+
+            # Если ни spot ни futures не дали цену — пропускаем
+            if current_price is None:
+                logger.debug(f"[CV] {pair} — нет ни на spot ни на futures, пропускаем")
+                continue
 
             # Уникальность: не создаём дубликаты если message_id уже был с тем же pair
             unique_msg_id = message_id * 100 + created
