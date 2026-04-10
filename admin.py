@@ -551,6 +551,77 @@ async def api_delete_signals(payload: dict):
     return {"ok": True, "deleted": deleted, "events_deleted": events}
 
 
+@app.post("/api/sync-cv")
+async def api_sync_cv(limit: int = 500):
+    """Синхронизирует сигналы Cryptovizor — подтягивает пропущенные из истории."""
+    import userbot as _ub
+    from parser_cryptovizor import parse_cryptovizor_message
+    from config import BOT2_NAME
+    from exchange import get_prices_any as _gp
+
+    client = _ub._tg_client
+    if client is None:
+        return {"ok": False, "error": "Userbot не запущен"}
+
+    # Ищем Cryptovizor dialog
+    cv_id = None
+    async for d in client.iter_dialogs():
+        if "cryptovizor" in (d.name or "").lower():
+            cv_id = d.id
+            break
+    if not cv_id:
+        return {"ok": False, "error": "Cryptovizor dialog не найден"}
+
+    messages = []
+    async for m in client.iter_messages(cv_id, limit=limit):
+        messages.append(m)
+    messages.reverse()
+
+    added = 0
+    db = Session()
+    try:
+        for msg in messages:
+            parsed = parse_cryptovizor_message(msg.raw_text or "")
+            if not parsed:
+                continue
+            pairs = [sd["pair"] for sd in parsed]
+            prices = await asyncio.to_thread(_gp, pairs)
+
+            for i, sd in enumerate(parsed):
+                unique_id = msg.id * 100 + i
+                existing = db.query(Signal).filter(
+                    Signal.source == BOT2_NAME
+                ).filter(Signal.message_id == unique_id).first()
+                if existing:
+                    continue
+
+                norm = sd["pair"].replace("/", "").upper()
+                price = prices.get(norm)
+                if price is None:
+                    continue
+
+                s = Signal(
+                    source=BOT2_NAME,
+                    message_id=unique_id,
+                    raw_text=msg.raw_text,
+                    pair=sd["pair"],
+                    direction=sd["direction"],
+                    trend=sd["trend"],
+                    timeframe="1h",
+                    entry=price,
+                    status="СЛЕЖУ",
+                    received_at=msg.date.replace(tzinfo=None) if msg.date.tzinfo else msg.date,
+                )
+                db.add(s)
+                db.commit()
+                db.refresh(s)
+                added += 1
+    finally:
+        db.close()
+
+    return {"ok": True, "scanned": len(messages), "added": added}
+
+
 @app.post("/api/sync")
 async def api_sync(limit: int = 300, bot: str = "tradium"):
     """Прогоняет последние N сообщений из группы: добавляет пропущенные
