@@ -444,7 +444,7 @@ async def handle_cryptovizor_message(text: str, message_id: int):
                 pair=pair,
                 direction=sd["direction"],
                 trend=sd["trend"],
-                timeframe="30m",
+                timeframe="1h",
                 entry=current_price,
                 status="СЛЕЖУ",
                 received_at=utcnow(),

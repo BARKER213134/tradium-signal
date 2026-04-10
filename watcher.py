@@ -487,7 +487,7 @@ async def _check_once():
         await _check_patterns(db)
         await _check_tp_sl(db, allowed_ids=opened_before)
 
-        # Cryptovizor: отдельный поток паттернов на 30m
+        # Cryptovizor: отдельный поток паттернов на 1h
         await _check_cryptovizor(db)
     finally:
         db.close()
@@ -523,7 +523,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     text = (
         f"🚀 <b>CRYPTOVIZOR · ПАТТЕРН НАЙДЕН</b>\n"
         f"\n"
-        f"<b>{pair}/USDT</b> · 30m · {dir_emoji} <b>{dir_label}</b>\n"
+        f"<b>{pair}/USDT</b> · 1h · {dir_emoji} <b>{dir_label}</b>\n"
         f"\n"
         f"🎴 <b>Паттерн:</b> {pattern}\n"
         f"🎯 <b>Цена сигнала:</b> <code>{signal.entry}</code>\n"
@@ -538,7 +538,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     try:
         if chart_png:
             from aiogram.types import BufferedInputFile
-            photo = BufferedInputFile(chart_png, filename=f"{pair}_30m.png")
+            photo = BufferedInputFile(chart_png, filename=f"{pair}_1h.png")
             await target_bot.send_photo(_admin_chat_id, photo=photo, caption=text, parse_mode="HTML")
         else:
             await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
@@ -548,7 +548,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
 
 
 async def _check_cryptovizor(db):
-    """Watcher для cryptovizor сигналов: детект reversal+continuation на 30m,
+    """Watcher для cryptovizor сигналов: детект reversal+continuation на 1h,
     переход СЛЕЖУ → ПАТТЕРН, алерт в BOT2."""
     from continuation_patterns import detect_continuation
     from levels import nearest_levels
@@ -569,7 +569,7 @@ async def _check_cryptovizor(db):
 
     for s in signals:
         try:
-            candles = await get_klines_any(s.pair, "30m", limit=60)
+            candles = await get_klines_any(s.pair, "1h", limit=60)
             if not candles or len(candles) < 10:
                 continue
 
@@ -628,7 +628,7 @@ async def _check_cryptovizor(db):
 
                 if png_path:
                     q = await analyze_signal_quality(png_path, {
-                        "pair": s.pair, "direction": s.direction, "timeframe": "30m",
+                        "pair": s.pair, "direction": s.direction, "timeframe": "1h",
                         "entry": s.entry, "tp1": r1, "sl": s1,
                         "trend": s.trend, "pattern": strongest,
                     })

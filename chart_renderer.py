@@ -1,4 +1,4 @@
-"""Рисует 30m свечи + маркер entry + горизонтальные линии S1/R1.
+"""Рисует свечи + маркер entry + горизонтальные линии S1/R1.
 
 Возвращает bytes PNG для отправки в Telegram.
 """
@@ -88,7 +88,7 @@ def render_chart(
         )
 
     dir_emoji = "🟢 LONG" if direction in ("LONG", "BUY") else "🔴 SHORT"
-    title_parts = [f"{pair} · 30m · {dir_emoji}"]
+    title_parts = [f"{pair} · 1h · {dir_emoji}"]
     if pattern:
         title_parts.append(pattern)
     title = "  |  ".join(title_parts)
