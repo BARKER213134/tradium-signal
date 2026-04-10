@@ -50,6 +50,10 @@ def _events() -> Collection:
     return _get_db().events
 
 
+def _polymarkets() -> Collection:
+    return _get_db().polymarkets
+
+
 def _counters() -> Collection:
     return _get_db().counters
 
@@ -483,3 +487,9 @@ def init_db():
     ev.create_index("signal_id")
     ev.create_index("at")
     ev.create_index("type")
+
+    pm = _polymarkets()
+    pm.create_index("market_id", unique=True, sparse=True)
+    pm.create_index("status")
+    pm.create_index("edge")
+    pm.create_index("analyzed_at")

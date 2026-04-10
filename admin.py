@@ -551,6 +551,108 @@ async def api_delete_signals(payload: dict):
     return {"ok": True, "deleted": deleted, "events_deleted": events}
 
 
+# ── Polymarket endpoints ──────────────────────────────────────────────
+
+@app.get("/api/polymarket/markets")
+async def api_polymarket_markets():
+    from database import _polymarkets
+    docs = list(_polymarkets().find().sort("edge", -1).limit(100))
+    for d in docs:
+        d.pop("_id", None)
+    return docs
+
+
+@app.get("/api/polymarket/stats")
+async def api_polymarket_stats():
+    from database import _polymarkets
+    total = _polymarkets().count_documents({})
+    signals = _polymarkets().count_documents({"status": "SIGNAL"})
+    watching = _polymarkets().count_documents({"status": "WATCHING"})
+    skipped = _polymarkets().count_documents({"status": "SKIP"})
+    return {"total": total, "signals": signals, "watching": watching, "skipped": skipped}
+
+
+@app.post("/api/polymarket/scan")
+async def api_polymarket_scan():
+    """Ручной запуск скана Polymarket."""
+    from polymarket import get_active_markets
+    from polymarket_analyzer import analyze_market, kelly_fraction
+    from database import _polymarkets, utcnow
+
+    markets = await asyncio.to_thread(get_active_markets, 50, 5000)
+    analyzed = 0
+    signals = 0
+
+    for m in markets:
+        # Пропускаем уже проанализированные
+        existing = _polymarkets().find_one({"market_id": m["id"]})
+        if existing:
+            continue
+
+        result = await analyze_market(m)
+        if result.get("_error"):
+            continue
+
+        prob = result.get("probability", 0.5)
+        edge = result.get("edge", 0)
+        side = result.get("side", "SKIP")
+        confidence = result.get("confidence", "low")
+
+        # Kelly fraction для размера ставки
+        price = m["yes_price"] if side == "YES" else m["no_price"]
+        kelly = kelly_fraction(prob, price) if price and side != "SKIP" else 0
+
+        status = "SIGNAL" if edge >= 0.10 and side != "SKIP" else "SKIP"
+        if 0.05 <= edge < 0.10 and side != "SKIP":
+            status = "WATCHING"
+
+        doc = {
+            "market_id": m["id"],
+            "question": m["question"],
+            "description": m["description"],
+            "category": m["category"],
+            "yes_price": m["yes_price"],
+            "no_price": m["no_price"],
+            "volume_24h": m["volume_24h"],
+            "end_date": m["end_date"],
+            "image": m["image"],
+            "ai_probability": prob,
+            "ai_edge": edge,
+            "ai_side": side,
+            "ai_confidence": confidence,
+            "ai_reasoning": result.get("reasoning", ""),
+            "kelly_fraction": kelly,
+            "status": status,
+            "analyzed_at": utcnow(),
+        }
+        _polymarkets().insert_one(doc)
+        analyzed += 1
+        if status == "SIGNAL":
+            signals += 1
+
+    return {"ok": True, "scanned": len(markets), "analyzed": analyzed, "signals": signals}
+
+
+@app.post("/api/polymarket/budget")
+async def api_polymarket_budget(payload: dict):
+    """Сохраняет общий бюджет."""
+    from database import _get_db
+    budget = float(payload.get("budget", 0))
+    _get_db().settings.update_one(
+        {"_id": "polymarket_budget"},
+        {"$set": {"value": budget}},
+        upsert=True,
+    )
+    return {"ok": True, "budget": budget}
+
+
+@app.get("/api/polymarket/budget")
+async def api_polymarket_budget_get():
+    from database import _get_db
+    doc = _get_db().settings.find_one({"_id": "polymarket_budget"})
+    return {"budget": doc.get("value", 500) if doc else 500}
+
+
 @app.post("/api/sync-cv")
 async def api_sync_cv(limit: int = 500):
     """Синхронизирует сигналы Cryptovizor — подтягивает пропущенные из истории."""
