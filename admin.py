@@ -284,14 +284,17 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
 
     # Cryptovizor имеет свои вкладки
     if bot == "cryptovizor":
-        cv_tab = tab if tab in ("watching", "active") else "watching"
+        cv_tab = tab if tab in ("watching", "active", "volume") else "watching"
         if cv_tab == "watching":
             query = query.filter(Signal.status == "СЛЕЖУ")
-        else:
+        elif cv_tab == "active":
             query = query.filter(Signal.status == "ПАТТЕРН")
+        elif cv_tab == "volume":
+            query = query.filter(Signal.status == "VOLUME")
         cv_watching = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "СЛЕЖУ").count()
         cv_active = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "ПАТТЕРН").count()
-        cv_stats = {"watching": cv_watching, "active": cv_active}
+        cv_volume = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "VOLUME").count()
+        cv_stats = {"watching": cv_watching, "active": cv_active, "volume": cv_volume}
         signals = query.order_by(desc(Signal.received_at)).limit(200).all()
         return templates.TemplateResponse(request, "signals.html", {
             "signals": signals,

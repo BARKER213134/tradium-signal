@@ -165,6 +165,7 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 <div class="tabs">
   <a href="/signals?bot=cryptovizor&tab=watching" class="tab {% if cv_tab == 'watching' %}active{% endif %}">Следим <span class="tab-badge">{{ cv_stats.watching }}</span></a>
   <a href="/signals?bot=cryptovizor&tab=active" class="tab {% if cv_tab == 'active' %}active{% endif %}">Сигнал <span class="tab-badge">{{ cv_stats.active }}</span></a>
+  <a href="/signals?bot=cryptovizor&tab=volume" class="tab {% if cv_tab == 'volume' %}active{% endif %}">Volume Alert <span class="tab-badge">{{ cv_stats.volume }}</span></a>
 </div>
 
 <div class="select-all">
