@@ -621,15 +621,15 @@ async function clearProcessed() {
           {% if s.status == 'ПАТТЕРН' %}<span class="badge badge-ai">ПАТТЕРН</span>
           {% else %}<span class="badge badge-status">СЛЕЖУ</span>{% endif %}
         </td>
-        {% if cv_tab == 'ai_signal' and s.comment %}
-        <td><button class="btn-ghost btn-sm" onclick="toggleAiRow({{ loop.index }})" style="font-size:10px;padding:4px 10px;color:var(--buy);border-color:var(--buy);">📝 Анализ</button></td>
+        {% if cv_tab == 'ai_signal' %}
+        <td><button class="btn-ghost btn-sm" onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" id="aibtn{{ loop.index }}" style="font-size:10px;padding:4px 10px;{% if s.comment %}color:var(--buy);border-color:var(--buy);{% endif %}">{% if s.comment %}✓ Анализ{% else %}📝 Анализ{% endif %}</button></td>
         {% endif %}
       </tr>
-      {% if cv_tab == 'ai_signal' and s.comment %}
+      {% if cv_tab == 'ai_signal' %}
       <tr id="airow{{ loop.index }}" style="display:none;">
         <td colspan="14" style="padding:16px 18px;background:var(--dark-2);border-bottom:1px solid var(--border);">
           <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">AI АНАЛИЗ · {{ (s.pair or '—')|replace('/USDT','') }}</div>
-          <div style="font-size:13px;line-height:1.7;color:var(--text-2);white-space:pre-wrap;">{{ s.comment }}</div>
+          <div id="aitxt{{ loop.index }}" style="font-size:13px;line-height:1.7;color:var(--text-2);white-space:pre-wrap;">{{ s.comment or 'Нажми для анализа…' }}</div>
         </td>
       </tr>
       {% endif %}
@@ -730,10 +730,39 @@ if (sa) sa.onchange = () => {
   refreshDeleteBtn();
 };
 
-function toggleAiRow(idx) {
+async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
   const row = document.getElementById('airow'+idx);
+  const txt = document.getElementById('aitxt'+idx);
+  const btn = document.getElementById('aibtn'+idx);
   if (!row) return;
-  row.style.display = row.style.display === 'table-row' ? 'none' : 'table-row';
+
+  // Toggle
+  if (row.style.display !== 'none') {
+    row.style.display = 'none';
+    return;
+  }
+  row.style.display = '';
+
+  // Если уже есть анализ — не запрашиваем
+  if (txt.textContent && txt.textContent !== 'Нажми для анализа…') return;
+
+  // Запрашиваем анализ
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+  txt.textContent = 'Анализирую…';
+  try {
+    const r = await fetch('/api/analyze-coin', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pair, direction, entry: parseFloat(entry), pattern}),
+    });
+    const d = await r.json();
+    txt.textContent = d.ok ? d.analysis : ('Ошибка: ' + (d.error || ''));
+    if (btn) { btn.textContent = '✓ Анализ'; btn.style.color = 'var(--buy)'; btn.style.borderColor = 'var(--buy)'; }
+  } catch(e) {
+    txt.textContent = 'Ошибка: ' + e.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 updatePricesAndPnl();
