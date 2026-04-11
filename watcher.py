@@ -41,16 +41,14 @@ POLL_INTERVAL = 15  # секунд
 
 _bot = None
 _bot2 = None
-_bot3 = None
 _bot4 = None
 _admin_chat_id = None
 
 
 def setup(bot, admin_chat_id: int, bot2=None, bot3=None, bot4=None):
-    global _bot, _bot2, _bot3, _bot4, _admin_chat_id
+    global _bot, _bot2, _bot4, _admin_chat_id
     _bot = bot
     _bot2 = bot2
-    _bot3 = bot3
     _bot4 = bot4
     _admin_chat_id = admin_chat_id
 
@@ -613,30 +611,6 @@ async def _check_cryptovizor(db):
                 await _ai_score_and_alert_pattern(s, strongest, current_price, s1, r1, chart_png, candles, db)
                 continue
 
-            # ── Путь 2: volume spike → BOT3 ────────────────────
-            from volume_analysis import is_volume_spike, format_volume
-            triggered, vol_info = is_volume_spike(candles, s.direction)
-            if triggered:
-                chart_png = render_chart(
-                    candles[-30:], s.pair, s.direction,
-                    entry=s.entry, s1=s1, r1=r1,
-                    pattern=f"VOLUME ×{vol_info['rvol']}",
-                )
-                s.status = "VOLUME"
-                s.pattern_triggered = True
-                s.pattern_name = f"Volume ×{vol_info['rvol']}"
-                s.pattern_triggered_at = utcnow()
-                s.pattern_price = current_price
-                # dca1=S1, dca2=R1, dca3=RVOL
-                if s1 is not None: s.dca1 = s1
-                if r1 is not None: s.dca2 = r1
-                s.dca3 = vol_info["rvol"]
-                db.commit()
-                log_event(s.id, "volume_spike", price=current_price,
-                    data=vol_info,
-                    message=f"Volume spike ×{vol_info['rvol']} price {vol_info['price_change_pct']}%")
-                _broadcast("signal_update", {"id": s.id, "status": "VOLUME", "source": "cryptovizor"})
-                await _ai_score_and_alert_volume(s, vol_info, current_price, s1, r1, chart_png, candles, db)
         except Exception as e:
             logger.error(f"Cryptovizor check #{s.id}: {e}")
 
@@ -669,74 +643,6 @@ async def _ai_score_and_alert_pattern(s, pattern, price, s1, r1, chart_png, cand
     except Exception as e:
         logger.error(f"CV AI pattern #{s.id}: {e}")
     await _send_cryptovizor_alert(s, pattern, price, s1, r1, chart_png)
-
-
-async def _ai_score_and_alert_volume(s, vol_info, price, s1, r1, chart_png, candles, db):
-    """AI score + отправка volume-алерта в BOT3."""
-    import tempfile, os
-    from volume_analysis import format_volume
-    try:
-        png_path = None
-        if chart_png:
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-            tmp.write(chart_png); tmp.close()
-            png_path = tmp.name
-        if png_path:
-            from ai_analyzer import analyze_signal_quality
-            q = await analyze_signal_quality(png_path, {
-                "pair": s.pair, "direction": s.direction, "timeframe": "1h",
-                "entry": s.entry, "tp1": r1, "sl": s1,
-                "trend": s.trend, "pattern": f"Volume spike ×{vol_info['rvol']}",
-            })
-            if q and "score" in q:
-                s.ai_score = q["score"]
-                s.ai_confidence = q.get("confidence")
-                s.ai_reasoning = q.get("reasoning")
-                s.ai_risks = q.get("risks") or []
-                s.ai_verdict = q.get("verdict")
-                db.commit()
-            try: os.remove(png_path)
-            except Exception: pass
-    except Exception as e:
-        logger.error(f"CV AI volume #{s.id}: {e}")
-
-    # Алерт в BOT3
-    target_bot = _bot3 or _bot2 or _bot
-    if not target_bot or not _admin_chat_id:
-        return
-    is_long = s.direction in ("LONG", "BUY")
-    dir_emoji = "🟢" if is_long else "🔴"
-    dir_label = "LONG" if is_long else "SHORT"
-    pair = (s.pair or "—").replace("/USDT", "")
-
-    ai_line = ""
-    if getattr(s, "ai_score", None) is not None:
-        em = "🟢" if s.ai_score >= 70 else "🟡" if s.ai_score >= 40 else "🔴"
-        ai_line = f"\n{em} <b>AI:</b> {s.ai_score}/100 · {s.ai_verdict or '—'}"
-
-    text = (
-        f"🔥 <b>VOLUME ALERT</b>\n"
-        f"\n"
-        f"<b>{pair}/USDT</b> · 1h · {dir_emoji} <b>{dir_label}</b>\n"
-        f"\n"
-        f"Volume: <code>{format_volume(vol_info['volume'])}</code> (×{vol_info['rvol']} от среднего)\n"
-        f"Цена за свечу: <code>{vol_info['price_change_pct']:+.1f}%</code>\n"
-        f"Entry: <code>{s.entry}</code>\n"
-        f"Сейчас: <code>{price}</code>"
-        f"{ai_line}\n"
-        f"\n"
-        f"⚡ Объёмный импульс в направлении тренда"
-    )
-    try:
-        if chart_png:
-            from aiogram.types import BufferedInputFile
-            photo = BufferedInputFile(chart_png, filename=f"{pair}_vol_1h.png")
-            await target_bot.send_photo(_admin_chat_id, photo=photo, caption=text, parse_mode="HTML")
-        else:
-            await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
-        logger.info(f"Volume alert sent #{s.id} {pair} ×{vol_info['rvol']}")
-    except Exception as e:
-        logger.error(f"Volume alert fail #{s.id}: {e}")
 
 
 async def _check_ai_signals(db):

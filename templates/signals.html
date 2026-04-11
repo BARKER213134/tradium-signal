@@ -166,7 +166,6 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
   <a href="/signals?bot=cryptovizor&tab=watching" class="tab {% if cv_tab == 'watching' %}active{% endif %}">Следим <span class="tab-badge">{{ cv_stats.watching }}</span></a>
   <a href="/signals?bot=cryptovizor&tab=active" class="tab {% if cv_tab == 'active' %}active{% endif %}">Сигнал <span class="tab-badge">{{ cv_stats.active }}</span></a>
   <a href="/signals?bot=cryptovizor&tab=ai_signal" class="tab {% if cv_tab == 'ai_signal' %}active{% endif %}">Сигнал AI <span class="tab-badge">{{ cv_stats.ai_signal }}</span></a>
-  <a href="/signals?bot=cryptovizor&tab=volume" class="tab {% if cv_tab == 'volume' %}active{% endif %}">Volume Alert <span class="tab-badge">{{ cv_stats.volume }}</span></a>
   <a href="/signals?bot=cryptovizor&tab=backtest" class="tab {% if cv_tab == 'backtest' %}active{% endif %}">Бектест</a>
   <a href="/signals?bot=cryptovizor&tab=ai_settings" class="tab {% if cv_tab == 'ai_settings' %}active{% endif %}">AI Настройки</a>
 </div>
@@ -570,10 +569,6 @@ async function clearProcessed() {
         <th>Цена сигнала</th>
         <th>Цена сейчас</th>
         <th>PnL %</th>
-        {% if cv_tab == 'volume' %}
-        <th>RVOL</th>
-        <th>Vol %</th>
-        {% endif %}
         <th>S1</th>
         <th>R1</th>
         <th>Паттерн</th>
@@ -598,12 +593,6 @@ async function clearProcessed() {
         <td class="mono">{{ s.entry or '—' }}</td>
         <td class="mono price-cell text-muted">—</td>
         <td class="mono pnl-cell text-muted">—</td>
-        {% if cv_tab == 'volume' %}
-        <td class="mono text-accent">{{ '×' ~ s.dca3 if s.dca3 else '—' }}</td>
-        <td class="mono {% if s.pattern_price %}{% if s.direction == 'SHORT' %}text-buy{% else %}text-sell{% endif %}{% endif %}">
-          {% if s.pattern_name and 'Volume' in (s.pattern_name or '') %}{{ s.pattern_name }}{% else %}—{% endif %}
-        </td>
-        {% endif %}
         <td class="mono text-buy">{{ s.dca1 or '—' }}</td>
         <td class="mono text-sell">{{ s.dca2 or '—' }}</td>
         <td class="mono">{{ s.pattern_name or '—' }}</td>
@@ -613,8 +602,7 @@ async function clearProcessed() {
           {% else %}<span class="text-muted">—</span>{% endif %}
         </td>
         <td>
-          {% if s.status == 'VOLUME' %}<span class="badge" style="background:rgba(255,165,0,0.15);color:#ffa500;border:1px solid rgba(255,165,0,0.4);">🔥 VOLUME</span>
-          {% elif s.status == 'ПАТТЕРН' %}<span class="badge badge-ai">ПАТТЕРН</span>
+          {% if s.status == 'ПАТТЕРН' %}<span class="badge badge-ai">ПАТТЕРН</span>
           {% else %}<span class="badge badge-status">СЛЕЖУ</span>{% endif %}
         </td>
       </tr>

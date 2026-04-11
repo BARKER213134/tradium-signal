@@ -284,7 +284,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
 
     # Cryptovizor имеет свои вкладки
     if bot == "cryptovizor":
-        cv_tab = tab if tab in ("watching", "active", "ai_signal", "volume", "backtest", "ai_settings") else "watching"
+        cv_tab = tab if tab in ("watching", "active", "ai_signal", "backtest", "ai_settings") else "watching"
         if cv_tab == "watching":
             query = query.filter(Signal.status == "СЛЕЖУ")
         elif cv_tab == "active":
@@ -299,14 +299,11 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
                 query = query.filter(Signal.id.in_(ai_ids))
             else:
                 query = query.filter(Signal.status == "__none__")
-        elif cv_tab == "volume":
-            query = query.filter(Signal.status == "VOLUME")
         cv_watching = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "СЛЕЖУ").count()
-        cv_active = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status.in_(["ПАТТЕРН", "AI_SIGNAL"])).count()
+        cv_active = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status.in_(["ПАТТЕРН"])).count()
         from database import _signals as _sc2
         cv_ai = _sc2().count_documents({"source": "cryptovizor", "filter_reason": {"$regex": "^AI_SIGNAL"}})
-        cv_volume = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "VOLUME").count()
-        cv_stats = {"watching": cv_watching, "active": cv_active, "ai_signal": cv_ai, "volume": cv_volume}
+        cv_stats = {"watching": cv_watching, "active": cv_active, "ai_signal": cv_ai}
         if cv_tab in ("backtest", "ai_settings"):
             # Backtest / AI Settings — JS загружает данные
             return templates.TemplateResponse(request, "signals.html", {

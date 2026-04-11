@@ -6,7 +6,7 @@ import os
 import uvicorn
 
 from database import init_db
-from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT2_BOT_TOKEN, BOT3_BOT_TOKEN, BOT4_BOT_TOKEN
+from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT2_BOT_TOKEN, BOT4_BOT_TOKEN
 
 
 def _bootstrap_session():
@@ -104,7 +104,6 @@ async def main():
 
     from bot import bot, start_bot
     from bot2 import bot2, start_bot2
-    from bot3 import bot3, start_bot3
     from userbot import set_bot, start_userbot
     from watcher import setup as setup_watcher, start_watcher
 
@@ -112,9 +111,6 @@ async def main():
 
     if bot2:
         logger.info("✅ BOT2 (Cryptovizor) инициализирован")
-    if bot3:
-        logger.info("✅ BOT3 (Volume Alert) инициализирован")
-
     bot4 = None
     if BOT4_BOT_TOKEN:
         try:
@@ -137,8 +133,6 @@ async def main():
     ]
     if bot2:
         tasks.append(start_bot2())
-    if bot3:
-        tasks.append(start_bot3())
     await asyncio.gather(*tasks)
 
 
