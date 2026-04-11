@@ -1199,8 +1199,10 @@ setInterval(updatePricesAndPnl, 10000);
     ws.onmessage = (e) => {
       try {
         const m = JSON.parse(e.data);
-        if (m.type === 'signal_new' || m.type === 'signal_update' || m.type === 'signal_deleted') {
-          updatePricesAndPnl();
+        if (m.type === 'signal_new' || m.type === 'signal_deleted') {
+          location.reload();  // новый/удалённый сигнал — обновляем таблицу
+        } else if (m.type === 'signal_update') {
+          updatePricesAndPnl();  // обновление цен — без reload
         }
       } catch {}
     };
