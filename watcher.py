@@ -919,60 +919,88 @@ _anomaly_batch_idx = 0
 _ANOMALY_INTERVAL = 10  # каждый 10-й тик (10×30с = 5 мин)
 _anomaly_tick = 0
 
+# Состояние скана — читается из admin API
+anomaly_scan_state = {
+    "running": False, "progress": 0, "total": 0,
+    "found": 0, "batch": 0, "batches": 0, "current": "",
+}
+
 
 async def _check_anomalies():
-    """Сканирует фьючерсные пары батчами. Полный цикл за 2 тика (10 мин)."""
+    """Сканирует фьючерсные пары батчами. Полный цикл за 4 тика (20 мин)."""
     global _anomaly_batch_idx, _anomaly_tick
     _anomaly_tick += 1
     if _anomaly_tick % _ANOMALY_INTERVAL != 0:
         return
 
-    from anomaly_scanner import get_all_futures_pairs, scan_batch
+    from anomaly_scanner import get_all_futures_pairs, scan_symbol
     from database import _anomalies, utcnow
 
     pairs = await asyncio.to_thread(get_all_futures_pairs)
     if not pairs:
         return
 
-    # Разбиваем на 4 батча по ~100 пар (полный цикл = 20 мин)
+    # Разбиваем на 4 батча
     chunk_size = max(len(pairs) // 4, 50)
     start = _anomaly_batch_idx * chunk_size
     batch = pairs[start:start + chunk_size]
     _anomaly_batch_idx = (_anomaly_batch_idx + 1) % 4
 
-    logger.info(f"Anomaly scan batch {_anomaly_batch_idx}/{4}: {len(batch)} pairs")
-    results = await asyncio.to_thread(scan_batch, batch, 7)
+    # Обновляем состояние
+    anomaly_scan_state["running"] = True
+    anomaly_scan_state["total"] = len(pairs)
+    anomaly_scan_state["batch"] = _anomaly_batch_idx
+    anomaly_scan_state["batches"] = 4
+    anomaly_scan_state["found"] = 0
+    anomaly_scan_state["progress"] = 0
 
-    if not results:
-        return
+    logger.info(f"Anomaly scan batch {_anomaly_batch_idx}/4: {len(batch)} pairs")
 
     now = utcnow()
-    for r in results:
+    results = []
+    for idx, symbol in enumerate(batch):
+        anomaly_scan_state["current"] = symbol.replace("USDT", "")
+        anomaly_scan_state["progress"] = int((idx / len(batch)) * 100)
+
+        try:
+            r = await asyncio.to_thread(scan_symbol, symbol)
+        except Exception:
+            continue
+        if not r or r["score"] < 7:
+            continue
+        if not r.get("has_ftt") and not r.get("has_delta"):
+            continue
+        if r.get("raw_count", 0) < 3:
+            continue
+
         # Дедупликация — та же пара за последние 4 часа
+        import datetime
         existing = _anomalies().find_one({
             "symbol": r["symbol"],
-            "detected_at": {"$gte": __import__('datetime').datetime.utcnow() - __import__('datetime').timedelta(hours=4)},
+            "detected_at": {"$gte": datetime.datetime.utcnow() - datetime.timedelta(hours=4)},
         })
         if existing:
             continue
 
         doc = {
-            "symbol": r["symbol"],
-            "pair": r["pair"],
-            "price": r["price"],
-            "score": r["score"],
-            "direction": r["direction"],
-            "anomalies": r["anomalies"],
-            "detected_at": now,
+            "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
+            "score": r["score"], "direction": r["direction"],
+            "anomalies": r["anomalies"], "detected_at": now,
         }
         _anomalies().insert_one(doc)
+        anomaly_scan_state["found"] += 1
+        results.append(r)
         logger.info(f"Anomaly: {r['symbol']} score={r['score']} dir={r['direction']}")
 
         # Алерт в бот (только сильные)
         if r["score"] >= 7:
             await _send_anomaly_alert(r)
 
-    _broadcast("anomaly_update", {"count": len(results)})
+    anomaly_scan_state["running"] = False
+    anomaly_scan_state["progress"] = 100
+    anomaly_scan_state["current"] = ""
+    if results:
+        _broadcast("anomaly_update", {"count": len(results)})
 
 
 async def _send_anomaly_alert(r: dict):

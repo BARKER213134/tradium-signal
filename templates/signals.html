@@ -167,18 +167,20 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 <!-- ── Anomaly tab ─────────────────────────────────────────────── -->
 <div style="display:flex;gap:12px;margin-bottom:20px;align-items:center;flex-wrap:wrap;">
   <div class="status-pill" id="scanStatus" style="font-size:11px;">
-    <div class="dot"></div>
-    <span id="scanLabel">Автоскан каждые 5 мин</span>
+    <div class="dot" id="scanDot"></div>
+    <span id="scanLabel">Ожидание скана…</span>
   </div>
-  <button class="btn-ghost btn-sm" id="scanBtn" onclick="startScan()" style="font-size:11px;padding:5px 14px;">🔍 Сканировать сейчас</button>
   <button class="delete-btn" onclick="clearAnomalies()">🗑 Очистить</button>
   <span id="anStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
-  <div id="scanProgress" style="display:none;flex-basis:100%;margin-top:4px;">
-    <div style="background:var(--dark-2);border-radius:4px;height:6px;overflow:hidden;max-width:400px;">
-      <div id="scanBar" style="height:100%;background:var(--buy);width:0%;transition:width 0.3s;border-radius:4px;"></div>
+</div>
+<div id="scanProgress" style="display:none;margin-bottom:16px;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+    <div style="flex:1;background:var(--dark-2);border-radius:4px;height:4px;overflow:hidden;">
+      <div id="scanBar" style="height:100%;background:var(--buy);width:0%;transition:width 0.5s;border-radius:4px;"></div>
     </div>
-    <span id="scanInfo" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:2px;display:block;"></span>
+    <span id="scanPercent" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:30px;">0%</span>
   </div>
+  <span id="scanInfo" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
 </div>
 
 <div class="table-wrap">
@@ -270,64 +272,42 @@ async function clearAnomalies() {
   loadAnomalies();
 }
 
-let _scanPollId = null;
-
-async function startScan() {
-  const btn = document.getElementById('scanBtn');
-  btn.disabled = true;
-  btn.textContent = '⏳ Запуск…';
-  try {
-    const r = await fetch('/api/anomalies/scan', {method:'POST'});
-    const d = await r.json();
-    if (!d.ok) { btn.textContent = d.error || 'Ошибка'; btn.disabled = false; return; }
-    document.getElementById('scanProgress').style.display = 'block';
-    document.getElementById('scanLabel').textContent = 'Скан идёт…';
-    document.getElementById('scanStatus').style.setProperty('--dot-color', '#ffa24e');
-    _scanPollId = setInterval(pollScanStatus, 2000);
-  } catch(e) {
-    btn.textContent = 'Ошибка'; btn.disabled = false;
-  }
-}
-
 async function pollScanStatus() {
   try {
     const r = await fetch('/api/anomalies/scan-status');
     const s = await r.json();
+    const dot = document.getElementById('scanDot');
+    const label = document.getElementById('scanLabel');
+    const progress = document.getElementById('scanProgress');
     const bar = document.getElementById('scanBar');
     const info = document.getElementById('scanInfo');
-    const btn = document.getElementById('scanBtn');
-    const label = document.getElementById('scanLabel');
-    bar.style.width = s.progress + '%';
-    info.textContent = `Батч ${s.batch}/${s.batches} · ${s.total} пар · Найдено: ${s.found}`;
-    if (!s.running && s.progress >= 100) {
-      clearInterval(_scanPollId);
-      _scanPollId = null;
-      btn.disabled = false;
-      btn.textContent = '🔍 Сканировать сейчас';
-      label.textContent = `Готово · ${s.found} аномалий`;
-      setTimeout(() => {
-        document.getElementById('scanProgress').style.display = 'none';
+    const pct = document.getElementById('scanPercent');
+
+    if (s.running) {
+      dot.style.background = '#ffa24e';
+      dot.style.boxShadow = '0 0 8px rgba(255,162,78,0.6)';
+      const coin = s.current || '…';
+      label.textContent = `Сканирую ${coin}`;
+      progress.style.display = 'block';
+      bar.style.width = s.progress + '%';
+      pct.textContent = s.progress + '%';
+      info.textContent = `Батч ${s.batch}/4 · ${s.total} пар · Найдено: ${s.found}`;
+    } else {
+      dot.style.background = '#00e5a0';
+      dot.style.boxShadow = '0 0 8px rgba(0,229,160,0.4)';
+      if (s.progress >= 100 && s.found > 0) {
+        label.textContent = `Найдено ${s.found} · ожидание`;
+        loadAnomalies();
+      } else {
         label.textContent = 'Автоскан каждые 5 мин';
-      }, 5000);
-      loadAnomalies();
+      }
+      progress.style.display = 'none';
     }
   } catch {}
 }
 
-// Проверяем, не идёт ли уже скан при загрузке
-(async function checkScanOnLoad() {
-  try {
-    const r = await fetch('/api/anomalies/scan-status');
-    const s = await r.json();
-    if (s.running) {
-      document.getElementById('scanBtn').disabled = true;
-      document.getElementById('scanBtn').textContent = '⏳ Скан идёт…';
-      document.getElementById('scanProgress').style.display = 'block';
-      document.getElementById('scanLabel').textContent = 'Скан идёт…';
-      _scanPollId = setInterval(pollScanStatus, 2000);
-    }
-  } catch {}
-})();
+pollScanStatus();
+setInterval(pollScanStatus, 3000);
 
 const _clusterCache = {};
 
