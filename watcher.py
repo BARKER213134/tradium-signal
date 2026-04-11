@@ -916,18 +916,19 @@ _anomaly_tick = 0
 anomaly_scan_state = {
     "running": False, "progress": 0, "total": 0,
     "found": 0, "batch": 0, "batches": 0, "current": "",
-    "next_in": 0,
+    "next_at": 0,  # unix timestamp следующего скана
 }
 
 
 async def _check_anomalies():
     """Сканирует фьючерсные пары батчами. Полный цикл за 4 тика (20 мин)."""
+    import time as _time
     global _anomaly_batch_idx, _anomaly_tick
     _anomaly_tick += 1
     ticks_left = _ANOMALY_INTERVAL - (_anomaly_tick % _ANOMALY_INTERVAL)
     if ticks_left == _ANOMALY_INTERVAL:
         ticks_left = 0
-    anomaly_scan_state["next_in"] = ticks_left * 30  # секунд до следующего скана
+    anomaly_scan_state["next_at"] = _time.time() + ticks_left * 30
     if _anomaly_tick % _ANOMALY_INTERVAL != 0:
         return
 

@@ -754,11 +754,14 @@ async def api_anomalies():
 @app.get("/api/anomalies/scan-status")
 async def api_scan_status():
     """Читает состояние скана из watcher."""
+    import time as _time
     try:
         from watcher import anomaly_scan_state
-        return anomaly_scan_state
+        s = dict(anomaly_scan_state)
+        s["next_in"] = max(0, int(s.pop("next_at", 0) - _time.time()))
+        return s
     except ImportError:
-        return {"running": False, "progress": 0, "total": 0, "found": 0, "batch": 0, "batches": 0, "current": ""}
+        return {"running": False, "progress": 0, "total": 0, "found": 0, "batch": 0, "batches": 0, "current": "", "next_in": 0}
 
 
 @app.get("/api/anomaly-cluster")

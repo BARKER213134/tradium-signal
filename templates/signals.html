@@ -284,6 +284,7 @@ async function pollScanStatus() {
     const pct = document.getElementById('scanPercent');
 
     if (s.running) {
+      _scanning = true;
       dot.style.background = '#ffa24e';
       dot.style.boxShadow = '0 0 8px rgba(255,162,78,0.6)';
       const coin = s.current || '…';
@@ -292,42 +293,37 @@ async function pollScanStatus() {
       bar.style.width = s.progress + '%';
       pct.textContent = s.progress + '%';
       info.textContent = `Батч ${s.batch}/4 · ${s.total} пар · Найдено: ${s.found}`;
-      _nextScanSec = 0;
     } else {
+      _scanning = false;
       dot.style.background = '#00e5a0';
       dot.style.boxShadow = '0 0 8px rgba(0,229,160,0.4)';
       progress.style.display = 'none';
       if (s.progress >= 100 && s.found > 0) {
         loadAnomalies();
       }
-      _nextScanSec = s.next_in || 0;
+      _scanTargetTs = Date.now() + (s.next_in || 0) * 1000;
       _updateTimer();
     }
   } catch {}
 }
 
-let _nextScanSec = 0;
+let _scanTargetTs = 0; // unix ms когда будет следующий скан
+let _scanning = false;
 
 function _updateTimer() {
+  if (_scanning) return;
   const label = document.getElementById('scanLabel');
-  if (_nextScanSec <= 0) {
+  const left = Math.max(0, Math.round((_scanTargetTs - Date.now()) / 1000));
+  if (left <= 0) {
     label.textContent = 'Скан скоро…';
     return;
   }
-  const m = Math.floor(_nextScanSec / 60);
-  const s = _nextScanSec % 60;
+  const m = Math.floor(left / 60);
+  const s = left % 60;
   label.textContent = `Следующий скан ${m}:${String(s).padStart(2,'0')}`;
 }
 
-// Локальный тикер — отсчитывает секунды между polling
-setInterval(() => {
-  if (_nextScanSec > 0) {
-    _nextScanSec--;
-    const dot = document.getElementById('scanDot');
-    if (dot && dot.style.background !== 'rgb(255, 162, 78)') _updateTimer();
-  }
-}, 1000);
-
+setInterval(_updateTimer, 1000);
 pollScanStatus();
 setInterval(pollScanStatus, 5000);
 
