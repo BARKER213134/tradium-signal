@@ -322,7 +322,48 @@ async function saveCriteria() {
       </table>
     </div>
   </div>
+
+  <div id="btHistory" style="display:none;margin-top:24px;">
+    <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:12px;">ИСТОРИЯ БЕКТЕСТОВ</div>
+    <div id="btHistoryList"></div>
+  </div>
 </div>
+
+<style>
+.history-card {
+  position: relative;
+  padding: 14px 18px;
+  background: var(--dark-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.history-header {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.history-coins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.history-close {
+  position: absolute;
+  top: 8px; right: 10px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.history-close:hover { color: var(--sell); }
+</style>
+
 <script>
 let btData = null;
 
@@ -405,14 +446,53 @@ async function startBacktest() {
   finally { btn.classList.remove('spinning'); btn.disabled = false; }
 }
 
-// При загрузке: показываем сохранённый бектест если есть
+// При загрузке: показываем сохранённый бектест + историю
 (async function() {
   try {
     const r = await fetch('/api/backtest/saved');
     const d = await r.json();
     if (d && d.with_result > 0) renderBacktest(d);
   } catch {}
+  loadHistory();
 })();
+
+async function loadHistory() {
+  try {
+    const r = await fetch('/api/backtest/history');
+    const items = await r.json();
+    const el = document.getElementById('btHistory');
+    if (!el || !items.length) return;
+    el.style.display = 'block';
+    document.getElementById('btHistoryList').innerHTML = items.map(h => {
+      const wrCls = h.win_rate >= 50 ? 'text-buy' : 'text-sell';
+      const pnlCls = h.total_pnl >= 0 ? 'text-buy' : 'text-sell';
+      const coinsList = (h.coins || []).slice(0, 10).map(c => {
+        const pcls = c.pnl >= 0 ? 'text-buy' : 'text-sell';
+        return `<span class="mono" style="font-size:11px;">${c.pair} <span class="${pcls}">${c.pnl>=0?'+':''}${c.pnl}%</span></span>`;
+      }).join(' · ');
+      const more = (h.coins||[]).length > 10 ? ` <span class="text-muted">+${h.coins.length-10}</span>` : '';
+      return `<div class="history-card">
+        <button class="history-close" onclick="deleteHistory('${h._id}')">&times;</button>
+        <div class="history-header">
+          <span class="mono text-muted" style="font-size:11px;">${h.date ? h.date.slice(0,16) : '—'}</span>
+          <span class="mono"><b>${h.count}</b> сигналов</span>
+          <span class="mono ${wrCls}">WR ${h.win_rate}%</span>
+          <span class="mono ${pnlCls}">PnL ${h.total_pnl>=0?'+':''}${h.total_pnl}%</span>
+          <span class="mono">avg ${h.avg_pnl>=0?'+':''}${h.avg_pnl}%</span>
+        </div>
+        <div class="history-coins">${coinsList}${more}</div>
+      </div>`;
+    }).join('');
+  } catch {}
+}
+
+async function deleteHistory(id) {
+  await fetch('/api/backtest/history/delete', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id}),
+  });
+  loadHistory();
+}
 
 async function analyzeCoin(idx) {
   if (!btData || !btData.signals || !btData.signals[idx]) return;

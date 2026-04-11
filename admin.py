@@ -576,16 +576,79 @@ async def api_delete_signals(payload: dict):
 
 @app.post("/api/signals/clear-processed")
 async def api_clear_processed():
-    """Удаляет все отработанные Cryptovizor сигналы (ПАТТЕРН) после бектеста."""
-    from database import _signals as _sc, _events
+    """Удаляет отработанные Cryptovizor сигналы + сохраняет summary в историю."""
+    from database import _signals as _sc, _get_db, utcnow
+
+    # Собираем данные перед удалением
+    signals = list(_sc().find(
+        {"source": "cryptovizor", "status": {"$in": ["ПАТТЕРН", "VOLUME"]}},
+        {"pair": 1, "direction": 1, "pattern_name": 1, "entry": 1, "pattern_price": 1, "ai_score": 1}
+    ))
+
+    if not signals:
+        return {"ok": True, "deleted": 0}
+
+    # Краткое summary
+    coins = []
+    for s in signals:
+        entry = s.get("entry") or 0
+        current = s.get("pattern_price") or entry
+        pnl = ((current - entry) / entry * 100) if entry > 0 else 0
+        if s.get("direction") in ("SHORT", "SELL"):
+            pnl = -pnl
+        coins.append({
+            "pair": (s.get("pair") or "").replace("/USDT", ""),
+            "dir": s.get("direction", ""),
+            "pattern": s.get("pattern_name", ""),
+            "pnl": round(pnl, 2),
+        })
+
+    wins = sum(1 for c in coins if c["pnl"] > 0)
+    total_pnl = sum(c["pnl"] for c in coins)
+
+    summary = {
+        "date": str(utcnow()),
+        "count": len(coins),
+        "win_rate": round(wins / len(coins) * 100, 1) if coins else 0,
+        "total_pnl": round(total_pnl, 2),
+        "avg_pnl": round(total_pnl / len(coins), 2) if coins else 0,
+        "coins": coins,
+    }
+
+    # Сохраняем в историю
+    _get_db().backtest_history.insert_one(summary)
+
+    # Удаляем
     result = _sc().delete_many({
         "source": "cryptovizor",
         "status": {"$in": ["ПАТТЕРН", "VOLUME"]},
     })
-    # Очищаем связанные events
-    if result.deleted_count > 0:
-        broadcast_event("signal_deleted", {"count": result.deleted_count})
-    return {"ok": True, "deleted": result.deleted_count}
+
+    broadcast_event("signal_deleted", {"count": result.deleted_count})
+    return {"ok": True, "deleted": result.deleted_count, "summary": summary}
+
+
+@app.get("/api/backtest/history")
+async def api_backtest_history():
+    """Возвращает историю бектестов."""
+    from database import _get_db
+    docs = list(_get_db().backtest_history.find().sort("date", -1).limit(50))
+    for d in docs:
+        d["_id"] = str(d["_id"])
+    return docs
+
+
+@app.post("/api/backtest/history/delete")
+async def api_backtest_history_delete(payload: dict):
+    """Удаляет одну запись из истории."""
+    from database import _get_db
+    from bson import ObjectId
+    hid = payload.get("id", "")
+    try:
+        _get_db().backtest_history.delete_one({"_id": ObjectId(hid)})
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/api/analyze-coin")
