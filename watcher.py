@@ -927,17 +927,17 @@ async def _check_anomalies():
     _anomaly_batch_idx = (_anomaly_batch_idx + 1) % 4
 
     logger.info(f"Anomaly scan batch {_anomaly_batch_idx}/{4}: {len(batch)} pairs")
-    results = await asyncio.to_thread(scan_batch, batch, 2)
+    results = await asyncio.to_thread(scan_batch, batch, 7)
 
     if not results:
         return
 
     now = utcnow()
     for r in results:
-        # Проверяем дубликат (та же пара за последние 30 мин)
+        # Дедупликация — та же пара за последние 4 часа
         existing = _anomalies().find_one({
             "symbol": r["symbol"],
-            "detected_at": {"$gte": __import__('datetime').datetime.utcnow() - __import__('datetime').timedelta(minutes=30)},
+            "detected_at": {"$gte": __import__('datetime').datetime.utcnow() - __import__('datetime').timedelta(hours=4)},
         })
         if existing:
             continue
@@ -954,8 +954,8 @@ async def _check_anomalies():
         _anomalies().insert_one(doc)
         logger.info(f"Anomaly: {r['symbol']} score={r['score']} dir={r['direction']}")
 
-        # Алерт в бот
-        if r["score"] >= 3:
+        # Алерт в бот (только сильные)
+        if r["score"] >= 7:
             await _send_anomaly_alert(r)
 
     _broadcast("anomaly_update", {"count": len(results)})

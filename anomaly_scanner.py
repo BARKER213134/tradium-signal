@@ -470,24 +470,69 @@ def scan_symbol(symbol: str) -> dict:
     elif short_signals > long_signals:
         direction = "SHORT"
 
+    # ── Weighted Score (не просто количество, а качество) ──
+    types = [a["type"] for a in anomalies]
+    has_ftt = "ftt" in types
+    has_delta = "delta_cluster" in types
+    has_speed = "trade_speed" in types
+    has_oi = "oi_spike" in types
+
+    # Весовая система: FTT и Delta — ключевые
+    wscore = 0
+    for a in anomalies:
+        if a["type"] == "ftt":
+            ftt_pts = a.get("ftt_score", 3)
+            wscore += 2 + (1 if ftt_pts >= 4 else 0)  # 2-3 очка
+        elif a["type"] == "delta_cluster":
+            wscore += 2
+        elif a["type"] == "trade_speed":
+            wscore += 1.5
+        elif a["type"] == "oi_spike":
+            wscore += 1.5
+        else:
+            wscore += 1  # funding, ls, taker, wall
+
+    # Бонус за комбинации
+    if has_ftt and has_delta:
+        wscore += 2  # FTT + Delta = сильная связка
+    if has_ftt and has_speed:
+        wscore += 1  # FTT + Speed = подтверждение
+
     return {
         "symbol": symbol,
         "pair": symbol.replace("USDT", "/USDT"),
         "price": price,
-        "score": len(anomalies),
+        "score": round(wscore, 1),
+        "raw_count": len(anomalies),
         "direction": direction,
         "anomalies": anomalies,
+        "has_ftt": has_ftt,
+        "has_delta": has_delta,
     }
 
 
-def scan_batch(symbols: list[str], min_score: int = 2) -> list[dict]:
-    """Сканирует батч пар. Возвращает только с score >= min_score."""
+def scan_batch(symbols: list[str], min_score: float = 7.0) -> list[dict]:
+    """Сканирует батч пар. Жёсткий фильтр качества.
+
+    Требования для прохождения:
+    - wscore >= min_score (по умолчанию 5)
+    - Обязательно FTT или Delta Cluster (ключевые разворотные паттерны)
+    - Минимум 3 разных типа аномалий
+    """
     results = []
     for s in symbols:
         try:
             r = scan_symbol(s)
-            if r and r["score"] >= min_score:
-                results.append(r)
+            if not r:
+                continue
+            # Жёсткие фильтры
+            if r["score"] < min_score:
+                continue
+            if not r["has_ftt"] and not r["has_delta"]:
+                continue  # без FTT/Delta — слабый сигнал
+            if r["raw_count"] < 3:
+                continue  # минимум 3 типа аномалий
+            results.append(r)
         except Exception as e:
             logger.debug(f"Scan {s}: {e}")
     return sorted(results, key=lambda x: -x["score"])

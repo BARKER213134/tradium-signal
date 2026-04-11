@@ -225,7 +225,8 @@ async function loadAnomalies() {
       const pair = (d.pair||d.symbol||'').replace('/USDT','');
       const time = d.detected_at ? new Date(d.detected_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
 
-      return `<tr>
+      const sym = d.symbol || (d.pair||'').replace('/','');
+      return `<tr style="cursor:pointer;" onclick="toggleCluster('cl_${i}','${sym}')">
         <td class="mono text-muted" style="font-size:11px;">${time}</td>
         <td class="mono text-accent fw-700">${pair}</td>
         <td class="mono">${d.price||'—'}</td>
@@ -239,6 +240,14 @@ async function loadAnomalies() {
         <td class="mono">${ls}</td>
         <td class="mono">${taker}</td>
         <td class="mono text-muted" style="font-size:11px;">${wall}</td>
+      </tr>
+      <tr id="cl_${i}" style="display:none;" data-open="0">
+        <td colspan="13" style="padding:12px 16px;background:var(--dark-2);border-bottom:1px solid var(--border);">
+          <div style="display:flex;gap:20px;align-items:flex-start;">
+            <canvas id="cv_${i}" width="600" height="320" style="background:#111;border-radius:6px;"></canvas>
+            <div id="ci_${i}" style="font-size:12px;color:var(--text-2);font-family:var(--font-mono);line-height:1.8;min-width:180px;">Загрузка…</div>
+          </div>
+        </td>
       </tr>`;
     }).join('');
   } catch {}
@@ -248,6 +257,163 @@ async function clearAnomalies() {
   if (!confirm('Очистить все аномалии?')) return;
   await fetch('/api/anomalies/clear', {method:'POST'});
   loadAnomalies();
+}
+
+const _clusterCache = {};
+
+async function toggleCluster(rowId, symbol) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  if (row.dataset.open === '1') {
+    row.style.display = 'none';
+    row.dataset.open = '0';
+    return;
+  }
+  row.style.display = 'table-row';
+  row.dataset.open = '1';
+
+  const idx = rowId.replace('cl_','');
+  const canvas = document.getElementById('cv_'+idx);
+  const info = document.getElementById('ci_'+idx);
+  if (!canvas || !info) return;
+
+  // Кэш
+  if (_clusterCache[symbol]) {
+    drawCluster(canvas, _clusterCache[symbol], info);
+    return;
+  }
+
+  info.textContent = 'Загрузка aggTrades…';
+  try {
+    const r = await fetch('/api/anomaly-cluster?symbol='+symbol);
+    const d = await r.json();
+    if (!d.ok) { info.textContent = 'Ошибка: '+(d.error||''); return; }
+    _clusterCache[symbol] = d;
+    drawCluster(canvas, d, info);
+  } catch(e) {
+    info.textContent = 'Ошибка: '+e.message;
+  }
+}
+
+function drawCluster(canvas, data, infoDiv) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const levels = data.levels || [];
+  if (!levels.length) { infoDiv.textContent = 'Нет данных'; return; }
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0,0,W,H);
+
+  const pad = {top:20, bottom:30, left:90, right:20};
+  const chartW = W - pad.left - pad.right;
+  const chartH = H - pad.top - pad.bottom;
+
+  // Макс объём для масштаба
+  const maxVol = Math.max(...levels.map(l => Math.max(l.buy, l.sell)));
+  const barH = chartH / levels.length;
+
+  // Ось цен (слева)
+  ctx.fillStyle = '#666';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'right';
+
+  let maxDeltaIdx = 0;
+  let maxDeltaAbs = 0;
+  levels.forEach((l, i) => {
+    if (Math.abs(l.delta) > maxDeltaAbs) {
+      maxDeltaAbs = Math.abs(l.delta);
+      maxDeltaIdx = i;
+    }
+  });
+
+  levels.forEach((l, i) => {
+    const y = pad.top + i * barH;
+    const buyW = maxVol > 0 ? (l.buy / maxVol) * (chartW / 2) : 0;
+    const sellW = maxVol > 0 ? (l.sell / maxVol) * (chartW / 2) : 0;
+    const centerX = pad.left + chartW / 2;
+
+    // Buy бары (вправо от центра)
+    ctx.fillStyle = i === maxDeltaIdx ? '#00ff88' : '#0d7a3e';
+    ctx.fillRect(centerX, y + 1, buyW, barH - 2);
+
+    // Sell бары (влево от центра)
+    ctx.fillStyle = i === maxDeltaIdx ? '#ff4466' : '#7a1a2e';
+    ctx.fillRect(centerX - sellW, y + 1, sellW, barH - 2);
+
+    // Цена
+    if (i % Math.max(1, Math.floor(levels.length / 10)) === 0 || i === maxDeltaIdx) {
+      ctx.fillStyle = i === maxDeltaIdx ? '#fff' : '#666';
+      ctx.textAlign = 'right';
+      ctx.fillText(formatPrice(l.price), pad.left - 6, y + barH / 2 + 4);
+    }
+
+    // Подсветка аномального уровня
+    if (i === maxDeltaIdx) {
+      ctx.strokeStyle = '#ffaa00';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(pad.left, y, chartW, barH);
+      ctx.lineWidth = 1;
+    }
+  });
+
+  // Центральная линия
+  const cx = pad.left + chartW / 2;
+  ctx.strokeStyle = '#333';
+  ctx.beginPath();
+  ctx.moveTo(cx, pad.top);
+  ctx.lineTo(cx, pad.top + chartH);
+  ctx.stroke();
+
+  // Легенда
+  ctx.fillStyle = '#0d7a3e'; ctx.fillRect(cx - 80, H - 18, 10, 10);
+  ctx.fillStyle = '#888'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('BUY', cx - 66, H - 9);
+  ctx.fillStyle = '#7a1a2e'; ctx.fillRect(cx + 20, H - 18, 10, 10);
+  ctx.fillStyle = '#888'; ctx.fillText('SELL', cx + 34, H - 9);
+
+  // Текущая цена — горизонтальная линия
+  if (data.current && levels.length > 1) {
+    const pMin = levels[0].price;
+    const pMax = levels[levels.length-1].price;
+    const ratio = (data.current - pMin) / (pMax - pMin);
+    const cy = pad.top + ratio * chartH;
+    ctx.strokeStyle = '#ffaa00';
+    ctx.setLineDash([4,3]);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, cy);
+    ctx.lineTo(pad.left + chartW, cy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ffaa00';
+    ctx.textAlign = 'left';
+    ctx.fillText('▸ '+formatPrice(data.current), pad.left + chartW + 2, cy + 4);
+  }
+
+  // Info panel
+  const maxLvl = levels[maxDeltaIdx];
+  const totalBuy = levels.reduce((s,l)=>s+l.buy, 0);
+  const totalSell = levels.reduce((s,l)=>s+l.sell, 0);
+  const totalDelta = totalBuy - totalSell;
+  infoDiv.innerHTML = `
+    <div style="color:#ffaa00;font-weight:700;margin-bottom:8px;">📊 CLUSTER · ${data.symbol}</div>
+    <div>Трейдов: <b>${data.trades}</b> (15 мин)</div>
+    <div>Buy: <span style="color:var(--buy)">${totalBuy.toFixed(1)}</span></div>
+    <div>Sell: <span style="color:var(--sell)">${totalSell.toFixed(1)}</span></div>
+    <div>Delta: <span style="color:${totalDelta>0?'var(--buy)':'var(--sell)'}"><b>${totalDelta>0?'+':''}${totalDelta.toFixed(1)}</b></span></div>
+    <hr style="border-color:#333;margin:8px 0;">
+    <div style="color:#ffaa00;">⚠ Макс. дисбаланс:</div>
+    <div>Уровень: <b>${formatPrice(maxLvl.price)}</b></div>
+    <div>Delta: <b>${maxLvl.delta>0?'+':''}${maxLvl.delta.toFixed(1)}</b></div>
+    <div>Buy: ${maxLvl.buy.toFixed(1)} / Sell: ${maxLvl.sell.toFixed(1)}</div>
+  `;
+}
+
+function formatPrice(p) {
+  if (p >= 1000) return p.toFixed(1);
+  if (p >= 1) return p.toFixed(3);
+  if (p >= 0.01) return p.toFixed(5);
+  return p.toFixed(8);
 }
 
 loadAnomalies();
@@ -611,12 +777,14 @@ async function analyzeCoin(idx) {
   const btn = document.getElementById('abtn'+idx);
   if (!row || !txt || !btn) return;
 
-  // Toggle
-  if (row.style.display !== 'none') {
+  // Toggle через data-атрибут
+  if (row.dataset.open === '1') {
     row.style.display = 'none';
+    row.dataset.open = '0';
     return;
   }
-  row.style.display = '';
+  row.style.display = 'table-row';
+  row.dataset.open = '1';
 
   // Если уже есть сохранённый анализ — показываем без запроса
   if (s._analysis) {
@@ -920,13 +1088,14 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
   const btn = document.getElementById('aibtn'+idx);
   if (!row) return;
 
-  // Toggle — проверяем видимость через offsetParent
-  const isVisible = row.offsetParent !== null;
-  if (isVisible) {
+  // Toggle через data-атрибут (надёжнее offsetParent для tr)
+  if (row.dataset.open === '1') {
     row.style.display = 'none';
+    row.dataset.open = '0';
     return;
   }
-  row.style.display = '';
+  row.style.display = 'table-row';
+  row.dataset.open = '1';
 
   // Если уже есть анализ — не запрашиваем
   if (txt.textContent && txt.textContent !== 'Нажми для анализа…') return;

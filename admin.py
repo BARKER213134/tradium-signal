@@ -554,7 +554,7 @@ def _signals_live_sync(db, tab, bot):
                 "timeframe": s.timeframe, "entry": s.entry, "tp1": s.tp1, "sl": s.sl,
                 "dca4": s.dca4, "risk_reward": s.risk_reward, "trend": s.trend,
                 "status": s.status,
-                "received_at": s.received_at.isoformat() if s.received_at else None,
+                "received_at": s.received_at.isoformat() if s.received_at and hasattr(s.received_at, 'isoformat') else s.received_at,
                 "exit_price": s.exit_price, "pnl_percent": s.pnl_percent,
                 "ai_score": s.ai_score, "ai_verdict": s.ai_verdict,
             }
@@ -765,6 +765,57 @@ async def api_anomalies_scan():
         added += 1
 
     return {"ok": True, "scanned": len(pairs[:100]), "found": added}
+
+
+@app.get("/api/anomaly-cluster")
+async def api_anomaly_cluster(symbol: str):
+    """Возвращает кластерные данные (aggTrades) для символа."""
+    import httpx, time
+    FAPI = "https://fapi.binance.com"
+    now_ms = int(time.time() * 1000)
+    try:
+        r = await asyncio.to_thread(
+            lambda: httpx.get(f"{FAPI}/fapi/v1/aggTrades",
+                              params={"symbol": symbol, "startTime": now_ms - 15 * 60 * 1000, "limit": 1000},
+                              timeout=10).json()
+        )
+        if not r or not isinstance(r, list):
+            return {"ok": False, "error": "no trades"}
+
+        prices = [float(t["p"]) for t in r]
+        price_min, price_max = min(prices), max(prices)
+        price_range = price_max - price_min
+        if price_range <= 0:
+            return {"ok": False, "error": "no range"}
+
+        n_levels = 25
+        step = price_range / n_levels
+        clusters = {}
+        for t in r:
+            p = float(t["p"])
+            q = float(t["q"])
+            level = round((p - price_min) / step) * step + price_min
+            level = round(level, 8)
+            if level not in clusters:
+                clusters[level] = {"buy": 0.0, "sell": 0.0}
+            if t.get("m"):
+                clusters[level]["sell"] += q
+            else:
+                clusters[level]["buy"] += q
+
+        levels = []
+        for lv in sorted(clusters.keys()):
+            v = clusters[lv]
+            levels.append({
+                "price": round(lv, 8),
+                "buy": round(v["buy"], 4),
+                "sell": round(v["sell"], 4),
+                "delta": round(v["buy"] - v["sell"], 4),
+            })
+        current = prices[-1] if prices else 0
+        return {"ok": True, "symbol": symbol, "levels": levels, "current": current, "trades": len(r)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/api/anomalies/clear")
@@ -1233,7 +1284,7 @@ def _signal_one_sync(signal_id, db):
         "ai_reasoning": s.ai_reasoning,
         "ai_risks": s.ai_risks,
         "ai_verdict": s.ai_verdict,
-        "received_at": s.received_at.isoformat() if s.received_at else None,
+        "received_at": s.received_at.isoformat() if s.received_at and hasattr(s.received_at, 'isoformat') else s.received_at,
     }
 
 
@@ -1255,7 +1306,7 @@ async def api_signals(db: Session = Depends(get_db), limit: int = 50):
             "chart_pair": s.chart_pair,
             "chart_direction": s.chart_direction,
             "is_forwarded": s.is_forwarded,
-            "received_at": s.received_at.isoformat() if s.received_at else None,
+            "received_at": s.received_at.isoformat() if s.received_at and hasattr(s.received_at, 'isoformat') else s.received_at,
         }
         for s in signals
     ]
