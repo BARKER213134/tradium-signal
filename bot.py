@@ -101,5 +101,16 @@ async def msg_open(message: types.Message):
 
 
 async def start_bot():
+    import asyncio as _aio
     logger.info("🤖 Tradium Bot запущен!")
-    await dp.start_polling(bot)
+    for attempt in range(5):
+        try:
+            await dp.start_polling(bot)
+            break
+        except Exception as e:
+            if "Conflict" in str(e) and attempt < 4:
+                wait = 10 * (attempt + 1)
+                logger.warning(f"Bot conflict, retry in {wait}s (attempt {attempt+1}/5)")
+                await _aio.sleep(wait)
+            else:
+                raise

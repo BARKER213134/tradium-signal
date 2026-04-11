@@ -203,9 +203,16 @@ class Signal:
         if not d:
             return None
         s = cls()
+        _DT_FIELDS = {"received_at", "pattern_triggered_at", "chart_received_at", "forwarded_at"}
         for k, v in d.items():
             if k == "_id":
                 continue
+            # Автоконверсия строковых дат в datetime
+            if k in _DT_FIELDS and isinstance(v, str):
+                try:
+                    v = datetime.fromisoformat(v)
+                except (ValueError, TypeError):
+                    pass
             s._data[k] = v
         return s
 

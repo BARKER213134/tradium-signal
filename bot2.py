@@ -105,5 +105,16 @@ async def start_bot2():
     if not bot2:
         logger.warning("BOT2_BOT_TOKEN не задан — Cryptovizor bot не запущен")
         return
+    import asyncio as _aio
     logger.info("🤖 Cryptovizor Bot запущен!")
-    await dp2.start_polling(bot2)
+    for attempt in range(5):
+        try:
+            await dp2.start_polling(bot2)
+            break
+        except Exception as e:
+            if "Conflict" in str(e) and attempt < 4:
+                wait = 10 * (attempt + 1)
+                logger.warning(f"Bot2 conflict, retry in {wait}s (attempt {attempt+1}/5)")
+                await _aio.sleep(wait)
+            else:
+                raise

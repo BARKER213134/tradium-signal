@@ -492,18 +492,18 @@ async def _check_once():
             .all()
         }
 
-        await _check_dca4(db)
-        await _check_patterns(db)
-        await _check_tp_sl(db, allowed_ids=opened_before)
-
-        # Cryptovizor: отдельный поток паттернов на 1h
-        await _check_cryptovizor(db)
-
-        # AI Signal filter: выбирает лучшие из ПАТТЕРН → AI_SIGNAL
-        await _check_ai_signals(db)
-
-        # Дозаполняем анализ для AI сигналов без comment
-        await _fill_missing_ai_analysis(db)
+        for step_name, step_fn in [
+            ("dca4", lambda: _check_dca4(db)),
+            ("patterns", lambda: _check_patterns(db)),
+            ("tp_sl", lambda: _check_tp_sl(db, allowed_ids=opened_before)),
+            ("cryptovizor", lambda: _check_cryptovizor(db)),
+            ("ai_signals", lambda: _check_ai_signals(db)),
+            ("ai_analysis", lambda: _fill_missing_ai_analysis(db)),
+        ]:
+            try:
+                await step_fn()
+            except Exception as e:
+                logger.error(f"Watcher step '{step_name}' failed: {e}")
     finally:
         db.close()
 
@@ -758,14 +758,7 @@ async def _check_ai_signals(db):
             norm = (s.pair or "").replace("/", "").upper()
             prices = await get_prices_any([s.pair])
             current = prices.get(norm)
-            _pt = s.pattern_triggered_at
-            if _pt and not hasattr(_pt, 'hour'):
-                try:
-                    from datetime import datetime as _dt
-                    _pt = _dt.fromisoformat(str(_pt))
-                except Exception:
-                    _pt = None
-            hour = _pt.hour if _pt else 0
+            hour = s.pattern_triggered_at.hour if s.pattern_triggered_at and hasattr(s.pattern_triggered_at, 'hour') else 0
 
             # Если есть сохранённые критерии — используем правила
             if has_criteria:
