@@ -402,8 +402,6 @@ function renderBacktest(d) {
       const cls = s.pnl >= 0 ? 'text-buy' : 'text-sell';
       const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
       const ai = s.ai_score != null ? `<span class="ai-score-pill ai-${s.ai_score>=70?'good':s.ai_score>=40?'ok':'bad'}">${s.ai_score}</span>` : '—';
-      const idx = i;
-      const pairSafe = (s.pair||'').replace("'","\\'");
       return `<tr>
         <td class="mono text-accent">${(s.pair||'').replace('/USDT','')}</td>
         <td>${dir}</td>
@@ -412,12 +410,12 @@ function renderBacktest(d) {
         <td class="mono">${s.current||'—'}</td>
         <td class="mono ${cls} fw-700">${s.pnl>=0?'+':''}${s.pnl}%</td>
         <td>${ai}</td>
-        <td><button class="btn-ghost btn-sm" onclick="analyzeCoin(${idx})" id="abtn${idx}" style="font-size:10px;padding:4px 10px;">Анализ</button></td>
+        <td><button class="btn-ghost btn-sm" onclick="analyzeCoin(${i})" id="abtn${i}" style="font-size:10px;padding:4px 10px;${s._analysis?'color:var(--buy);border-color:var(--buy);':''}">${s._analysis?'✓ Анализ':'Анализ'}</button></td>
       </tr>
-      <tr id="arow${idx}" style="display:none;">
+      <tr id="arow${i}" style="display:none;">
         <td colspan="8" style="padding:16px 18px;background:var(--dark-2);border-bottom:1px solid var(--border);">
           <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">AI АНАЛИЗ · ${(s.pair||'').replace('/USDT','')}</div>
-          <div id="atxt${idx}" style="font-size:13px;line-height:1.7;color:var(--text-2);">Загрузка…</div>
+          <div id="atxt${i}" style="font-size:13px;line-height:1.7;color:var(--text-2);">${s._analysis || 'Нажми Анализ…'}</div>
         </td>
       </tr>`;
     }).join('');
@@ -493,26 +491,24 @@ async function deleteHistory(id) {
   loadHistory();
 }
 
-const coinAnalysisCache = {};
-
 async function analyzeCoin(idx) {
   if (!btData || !btData.signals || !btData.signals[idx]) return;
   const s = btData.signals[idx];
   const row = document.getElementById('arow'+idx);
   const txt = document.getElementById('atxt'+idx);
   const btn = document.getElementById('abtn'+idx);
+  if (!row || !txt || !btn) return;
 
-  // Toggle: если уже открыта — закрываем
-  if (row.style.display !== 'none') {
+  // Toggle
+  if (row.style.display === 'table-row') {
     row.style.display = 'none';
     return;
   }
-
   row.style.display = 'table-row';
 
-  // Если уже анализировали — показываем кеш
-  if (coinAnalysisCache[idx]) {
-    txt.textContent = coinAnalysisCache[idx];
+  // Если уже есть сохранённый анализ — показываем без запроса
+  if (s._analysis) {
+    txt.textContent = s._analysis;
     return;
   }
 
@@ -536,7 +532,15 @@ async function analyzeCoin(idx) {
     const d = await r.json();
     const result = d.ok ? d.analysis : ('Ошибка: ' + (d.error || ''));
     txt.textContent = result;
-    coinAnalysisCache[idx] = result;
+
+    // Сохраняем в btData и в MongoDB
+    s._analysis = result;
+    btData.signals[idx] = s;
+    fetch('/api/backtest/save', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(btData),
+    });
   } catch(e) {
     txt.textContent = 'Ошибка: ' + e.message;
   } finally {
