@@ -1006,7 +1006,7 @@ async function clearProcessed() {
           {% else %}<span class="text-muted">—</span>{% endif %}
         </td>
         <td class="trend-cell">
-          {% if s.trend %}{% set tfs = ['5m','15m','1h','4h','1D'] %}{% for c in s.trend %}<span class="trend-{{ 'dn' if c == 'R' else 'up' }}">{{ tfs[loop.index0] if loop.index0 < 5 else '' }}{{ '▼' if c == 'R' else '▲' }}</span> {% endfor %}{% else %}—{% endif %}
+          {% if s.trend %}{% for c in s.trend %}{{ '🔴' if c == 'R' else '🟢' }}{% endfor %}{% else %}—{% endif %}
         </td>
         <td class="mono">{{ s.entry or '—' }}</td>
         <td class="mono price-cell text-muted">—</td>
@@ -1818,16 +1818,9 @@ function renderAiScore(score) {
   return `<span class="ai-score-pill ${cls}">${score}</span>`;
 }
 
-const TF_LABELS = ['5m','15m','1h','4h','1D'];
 function renderTrend(t) {
   if (!t) return '<span class="text-muted">—</span>';
-  return [...t].map((c, i) => {
-    const up = c !== 'R';
-    const arrow = up ? '▲' : '▼';
-    const cls = up ? 'trend-up' : 'trend-dn';
-    const label = TF_LABELS[i] || '';
-    return `<span class="${cls}" title="${label}">${label}${arrow}</span>`;
-  }).join(' ');
+  return [...t].map(c => c === 'R' ? '🔴' : '🟢').join('');
 }
 
 function renderBadgeDir(d) {

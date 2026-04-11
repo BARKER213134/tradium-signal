@@ -63,18 +63,11 @@ def _resolve_chart(p: str) -> str | None:
     return cand if os.path.exists(cand) else None
 
 
-_TF_LABELS = ['5m', '15m', '1h', '4h', '1D']
-
 def _fmt_trend(trend: str | None) -> str:
-    """GRRRR → 5m▲ 15m▼ 1h▼ 4h▼ 1D▼"""
+    """GRRRR → 🟢🔴🔴🔴🔴"""
     if not trend:
         return "—"
-    parts = []
-    for i, c in enumerate(trend[:5]):
-        tf = _TF_LABELS[i] if i < len(_TF_LABELS) else ""
-        arrow = "▲" if c == "G" else "▼"
-        parts.append(f"{tf}{arrow}")
-    return " ".join(parts)
+    return "".join("🟢" if c == "G" else "🔴" for c in trend[:5])
 
 
 def _dca_reached(direction: str, current: float, dca4: float) -> bool:
