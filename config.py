@@ -41,10 +41,14 @@ BOT2_SOURCE_GROUP = os.getenv("BOT2_SOURCE_GROUP", "")
 # Четвёртый бот — AI Signal (лучшие сигналы)
 BOT4_BOT_TOKEN = os.getenv("BOT4_BOT_TOKEN", "")
 
+# Третий бот — Anomaly Alerts
+BOT3_BOT_TOKEN = os.getenv("BOT3_BOT_TOKEN", "")
+
 # Список ботов для UI
 BOTS = [
     {"id": "tradium", "label": "Tradium"},
     {"id": BOT2_NAME, "label": BOT2_LABEL},
+    {"id": "anomaly", "label": "Аномалии"},
 ]
 
 # Админка

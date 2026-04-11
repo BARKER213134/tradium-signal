@@ -283,6 +283,17 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
     query = db.query(Signal).filter(Signal.source == bot)
 
     # Cryptovizor имеет свои вкладки
+    if bot == "anomaly":
+        return templates.TemplateResponse(request, "signals.html", {
+            "signals": [],
+            "total": 0,
+            "bot": bot, "bots": BOTS,
+            "cv_tab": "", "cv_stats": {},
+            "tab": tab, "stats": {}, "summary": None,
+            "pages": 1, "page": 1, "pairs": [],
+            "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
+        })
+
     if bot == "cryptovizor":
         cv_tab = tab if tab in ("watching", "active", "ai_signal", "backtest", "ai_settings") else "watching"
         if cv_tab == "watching":

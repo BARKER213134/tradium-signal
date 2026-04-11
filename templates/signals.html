@@ -160,7 +160,18 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 .row-check { accent-color: var(--cyan); cursor: pointer; }
 </style>
 
-{% if bot == 'cryptovizor' %}
+{% if bot == 'anomaly' %}
+<!-- ── Anomaly tab ─────────────────────────────────────────────── -->
+<div class="bot-placeholder">
+  <div class="bot-placeholder-inner">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <h3>Аномалии</h3>
+    <p>Обнаружение аномалий по OI, Funding Rate, Long/Short ratio.<br>Подключение к Binance Futures data + Resonance Vision.</p>
+    <p style="margin-top:12px;color:var(--cyan);font-size:12px;">Алерты → @volumebottrendbot</p>
+  </div>
+</div>
+
+{% elif bot == 'cryptovizor' %}
 <!-- ── Cryptovizor tabs ───────────────────────────────────────────── -->
 <div class="tabs">
   <a href="/signals?bot=cryptovizor&tab=watching" class="tab {% if cv_tab == 'watching' %}active{% endif %}">Следим <span class="tab-badge">{{ cv_stats.watching }}</span></a>
