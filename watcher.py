@@ -744,6 +744,59 @@ async def _check_ai_signals(db):
             logger.error(f"AI filter #{s.id}: {e}")
 
 
+async def _generate_ai_deep_analysis(signal, current_price, s1, r1):
+    """Claude делает глубокий анализ сигнала: уровни, TP/SL, оценка, контекст."""
+    import anthropic
+    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+
+    pair = (signal.pair or "").replace("/USDT", "")
+    entry = signal.entry or current_price
+    direction = signal.direction or "LONG"
+    pattern = signal.pattern_name or "unknown"
+    trend = signal.trend or ""
+
+    prompt = (
+        f"Ты — профессиональный крипто-трейдер для дейтрейдинга.\n\n"
+        f"Монета: {pair}/USDT\n"
+        f"Направление: {direction}\n"
+        f"Паттерн: {pattern}\n"
+        f"Тренд (5 TF): {trend}\n"
+        f"Entry: {entry}\n"
+        f"Текущая цена: {current_price}\n"
+        f"Support (S1): {s1 or 'не определён'}\n"
+        f"Resistance (R1): {r1 or 'не определён'}\n\n"
+        f"Задача — дай ПОЛНЫЙ анализ как в примере ниже:\n\n"
+        f"1. **Что происходит с монетой** — почему она здесь, что за проект, ликвидность\n"
+        f"2. **Технический анализ** — как отрабатывает паттерн {pattern}, уровни поддержки/сопротивления\n"
+        f"3. **Рыночный контекст** — что делает BTC, общий тренд альтов\n"
+        f"4. **TP и SL** — дай конкретные цены на основе уровней S1/R1 и структуры рынка:\n"
+        f"   - TP1 (ближний), TP2 (дальний)\n"
+        f"   - SL (стоп-лосс)\n"
+        f"   - R:R соотношение\n"
+        f"5. **Оценка сделки** — стоит ли входить, score 1-10, риски\n"
+        f"6. **Вывод** — короткая рекомендация\n\n"
+        f"Ответ на русском. Формат:\n"
+        f"TP1: цена\n"
+        f"TP2: цена\n"
+        f"SL: цена\n"
+        f"Score: X/10\n"
+        f"Далее текст анализа 5-8 предложений."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        message = await asyncio.to_thread(
+            client.messages.create,
+            model=ANTHROPIC_MODEL,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return message.content[0].text
+    except Exception as e:
+        logger.error(f"AI deep analysis error: {e}")
+        return None
+
+
 async def _send_ai_signal_alert(signal, ai_result, current_price):
     target_bot = _bot4 or _bot2 or _bot
     if not target_bot or not _admin_chat_id:
@@ -754,6 +807,22 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     score = ai_result.get("score", 0)
     score_bar = "🟢" * score + "⚪" * (10 - score)
 
+    # Получаем уровни
+    s1 = getattr(signal, "dca1", None)
+    r1 = getattr(signal, "dca2", None)
+
+    # Глубокий анализ от Claude
+    analysis = await _generate_ai_deep_analysis(signal, current_price, s1, r1)
+
+    # Сохраняем анализ в БД
+    if analysis:
+        signal.comment = analysis
+        from database import _signals
+        _signals().update_one(
+            {"id": signal.id},
+            {"$set": {"comment": analysis}}
+        )
+
     text = (
         f"🤖 <b>AI SIGNAL · TOP PICK</b>\n"
         f"\n"
@@ -762,12 +831,22 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
         f"🎴 Паттерн: <b>{signal.pattern_name}</b>\n"
         f"🎯 Entry: <code>{signal.entry}</code>\n"
         f"💰 Сейчас: <code>{current_price}</code>\n"
-        f"\n"
-        f"⭐ AI Score: <b>{score}/10</b>\n"
-        f"{score_bar}\n"
-        f"\n"
-        f"📝 <i>{ai_result.get('reasoning', '')}</i>"
     )
+    if s1:
+        text += f"🟢 S1: <code>{s1}</code>\n"
+    if r1:
+        text += f"🔴 R1: <code>{r1}</code>\n"
+
+    text += (
+        f"\n"
+        f"⭐ Score: <b>{score}/10</b> {score_bar}\n"
+    )
+
+    if analysis:
+        # Обрезаем до 800 символов для Telegram
+        short = analysis[:800] + ("…" if len(analysis) > 800 else "")
+        text += f"\n📝 {short}"
+
     try:
         await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"AI signal alert sent #{signal.id}")
