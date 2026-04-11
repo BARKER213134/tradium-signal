@@ -594,6 +594,32 @@ async def api_backtest():
     return await asyncio.to_thread(run_backtest, "cryptovizor")
 
 
+@app.post("/api/backtest/save")
+async def api_backtest_save(payload: dict):
+    """Сохраняет результат бектеста в MongoDB."""
+    from database import _get_db, utcnow
+    # Убираем signals array (слишком большой для хранения)
+    to_save = {k: v for k, v in payload.items() if k != "signals"}
+    to_save["saved_at"] = str(utcnow())
+    _get_db().settings.update_one(
+        {"_id": "last_backtest"},
+        {"$set": to_save},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@app.get("/api/backtest/saved")
+async def api_backtest_saved():
+    """Загружает последний сохранённый бектест."""
+    from database import _get_db
+    doc = _get_db().settings.find_one({"_id": "last_backtest"})
+    if not doc:
+        return {}
+    doc.pop("_id", None)
+    return doc
+
+
 @app.post("/api/ai-criteria/generate")
 async def api_ai_criteria_generate():
     """AI анализирует бектест и генерирует список критериев с рекомендациями."""

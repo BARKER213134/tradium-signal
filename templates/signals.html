@@ -294,11 +294,14 @@ async function saveCriteria() {
 <!-- ── Backtest full results page ──────────────────────────────── -->
 <div id="btPage">
   <div style="display:flex;gap:12px;margin-bottom:16px;">
+    <button class="sync-btn" onclick="startBacktest()" id="btRunBtn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+      <span id="btRunLabel">НАЧАТЬ БЕКТЕСТ</span>
+    </button>
     <button class="delete-btn" onclick="clearProcessed()" id="clearBtn" style="display:none;">
-      🗑 Очистить отработанные сигналы
+      🗑 Очистить отработанные
     </button>
   </div>
-  <div style="text-align:center;padding:40px;" class="text-muted" id="btLoading">Загрузка бектеста…</div>
   <div id="btSummary" style="display:none;">
     <div class="results-summary" id="btCards"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
@@ -321,12 +324,7 @@ async function saveCriteria() {
   </div>
 </div>
 <script>
-(async function() {
-  try {
-    const r = await fetch('/api/backtest', {method:'POST'});
-    const d = await r.json();
-    if (d.error) { document.getElementById('btLoading').textContent = d.error; return; }
-    document.getElementById('btLoading').style.display = 'none';
+function renderBacktest(d) {
     document.getElementById('btSummary').style.display = 'block';
 
     // Cards
@@ -372,7 +370,36 @@ async function saveCriteria() {
       </tr>`;
     }).join('');
     document.getElementById('clearBtn').style.display = 'inline-flex';
-  } catch(e) { document.getElementById('btLoading').textContent = 'Ошибка: '+e.message; }
+}
+
+async function startBacktest() {
+  const btn = document.getElementById('btRunBtn');
+  const label = document.getElementById('btRunLabel');
+  btn.disabled = true; btn.classList.add('spinning'); label.textContent = 'АНАЛИЗ…';
+  try {
+    const r = await fetch('/api/backtest', {method:'POST'});
+    const d = await r.json();
+    if (d.error) { alert(d.error); return; }
+    renderBacktest(d);
+    // Сохраняем результат в MongoDB
+    await fetch('/api/backtest/save', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(d),
+    });
+    label.textContent = `WR ${d.overall_win_rate}%`;
+    setTimeout(() => { label.textContent = 'НАЧАТЬ БЕКТЕСТ'; }, 5000);
+  } catch(e) { alert('Ошибка: '+e.message); label.textContent = 'НАЧАТЬ БЕКТЕСТ'; }
+  finally { btn.classList.remove('spinning'); btn.disabled = false; }
+}
+
+// При загрузке: показываем сохранённый бектест если есть
+(async function() {
+  try {
+    const r = await fetch('/api/backtest/saved');
+    const d = await r.json();
+    if (d && d.with_result > 0) renderBacktest(d);
+  } catch {}
 })();
 
 async function clearProcessed() {
