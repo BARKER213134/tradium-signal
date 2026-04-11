@@ -168,10 +168,10 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 <div style="display:flex;gap:12px;margin-bottom:20px;align-items:center;flex-wrap:wrap;">
   <div class="status-pill" id="scanStatus" style="font-size:11px;">
     <div class="dot" id="scanDot"></div>
-    <span id="scanLabel">Ожидание скана…</span>
+    <span id="scanLabel">—</span>
   </div>
-  <button class="delete-btn" onclick="clearAnomalies()">🗑 Очистить</button>
   <span id="anStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
+  <button class="delete-btn" onclick="clearAnomalies()" style="margin-left:auto;">🗑 Очистить</button>
 </div>
 <div id="scanProgress" style="display:none;margin-bottom:16px;">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
@@ -292,22 +292,44 @@ async function pollScanStatus() {
       bar.style.width = s.progress + '%';
       pct.textContent = s.progress + '%';
       info.textContent = `Батч ${s.batch}/4 · ${s.total} пар · Найдено: ${s.found}`;
+      _nextScanSec = 0;
     } else {
       dot.style.background = '#00e5a0';
       dot.style.boxShadow = '0 0 8px rgba(0,229,160,0.4)';
-      if (s.progress >= 100 && s.found > 0) {
-        label.textContent = `Найдено ${s.found} · ожидание`;
-        loadAnomalies();
-      } else {
-        label.textContent = 'Автоскан каждые 5 мин';
-      }
       progress.style.display = 'none';
+      if (s.progress >= 100 && s.found > 0) {
+        loadAnomalies();
+      }
+      _nextScanSec = s.next_in || 0;
+      _updateTimer();
     }
   } catch {}
 }
 
+let _nextScanSec = 0;
+
+function _updateTimer() {
+  const label = document.getElementById('scanLabel');
+  if (_nextScanSec <= 0) {
+    label.textContent = 'Скан скоро…';
+    return;
+  }
+  const m = Math.floor(_nextScanSec / 60);
+  const s = _nextScanSec % 60;
+  label.textContent = `Следующий скан ${m}:${String(s).padStart(2,'0')}`;
+}
+
+// Локальный тикер — отсчитывает секунды между polling
+setInterval(() => {
+  if (_nextScanSec > 0) {
+    _nextScanSec--;
+    const dot = document.getElementById('scanDot');
+    if (dot && dot.style.background !== 'rgb(255, 162, 78)') _updateTimer();
+  }
+}, 1000);
+
 pollScanStatus();
-setInterval(pollScanStatus, 3000);
+setInterval(pollScanStatus, 5000);
 
 const _clusterCache = {};
 
