@@ -137,6 +137,9 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 }
 .dot-r { background: #ff4d6d; box-shadow: 0 0 6px rgba(255,77,109,0.5); }
 .dot-g { background: #00e5a0; box-shadow: 0 0 6px rgba(0,229,160,0.5); }
+.trend-up, .trend-dn { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: -0.3px; }
+.trend-up { color: #00e5a0; }
+.trend-dn { color: #ff4d6d; }
 .ai-score-pill {
   display: inline-flex;
   align-items: center;
@@ -1023,7 +1026,7 @@ async function clearProcessed() {
           {% else %}<span class="text-muted">—</span>{% endif %}
         </td>
         <td class="trend-cell">
-          {% if s.trend %}{% for c in s.trend %}<span class="dot-{{ 'r' if c == 'R' else 'g' }}"></span>{% endfor %}{% else %}—{% endif %}
+          {% if s.trend %}{% set tfs = ['5m','15m','1h','4h','1D'] %}{% for c in s.trend %}<span class="trend-{{ 'dn' if c == 'R' else 'up' }}">{{ tfs[loop.index0] if loop.index0 < 5 else '' }}{{ '▼' if c == 'R' else '▲' }}</span> {% endfor %}{% else %}—{% endif %}
         </td>
         <td class="mono">{{ s.entry or '—' }}</td>
         <td class="mono price-cell text-muted">—</td>
@@ -1577,6 +1580,9 @@ setInterval(() => location.reload(), 30000);
 }
 .dot-r { background: #ff4d6d; box-shadow: 0 0 6px rgba(255,77,109,0.5); }
 .dot-g { background: #00e5a0; box-shadow: 0 0 6px rgba(0,229,160,0.5); }
+.trend-up, .trend-dn { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: -0.3px; }
+.trend-up { color: #00e5a0; }
+.trend-dn { color: #ff4d6d; }
 
 .badge-status {
   background: rgba(0,102,255,0.15);
@@ -1832,9 +1838,16 @@ function renderAiScore(score) {
   return `<span class="ai-score-pill ${cls}">${score}</span>`;
 }
 
+const TF_LABELS = ['5m','15m','1h','4h','1D'];
 function renderTrend(t) {
   if (!t) return '<span class="text-muted">—</span>';
-  return [...t].map(c => `<span class="dot-${c === 'R' ? 'r' : 'g'}"></span>`).join('');
+  return [...t].map((c, i) => {
+    const up = c !== 'R';
+    const arrow = up ? '▲' : '▼';
+    const cls = up ? 'trend-up' : 'trend-dn';
+    const label = TF_LABELS[i] || '';
+    return `<span class="${cls}" title="${label}">${label}${arrow}</span>`;
+  }).join(' ');
 }
 
 function renderBadgeDir(d) {
@@ -2069,13 +2082,11 @@ function renderSignal(s) {
 
   // Chart
   const chartHtml = s.has_chart
-    ? `<div class="modal-chart-wrap"><img src="/chart/${s.id}" alt="chart" onerror="this.parentElement.innerHTML='<div class=\\'modal-chart-empty\\'>График недоступен (файл удалён при деплое)</div>'"></div>`
+    ? `<div class="modal-chart-wrap"><img src="/chart/${s.id}" alt="chart" onerror="this.parentElement.innerHTML='<div class=\\'modal-chart-empty\\'>График загружается…</div>'"></div>`
     : `<div class="modal-chart-empty">График отсутствует</div>`;
 
   // Trend dots
-  const trendHtml = s.trend
-    ? s.trend.split('').map(c => `<span class="dot-${c === 'R' ? 'r' : 'g'}"></span>`).join('')
-    : '—';
+  const trendHtml = s.trend ? renderTrend(s.trend) : '—';
 
   // Date
   const dateStr = s.received_at

@@ -63,6 +63,20 @@ def _resolve_chart(p: str) -> str | None:
     return cand if os.path.exists(cand) else None
 
 
+_TF_LABELS = ['5m', '15m', '1h', '4h', '1D']
+
+def _fmt_trend(trend: str | None) -> str:
+    """GRRRR → 5m▲ 15m▼ 1h▼ 4h▼ 1D▼"""
+    if not trend:
+        return "—"
+    parts = []
+    for i, c in enumerate(trend[:5]):
+        tf = _TF_LABELS[i] if i < len(_TF_LABELS) else ""
+        arrow = "▲" if c == "G" else "▼"
+        parts.append(f"{tf}{arrow}")
+    return " ".join(parts)
+
+
 def _dca_reached(direction: str, current: float, dca4: float) -> bool:
     if direction in ("LONG", "BUY"):
         return current <= dca4
@@ -546,7 +560,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"{s1_line}{r1_line}"
         f"{ai_line}\n"
         f"\n"
-        f"⚡ <i>Тренд: {signal.trend}</i>"
+        f"⚡ <i>Тренд: {_fmt_trend(signal.trend)}</i>"
     )
 
     try:
@@ -983,12 +997,14 @@ async def _send_anomaly_alert(r: dict):
 
     dir_emoji = "🟢" if r["direction"] == "LONG" else "🔴" if r["direction"] == "SHORT" else "⚪"
     pair = r["pair"].replace("/USDT", "")
-    score_bar = "🔴" * r["score"] + "⚪" * (5 - r["score"])
+    ws = r.get("score", 0)
+    stars = int(min(ws / 3, 5))  # wscore 7-15 → 2-5 звёзд
+    score_bar = "⭐" * stars
 
     lines = [
         f"⚠️ <b>АНОМАЛИЯ · {pair}/USDT</b>",
         f"",
-        f"Score: <b>{r['score']}/5</b> {score_bar}",
+        f"Score: <b>{ws}</b> {score_bar}",
         f"Направление: {dir_emoji} <b>{r['direction']}</b>",
         f"Цена: <code>{r['price']}</code>",
         f"",

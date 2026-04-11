@@ -68,6 +68,36 @@ def _persist_session_to_mongo():
 
 _bootstrap_session()
 
+
+def _migrate_charts_to_gridfs():
+    """При старте мигрирует локальные графики в GridFS (если ещё не там)."""
+    try:
+        from database import _get_db, save_chart, get_chart
+        db = _get_db()
+        signals = list(db.signals.find({"has_chart": True, "chart_path": {"$exists": True}}))
+        migrated = 0
+        for s in signals:
+            sid = s.get("id")
+            if get_chart(sid):
+                continue  # уже в GridFS
+            path = s.get("chart_path", "")
+            here = os.path.dirname(os.path.abspath(__file__))
+            candidates = [path, os.path.join(here, path.lstrip("./\\"))]
+            for c in candidates:
+                c = os.path.normpath(c)
+                if os.path.exists(c):
+                    with open(c, "rb") as f:
+                        save_chart(sid, f.read(), filename=os.path.basename(c))
+                    migrated += 1
+                    break
+        if migrated:
+            logging.info(f"Migrated {migrated} charts to GridFS")
+    except Exception as e:
+        logging.error(f"Chart migration: {e}")
+
+
+_migrate_charts_to_gridfs()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
