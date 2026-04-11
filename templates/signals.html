@@ -803,8 +803,9 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
   const btn = document.getElementById('aibtn'+idx);
   if (!row) return;
 
-  // Toggle
-  if (row.style.display !== 'none') {
+  // Toggle — проверяем видимость через offsetParent
+  const isVisible = row.offsetParent !== null;
+  if (isVisible) {
     row.style.display = 'none';
     return;
   }
