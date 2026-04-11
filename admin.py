@@ -284,20 +284,40 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
 
     # Cryptovizor имеет свои вкладки
     if bot == "cryptovizor":
-        cv_tab = tab if tab in ("watching", "active", "ai_signal", "volume") else "watching"
+        cv_tab = tab if tab in ("watching", "active", "ai_signal", "volume", "backtest", "ai_settings") else "watching"
         if cv_tab == "watching":
             query = query.filter(Signal.status == "СЛЕЖУ")
         elif cv_tab == "active":
             query = query.filter(Signal.status.in_(["ПАТТЕРН", "AI_SIGNAL"]))
         elif cv_tab == "ai_signal":
-            query = query.filter(Signal.status == "AI_SIGNAL")
+            from database import _signals as _sc
+            ai_ids = [d["id"] for d in _sc().find(
+                {"source": "cryptovizor", "filter_reason": {"$regex": "^AI_SIGNAL"}},
+                {"id": 1}
+            )]
+            if ai_ids:
+                query = query.filter(Signal.id.in_(ai_ids))
+            else:
+                query = query.filter(Signal.status == "__none__")
         elif cv_tab == "volume":
             query = query.filter(Signal.status == "VOLUME")
         cv_watching = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "СЛЕЖУ").count()
         cv_active = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status.in_(["ПАТТЕРН", "AI_SIGNAL"])).count()
-        cv_ai = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "AI_SIGNAL").count()
+        from database import _signals as _sc2
+        cv_ai = _sc2().count_documents({"source": "cryptovizor", "filter_reason": {"$regex": "^AI_SIGNAL"}})
         cv_volume = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "VOLUME").count()
         cv_stats = {"watching": cv_watching, "active": cv_active, "ai_signal": cv_ai, "volume": cv_volume}
+        if cv_tab in ("backtest", "ai_settings"):
+            # Backtest / AI Settings — JS загружает данные
+            return templates.TemplateResponse(request, "signals.html", {
+                "signals": [],
+                "total": 0,
+                "bot": bot, "bots": BOTS,
+                "cv_tab": cv_tab, "cv_stats": cv_stats,
+                "tab": cv_tab, "stats": {}, "summary": None,
+                "pages": 1, "page": 1, "pairs": [],
+                "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
+            })
         signals = query.order_by(desc(Signal.received_at)).limit(200).all()
         return templates.TemplateResponse(request, "signals.html", {
             "signals": signals,
@@ -558,6 +578,107 @@ async def api_delete_signals(payload: dict):
 async def api_backtest():
     from backtest import run_backtest
     return await asyncio.to_thread(run_backtest, "cryptovizor")
+
+
+@app.post("/api/ai-criteria/generate")
+async def api_ai_criteria_generate():
+    """AI анализирует бектест и генерирует список критериев с рекомендациями."""
+    from backtest import run_backtest
+    bt = await asyncio.to_thread(run_backtest, "cryptovizor")
+    if bt.get("error"):
+        return {"ok": False, "error": bt["error"]}
+
+    criteria = []
+    # По паттернам
+    for name, v in bt.get("by_pattern", {}).items():
+        if v["count"] >= 2:
+            criteria.append({
+                "id": f"pattern:{name}",
+                "type": "pattern",
+                "label": name,
+                "count": v["count"],
+                "win_rate": v["win_rate"],
+                "avg_pnl": v["avg_pnl"],
+                "recommended": v["win_rate"] >= 55 and v["avg_pnl"] > 0,
+                "enabled": v["win_rate"] >= 55 and v["avg_pnl"] > 0,
+            })
+
+    # По направлению
+    for d, v in bt.get("by_direction", {}).items():
+        criteria.append({
+            "id": f"direction:{d}",
+            "type": "direction",
+            "label": d,
+            "count": v["count"],
+            "win_rate": v["win_rate"],
+            "avg_pnl": v["avg_pnl"],
+            "recommended": v["win_rate"] >= 50,
+            "enabled": v["win_rate"] >= 50,
+        })
+
+    # По часам (группируем в слоты)
+    for h, v in bt.get("by_hour", {}).items():
+        if v["count"] >= 2:
+            criteria.append({
+                "id": f"hour:{h}",
+                "type": "hour",
+                "label": f"{int(h):02d}:00 UTC",
+                "count": v["count"],
+                "win_rate": v["win_rate"],
+                "recommended": v["win_rate"] >= 55,
+                "enabled": v["win_rate"] >= 55,
+            })
+
+    # Общие пороги
+    criteria.append({
+        "id": "min_win_rate",
+        "type": "threshold",
+        "label": f"Min win rate (рекомендация: {max(50, int(bt['overall_win_rate'] - 5))}%)",
+        "value": max(50, int(bt["overall_win_rate"] - 5)),
+        "recommended": True,
+        "enabled": True,
+    })
+    criteria.append({
+        "id": "min_ai_score",
+        "type": "threshold",
+        "label": "Min AI visual score",
+        "value": 40,
+        "recommended": True,
+        "enabled": True,
+    })
+
+    return {
+        "ok": True,
+        "summary": {
+            "total": bt["with_result"],
+            "win_rate": bt["overall_win_rate"],
+            "avg_pnl": bt["overall_avg_pnl"],
+            "top_patterns": bt["top_patterns"],
+            "worst_patterns": bt["worst_patterns"],
+        },
+        "criteria": criteria,
+    }
+
+
+@app.post("/api/ai-criteria/save")
+async def api_ai_criteria_save(payload: dict):
+    """Сохраняет выбранные пользователем критерии."""
+    from database import _get_db
+    criteria = payload.get("criteria", [])
+    _get_db().settings.update_one(
+        {"_id": "ai_criteria"},
+        {"$set": {"criteria": criteria, "updated_at": str(__import__('datetime').datetime.utcnow())}},
+        upsert=True,
+    )
+    return {"ok": True, "saved": len(criteria)}
+
+
+@app.get("/api/ai-criteria")
+async def api_ai_criteria_get():
+    """Загружает сохранённые критерии."""
+    from database import _get_db
+    doc = _get_db().settings.find_one({"_id": "ai_criteria"})
+    return {"criteria": doc.get("criteria", []) if doc else []}
 
 
 @app.post("/api/sync-cv")

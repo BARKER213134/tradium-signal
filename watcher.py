@@ -756,39 +756,71 @@ async def _check_ai_signals(db):
 
     from backtest import backtest_summary_for_ai
     from ai_signal_filter import should_send_signal
-    from volume_analysis import format_volume
 
-    # Кешируем summary — не пересчитываем для каждого сигнала
+    # Загружаем сохранённые критерии пользователя
+    from database import _get_db
+    criteria_doc = _get_db().settings.find_one({"_id": "ai_criteria"})
+    user_criteria = criteria_doc.get("criteria", []) if criteria_doc else []
+
+    # Enabled критерии
+    enabled_patterns = {c["label"] for c in user_criteria if c.get("type") == "pattern" and c.get("enabled")}
+    enabled_directions = {c["label"] for c in user_criteria if c.get("type") == "direction" and c.get("enabled")}
+    enabled_hours = {int(c["id"].split(":")[1]) for c in user_criteria if c.get("type") == "hour" and c.get("enabled")}
+    min_win_rate_c = next((c for c in user_criteria if c.get("id") == "min_win_rate"), None)
+    min_ai_score_c = next((c for c in user_criteria if c.get("id") == "min_ai_score"), None)
+
+    has_criteria = bool(user_criteria)
+
+    # Кешируем summary для Claude fallback
+    summary = ""
     try:
         summary = await asyncio.to_thread(backtest_summary_for_ai, "cryptovizor")
     except Exception as e:
         logger.error(f"Backtest summary error: {e}")
-        return
 
     for s in signals:
         try:
-            # Текущая цена
             norm = (s.pair or "").replace("/", "").upper()
             prices = await get_prices_any([s.pair])
             current = prices.get(norm)
+            hour = s.pattern_triggered_at.hour if s.pattern_triggered_at else 0
 
-            result = await should_send_signal({
-                "pair": s.pair,
-                "direction": s.direction,
-                "pattern": s.pattern_name,
-                "trend": s.trend,
-                "entry": s.entry,
-                "current_price": current,
-                "ai_score": s.ai_score,
-                "hour": s.pattern_triggered_at.hour if s.pattern_triggered_at else 0,
-            }, summary)
+            # Если есть сохранённые критерии — используем правила
+            if has_criteria:
+                pass_pattern = not enabled_patterns or (s.pattern_name in enabled_patterns)
+                pass_direction = not enabled_directions or (s.direction in enabled_directions)
+                pass_hour = not enabled_hours or (hour in enabled_hours)
+                pass_ai = True
+                if min_ai_score_c and min_ai_score_c.get("enabled") and s.ai_score is not None:
+                    pass_ai = s.ai_score >= min_ai_score_c.get("value", 0)
+
+                send = pass_pattern and pass_direction and pass_hour and pass_ai
+                result = {
+                    "send": send,
+                    "score": 8 if send else 3,
+                    "reasoning": f"Criteria: pattern={'✓' if pass_pattern else '✗'} dir={'✓' if pass_direction else '✗'} hour={'✓' if pass_hour else '✗'} ai={'✓' if pass_ai else '✗'}",
+                }
+            else:
+                # Нет критериев — Claude решает
+                result = await should_send_signal({
+                    "pair": s.pair,
+                    "direction": s.direction,
+                    "pattern": s.pattern_name,
+                    "trend": s.trend,
+                    "entry": s.entry,
+                    "current_price": current,
+                    "ai_score": s.ai_score,
+                    "hour": hour,
+                }, summary)
 
             # Помечаем как проверенный (используем поле result)
             s.result = f"AI:{result.get('score', 0)}"
             db.commit()
 
             if result.get("send"):
-                s.status = "AI_SIGNAL"
+                # Не меняем status — сигнал остаётся в ПАТТЕРН (вкладка Сигнал)
+                # Добавляем метку ai_filtered для вкладки Сигнал AI
+                s.filter_reason = f"AI_SIGNAL:score={result['score']}"
                 db.commit()
                 log_event(s.id, "ai_signal", price=current,
                     data={"score": result["score"], "reasoning": result.get("reasoning")},
