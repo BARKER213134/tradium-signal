@@ -28,8 +28,8 @@ async def lifespan(app):
     try:
         # Проверяем, не запущен ли уже watcher через main.py
         from watcher import _bot as _wb
+        print(f"[LIFESPAN] _bot={_wb}, запуск компонентов: {_wb is None}", flush=True)
         if _wb is None:
-            _log.info("Lifespan: main.py не вызван, запускаю компоненты...")
             from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT2_BOT_TOKEN, BOT4_BOT_TOKEN
             from database import init_db
             init_db()
@@ -58,9 +58,11 @@ async def lifespan(app):
             _bg_tasks.append(asyncio.create_task(start_watcher()))
             if bot2:
                 _bg_tasks.append(asyncio.create_task(start_bot2()))
-            _log.info("Lifespan: все компоненты запущены")
+            print(f"[LIFESPAN] {len(_bg_tasks)} tasks started", flush=True)
     except Exception as e:
-        _log.error(f"Lifespan startup error: {e}")
+        import traceback
+        print(f"[LIFESPAN] ERROR: {e}", flush=True)
+        traceback.print_exc()
 
     yield
 
