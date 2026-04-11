@@ -991,12 +991,11 @@ async function clearProcessed() {
         <th>Паттерн</th>
         <th>AI</th>
         <th>Статус</th>
-        {% if cv_tab == 'ai_signal' %}<th></th>{% endif %}
       </tr>
     </thead>
     <tbody>
       {% for s in signals %}
-      <tr class="signal-row" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}">
+      <tr class="signal-row{% if cv_tab == 'ai_signal' %} ai-clickable{% endif %}{% if cv_tab == 'ai_signal' and s.comment %} ai-done{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if cv_tab == 'ai_signal' %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
         <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT','') }}</td>
@@ -1023,9 +1022,6 @@ async function clearProcessed() {
           {% if s.status == 'ПАТТЕРН' %}<span class="badge badge-ai">ПАТТЕРН</span>
           {% else %}<span class="badge badge-status">СЛЕЖУ</span>{% endif %}
         </td>
-        {% if cv_tab == 'ai_signal' %}
-        <td><button class="btn-ghost btn-sm" onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" id="aibtn{{ loop.index }}" style="font-size:10px;padding:4px 10px;{% if s.comment %}color:var(--buy);border-color:var(--buy);{% endif %}">{% if s.comment %}✓ Анализ{% else %}📝 Анализ{% endif %}</button></td>
-        {% endif %}
       </tr>
       {% if cv_tab == 'ai_signal' %}
       <tr id="airow{{ loop.index }}" style="display:none;">
@@ -1135,10 +1131,8 @@ if (sa) sa.onchange = () => {
 async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
   const row = document.getElementById('airow'+idx);
   const txt = document.getElementById('aitxt'+idx);
-  const btn = document.getElementById('aibtn'+idx);
   if (!row) return;
 
-  // Toggle через data-атрибут (надёжнее offsetParent для tr)
   if (row.dataset.open === '1') {
     row.style.display = 'none';
     row.dataset.open = '0';
@@ -1150,8 +1144,6 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
   // Если уже есть анализ — не запрашиваем
   if (txt.textContent && txt.textContent !== 'Нажми для анализа…') return;
 
-  // Запрашиваем анализ
-  if (btn) { btn.textContent = '…'; btn.disabled = true; }
   txt.textContent = 'Анализирую…';
   try {
     const r = await fetch('/api/analyze-coin', {
@@ -1162,7 +1154,6 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
     const d = await r.json();
     const result = d.ok ? d.analysis : ('Ошибка: ' + (d.error || ''));
     txt.textContent = result;
-    if (btn) { btn.textContent = '✓ Анализ'; btn.style.color = 'var(--buy)'; btn.style.borderColor = 'var(--buy)'; }
     // Сохраняем в БД
     if (d.ok) {
       fetch('/api/save-coin-analysis', {
@@ -1173,8 +1164,6 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
     }
   } catch(e) {
     txt.textContent = 'Ошибка: ' + e.message;
-  } finally {
-    if (btn) btn.disabled = false;
   }
 }
 
@@ -1571,6 +1560,9 @@ setInterval(() => location.reload(), 30000);
 }
 
 .signal-row { cursor: pointer; }
+.ai-clickable { border-left: 3px solid transparent; transition: border-color 0.2s, background 0.2s; }
+.ai-clickable:hover { background: rgba(255,255,255,0.03); }
+.ai-done { border-left: 3px solid var(--buy); }
 
 /* ── Modal ── */
 .modal {
