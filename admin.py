@@ -588,6 +588,53 @@ async def api_clear_processed():
     return {"ok": True, "deleted": result.deleted_count}
 
 
+@app.post("/api/analyze-coin")
+async def api_analyze_coin(payload: dict):
+    """Claude анализирует почему монета выросла/упала. Вызывается по кнопке."""
+    pair = payload.get("pair", "")
+    direction = payload.get("direction", "")
+    entry = payload.get("entry")
+    current = payload.get("current")
+    pnl = payload.get("pnl")
+    pattern = payload.get("pattern", "")
+
+    if not pair:
+        return {"ok": False, "error": "no pair"}
+
+    import anthropic
+    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+
+    prompt = (
+        f"Ты — крипто-аналитик. Проанализируй движение монеты.\n\n"
+        f"Монета: {pair}\n"
+        f"Направление сигнала: {direction}\n"
+        f"Паттерн: {pattern}\n"
+        f"Цена при сигнале: {entry}\n"
+        f"Текущая цена: {current}\n"
+        f"PnL: {pnl}%\n\n"
+        f"Задача:\n"
+        f"1. Что произошло с монетой — почему она выросла/упала?\n"
+        f"2. Какие фундаментальные/технические факторы повлияли?\n"
+        f"3. Что рынок делал в это время (BTC, общий тренд)?\n"
+        f"4. Отработал ли паттерн '{pattern}' правильно?\n"
+        f"5. Вывод: стоило ли входить?\n\n"
+        f"Ответь кратко на русском, 3-5 предложений. Без JSON, просто текст."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        message = await asyncio.to_thread(
+            client.messages.create,
+            model=ANTHROPIC_MODEL,
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = message.content[0].text
+        return {"ok": True, "analysis": text}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/api/backtest")
 async def api_backtest():
     from backtest import run_backtest

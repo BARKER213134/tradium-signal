@@ -317,14 +317,17 @@ async function saveCriteria() {
     <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:12px;">ВСЕ СИГНАЛЫ (по PnL)</div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Пара</th><th>Напр.</th><th>Паттерн</th><th>Entry</th><th>Сейчас</th><th>PnL %</th><th>AI</th></tr></thead>
+        <thead><tr><th>Пара</th><th>Напр.</th><th>Паттерн</th><th>Entry</th><th>Сейчас</th><th>PnL %</th><th>AI</th><th></th></tr></thead>
         <tbody id="btSignals"></tbody>
       </table>
     </div>
   </div>
 </div>
 <script>
+let btData = null;
+
 function renderBacktest(d) {
+    btData = d;
     document.getElementById('btSummary').style.display = 'block';
 
     // Cards
@@ -359,6 +362,8 @@ function renderBacktest(d) {
       const cls = s.pnl >= 0 ? 'text-buy' : 'text-sell';
       const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
       const ai = s.ai_score != null ? `<span class="ai-score-pill ai-${s.ai_score>=70?'good':s.ai_score>=40?'ok':'bad'}">${s.ai_score}</span>` : '—';
+      const idx = i;
+      const pairSafe = (s.pair||'').replace("'","\\'");
       return `<tr>
         <td class="mono text-accent">${(s.pair||'').replace('/USDT','')}</td>
         <td>${dir}</td>
@@ -367,6 +372,13 @@ function renderBacktest(d) {
         <td class="mono">${s.current||'—'}</td>
         <td class="mono ${cls} fw-700">${s.pnl>=0?'+':''}${s.pnl}%</td>
         <td>${ai}</td>
+        <td><button class="btn-ghost btn-sm" onclick="analyzeCoin(${idx})" id="abtn${idx}" style="font-size:10px;padding:4px 10px;">Анализ</button></td>
+      </tr>
+      <tr id="arow${idx}" style="display:none;">
+        <td colspan="8" style="padding:16px 18px;background:var(--dark-2);border-bottom:1px solid var(--border);">
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">AI АНАЛИЗ · ${(s.pair||'').replace('/USDT','')}</div>
+          <div id="atxt${idx}" style="font-size:13px;line-height:1.7;color:var(--text-2);">Загрузка…</div>
+        </td>
       </tr>`;
     }).join('');
     document.getElementById('clearBtn').style.display = 'inline-flex';
@@ -401,6 +413,47 @@ async function startBacktest() {
     if (d && d.with_result > 0) renderBacktest(d);
   } catch {}
 })();
+
+async function analyzeCoin(idx) {
+  if (!btData || !btData.signals || !btData.signals[idx]) return;
+  const s = btData.signals[idx];
+  const row = document.getElementById('arow'+idx);
+  const txt = document.getElementById('atxt'+idx);
+  const btn = document.getElementById('abtn'+idx);
+
+  // Toggle: если уже открыта — закрываем
+  if (row.style.display !== 'none') {
+    row.style.display = 'none';
+    return;
+  }
+
+  row.style.display = 'table-row';
+  btn.textContent = '…';
+  btn.disabled = true;
+  txt.textContent = 'Анализирую…';
+
+  try {
+    const r = await fetch('/api/analyze-coin', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        pair: s.pair,
+        direction: s.direction,
+        entry: s.entry,
+        current: s.current,
+        pnl: s.pnl,
+        pattern: s.pattern,
+      }),
+    });
+    const d = await r.json();
+    txt.textContent = d.ok ? d.analysis : ('Ошибка: ' + (d.error || ''));
+  } catch(e) {
+    txt.textContent = 'Ошибка: ' + e.message;
+  } finally {
+    btn.textContent = 'Анализ';
+    btn.disabled = false;
+  }
+}
 
 async function clearProcessed() {
   if (!confirm('Удалить все отработанные сигналы из вкладки "Сигнал"? Бектест уже сохранён в AI Настройках.')) return;
