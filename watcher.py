@@ -932,10 +932,13 @@ async def _check_anomalies():
     if _anomaly_tick % _ANOMALY_INTERVAL != 0:
         return
 
-    from anomaly_scanner import get_all_futures_pairs, scan_symbol
+    from anomaly_scanner import get_liquid_pairs, scan_symbol, _refresh_batch_cache
     from database import _anomalies, utcnow
 
-    pairs = await asyncio.to_thread(get_all_futures_pairs)
+    # Обновляем batch-кеш (2 HTTP запроса вместо 400+)
+    await asyncio.to_thread(_refresh_batch_cache)
+
+    pairs = await asyncio.to_thread(get_liquid_pairs, 5_000_000)
     if not pairs:
         return
 

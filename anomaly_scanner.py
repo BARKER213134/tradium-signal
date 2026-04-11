@@ -25,6 +25,68 @@ _pairs_cache: list[str] = []
 _pairs_cache_ts: float = 0
 _PAIRS_TTL = 3600
 
+# ── Batch-кеши (один запрос вместо 400+) ─────────────────────────────
+_batch_cache: dict = {}
+_batch_cache_ts: float = 0
+_BATCH_TTL = 120  # 2 мин
+
+
+def _refresh_batch_cache():
+    """Один раз загружает funding, OI, ticker для ВСЕХ пар."""
+    global _batch_cache, _batch_cache_ts
+    now = time.time()
+    if _batch_cache and (now - _batch_cache_ts) < _BATCH_TTL:
+        return
+
+    cache = {"funding": {}, "ticker": {}, "oi": {}}
+
+    # 1. premiumIndex — funding rate + mark price для всех пар (1 запрос)
+    try:
+        r = httpx.get(f"{FAPI}/fapi/v1/premiumIndex", timeout=10)
+        if r.status_code == 200:
+            for item in r.json():
+                s = item.get("symbol", "")
+                cache["funding"][s] = float(item.get("lastFundingRate", 0)) * 100
+    except Exception as e:
+        logger.debug(f"Batch premiumIndex: {e}")
+
+    # 2. ticker/24hr — объём, цена для всех пар (1 запрос)
+    try:
+        r = httpx.get(f"{FAPI}/fapi/v1/ticker/24hr", timeout=10)
+        if r.status_code == 200:
+            for item in r.json():
+                s = item.get("symbol", "")
+                cache["ticker"][s] = {
+                    "price": float(item.get("lastPrice", 0)),
+                    "volume_usd": float(item.get("quoteVolume", 0)),
+                }
+    except Exception as e:
+        logger.debug(f"Batch ticker: {e}")
+
+    # 3. openInterest для всех пар (1 запрос)
+    try:
+        r = httpx.get(f"{FAPI}/fapi/v1/openInterest", timeout=10)
+        # Этот endpoint принимает только один символ, используем ticker вместо
+    except Exception:
+        pass
+
+    _batch_cache = cache
+    _batch_cache_ts = now
+    logger.info(f"Batch cache refreshed: {len(cache['funding'])} funding, {len(cache['ticker'])} tickers")
+
+
+def get_liquid_pairs(min_volume_usd: float = 5_000_000) -> list[str]:
+    """Возвращает только пары с дневным объёмом >= min_volume_usd."""
+    _refresh_batch_cache()
+    pairs = get_all_futures_pairs()
+    liquid = []
+    for p in pairs:
+        vol = _batch_cache.get("ticker", {}).get(p, {}).get("volume_usd", 0)
+        if vol >= min_volume_usd:
+            liquid.append(p)
+    logger.info(f"Liquid pairs (>${min_volume_usd/1e6:.0f}M): {len(liquid)}/{len(pairs)}")
+    return liquid
+
 
 def get_all_futures_pairs() -> list[str]:
     """Все USDT perpetual пары на Binance Futures."""
@@ -74,17 +136,10 @@ def check_oi_spike(symbol: str, threshold: float = 5.0) -> Optional[dict]:
 
 
 def check_funding(symbol: str, threshold: float = 0.05) -> Optional[dict]:
-    """Funding rate extreme."""
-    try:
-        r = httpx.get(f"{FAPI}/fapi/v1/fundingRate",
-                      params={"symbol": symbol, "limit": 1}, timeout=5)
-        if r.status_code != 200 or not r.json():
-            return None
-        rate = float(r.json()[0].get("fundingRate", 0)) * 100  # в процентах
-        if abs(rate) >= threshold:
-            return {"type": "funding_extreme", "value": round(rate, 4)}
-    except Exception:
-        pass
+    """Funding rate extreme. Использует batch-кеш."""
+    rate = _batch_cache.get("funding", {}).get(symbol)
+    if rate is not None and abs(rate) >= threshold:
+        return {"type": "funding_extreme", "value": round(rate, 4)}
     return None
 
 
@@ -215,22 +270,11 @@ def check_delta_clusters(symbol: str) -> Optional[dict]:
     return None
 
 
-def check_ftt(symbol: str) -> Optional[dict]:
-    """FTT (Full Tail Turn) — улучшенный алгоритм.
-
-    Проверяет:
-    1. Длинная тень на 1h свече (wick > 2× body)
-    2. Объём свечи выше среднего (> 1.3× SMA5)
-    3. aggTrades: delta на экстремуме (кто торговал на тени — покупатели или продавцы)
-    4. Несколько свечей: предыдущие свечи шли в направлении тени (тренд → разворот)
-    5. Закрытие свечи в правильной зоне (далеко от экстремума)
-
-    Score FTT: 1-5 (5 = идеальный FTT сигнал)
-    """
+def _check_ftt_tf(symbol: str, interval: str = "1h") -> Optional[dict]:
+    """FTT на одном таймфрейме. Возвращает dict с ftt_score или None."""
     try:
-        # Последние 5 свечей 1h
         r = httpx.get(f"{FAPI}/fapi/v1/klines",
-                      params={"symbol": symbol, "interval": "1h", "limit": 5}, timeout=5)
+                      params={"symbol": symbol, "interval": interval, "limit": 5}, timeout=5)
         if r.status_code != 200:
             return None
         candles = r.json()
@@ -342,10 +386,39 @@ def check_ftt(symbol: str) -> Optional[dict]:
             "wick_ratio": round(wick_pct, 2),
             "vol_ratio": round(vol_ratio, 1),
             "close_position": round(close_position, 2),
+            "tf": interval,
         }
     except Exception:
         pass
     return None
+
+
+def check_ftt(symbol: str) -> Optional[dict]:
+    """Multi-TF FTT: проверяет 15m, 1h, 4h. Берёт лучший с бонусом за совпадения."""
+    results = []
+    tf_weights = {"15m": 0.7, "1h": 1.0, "4h": 1.5}
+    for tf, weight in tf_weights.items():
+        r = _check_ftt_tf(symbol, tf)
+        if r:
+            r["_weight"] = weight
+            results.append(r)
+
+    if not results:
+        return None
+
+    # Берём лучший по score × weight
+    best = max(results, key=lambda x: x["ftt_score"] * x["_weight"])
+    # Бонус за подтверждение на нескольких TF
+    if len(results) >= 2:
+        best["ftt_score"] = min(best["ftt_score"] + 1, 5)
+    if len(results) >= 3:
+        best["ftt_score"] = 5  # все 3 TF = идеальный FTT
+
+    tfs = "+".join(r["tf"] for r in results)
+    best["value"] = best["value"]  # LONG/SHORT
+    best.pop("_weight", None)
+    best["tf"] = tfs
+    return best
 
 
 def check_orderbook_wall(symbol: str, multiplier: float = 10.0) -> Optional[dict]:
@@ -423,15 +496,8 @@ def scan_symbol(symbol: str) -> dict:
     if not anomalies:
         return None
 
-    # Текущая цена
-    price = None
-    try:
-        r = httpx.get(f"{FAPI}/fapi/v1/ticker/price",
-                      params={"symbol": symbol}, timeout=3)
-        if r.status_code == 200:
-            price = float(r.json().get("price", 0))
-    except Exception:
-        pass
+    # Текущая цена (из batch-кеша, без HTTP)
+    price = _batch_cache.get("ticker", {}).get(symbol, {}).get("price")
 
     # Определяем направление
     direction = "NEUTRAL"

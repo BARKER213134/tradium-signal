@@ -1200,8 +1200,7 @@ setInterval(updatePricesAndPnl, 10000);
       try {
         const m = JSON.parse(e.data);
         if (m.type === 'signal_new' || m.type === 'signal_update' || m.type === 'signal_deleted') {
-          // Перезагружаем страницу чтобы подтянуть новые данные из БД
-          location.reload();
+          updatePricesAndPnl();
         }
       } catch {}
     };
@@ -1213,9 +1212,6 @@ setInterval(updatePricesAndPnl, 10000);
   }
   open();
 })();
-
-// Fallback: перезагружаем каждые 30 секунд на случай пропущенных broadcast
-setInterval(() => location.reload(), 30000);
 </script>
 {% endif %}
 
@@ -1350,15 +1346,16 @@ setInterval(() => location.reload(), 30000);
 </div>
 
 {% if pages > 1 %}
+{% set pq = "bot=" ~ bot ~ "&tab=" ~ tab ~ "&pair=" ~ filter_pair ~ "&direction=" ~ filter_direction ~ "&has_chart=" ~ filter_has_chart %}
 <div class="pagination">
-  {% if page > 1 %}<a href="?page={{ page-1 }}">←</a>{% endif %}
+  {% if page > 1 %}<a href="?{{ pq }}&page={{ page-1 }}">←</a>{% endif %}
   {% for p in range(1, pages+1) %}
     {% if p == page %}<span class="current">{{ p }}</span>
     {% elif p <= 3 or p >= pages-2 or (p >= page-2 and p <= page+2) %}
-    <a href="?page={{ p }}">{{ p }}</a>
+    <a href="?{{ pq }}&page={{ p }}">{{ p }}</a>
     {% endif %}
   {% endfor %}
-  {% if page < pages %}<a href="?page={{ page+1 }}">→</a>{% endif %}
+  {% if page < pages %}<a href="?{{ pq }}&page={{ page+1 }}">→</a>{% endif %}
 </div>
 {% endif %}
 
@@ -1453,130 +1450,7 @@ setInterval(() => location.reload(), 30000);
   font-weight: 700;
 }
 
-/* ── Tabs ── */
-.tabs {
-  display: inline-flex;
-  gap: 4px;
-  padding: 6px;
-  background: linear-gradient(180deg, rgba(23,27,36,0.85), rgba(17,20,27,0.85));
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  margin-bottom: 22px;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-.tab {
-  padding: 10px 18px;
-  font-size: 12px;
-  font-weight: 600;
-  font-family: var(--font-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--muted);
-  cursor: pointer;
-  border-radius: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  transition: all 0.15s;
-  border: 1px solid transparent;
-}
-.tab:hover { color: var(--text-2); background: rgba(255,255,255,0.03); }
-.tab.active {
-  color: var(--cyan);
-  background: rgba(0,102,255,0.12);
-  border-color: rgba(0,255,255,0.35);
-  box-shadow: 0 0 0 1px rgba(0,102,255,0.25), 0 0 16px rgba(0,102,255,0.2);
-}
-.tab-badge {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.06);
-  color: var(--text-2);
-  font-size: 10px;
-  min-width: 20px;
-  text-align: center;
-}
-.tab.active .tab-badge {
-  background: rgba(0,255,255,0.2);
-  color: var(--cyan);
-}
-
-.select-all {
-  padding: 12px 0;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--muted);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-.select-all label { cursor: pointer; }
-.delete-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 14px;
-  background: rgba(255,77,109,0.1);
-  border: 1px solid rgba(255,77,109,0.4);
-  border-radius: 8px;
-  color: var(--sell);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.delete-btn:hover {
-  background: rgba(255,77,109,0.2);
-  box-shadow: 0 0 16px rgba(255,77,109,0.25);
-}
-.delete-btn svg { flex-shrink: 0; }
-.select-all input[type=checkbox],
-.row-check {
-  accent-color: var(--cyan);
-  cursor: pointer;
-}
-
-/* ── Trend dots ── */
-.ai-score-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 34px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 800;
-}
-.ai-good { background: rgba(0,229,160,0.18); color: var(--buy); border: 1px solid rgba(0,229,160,0.4); }
-.ai-ok   { background: rgba(255,210,62,0.15); color: #ffd23e; border: 1px solid rgba(255,210,62,0.35); }
-.ai-bad  { background: rgba(255,77,109,0.15); color: var(--sell); border: 1px solid rgba(255,77,109,0.35); }
-
-.trend-cell { white-space: nowrap; }
-.dot-r, .dot-g {
-  display: inline-block;
-  width: 10px; height: 10px;
-  border-radius: 50%;
-  margin-right: 2px;
-}
-.dot-r { background: #ff4d6d; box-shadow: 0 0 6px rgba(255,77,109,0.5); }
-.dot-g { background: #00e5a0; box-shadow: 0 0 6px rgba(0,229,160,0.5); }
-.trend-up, .trend-dn { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: -0.3px; }
-.trend-up { color: #00e5a0; }
-.trend-dn { color: #ff4d6d; }
-
-.badge-status {
-  background: rgba(0,102,255,0.15);
-  color: var(--cyan);
-  border: 1px solid rgba(0,255,255,0.35);
-}
-
+/* ── Tradium-only styles (shared styles in base.html) ── */
 .signal-row { cursor: pointer; }
 .ai-clickable { border-left: 3px solid transparent; transition: border-color 0.2s, background 0.2s; }
 .ai-clickable:hover { background: rgba(255,255,255,0.03); }

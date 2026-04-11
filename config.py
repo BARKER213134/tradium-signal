@@ -53,5 +53,9 @@ BOTS = [
 
 # Админка
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
-SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey123")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not ADMIN_PASSWORD:
+    raise RuntimeError("ADMIN_PASSWORD не задан в .env — панель не может стартовать без пароля")
+if not SECRET_KEY:
+    SECRET_KEY = ADMIN_PASSWORD + "_secret_key"  # fallback, но не дефолтный

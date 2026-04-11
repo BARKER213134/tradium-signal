@@ -108,12 +108,14 @@ async def login_submit(
             "next": next, "error": "Неверный логин или пароль",
         }, status_code=401)
     resp = RedirectResponse(url=next or "/signals", status_code=303)
+    is_prod = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PORT")
     resp.set_cookie(
         SESSION_COOKIE,
         _make_token(username),
         max_age=SESSION_TTL,
         httponly=True,
         samesite="lax",
+        secure=bool(is_prod),
         path="/",
     )
     return resp

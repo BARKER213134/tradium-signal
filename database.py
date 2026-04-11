@@ -467,17 +467,19 @@ class Session:
 
     def commit(self):
         # 1) Новые вставки
+        inserted = set()
         for obj in self._pending_inserts:
             if getattr(obj, "id", None) is None:
                 obj._data["id"] = _next_id()
             if obj._data.get("received_at") is None:
                 obj._data["received_at"] = utcnow()
             _signals().insert_one(obj.to_dict())
+            inserted.add(id(obj))
         self._pending_inserts.clear()
 
-        # 2) Апдейты отслеживаемых
+        # 2) Апдейты отслеживаемых (пропускаем только что вставленные)
         for obj in self._tracked:
-            if obj in self._pending_inserts:
+            if id(obj) in inserted:
                 continue
             if getattr(obj, "id", None) is None:
                 continue
