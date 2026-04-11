@@ -818,31 +818,18 @@ async def _generate_ai_deep_analysis(signal, current_price, s1, r1):
     trend = signal.trend or ""
 
     prompt = (
-        f"Ты — профессиональный крипто-трейдер для дейтрейдинга.\n\n"
-        f"Монета: {pair}/USDT\n"
-        f"Направление: {direction}\n"
-        f"Паттерн: {pattern}\n"
-        f"Тренд (5 TF): {trend}\n"
-        f"Entry: {entry}\n"
-        f"Текущая цена: {current_price}\n"
-        f"Support (S1): {s1 or 'не определён'}\n"
-        f"Resistance (R1): {r1 or 'не определён'}\n\n"
-        f"Задача — дай ПОЛНЫЙ анализ как в примере ниже:\n\n"
-        f"1. **Что происходит с монетой** — почему она здесь, что за проект, ликвидность\n"
-        f"2. **Технический анализ** — как отрабатывает паттерн {pattern}, уровни поддержки/сопротивления\n"
-        f"3. **Рыночный контекст** — что делает BTC, общий тренд альтов\n"
-        f"4. **TP и SL** — дай конкретные цены на основе уровней S1/R1 и структуры рынка:\n"
-        f"   - TP1 (ближний), TP2 (дальний)\n"
-        f"   - SL (стоп-лосс)\n"
-        f"   - R:R соотношение\n"
-        f"5. **Оценка сделки** — стоит ли входить, score 1-10, риски\n"
-        f"6. **Вывод** — короткая рекомендация\n\n"
-        f"Ответ на русском. Формат:\n"
+        f"Ты — крипто-трейдер. Дай КРАТКИЙ анализ.\n\n"
+        f"Монета: {pair}/USDT | {direction} | Паттерн: {pattern}\n"
+        f"Тренд: {trend} | Entry: {entry} | Цена: {current_price}\n"
+        f"S1: {s1 or '—'} | R1: {r1 or '—'}\n\n"
+        f"Ответь СТРОГО в таком формате (без лишнего текста):\n"
         f"TP1: цена\n"
         f"TP2: цена\n"
         f"SL: цена\n"
+        f"R:R: соотношение\n"
         f"Score: X/10\n"
-        f"Далее текст анализа 5-8 предложений."
+        f"Анализ: 2-3 предложения — тех.анализ, контекст, вывод.\n\n"
+        f"Ответ на русском. Максимум 500 символов."
     )
 
     try:
@@ -850,7 +837,7 @@ async def _generate_ai_deep_analysis(signal, current_price, s1, r1):
         message = await asyncio.to_thread(
             client.messages.create,
             model=ANTHROPIC_MODEL,
-            max_tokens=1024,
+            max_tokens=400,
             messages=[{"role": "user", "content": prompt}],
         )
         return message.content[0].text
@@ -905,9 +892,7 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     )
 
     if analysis:
-        # Обрезаем до 800 символов для Telegram
-        short = analysis[:800] + ("…" if len(analysis) > 800 else "")
-        text += f"\n📝 {short}"
+        text += f"\n📝 {analysis}"
 
     try:
         await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")

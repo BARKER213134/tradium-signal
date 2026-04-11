@@ -780,7 +780,7 @@ async function clearProcessed() {
       {% for s in signals %}
       <tr class="signal-row" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}">
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
-        <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at else '—' }}</td>
+        <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT','') }}</td>
         <td>
           {% if s.direction == 'LONG' %}<span class="badge badge-buy">LONG</span>
@@ -1079,7 +1079,7 @@ setInterval(() => location.reload(), 30000);
       {% for s in signals %}
       <tr class="signal-row" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}">
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
-        <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at else '—' }}</td>
+        <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT', '') }}</td>
         <td class="mono text-muted">{{ s.timeframe or '—' }}</td>
         <td>
