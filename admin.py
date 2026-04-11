@@ -313,9 +313,15 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
                 query = query.filter(Signal.id.in_(ai_ids))
             else:
                 query = query.filter(Signal.status == "__none__")
-        cv_watching = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "СЛЕЖУ").count()
-        cv_active = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status.in_(["ПАТТЕРН"])).count()
+        # Один агрегатный запрос вместо 4 отдельных
         from database import _signals as _sc2
+        _agg = list(_sc2().aggregate([
+            {"$match": {"source": "cryptovizor"}},
+            {"$group": {"_id": "$status", "cnt": {"$sum": 1}}},
+        ]))
+        _counts = {d["_id"]: d["cnt"] for d in _agg}
+        cv_watching = _counts.get("СЛЕЖУ", 0)
+        cv_active = _counts.get("ПАТТЕРН", 0)
         cv_ai = _sc2().count_documents({"source": "cryptovizor", "filter_reason": {"$regex": "^AI_SIGNAL"}})
         cv_stats = {"watching": cv_watching, "active": cv_active, "ai_signal": cv_ai}
         if cv_tab in ("backtest", "ai_settings"):
