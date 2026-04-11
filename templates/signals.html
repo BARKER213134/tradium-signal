@@ -398,7 +398,7 @@ function renderBacktest(d) {
     }).join('');
 
     // Signals table
-    document.getElementById('btSignals').innerHTML = (d.signals||[]).map(s => {
+    document.getElementById('btSignals').innerHTML = (d.signals||[]).map((s, i) => {
       const cls = s.pnl >= 0 ? 'text-buy' : 'text-sell';
       const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
       const ai = s.ai_score != null ? `<span class="ai-score-pill ai-${s.ai_score>=70?'good':s.ai_score>=40?'ok':'bad'}">${s.ai_score}</span>` : '—';
