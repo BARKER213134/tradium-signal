@@ -751,27 +751,69 @@ async def api_anomalies():
     return docs
 
 
+_scan_state = {"running": False, "progress": 0, "total": 0, "found": 0, "batch": 0, "batches": 0}
+
+
+@app.get("/api/anomalies/scan-status")
+async def api_scan_status():
+    return _scan_state
+
+
 @app.post("/api/anomalies/scan")
 async def api_anomalies_scan():
-    """Ручной запуск скана аномалий."""
-    from anomaly_scanner import get_all_futures_pairs, scan_batch
-    from database import _anomalies, utcnow
+    """Ручной запуск полного скана аномалий."""
+    if _scan_state["running"]:
+        return {"ok": False, "error": "Скан уже запущен"}
 
-    pairs = await asyncio.to_thread(get_all_futures_pairs)
-    results = await asyncio.to_thread(scan_batch, pairs[:100], 2)  # первые 100 для ручного
+    async def _run_scan():
+        import time as _time
+        from anomaly_scanner import get_all_futures_pairs, scan_batch
+        from database import _anomalies, utcnow
 
-    now = utcnow()
-    added = 0
-    for r in results:
-        doc = {
-            "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
-            "score": r["score"], "direction": r["direction"],
-            "anomalies": r["anomalies"], "detected_at": now,
-        }
-        _anomalies().insert_one(doc)
-        added += 1
+        _scan_state["running"] = True
+        _scan_state["found"] = 0
+        _scan_state["progress"] = 0
 
-    return {"ok": True, "scanned": len(pairs[:100]), "found": added}
+        try:
+            pairs = await asyncio.to_thread(get_all_futures_pairs)
+            _scan_state["total"] = len(pairs)
+
+            batch_size = 30
+            batches = [(pairs[i:i+batch_size]) for i in range(0, len(pairs), batch_size)]
+            _scan_state["batches"] = len(batches)
+
+            now = utcnow()
+            for idx, batch in enumerate(batches):
+                _scan_state["batch"] = idx + 1
+                _scan_state["progress"] = int((idx / len(batches)) * 100)
+
+                results = await asyncio.to_thread(scan_batch, batch, 7)
+
+                for r in results:
+                    # Дедупликация 4 часа
+                    import datetime
+                    existing = _anomalies().find_one({
+                        "symbol": r["symbol"],
+                        "detected_at": {"$gte": datetime.datetime.utcnow() - datetime.timedelta(hours=4)},
+                    })
+                    if existing:
+                        continue
+                    doc = {
+                        "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
+                        "score": r["score"], "direction": r["direction"],
+                        "anomalies": r["anomalies"], "detected_at": now,
+                    }
+                    _anomalies().insert_one(doc)
+                    _scan_state["found"] += 1
+
+                await asyncio.sleep(1.5)  # пауза для rate limit
+
+            _scan_state["progress"] = 100
+        finally:
+            _scan_state["running"] = False
+
+    asyncio.create_task(_run_scan())
+    return {"ok": True, "message": "Скан запущен"}
 
 
 @app.get("/api/anomaly-cluster")
