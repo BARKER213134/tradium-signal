@@ -284,17 +284,20 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
 
     # Cryptovizor имеет свои вкладки
     if bot == "cryptovizor":
-        cv_tab = tab if tab in ("watching", "active", "volume") else "watching"
+        cv_tab = tab if tab in ("watching", "active", "ai_signal", "volume") else "watching"
         if cv_tab == "watching":
             query = query.filter(Signal.status == "СЛЕЖУ")
         elif cv_tab == "active":
-            query = query.filter(Signal.status == "ПАТТЕРН")
+            query = query.filter(Signal.status.in_(["ПАТТЕРН", "AI_SIGNAL"]))
+        elif cv_tab == "ai_signal":
+            query = query.filter(Signal.status == "AI_SIGNAL")
         elif cv_tab == "volume":
             query = query.filter(Signal.status == "VOLUME")
         cv_watching = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "СЛЕЖУ").count()
-        cv_active = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "ПАТТЕРН").count()
+        cv_active = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status.in_(["ПАТТЕРН", "AI_SIGNAL"])).count()
+        cv_ai = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "AI_SIGNAL").count()
         cv_volume = db.query(Signal).filter(Signal.source == "cryptovizor").filter(Signal.status == "VOLUME").count()
-        cv_stats = {"watching": cv_watching, "active": cv_active, "volume": cv_volume}
+        cv_stats = {"watching": cv_watching, "active": cv_active, "ai_signal": cv_ai, "volume": cv_volume}
         signals = query.order_by(desc(Signal.received_at)).limit(200).all()
         return templates.TemplateResponse(request, "signals.html", {
             "signals": signals,
@@ -549,6 +552,12 @@ async def api_delete_signals(payload: dict):
     deleted, events = await asyncio.to_thread(_del)
     broadcast_event("signal_deleted", {"ids": ids})
     return {"ok": True, "deleted": deleted, "events_deleted": events}
+
+
+@app.post("/api/backtest")
+async def api_backtest():
+    from backtest import run_backtest
+    return await asyncio.to_thread(run_backtest, "cryptovizor")
 
 
 @app.post("/api/sync-cv")

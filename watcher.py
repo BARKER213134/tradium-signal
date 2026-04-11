@@ -42,14 +42,16 @@ POLL_INTERVAL = 15  # секунд
 _bot = None
 _bot2 = None
 _bot3 = None
+_bot4 = None
 _admin_chat_id = None
 
 
-def setup(bot, admin_chat_id: int, bot2=None, bot3=None):
-    global _bot, _bot2, _bot3, _admin_chat_id
+def setup(bot, admin_chat_id: int, bot2=None, bot3=None, bot4=None):
+    global _bot, _bot2, _bot3, _bot4, _admin_chat_id
     _bot = bot
     _bot2 = bot2
     _bot3 = bot3
+    _bot4 = bot4
     _admin_chat_id = admin_chat_id
 
 
@@ -491,6 +493,9 @@ async def _check_once():
 
         # Cryptovizor: отдельный поток паттернов на 1h
         await _check_cryptovizor(db)
+
+        # AI Signal filter: выбирает лучшие из ПАТТЕРН → AI_SIGNAL
+        await _check_ai_signals(db)
     finally:
         db.close()
 
@@ -732,6 +737,104 @@ async def _ai_score_and_alert_volume(s, vol_info, price, s1, r1, chart_png, cand
         logger.info(f"Volume alert sent #{s.id} {pair} ×{vol_info['rvol']}")
     except Exception as e:
         logger.error(f"Volume alert fail #{s.id}: {e}")
+
+
+async def _check_ai_signals(db):
+    """Для сигналов Cryptovizor в ПАТТЕРН, ещё не проверенных AI filter →
+    Claude решает на основе бектеста отправлять ли в @aitradiumbot."""
+    # Только сигналы с ai_filter_checked != True
+    signals = (
+        db.query(Signal)
+        .filter(Signal.source == "cryptovizor")
+        .filter(Signal.status == "ПАТТЕРН")
+        .filter(Signal.result == None)  # ещё не проверен AI filter (используем поле result)
+        .limit(5)
+        .all()
+    )
+    if not signals:
+        return
+
+    from backtest import backtest_summary_for_ai
+    from ai_signal_filter import should_send_signal
+    from volume_analysis import format_volume
+
+    # Кешируем summary — не пересчитываем для каждого сигнала
+    try:
+        summary = await asyncio.to_thread(backtest_summary_for_ai, "cryptovizor")
+    except Exception as e:
+        logger.error(f"Backtest summary error: {e}")
+        return
+
+    for s in signals:
+        try:
+            # Текущая цена
+            norm = (s.pair or "").replace("/", "").upper()
+            prices = await get_prices_any([s.pair])
+            current = prices.get(norm)
+
+            result = await should_send_signal({
+                "pair": s.pair,
+                "direction": s.direction,
+                "pattern": s.pattern_name,
+                "trend": s.trend,
+                "entry": s.entry,
+                "current_price": current,
+                "ai_score": s.ai_score,
+                "hour": s.pattern_triggered_at.hour if s.pattern_triggered_at else 0,
+            }, summary)
+
+            # Помечаем как проверенный (используем поле result)
+            s.result = f"AI:{result.get('score', 0)}"
+            db.commit()
+
+            if result.get("send"):
+                s.status = "AI_SIGNAL"
+                db.commit()
+                log_event(s.id, "ai_signal", price=current,
+                    data={"score": result["score"], "reasoning": result.get("reasoning")},
+                    message=f"AI отобрал: score {result['score']}/10")
+                _broadcast("signal_update", {"id": s.id, "status": "AI_SIGNAL", "source": "cryptovizor"})
+
+                # Алерт в BOT4
+                await _send_ai_signal_alert(s, result, current)
+                logger.info(f"AI Signal #{s.id} {s.pair} score={result['score']}")
+            else:
+                log_event(s.id, "ai_skipped",
+                    data={"score": result["score"], "reasoning": result.get("reasoning")},
+                    message=f"AI пропустил: score {result['score']}/10")
+        except Exception as e:
+            logger.error(f"AI filter #{s.id}: {e}")
+
+
+async def _send_ai_signal_alert(signal, ai_result, current_price):
+    target_bot = _bot4 or _bot2 or _bot
+    if not target_bot or not _admin_chat_id:
+        return
+    is_long = signal.direction in ("LONG", "BUY")
+    dir_emoji = "🟢" if is_long else "🔴"
+    pair = (signal.pair or "—").replace("/USDT", "")
+    score = ai_result.get("score", 0)
+    score_bar = "🟢" * score + "⚪" * (10 - score)
+
+    text = (
+        f"🤖 <b>AI SIGNAL · TOP PICK</b>\n"
+        f"\n"
+        f"<b>{pair}/USDT</b> · 1h · {dir_emoji} <b>{signal.direction}</b>\n"
+        f"\n"
+        f"🎴 Паттерн: <b>{signal.pattern_name}</b>\n"
+        f"🎯 Entry: <code>{signal.entry}</code>\n"
+        f"💰 Сейчас: <code>{current_price}</code>\n"
+        f"\n"
+        f"⭐ AI Score: <b>{score}/10</b>\n"
+        f"{score_bar}\n"
+        f"\n"
+        f"📝 <i>{ai_result.get('reasoning', '')}</i>"
+    )
+    try:
+        await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
+        logger.info(f"AI signal alert sent #{signal.id}")
+    except Exception as e:
+        logger.error(f"AI signal alert fail: {e}")
 
 
 async def start_watcher():

@@ -6,7 +6,7 @@ import os
 import uvicorn
 
 from database import init_db
-from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT2_BOT_TOKEN, BOT3_BOT_TOKEN
+from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT2_BOT_TOKEN, BOT3_BOT_TOKEN, BOT4_BOT_TOKEN
 
 
 def _bootstrap_session():
@@ -114,7 +114,19 @@ async def main():
         logger.info("✅ BOT2 (Cryptovizor) инициализирован")
     if bot3:
         logger.info("✅ BOT3 (Volume Alert) инициализирован")
-    setup_watcher(bot, ADMIN_CHAT_ID, bot2=bot2, bot3=bot3)
+
+    bot4 = None
+    if BOT4_BOT_TOKEN:
+        try:
+            from aiogram import Bot as _B4
+            from aiogram.client.default import DefaultBotProperties as _DP4
+            from aiogram.enums import ParseMode as _PM4
+            bot4 = _B4(token=BOT4_BOT_TOKEN, default=_DP4(parse_mode=_PM4.HTML))
+            logger.info("✅ BOT4 (AI Signal) инициализирован")
+        except Exception as e:
+            logger.error(f"BOT4 init fail: {e}")
+
+    setup_watcher(bot, ADMIN_CHAT_ID, bot2=bot2, bot3=bot3, bot4=bot4)
 
     logger.info("Запуск admin / bots / userbot / watcher…")
     tasks = [
