@@ -574,6 +574,20 @@ async def api_delete_signals(payload: dict):
     return {"ok": True, "deleted": deleted, "events_deleted": events}
 
 
+@app.post("/api/signals/clear-processed")
+async def api_clear_processed():
+    """Удаляет все отработанные Cryptovizor сигналы (ПАТТЕРН) после бектеста."""
+    from database import _signals as _sc, _events
+    result = _sc().delete_many({
+        "source": "cryptovizor",
+        "status": {"$in": ["ПАТТЕРН", "VOLUME"]},
+    })
+    # Очищаем связанные events
+    if result.deleted_count > 0:
+        broadcast_event("signal_deleted", {"count": result.deleted_count})
+    return {"ok": True, "deleted": result.deleted_count}
+
+
 @app.post("/api/backtest")
 async def api_backtest():
     from backtest import run_backtest

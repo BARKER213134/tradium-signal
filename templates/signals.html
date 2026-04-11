@@ -171,18 +171,6 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
   <a href="/signals?bot=cryptovizor&tab=ai_settings" class="tab {% if cv_tab == 'ai_settings' %}active{% endif %}">AI Настройки</a>
 </div>
 
-<div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;">
-  <button class="sync-btn" onclick="runBacktest()" id="btBtn">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
-    <span id="btLabel">БЕКТЕСТ</span>
-  </button>
-</div>
-
-<div id="backtestResult" style="display:none;margin-bottom:20px;padding:18px;background:var(--dark-2);border:1px solid var(--border);border-radius:10px;">
-  <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:10px;">BACKTEST RESULTS</div>
-  <div id="btContent" style="font-size:13px;line-height:1.7;color:var(--text-2);white-space:pre-wrap;font-family:var(--font-mono);"></div>
-</div>
-
 {% if cv_tab == 'ai_settings' %}
 <!-- ── AI Settings page ───────────────────────────────────────── -->
 <div id="aiSettingsPage">
@@ -305,6 +293,11 @@ async function saveCriteria() {
 {% elif cv_tab == 'backtest' %}
 <!-- ── Backtest full results page ──────────────────────────────── -->
 <div id="btPage">
+  <div style="display:flex;gap:12px;margin-bottom:16px;">
+    <button class="delete-btn" onclick="clearProcessed()" id="clearBtn" style="display:none;">
+      🗑 Очистить отработанные сигналы
+    </button>
+  </div>
   <div style="text-align:center;padding:40px;" class="text-muted" id="btLoading">Загрузка бектеста…</div>
   <div id="btSummary" style="display:none;">
     <div class="results-summary" id="btCards"></div>
@@ -378,12 +371,25 @@ async function saveCriteria() {
         <td>${ai}</td>
       </tr>`;
     }).join('');
+    document.getElementById('clearBtn').style.display = 'inline-flex';
   } catch(e) { document.getElementById('btLoading').textContent = 'Ошибка: '+e.message; }
 })();
+
+async function clearProcessed() {
+  if (!confirm('Удалить все отработанные сигналы из вкладки "Сигнал"? Бектест уже сохранён в AI Настройках.')) return;
+  try {
+    const r = await fetch('/api/signals/clear-processed', {method: 'POST'});
+    const d = await r.json();
+    if (d.ok) {
+      alert(`Удалено ${d.deleted} сигналов. Вкладка "Сигнал" очищена для новых.`);
+      location.reload();
+    }
+  } catch(e) { alert('Ошибка: ' + e.message); }
+}
 </script>
 {% endif %}
 
-{% if cv_tab != 'backtest' %}
+{% if cv_tab not in ('backtest', 'ai_settings') %}
 <div class="select-all">
   <label><input type="checkbox" id="selectAll"> Выбрать все ({{ total }})</label>
   <button id="deleteBtn" class="delete-btn" onclick="deleteSelected()" style="display:none;">
@@ -548,29 +554,6 @@ if (sa) sa.onchange = () => {
   document.querySelectorAll('.row-check').forEach(c => c.checked = sa.checked);
   refreshDeleteBtn();
 };
-
-async function runBacktest() {
-  const btn = document.getElementById('btBtn');
-  const label = document.getElementById('btLabel');
-  btn.disabled = true; btn.classList.add('spinning'); label.textContent = 'АНАЛИЗ…';
-  try {
-    const r = await fetch('/api/backtest', {method: 'POST'});
-    const d = await r.json();
-    if (d.error) { alert(d.error); return; }
-    document.getElementById('backtestResult').style.display = 'block';
-    document.getElementById('btContent').textContent =
-      `Win rate: ${d.overall_win_rate}%  |  Avg PnL: ${d.overall_avg_pnl}%  |  Total PnL: ${d.total_pnl}%\n` +
-      `Сигналов: ${d.with_result}  |  Best: ${d.best_pnl}%  |  Worst: ${d.worst_pnl}%\n\n` +
-      `TOP паттерны: ${d.top_patterns.join(', ') || 'мало данных'}\n` +
-      `WORST паттерны: ${d.worst_patterns.join(', ') || 'мало данных'}\n\n` +
-      Object.entries(d.by_pattern || {}).map(([k,v]) =>
-        `${k}: count=${v.count} win=${v.win_rate}% avg=${v.avg_pnl}%`
-      ).join('\n');
-    label.textContent = `WR ${d.overall_win_rate}%`;
-    setTimeout(() => { label.textContent = 'БЕКТЕСТ'; }, 6000);
-  } catch (e) { label.textContent = 'ОШИБКА'; setTimeout(() => { label.textContent = 'БЕКТЕСТ'; }, 3000); }
-  finally { btn.classList.remove('spinning'); btn.disabled = false; }
-}
 
 updatePricesAndPnl();
 setInterval(updatePricesAndPnl, 10000);
