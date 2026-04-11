@@ -17,7 +17,58 @@ from config import ADMIN_USERNAME, ADMIN_PASSWORD, SECRET_KEY, BOTS
 from database import get_db, Signal, Session, desc, func, get_events
 from exchange import get_prices_any as _sync_get_prices, get_all_usdt_symbols as _sync_get_all_usdt_symbols
 
-app = FastAPI(title="Tradium Screener Admin")
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app):
+    """Запускает watcher/userbot/bots если main.py не вызван (Railway startCommand)."""
+    import logging as _log
+    _bg_tasks = []
+    try:
+        # Проверяем, не запущен ли уже watcher через main.py
+        from watcher import _bot as _wb
+        if _wb is None:
+            _log.info("Lifespan: main.py не вызван, запускаю компоненты...")
+            from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT2_BOT_TOKEN, BOT4_BOT_TOKEN
+            from database import init_db
+            init_db()
+
+            from bot import bot, start_bot
+            from bot2 import bot2, start_bot2
+            from userbot import set_bot, start_userbot
+            from watcher import setup as setup_watcher, start_watcher
+
+            set_bot(bot, ADMIN_CHAT_ID)
+
+            bot4 = None
+            if BOT4_BOT_TOKEN:
+                try:
+                    from aiogram import Bot as _B4
+                    from aiogram.client.default import DefaultBotProperties as _DP4
+                    from aiogram.enums import ParseMode as _PM4
+                    bot4 = _B4(token=BOT4_BOT_TOKEN, default=_DP4(parse_mode=_PM4.HTML))
+                except Exception:
+                    pass
+
+            setup_watcher(bot, ADMIN_CHAT_ID, bot2=bot2, bot4=bot4)
+
+            _bg_tasks.append(asyncio.create_task(start_userbot()))
+            _bg_tasks.append(asyncio.create_task(start_bot()))
+            _bg_tasks.append(asyncio.create_task(start_watcher()))
+            if bot2:
+                _bg_tasks.append(asyncio.create_task(start_bot2()))
+            _log.info("Lifespan: все компоненты запущены")
+    except Exception as e:
+        _log.error(f"Lifespan startup error: {e}")
+
+    yield
+
+    for t in _bg_tasks:
+        t.cancel()
+
+
+app = FastAPI(title="Tradium Screener Admin", lifespan=lifespan)
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates"))
 
 
