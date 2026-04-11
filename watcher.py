@@ -494,6 +494,9 @@ async def _check_once():
 
         # AI Signal filter: выбирает лучшие из ПАТТЕРН → AI_SIGNAL
         await _check_ai_signals(db)
+
+        # Дозаполняем анализ для AI сигналов без comment
+        await _fill_missing_ai_analysis(db)
     finally:
         db.close()
 
@@ -643,6 +646,59 @@ async def _ai_score_and_alert_pattern(s, pattern, price, s1, r1, chart_png, cand
     except Exception as e:
         logger.error(f"CV AI pattern #{s.id}: {e}")
     await _send_cryptovizor_alert(s, pattern, price, s1, r1, chart_png)
+
+
+async def _fill_missing_ai_analysis(db):
+    """Дозаполняет анализ для AI сигналов у которых comment пустой."""
+    from database import _signals as _sc
+
+    docs = list(_sc().find({
+        "source": "cryptovizor",
+        "filter_reason": {"$regex": "^AI_SIGNAL"},
+        "$or": [{"comment": None}, {"comment": ""}],
+    }).limit(2))
+
+    for doc in docs:
+        sig_id = doc.get("id")
+        pair = doc.get("pair", "")
+        if not pair:
+            continue
+
+        prices = await get_prices_any([pair])
+        norm = pair.replace("/", "").upper()
+        current = prices.get(norm)
+
+        s1 = doc.get("dca1")
+        r1 = doc.get("dca2")
+
+        # Создаём фейковый signal-like объект
+        class _S:
+            pass
+        sig = _S()
+        for k, v in doc.items():
+            if k != "_id":
+                setattr(sig, k, v)
+
+        analysis = await _generate_ai_deep_analysis(sig, current or doc.get("entry"), s1, r1)
+        if analysis:
+            _sc().update_one({"id": sig_id}, {"$set": {"comment": analysis}})
+            logger.info(f"AI analysis filled for #{sig_id} {pair}")
+
+            # Отправляем в бот если ещё не отправлено
+            target_bot = _bot4 or _bot2 or _bot
+            if target_bot and _admin_chat_id:
+                dir_emoji = "🟢" if doc.get("direction") in ("LONG", "BUY") else "🔴"
+                p = pair.replace("/USDT", "")
+                short = analysis[:800] + ("…" if len(analysis) > 800 else "")
+                text = (
+                    f"🤖 <b>AI SIGNAL · {p}/USDT</b>\n"
+                    f"{dir_emoji} <b>{doc.get('direction')}</b> · {doc.get('pattern_name','')}\n\n"
+                    f"{short}"
+                )
+                try:
+                    await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
+                except Exception:
+                    pass
 
 
 async def _check_ai_signals(db):
