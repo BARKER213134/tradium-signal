@@ -37,7 +37,7 @@ async def get_klines_any(pair, timeframe, limit=50):
 
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL = 15  # секунд
+POLL_INTERVAL = 30  # секунд (было 15, снижаем нагрузку)
 
 _bot = None
 _bot2 = None
@@ -917,7 +917,7 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
 
 
 _anomaly_batch_idx = 0
-_ANOMALY_INTERVAL = 20  # каждый 20-й тик (20×15с = 5 мин)
+_ANOMALY_INTERVAL = 10  # каждый 10-й тик (10×30с = 5 мин)
 _anomaly_tick = 0
 
 
@@ -935,12 +935,13 @@ async def _check_anomalies():
     if not pairs:
         return
 
-    # Разбиваем на 2 батча
-    mid = len(pairs) // 2
-    batch = pairs[:mid] if _anomaly_batch_idx == 0 else pairs[mid:]
-    _anomaly_batch_idx = (_anomaly_batch_idx + 1) % 2
+    # Разбиваем на 4 батча по ~100 пар (полный цикл = 20 мин)
+    chunk_size = max(len(pairs) // 4, 50)
+    start = _anomaly_batch_idx * chunk_size
+    batch = pairs[start:start + chunk_size]
+    _anomaly_batch_idx = (_anomaly_batch_idx + 1) % 4
 
-    logger.info(f"Anomaly scan batch {_anomaly_batch_idx}: {len(batch)} pairs")
+    logger.info(f"Anomaly scan batch {_anomaly_batch_idx}/{4}: {len(batch)} pairs")
     results = await asyncio.to_thread(scan_batch, batch, 2)
 
     if not results:
