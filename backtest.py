@@ -45,11 +45,24 @@ def run_backtest(source: str = "cryptovizor") -> dict:
     if not signals:
         return {"total": 0, "error": "no signals"}
 
-    # Получаем текущие цены всех пар
+    # Пробуем получить текущие цены (spot + futures)
+    # Если API недоступен — используем pattern_price из БД
     pairs = list({s.get("pair") for s in signals if s.get("pair")})
-    prices_spot = get_prices(pairs)
-    prices_fut = get_futures_prices_only(pairs)
-    all_prices = {**prices_spot, **prices_fut}
+    all_prices = {}
+    try:
+        prices_spot = get_prices(pairs)
+        all_prices.update(prices_spot)
+    except Exception:
+        pass
+
+    # Futures только если spot не покрыл всё (и только с таймаутом 3с)
+    missing_pairs = [p for p in pairs if p.replace("/", "").upper() not in all_prices]
+    if missing_pairs:
+        try:
+            prices_fut = get_futures_prices_only(missing_pairs[:20])  # лимит чтобы не зависнуть
+            all_prices.update(prices_fut)
+        except Exception:
+            pass
 
     results = []
     for s in signals:
@@ -60,6 +73,12 @@ def run_backtest(source: str = "cryptovizor") -> dict:
         direction = s.get("direction", "LONG")
         pattern = s.get("pattern_name", "unknown")
 
+        # Fallback 1: pattern_price (цена на момент срабатывания паттерна)
+        if current is None:
+            current = s.get("pattern_price")
+        # Fallback 2: entry (цена при сигнале — PnL будет 0%, но сигнал не пропадёт)
+        if current is None:
+            current = entry
         if entry is None or current is None or entry <= 0:
             continue
 
