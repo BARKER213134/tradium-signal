@@ -661,6 +661,24 @@ async def api_analyze_coin(payload: dict):
     if not pair:
         return {"ok": False, "error": "no pair"}
 
+    # Если текущая цена не передана — получаем с биржи
+    if current is None and pair:
+        try:
+            from exchange import get_prices_any as _gpa
+            prices = await asyncio.to_thread(_gpa, [pair])
+            norm = pair.replace("/", "").upper()
+            current = prices.get(norm)
+        except Exception:
+            pass
+
+    # Считаем PnL если есть entry и current
+    if pnl is None and entry and current:
+        try:
+            raw = ((float(current) - float(entry)) / float(entry)) * 100
+            pnl = round(-raw if direction in ("SHORT", "SELL") else raw, 2)
+        except Exception:
+            pass
+
     import anthropic
     from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 
