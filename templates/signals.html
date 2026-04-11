@@ -297,8 +297,15 @@ async function saveCriteria() {
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
       <span id="btRunLabel">НАЧАТЬ БЕКТЕСТ</span>
     </button>
+    <button class="sync-btn" onclick="startAiBacktest()" id="btAiBtn" style="background:rgba(0,102,255,0.08);border-color:rgba(0,102,255,0.35);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+      <span id="btAiLabel">БЕКТЕСТ AI</span>
+    </button>
     <button class="delete-btn" onclick="clearProcessed()" id="clearBtn" style="display:none;">
-      🗑 Очистить отработанные
+      🗑 Очистить сигналы
+    </button>
+    <button class="delete-btn" onclick="clearAiSignals()" id="clearAiBtn" style="display:none;background:rgba(0,102,255,0.1);border-color:rgba(0,102,255,0.4);color:var(--cyan);">
+      🤖 Очистить AI сигналы
     </button>
   </div>
   <div id="btSummary" style="display:none;">
@@ -318,6 +325,17 @@ async function saveCriteria() {
       <table>
         <thead><tr><th>Пара</th><th>Напр.</th><th>Паттерн</th><th>Entry</th><th>Сейчас</th><th>PnL %</th><th>AI</th><th></th></tr></thead>
         <tbody id="btSignals"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="btAiResult" style="display:none;margin-top:24px;">
+    <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:12px;">БЕКТЕСТ AI СИГНАЛОВ</div>
+    <div class="results-summary" id="btAiCards"></div>
+    <div class="table-wrap" style="margin-top:12px;">
+      <table>
+        <thead><tr><th>Пара</th><th>Напр.</th><th>Паттерн</th><th>Entry</th><th>Сейчас</th><th>PnL %</th><th>AI</th></tr></thead>
+        <tbody id="btAiSignals"></tbody>
       </table>
     </div>
   </div>
@@ -547,6 +565,55 @@ async function analyzeCoin(idx) {
     btn.textContent = 'Анализ';
     btn.disabled = false;
   }
+}
+
+async function startAiBacktest() {
+  const btn = document.getElementById('btAiBtn');
+  const label = document.getElementById('btAiLabel');
+  btn.disabled = true; btn.classList.add('spinning'); label.textContent = 'АНАЛИЗ…';
+  try {
+    const r = await fetch('/api/backtest-ai', {method:'POST'});
+    const d = await r.json();
+    if (d.error) { alert(d.error); return; }
+
+    document.getElementById('btAiResult').style.display = 'block';
+    const cards = [
+      {label:'AI Сигналов', value:d.with_result, cls:''},
+      {label:'Win Rate', value:d.overall_win_rate+'%', cls:d.overall_win_rate>=50?'text-buy':'text-sell'},
+      {label:'Avg PnL', value:(d.overall_avg_pnl>=0?'+':'')+d.overall_avg_pnl+'%', cls:d.overall_avg_pnl>=0?'text-buy':'text-sell'},
+      {label:'Total PnL', value:(d.total_pnl>=0?'+':'')+d.total_pnl+'%', cls:d.total_pnl>=0?'text-buy':'text-sell'},
+    ];
+    document.getElementById('btAiCards').innerHTML = cards.map(c =>
+      `<div class="res-card"><div class="res-label">${c.label}</div><div class="res-value ${c.cls}">${c.value}</div></div>`
+    ).join('');
+
+    document.getElementById('btAiSignals').innerHTML = (d.signals||[]).map(s => {
+      const cls = s.pnl >= 0 ? 'text-buy' : 'text-sell';
+      const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
+      const ai = s.ai_score != null ? `<span class="ai-score-pill ai-${s.ai_score>=70?'good':s.ai_score>=40?'ok':'bad'}">${s.ai_score}</span>` : '—';
+      return `<tr>
+        <td class="mono text-accent">${(s.pair||'').replace('/USDT','')}</td>
+        <td>${dir}</td>
+        <td class="mono">${s.pattern||'—'}</td>
+        <td class="mono">${s.entry||'—'}</td>
+        <td class="mono">${s.current||'—'}</td>
+        <td class="mono ${cls} fw-700">${s.pnl>=0?'+':''}${s.pnl}%</td>
+        <td>${ai}</td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('clearAiBtn').style.display = 'inline-flex';
+    label.textContent = `WR ${d.overall_win_rate}%`;
+    setTimeout(() => { label.textContent = 'БЕКТЕСТ AI'; }, 5000);
+  } catch(e) { alert('Ошибка: '+e.message); label.textContent = 'БЕКТЕСТ AI'; }
+  finally { btn.classList.remove('spinning'); btn.disabled = false; }
+}
+
+async function clearAiSignals() {
+  if (!confirm('Очистить AI сигналы?')) return;
+  const r = await fetch('/api/signals/clear-ai', {method:'POST'});
+  const d = await r.json();
+  if (d.ok) { alert('Удалено ' + d.deleted); location.reload(); }
 }
 
 async function clearProcessed() {

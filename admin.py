@@ -710,6 +710,25 @@ async def api_save_coin_analysis(payload: dict):
     return {"ok": True}
 
 
+@app.post("/api/backtest-ai")
+async def api_backtest_ai():
+    """Бектест только AI-отфильтрованных сигналов."""
+    from backtest import run_backtest_filtered
+    return await asyncio.to_thread(run_backtest_filtered, "cryptovizor", "AI_SIGNAL")
+
+
+@app.post("/api/signals/clear-ai")
+async def api_clear_ai():
+    """Очищает AI сигналы (сбрасывает filter_reason)."""
+    from database import _signals as _sc
+    result = _sc().update_many(
+        {"source": "cryptovizor", "filter_reason": {"$regex": "^AI_SIGNAL"}},
+        {"$unset": {"filter_reason": ""}}
+    )
+    broadcast_event("signal_deleted", {"count": result.modified_count})
+    return {"ok": True, "deleted": result.modified_count}
+
+
 @app.post("/api/backtest")
 async def api_backtest():
     from backtest import run_backtest

@@ -170,6 +170,70 @@ def run_backtest(source: str = "cryptovizor") -> dict:
     }
 
 
+def run_backtest_filtered(source: str = "cryptovizor", filter_prefix: str = "AI_SIGNAL") -> dict:
+    """Бектест только по сигналам с filter_reason начинающимся на filter_prefix."""
+    import re as _re
+
+    signals = list(_signals().find({
+        "source": source,
+        "filter_reason": {"$regex": f"^{filter_prefix}"},
+        "entry": {"$ne": None},
+        "pair": {"$ne": None},
+    }))
+
+    if not signals:
+        return {"total": 0, "with_result": 0, "error": "no AI signals"}
+
+    pairs = list({s.get("pair") for s in signals if s.get("pair")})
+    all_prices = {}
+    try:
+        all_prices.update(get_prices(pairs))
+    except Exception:
+        pass
+    missing = [p for p in pairs if p.replace("/", "").upper() not in all_prices]
+    if missing:
+        try:
+            all_prices.update(get_futures_prices_only(missing[:20]))
+        except Exception:
+            pass
+
+    results = []
+    for s in signals:
+        pair = s.get("pair", "")
+        norm = pair.replace("/", "").upper()
+        current = all_prices.get(norm) or s.get("pattern_price") or s.get("entry")
+        entry = s.get("entry")
+        direction = s.get("direction", "LONG")
+        pattern = s.get("pattern_name", "unknown")
+
+        if entry is None or current is None or entry <= 0:
+            continue
+
+        raw_pnl = ((current - entry) / entry) * 100
+        pnl = -raw_pnl if direction in ("SHORT", "SELL") else raw_pnl
+
+        results.append({
+            "pair": pair, "direction": direction, "pattern": pattern,
+            "entry": entry, "current": current, "pnl": round(pnl, 2),
+            "win": pnl > 0, "ai_score": s.get("ai_score"),
+        })
+
+    if not results:
+        return {"total": len(signals), "with_result": 0, "error": "no prices"}
+
+    wins = [r for r in results if r["win"]]
+    return {
+        "total": len(signals),
+        "with_result": len(results),
+        "overall_win_rate": round(len(wins) / len(results) * 100, 1),
+        "overall_avg_pnl": round(sum(r["pnl"] for r in results) / len(results), 2),
+        "total_pnl": round(sum(r["pnl"] for r in results), 2),
+        "best_pnl": round(max(r["pnl"] for r in results), 2),
+        "worst_pnl": round(min(r["pnl"] for r in results), 2),
+        "signals": sorted(results, key=lambda r: r["pnl"], reverse=True),
+    }
+
+
 def backtest_summary_for_ai(source: str = "cryptovizor") -> str:
     """Генерирует текстовый summary для Claude — используется как контекст
     при фильтрации новых сигналов."""
