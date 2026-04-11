@@ -1021,6 +1021,13 @@ async def _send_anomaly_alert(r: dict):
             wp = v.get("price", 0)
             wq = v.get("qty", 0)
             lines.append(f"🧱 Wall: <code>{side} @ {wp} ({wq})</code>")
+        elif t == "trade_speed":
+            lines.append(f"⚡ Speed: <code>×{v}</code> (ускорение сделок)")
+        elif t == "delta_cluster":
+            lines.append(f"📊 Delta: <code>{v:+.0f}</code> на уровне")
+        elif t == "ftt":
+            ftt_emoji = "🟢" if v == "LONG" else "🔴"
+            lines.append(f"{ftt_emoji} FTT: <b>{v}</b> (разворот на объёме)")
 
     text = "\n".join(lines)
     try:

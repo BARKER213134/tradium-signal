@@ -163,10 +163,10 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 {% if bot == 'anomaly' %}
 <!-- ── Anomaly tab ─────────────────────────────────────────────── -->
 <div style="display:flex;gap:12px;margin-bottom:20px;align-items:center;">
-  <button class="sync-btn" onclick="scanAnomalies()" id="anScanBtn">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/></svg>
-    <span id="anScanLabel">СКАНИРОВАТЬ</span>
-  </button>
+  <div class="status-pill" style="font-size:11px;">
+    <div class="dot"></div>
+    Автоскан каждые 5 мин
+  </div>
   <button class="delete-btn" onclick="clearAnomalies()">🗑 Очистить</button>
   <span id="anStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
 </div>
@@ -180,6 +180,9 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
         <th>Цена</th>
         <th>Напр.</th>
         <th>Score</th>
+        <th>Speed</th>
+        <th>Delta</th>
+        <th>FTT</th>
         <th>OI</th>
         <th>Funding</th>
         <th>L/S</th>
@@ -188,7 +191,7 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
       </tr>
     </thead>
     <tbody id="anBody">
-      <tr><td colspan="10" style="text-align:center;padding:60px;" class="text-muted">Автоскан каждые 5 мин. Или нажми СКАНИРОВАТЬ.</td></tr>
+      <tr><td colspan="13" style="text-align:center;padding:60px;" class="text-muted">Автоскан каждые 5 мин. Данные появятся автоматически.</td></tr>
     </tbody>
   </table>
 </div>
@@ -207,13 +210,16 @@ async function loadAnomalies() {
       const scoreCls = d.score >= 4 ? 'text-sell' : d.score >= 3 ? 'text-accent' : 'text-muted';
       const scoreBar = '🔴'.repeat(Math.min(d.score,5)) + '⚪'.repeat(Math.max(0,5-d.score));
 
-      let oi='—', funding='—', ls='—', taker='—', wall='—';
+      let oi='—', funding='—', ls='—', taker='—', wall='—', speed='—', delta='—', ftt='—';
       (d.anomalies||[]).forEach(a => {
         if (a.type==='oi_spike') oi = `<span class="${a.value>0?'text-buy':'text-sell'}">${a.value>0?'+':''}${a.value}%</span>`;
         if (a.type==='funding_extreme') funding = `<span class="${a.value>0?'text-sell':'text-buy'}">${a.value.toFixed(3)}%</span>`;
         if (a.type==='ls_extreme') ls = `<span class="${a.value>2?'text-sell':'text-buy'}">${a.value}</span>`;
         if (a.type==='taker_imbalance') taker = `<span class="${a.value>1?'text-buy':'text-sell'}">${a.value}</span>`;
         if (a.type==='wall') wall = `${a.value.side} @ ${a.value.price}`;
+        if (a.type==='trade_speed') speed = `<span class="text-accent">×${a.value}</span>`;
+        if (a.type==='delta_cluster') delta = `<span class="${a.value>0?'text-buy':'text-sell'}">${a.value>0?'+':''}${a.value}</span>`;
+        if (a.type==='ftt') ftt = `<span class="${a.value==='LONG'?'text-buy':'text-sell'}">${a.value}</span>`;
       });
 
       const pair = (d.pair||d.symbol||'').replace('/USDT','');
@@ -225,6 +231,9 @@ async function loadAnomalies() {
         <td class="mono">${d.price||'—'}</td>
         <td>${dir}</td>
         <td class="mono ${scoreCls} fw-700">${scoreBar}</td>
+        <td class="mono">${speed}</td>
+        <td class="mono">${delta}</td>
+        <td class="mono">${ftt}</td>
         <td class="mono">${oi}</td>
         <td class="mono">${funding}</td>
         <td class="mono">${ls}</td>
@@ -233,20 +242,6 @@ async function loadAnomalies() {
       </tr>`;
     }).join('');
   } catch {}
-}
-
-async function scanAnomalies() {
-  const btn = document.getElementById('anScanBtn');
-  const label = document.getElementById('anScanLabel');
-  btn.disabled = true; btn.classList.add('spinning'); label.textContent = 'СКАН…';
-  try {
-    const r = await fetch('/api/anomalies/scan', {method:'POST'});
-    const d = await r.json();
-    label.textContent = `+${d.found} аномалий`;
-    loadAnomalies();
-    setTimeout(() => { label.textContent = 'СКАНИРОВАТЬ'; }, 4000);
-  } catch(e) { label.textContent = 'ОШИБКА'; setTimeout(()=>{label.textContent='СКАНИРОВАТЬ'},3000); }
-  finally { btn.classList.remove('spinning'); btn.disabled = false; }
 }
 
 async function clearAnomalies() {

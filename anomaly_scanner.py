@@ -118,6 +118,156 @@ def check_taker_ratio(symbol: str, high: float = 1.5, low: float = 0.5) -> Optio
     return None
 
 
+def check_trade_speed(symbol: str, multiplier: float = 3.0) -> Optional[dict]:
+    """Speed Print аналог: количество сделок за последнюю минуту vs среднее.
+    Если > multiplier× → алгоритм или кит активен."""
+    try:
+        now_ms = int(time.time() * 1000)
+        one_min = 60 * 1000
+        # Последняя минута
+        r1 = httpx.get(f"{FAPI}/fapi/v1/aggTrades",
+                       params={"symbol": symbol, "startTime": now_ms - one_min, "endTime": now_ms, "limit": 1000},
+                       timeout=5)
+        if r1.status_code != 200:
+            return None
+        recent_count = len(r1.json())
+
+        # 10 минут назад (для среднего)
+        r2 = httpx.get(f"{FAPI}/fapi/v1/aggTrades",
+                       params={"symbol": symbol, "startTime": now_ms - 10 * one_min, "endTime": now_ms - 9 * one_min, "limit": 1000},
+                       timeout=5)
+        if r2.status_code != 200:
+            return None
+        avg_count = len(r2.json())
+
+        if avg_count <= 0:
+            return None
+
+        ratio = recent_count / avg_count
+        if ratio >= multiplier:
+            return {"type": "trade_speed", "value": round(ratio, 1), "trades_per_min": recent_count}
+    except Exception:
+        pass
+    return None
+
+
+def check_delta_clusters(symbol: str) -> Optional[dict]:
+    """Delta по ценовым уровням из aggTrades.
+    Группирует сделки по цене, считает buy-sell delta на каждом уровне.
+    Возвращает аномалию если на экстремуме сильный дисбаланс."""
+    try:
+        now_ms = int(time.time() * 1000)
+        r = httpx.get(f"{FAPI}/fapi/v1/aggTrades",
+                      params={"symbol": symbol, "startTime": now_ms - 5 * 60 * 1000, "limit": 1000},
+                      timeout=5)
+        if r.status_code != 200:
+            return None
+        trades = r.json()
+        if len(trades) < 50:
+            return None
+
+        # Определяем шаг группировки по цене
+        prices = [float(t["p"]) for t in trades]
+        price_range = max(prices) - min(prices)
+        if price_range <= 0:
+            return None
+        step = price_range / 20  # 20 уровней
+        if step <= 0:
+            step = 0.01
+
+        # Группируем
+        clusters = {}
+        for t in trades:
+            p = float(t["p"])
+            q = float(t["q"])
+            level = round(p / step) * step
+            if level not in clusters:
+                clusters[level] = {"buy": 0, "sell": 0}
+            if t.get("m"):  # maker = sell
+                clusters[level]["sell"] += q
+            else:
+                clusters[level]["buy"] += q
+
+        # Считаем delta на каждом уровне
+        deltas = []
+        for level, v in clusters.items():
+            delta = v["buy"] - v["sell"]
+            total = v["buy"] + v["sell"]
+            deltas.append({"level": round(level, 6), "delta": round(delta, 2), "total": round(total, 2)})
+
+        if not deltas:
+            return None
+
+        # Ищем экстремальный delta
+        max_delta = max(deltas, key=lambda d: abs(d["delta"]))
+        avg_total = sum(d["total"] for d in deltas) / len(deltas)
+
+        # Аномалия: delta > 60% от total на этом уровне И total > 2× среднего
+        if abs(max_delta["delta"]) > max_delta["total"] * 0.6 and max_delta["total"] > avg_total * 2:
+            return {
+                "type": "delta_cluster",
+                "value": max_delta["delta"],
+                "level": max_delta["level"],
+                "total": max_delta["total"],
+            }
+    except Exception:
+        pass
+    return None
+
+
+def check_ftt(symbol: str) -> Optional[dict]:
+    """FTT (Full Tail Turn): аномальный объём на экстремуме свечи + цена не пробила.
+    Зелёный = buy volume на лоу (LONG), Красный = sell volume на хае (SHORT)."""
+    try:
+        # Последние 3 свечи 1h
+        r = httpx.get(f"{FAPI}/fapi/v1/klines",
+                      params={"symbol": symbol, "interval": "1h", "limit": 3}, timeout=5)
+        if r.status_code != 200:
+            return None
+        candles = r.json()
+        if len(candles) < 3:
+            return None
+
+        # Текущая свеча
+        c = candles[-1]
+        o, h, l, cl, vol = float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])
+        body = abs(cl - o)
+        full_range = h - l
+        if full_range <= 0:
+            return None
+
+        upper_wick = h - max(o, cl)
+        lower_wick = min(o, cl) - l
+
+        # Средний объём предыдущих 2 свечей
+        avg_vol = (float(candles[-2][5]) + float(candles[-3][5])) / 2
+        if avg_vol <= 0:
+            return None
+
+        vol_ratio = vol / avg_vol
+
+        # FTT SHORT: длинная верхняя тень + объём выше среднего → отвержение высоких цен
+        if upper_wick > body * 2 and upper_wick > full_range * 0.5 and vol_ratio > 1.5:
+            return {
+                "type": "ftt",
+                "value": "SHORT",
+                "wick_ratio": round(upper_wick / full_range, 2),
+                "vol_ratio": round(vol_ratio, 1),
+            }
+
+        # FTT LONG: длинная нижняя тень + объём выше среднего → отвержение низких цен
+        if lower_wick > body * 2 and lower_wick > full_range * 0.5 and vol_ratio > 1.5:
+            return {
+                "type": "ftt",
+                "value": "LONG",
+                "wick_ratio": round(lower_wick / full_range, 2),
+                "vol_ratio": round(vol_ratio, 1),
+            }
+    except Exception:
+        pass
+    return None
+
+
 def check_orderbook_wall(symbol: str, multiplier: float = 10.0) -> Optional[dict]:
     """Ищет стены в order book (объём > multiplier × среднего)."""
     try:
@@ -178,6 +328,18 @@ def scan_symbol(symbol: str) -> dict:
     if wall:
         anomalies.append(wall)
 
+    speed = check_trade_speed(symbol)
+    if speed:
+        anomalies.append(speed)
+
+    delta = check_delta_clusters(symbol)
+    if delta:
+        anomalies.append(delta)
+
+    ftt = check_ftt(symbol)
+    if ftt:
+        anomalies.append(ftt)
+
     if not anomalies:
         return None
 
@@ -212,6 +374,16 @@ def scan_symbol(symbol: str) -> dict:
             long_signals += 1
         elif a["type"] == "taker_imbalance" and a["value"] < 0.7:
             short_signals += 1
+        elif a["type"] == "ftt":
+            if a["value"] == "LONG":
+                long_signals += 2  # FTT = сильный сигнал
+            else:
+                short_signals += 2
+        elif a["type"] == "delta_cluster":
+            if a["value"] > 0:
+                long_signals += 1
+            else:
+                short_signals += 1
 
     if long_signals > short_signals:
         direction = "LONG"
