@@ -756,8 +756,17 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
       body: JSON.stringify({pair, direction, entry: parseFloat(entry), pattern}),
     });
     const d = await r.json();
-    txt.textContent = d.ok ? d.analysis : ('Ошибка: ' + (d.error || ''));
+    const result = d.ok ? d.analysis : ('Ошибка: ' + (d.error || ''));
+    txt.textContent = result;
     if (btn) { btn.textContent = '✓ Анализ'; btn.style.color = 'var(--buy)'; btn.style.borderColor = 'var(--buy)'; }
+    // Сохраняем в БД
+    if (d.ok) {
+      fetch('/api/save-coin-analysis', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({pair, analysis: result}),
+      });
+    }
   } catch(e) {
     txt.textContent = 'Ошибка: ' + e.message;
   } finally {

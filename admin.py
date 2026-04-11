@@ -695,6 +695,21 @@ async def api_analyze_coin(payload: dict):
         return {"ok": False, "error": str(e)}
 
 
+@app.post("/api/save-coin-analysis")
+async def api_save_coin_analysis(payload: dict):
+    """Сохраняет анализ монеты в comment поле сигнала."""
+    from database import _signals
+    pair = payload.get("pair", "")
+    analysis = payload.get("analysis", "")
+    if not pair or not analysis:
+        return {"ok": False}
+    _signals().update_many(
+        {"source": "cryptovizor", "pair": pair, "comment": None},
+        {"$set": {"comment": analysis}},
+    )
+    return {"ok": True}
+
+
 @app.post("/api/backtest")
 async def api_backtest():
     from backtest import run_backtest
