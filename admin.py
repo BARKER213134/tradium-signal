@@ -760,10 +760,14 @@ async def api_scan_status():
     try:
         from watcher import anomaly_scan_state
         s = dict(anomaly_scan_state)
-        s["next_in"] = max(0, int(s.pop("next_at", 0) - _time.time()))
+        next_at = s.pop("next_at", 0)
+        if next_at > 0:
+            s["next_in"] = max(0, int(next_at - _time.time()))
+        else:
+            s["next_in"] = 300  # watcher ещё не тикал, ~5 мин
         return s
     except ImportError:
-        return {"running": False, "progress": 0, "total": 0, "found": 0, "batch": 0, "batches": 0, "current": "", "next_in": 0}
+        return {"running": False, "progress": 0, "total": 0, "found": 0, "batch": 0, "batches": 0, "current": "", "next_in": 300}
 
 
 @app.get("/api/anomaly-cluster")
