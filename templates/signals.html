@@ -219,7 +219,7 @@ async function loadAnomalies() {
         if (a.type==='wall') wall = `${a.value.side} @ ${a.value.price}`;
         if (a.type==='trade_speed') speed = `<span class="text-accent">×${a.value}</span>`;
         if (a.type==='delta_cluster') delta = `<span class="${a.value>0?'text-buy':'text-sell'}">${a.value>0?'+':''}${a.value}</span>`;
-        if (a.type==='ftt') ftt = `<span class="${a.value==='LONG'?'text-buy':'text-sell'}">${a.value}</span>`;
+        if (a.type==='ftt') ftt = `<span class="${a.value==='LONG'?'text-buy':'text-sell'}">${a.value} ${a.ftt_score||0}/5</span>`;
       });
 
       const pair = (d.pair||d.symbol||'').replace('/USDT','');

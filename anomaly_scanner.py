@@ -216,53 +216,133 @@ def check_delta_clusters(symbol: str) -> Optional[dict]:
 
 
 def check_ftt(symbol: str) -> Optional[dict]:
-    """FTT (Full Tail Turn): аномальный объём на экстремуме свечи + цена не пробила.
-    Зелёный = buy volume на лоу (LONG), Красный = sell volume на хае (SHORT)."""
+    """FTT (Full Tail Turn) — улучшенный алгоритм.
+
+    Проверяет:
+    1. Длинная тень на 1h свече (wick > 2× body)
+    2. Объём свечи выше среднего (> 1.3× SMA5)
+    3. aggTrades: delta на экстремуме (кто торговал на тени — покупатели или продавцы)
+    4. Несколько свечей: предыдущие свечи шли в направлении тени (тренд → разворот)
+    5. Закрытие свечи в правильной зоне (далеко от экстремума)
+
+    Score FTT: 1-5 (5 = идеальный FTT сигнал)
+    """
     try:
-        # Последние 3 свечи 1h
+        # Последние 5 свечей 1h
         r = httpx.get(f"{FAPI}/fapi/v1/klines",
-                      params={"symbol": symbol, "interval": "1h", "limit": 3}, timeout=5)
+                      params={"symbol": symbol, "interval": "1h", "limit": 5}, timeout=5)
         if r.status_code != 200:
             return None
         candles = r.json()
-        if len(candles) < 3:
+        if len(candles) < 5:
             return None
 
-        # Текущая свеча
         c = candles[-1]
         o, h, l, cl, vol = float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])
         body = abs(cl - o)
         full_range = h - l
-        if full_range <= 0:
+        if full_range <= 0 or body <= 0:
             return None
 
         upper_wick = h - max(o, cl)
         lower_wick = min(o, cl) - l
 
-        # Средний объём предыдущих 2 свечей
-        avg_vol = (float(candles[-2][5]) + float(candles[-3][5])) / 2
+        # SMA объёма за 4 предыдущие свечи
+        prev_vols = [float(candles[i][5]) for i in range(-5, -1)]
+        avg_vol = sum(prev_vols) / len(prev_vols) if prev_vols else vol
         if avg_vol <= 0:
             return None
-
         vol_ratio = vol / avg_vol
 
-        # FTT SHORT: длинная верхняя тень + объём выше среднего → отвержение высоких цен
-        if upper_wick > body * 2 and upper_wick > full_range * 0.5 and vol_ratio > 1.5:
-            return {
-                "type": "ftt",
-                "value": "SHORT",
-                "wick_ratio": round(upper_wick / full_range, 2),
-                "vol_ratio": round(vol_ratio, 1),
-            }
+        # Определяем направление FTT
+        is_upper_ftt = upper_wick > body * 1.5 and upper_wick > full_range * 0.45
+        is_lower_ftt = lower_wick > body * 1.5 and lower_wick > full_range * 0.45
 
-        # FTT LONG: длинная нижняя тень + объём выше среднего → отвержение низких цен
-        if lower_wick > body * 2 and lower_wick > full_range * 0.5 and vol_ratio > 1.5:
-            return {
-                "type": "ftt",
-                "value": "LONG",
-                "wick_ratio": round(lower_wick / full_range, 2),
-                "vol_ratio": round(vol_ratio, 1),
-            }
+        if not is_upper_ftt and not is_lower_ftt:
+            return None
+
+        ftt_dir = "SHORT" if is_upper_ftt else "LONG"
+        wick = upper_wick if is_upper_ftt else lower_wick
+
+        # ── Scoring FTT quality (1-5) ──────────────────────────
+
+        ftt_score = 0
+
+        # 1. Wick длина (чем длиннее тень, тем сильнее отвержение)
+        wick_pct = wick / full_range
+        if wick_pct > 0.7:
+            ftt_score += 2
+        elif wick_pct > 0.55:
+            ftt_score += 1
+
+        # 2. Объём выше среднего
+        if vol_ratio > 2.0:
+            ftt_score += 2
+        elif vol_ratio > 1.3:
+            ftt_score += 1
+
+        # 3. Закрытие далеко от экстремума (сильное отвержение)
+        if is_upper_ftt:
+            close_position = (h - cl) / full_range  # 1 = закрылся на лоу
+            if close_position > 0.7:
+                ftt_score += 1
+        else:
+            close_position = (cl - l) / full_range  # 1 = закрылся на хае
+            if close_position > 0.7:
+                ftt_score += 1
+
+        # 4. Предыдущие свечи шли в направлении тени (тренд → разворот)
+        prev_direction = 0
+        for i in range(-4, -1):
+            pc = candles[i]
+            if float(pc[4]) > float(pc[1]):
+                prev_direction += 1  # bullish
+            else:
+                prev_direction -= 1  # bearish
+
+        if is_upper_ftt and prev_direction >= 2:  # был рост → теперь SHORT
+            ftt_score += 1
+        elif is_lower_ftt and prev_direction <= -2:  # было падение → теперь LONG
+            ftt_score += 1
+
+        # 5. aggTrades delta на экстремуме (кто торговал на тени)
+        try:
+            now_ms = int(time.time() * 1000)
+            tr = httpx.get(f"{FAPI}/fapi/v1/aggTrades",
+                           params={"symbol": symbol, "startTime": now_ms - 60 * 60 * 1000, "limit": 500},
+                           timeout=5)
+            if tr.status_code == 200:
+                trades = tr.json()
+                # Делим сделки на "в зоне тени" и "в зоне тела"
+                if is_upper_ftt:
+                    wick_zone = max(o, cl)  # тень выше тела
+                    wick_trades_sell = sum(float(t["q"]) for t in trades if float(t["p"]) > wick_zone and t.get("m"))
+                    wick_trades_buy = sum(float(t["q"]) for t in trades if float(t["p"]) > wick_zone and not t.get("m"))
+                    # SHORT FTT: на верхней тени должны доминировать продажи
+                    if wick_trades_sell > wick_trades_buy * 1.5 and wick_trades_sell > 0:
+                        ftt_score += 1
+                else:
+                    wick_zone = min(o, cl)
+                    wick_trades_buy = sum(float(t["q"]) for t in trades if float(t["p"]) < wick_zone and not t.get("m"))
+                    wick_trades_sell = sum(float(t["q"]) for t in trades if float(t["p"]) < wick_zone and t.get("m"))
+                    # LONG FTT: на нижней тени должны доминировать покупки
+                    if wick_trades_buy > wick_trades_sell * 1.5 and wick_trades_buy > 0:
+                        ftt_score += 1
+        except Exception:
+            pass
+
+        # Минимум 2 балла для сигнала
+        if ftt_score < 2:
+            return None
+
+        return {
+            "type": "ftt",
+            "value": ftt_dir,
+            "ftt_score": min(ftt_score, 5),
+            "wick_ratio": round(wick_pct, 2),
+            "vol_ratio": round(vol_ratio, 1),
+            "close_position": round(close_position, 2),
+        }
     except Exception:
         pass
     return None

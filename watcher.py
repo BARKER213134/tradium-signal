@@ -1027,7 +1027,8 @@ async def _send_anomaly_alert(r: dict):
             lines.append(f"📊 Delta: <code>{v:+.0f}</code> на уровне")
         elif t == "ftt":
             ftt_emoji = "🟢" if v == "LONG" else "🔴"
-            lines.append(f"{ftt_emoji} FTT: <b>{v}</b> (разворот на объёме)")
+            ftt_s = a.get("ftt_score", 0)
+            lines.append(f"{ftt_emoji} FTT: <b>{v}</b> ({ftt_s}/5) wick={a.get('wick_ratio',0)} vol=×{a.get('vol_ratio',0)}")
 
     text = "\n".join(lines)
     try:
