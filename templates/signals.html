@@ -162,14 +162,102 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 
 {% if bot == 'anomaly' %}
 <!-- ── Anomaly tab ─────────────────────────────────────────────── -->
-<div class="bot-placeholder">
-  <div class="bot-placeholder-inner">
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-    <h3>Аномалии</h3>
-    <p>Обнаружение аномалий по OI, Funding Rate, Long/Short ratio.<br>Подключение к Binance Futures data + Resonance Vision.</p>
-    <p style="margin-top:12px;color:var(--cyan);font-size:12px;">Алерты → @volumebottrendbot</p>
-  </div>
+<div style="display:flex;gap:12px;margin-bottom:20px;align-items:center;">
+  <button class="sync-btn" onclick="scanAnomalies()" id="anScanBtn">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/></svg>
+    <span id="anScanLabel">СКАНИРОВАТЬ</span>
+  </button>
+  <button class="delete-btn" onclick="clearAnomalies()">🗑 Очистить</button>
+  <span id="anStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
 </div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Время</th>
+        <th>Пара</th>
+        <th>Цена</th>
+        <th>Напр.</th>
+        <th>Score</th>
+        <th>OI</th>
+        <th>Funding</th>
+        <th>L/S</th>
+        <th>Taker</th>
+        <th>Стена</th>
+      </tr>
+    </thead>
+    <tbody id="anBody">
+      <tr><td colspan="10" style="text-align:center;padding:60px;" class="text-muted">Автоскан каждые 5 мин. Или нажми СКАНИРОВАТЬ.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function loadAnomalies() {
+  try {
+    const r = await fetch('/api/anomalies');
+    const items = await r.json();
+    document.getElementById('anStats').textContent = items.length + ' аномалий';
+    if (!items.length) return;
+    document.getElementById('anBody').innerHTML = items.map(d => {
+      const dir = d.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>'
+        : d.direction === 'SHORT' ? '<span class="badge badge-sell">SHORT</span>'
+        : '<span class="text-muted">—</span>';
+      const scoreCls = d.score >= 4 ? 'text-sell' : d.score >= 3 ? 'text-accent' : 'text-muted';
+      const scoreBar = '🔴'.repeat(Math.min(d.score,5)) + '⚪'.repeat(Math.max(0,5-d.score));
+
+      let oi='—', funding='—', ls='—', taker='—', wall='—';
+      (d.anomalies||[]).forEach(a => {
+        if (a.type==='oi_spike') oi = `<span class="${a.value>0?'text-buy':'text-sell'}">${a.value>0?'+':''}${a.value}%</span>`;
+        if (a.type==='funding_extreme') funding = `<span class="${a.value>0?'text-sell':'text-buy'}">${a.value.toFixed(3)}%</span>`;
+        if (a.type==='ls_extreme') ls = `<span class="${a.value>2?'text-sell':'text-buy'}">${a.value}</span>`;
+        if (a.type==='taker_imbalance') taker = `<span class="${a.value>1?'text-buy':'text-sell'}">${a.value}</span>`;
+        if (a.type==='wall') wall = `${a.value.side} @ ${a.value.price}`;
+      });
+
+      const pair = (d.pair||d.symbol||'').replace('/USDT','');
+      const time = d.detected_at ? new Date(d.detected_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+
+      return `<tr>
+        <td class="mono text-muted" style="font-size:11px;">${time}</td>
+        <td class="mono text-accent fw-700">${pair}</td>
+        <td class="mono">${d.price||'—'}</td>
+        <td>${dir}</td>
+        <td class="mono ${scoreCls} fw-700">${scoreBar}</td>
+        <td class="mono">${oi}</td>
+        <td class="mono">${funding}</td>
+        <td class="mono">${ls}</td>
+        <td class="mono">${taker}</td>
+        <td class="mono text-muted" style="font-size:11px;">${wall}</td>
+      </tr>`;
+    }).join('');
+  } catch {}
+}
+
+async function scanAnomalies() {
+  const btn = document.getElementById('anScanBtn');
+  const label = document.getElementById('anScanLabel');
+  btn.disabled = true; btn.classList.add('spinning'); label.textContent = 'СКАН…';
+  try {
+    const r = await fetch('/api/anomalies/scan', {method:'POST'});
+    const d = await r.json();
+    label.textContent = `+${d.found} аномалий`;
+    loadAnomalies();
+    setTimeout(() => { label.textContent = 'СКАНИРОВАТЬ'; }, 4000);
+  } catch(e) { label.textContent = 'ОШИБКА'; setTimeout(()=>{label.textContent='СКАНИРОВАТЬ'},3000); }
+  finally { btn.classList.remove('spinning'); btn.disabled = false; }
+}
+
+async function clearAnomalies() {
+  if (!confirm('Очистить все аномалии?')) return;
+  await fetch('/api/anomalies/clear', {method:'POST'});
+  loadAnomalies();
+}
+
+loadAnomalies();
+setInterval(loadAnomalies, 60000);
+</script>
 
 {% elif bot == 'cryptovizor' %}
 <!-- ── Cryptovizor tabs ───────────────────────────────────────────── -->

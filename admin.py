@@ -294,6 +294,9 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
             "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
         })
 
+    # API для аномалий
+    pass  # endpoints ниже
+
     if bot == "cryptovizor":
         cv_tab = tab if tab in ("watching", "active", "ai_signal", "backtest", "ai_settings") else "watching"
         if cv_tab == "watching":
@@ -722,6 +725,47 @@ async def api_analyze_coin(payload: dict):
         return {"ok": True, "analysis": text}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/anomalies")
+async def api_anomalies():
+    from database import _anomalies
+    docs = list(_anomalies().find().sort("detected_at", -1).limit(100))
+    for d in docs:
+        d["_id"] = str(d["_id"])
+        if d.get("detected_at"):
+            d["detected_at"] = d["detected_at"].isoformat() if hasattr(d["detected_at"], "isoformat") else str(d["detected_at"])
+    return docs
+
+
+@app.post("/api/anomalies/scan")
+async def api_anomalies_scan():
+    """Ручной запуск скана аномалий."""
+    from anomaly_scanner import get_all_futures_pairs, scan_batch
+    from database import _anomalies, utcnow
+
+    pairs = await asyncio.to_thread(get_all_futures_pairs)
+    results = await asyncio.to_thread(scan_batch, pairs[:100], 2)  # первые 100 для ручного
+
+    now = utcnow()
+    added = 0
+    for r in results:
+        doc = {
+            "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
+            "score": r["score"], "direction": r["direction"],
+            "anomalies": r["anomalies"], "detected_at": now,
+        }
+        _anomalies().insert_one(doc)
+        added += 1
+
+    return {"ok": True, "scanned": len(pairs[:100]), "found": added}
+
+
+@app.post("/api/anomalies/clear")
+async def api_anomalies_clear():
+    from database import _anomalies
+    r = _anomalies().delete_many({})
+    return {"ok": True, "deleted": r.deleted_count}
 
 
 @app.post("/api/save-coin-analysis")

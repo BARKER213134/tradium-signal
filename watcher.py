@@ -497,8 +497,12 @@ async def _check_once():
 
         # Дозаполняем анализ для AI сигналов без comment
         await _fill_missing_ai_analysis(db)
-    finally:
-        db.close()
+
+    # Аномалии — вне db сессии (свой MongoDB доступ)
+    try:
+        await _check_anomalies()
+    except Exception as e:
+        logger.error(f"Anomaly scan error: {e}")
 
 
 async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: float,
@@ -908,6 +912,122 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
         logger.info(f"AI signal alert sent #{signal.id}")
     except Exception as e:
         logger.error(f"AI signal alert fail: {e}")
+
+
+_anomaly_batch_idx = 0
+_ANOMALY_INTERVAL = 20  # каждый 20-й тик (20×15с = 5 мин)
+_anomaly_tick = 0
+
+
+async def _check_anomalies():
+    """Сканирует фьючерсные пары батчами. Полный цикл за 2 тика (10 мин)."""
+    global _anomaly_batch_idx, _anomaly_tick
+    _anomaly_tick += 1
+    if _anomaly_tick % _ANOMALY_INTERVAL != 0:
+        return
+
+    from anomaly_scanner import get_all_futures_pairs, scan_batch
+    from database import _anomalies, utcnow
+
+    pairs = await asyncio.to_thread(get_all_futures_pairs)
+    if not pairs:
+        return
+
+    # Разбиваем на 2 батча
+    mid = len(pairs) // 2
+    batch = pairs[:mid] if _anomaly_batch_idx == 0 else pairs[mid:]
+    _anomaly_batch_idx = (_anomaly_batch_idx + 1) % 2
+
+    logger.info(f"Anomaly scan batch {_anomaly_batch_idx}: {len(batch)} pairs")
+    results = await asyncio.to_thread(scan_batch, batch, 2)
+
+    if not results:
+        return
+
+    now = utcnow()
+    for r in results:
+        # Проверяем дубликат (та же пара за последние 30 мин)
+        existing = _anomalies().find_one({
+            "symbol": r["symbol"],
+            "detected_at": {"$gte": __import__('datetime').datetime.utcnow() - __import__('datetime').timedelta(minutes=30)},
+        })
+        if existing:
+            continue
+
+        doc = {
+            "symbol": r["symbol"],
+            "pair": r["pair"],
+            "price": r["price"],
+            "score": r["score"],
+            "direction": r["direction"],
+            "anomalies": r["anomalies"],
+            "detected_at": now,
+        }
+        _anomalies().insert_one(doc)
+        logger.info(f"Anomaly: {r['symbol']} score={r['score']} dir={r['direction']}")
+
+        # Алерт в бот
+        if r["score"] >= 3:
+            await _send_anomaly_alert(r)
+
+    _broadcast("anomaly_update", {"count": len(results)})
+
+
+async def _send_anomaly_alert(r: dict):
+    """Отправляет алерт об аномалии в BOT3."""
+    from config import BOT3_BOT_TOKEN, ADMIN_CHAT_ID
+    if not BOT3_BOT_TOKEN or not ADMIN_CHAT_ID:
+        return
+
+    # Используем бот который уже инициализирован или создаём одноразовый
+    target = _bot4 or _bot2 or _bot  # fallback
+    # Попробуем BOT3 если есть
+    try:
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        bot3 = Bot(token=BOT3_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    except Exception:
+        bot3 = target
+
+    if not bot3:
+        return
+
+    dir_emoji = "🟢" if r["direction"] == "LONG" else "🔴" if r["direction"] == "SHORT" else "⚪"
+    pair = r["pair"].replace("/USDT", "")
+    score_bar = "🔴" * r["score"] + "⚪" * (5 - r["score"])
+
+    lines = [
+        f"⚠️ <b>АНОМАЛИЯ · {pair}/USDT</b>",
+        f"",
+        f"Score: <b>{r['score']}/5</b> {score_bar}",
+        f"Направление: {dir_emoji} <b>{r['direction']}</b>",
+        f"Цена: <code>{r['price']}</code>",
+        f"",
+    ]
+    for a in r["anomalies"]:
+        t = a["type"]
+        v = a["value"]
+        if t == "oi_spike":
+            lines.append(f"📊 OI: <code>{v:+.1f}%</code>")
+        elif t == "funding_extreme":
+            lines.append(f"💰 Funding: <code>{v:.4f}%</code>")
+        elif t == "ls_extreme":
+            lines.append(f"📈 L/S Ratio: <code>{v:.2f}</code>")
+        elif t == "taker_imbalance":
+            lines.append(f"🔄 Taker B/S: <code>{v:.2f}</code>")
+        elif t == "wall":
+            side = v.get("side", "?")
+            wp = v.get("price", 0)
+            wq = v.get("qty", 0)
+            lines.append(f"🧱 Wall: <code>{side} @ {wp} ({wq})</code>")
+
+    text = "\n".join(lines)
+    try:
+        await bot3.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
+        await bot3.session.close()
+    except Exception as e:
+        logger.error(f"Anomaly alert fail: {e}")
 
 
 async def start_watcher():

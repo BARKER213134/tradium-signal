@@ -50,6 +50,10 @@ def _events() -> Collection:
     return _get_db().events
 
 
+def _anomalies() -> Collection:
+    return _get_db().anomalies
+
+
 
 
 def _counters() -> Collection:
@@ -485,4 +489,9 @@ def init_db():
     ev.create_index("signal_id")
     ev.create_index("at")
     ev.create_index("type")
+
+    an = _anomalies()
+    an.create_index("symbol")
+    an.create_index("score")
+    an.create_index("detected_at")
 
