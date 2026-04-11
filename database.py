@@ -18,6 +18,7 @@ from typing import Any, Iterable, Optional
 
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.collection import Collection
+import gridfs
 
 from config import MONGO_URL, MONGO_DB
 
@@ -58,6 +59,35 @@ def _anomalies() -> Collection:
 
 def _counters() -> Collection:
     return _get_db().counters
+
+
+# ─── GridFS для графиков ──────────────────────────────────────────────
+_fs = None
+
+
+def _get_fs() -> gridfs.GridFS:
+    global _fs
+    if _fs is None:
+        _fs = gridfs.GridFS(_get_db(), collection="charts")
+    return _fs
+
+
+def save_chart(signal_id: int, data: bytes, filename: str = "", content_type: str = "image/jpeg"):
+    """Сохраняет график в GridFS. Перезаписывает если уже есть."""
+    fs = _get_fs()
+    # Удаляем старый если есть
+    for old in fs.find({"signal_id": signal_id}):
+        fs.delete(old._id)
+    fs.put(data, signal_id=signal_id, filename=filename, content_type=content_type)
+
+
+def get_chart(signal_id: int) -> bytes | None:
+    """Возвращает байты графика из GridFS."""
+    fs = _get_fs()
+    f = fs.find_one({"signal_id": signal_id}, sort=[("uploadDate", DESCENDING)])
+    if f:
+        return f.read()
+    return None
 
 
 # ─── Event log ─────────────────────────────────────────────────────────

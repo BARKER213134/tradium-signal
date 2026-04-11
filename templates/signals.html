@@ -2002,7 +2002,7 @@ function renderSignal(s) {
 
   // Chart
   const chartHtml = s.has_chart
-    ? `<div class="modal-chart-wrap"><img src="/chart/${s.id}" alt="chart"></div>`
+    ? `<div class="modal-chart-wrap"><img src="/chart/${s.id}" alt="chart" onerror="this.parentElement.innerHTML='<div class=\\'modal-chart-empty\\'>График недоступен (файл удалён при деплое)</div>'"></div>`
     : `<div class="modal-chart-empty">График отсутствует</div>`;
 
   // Trend dots

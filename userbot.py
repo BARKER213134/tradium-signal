@@ -152,6 +152,15 @@ async def handle_photo_message(event, client):
         logger.error(f"Ошибка скачивания графика: {e}")
         return
 
+    # Сохраняем в GridFS (переживёт деплой)
+    try:
+        from database import save_chart
+        with open(chart_path, "rb") as f:
+            save_chart(signal_db_id, f.read(), filename=chart_filename)
+        logger.info(f"График сохранён в GridFS: #{signal_db_id}")
+    except Exception as e:
+        logger.error(f"GridFS save error: {e}")
+
     # Сохраняем путь к графику в БД
     db = SessionLocal()
     try:

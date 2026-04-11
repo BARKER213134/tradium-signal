@@ -214,6 +214,13 @@ def _resolve_chart_path(p: str) -> str:
 
 @app.get("/chart/{signal_id}")
 async def serve_chart(signal_id: int, db: Session = Depends(get_db)):
+    # Сначала GridFS (переживает деплой)
+    from database import get_chart
+    chart_data = await asyncio.to_thread(get_chart, signal_id)
+    if chart_data:
+        return Response(content=chart_data, media_type="image/jpeg")
+
+    # Фоллбэк на локальный файл
     signal = await asyncio.to_thread(
         lambda: db.query(Signal).filter(Signal.id == signal_id).first()
     )
