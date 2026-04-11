@@ -758,7 +758,14 @@ async def _check_ai_signals(db):
             norm = (s.pair or "").replace("/", "").upper()
             prices = await get_prices_any([s.pair])
             current = prices.get(norm)
-            hour = s.pattern_triggered_at.hour if s.pattern_triggered_at else 0
+            _pt = s.pattern_triggered_at
+            if _pt and not hasattr(_pt, 'hour'):
+                try:
+                    from datetime import datetime as _dt
+                    _pt = _dt.fromisoformat(str(_pt))
+                except Exception:
+                    _pt = None
+            hour = _pt.hour if _pt else 0
 
             # Если есть сохранённые критерии — используем правила
             if has_criteria:

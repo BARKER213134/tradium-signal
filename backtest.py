@@ -13,6 +13,18 @@ import logging
 from datetime import datetime, timezone
 
 from database import _signals, utcnow
+
+
+def _safe_hour(dt_or_str) -> int:
+    """Извлекает час из datetime или строки."""
+    if not dt_or_str:
+        return 0
+    if hasattr(dt_or_str, "hour"):
+        return dt_or_str.hour
+    try:
+        return datetime.fromisoformat(str(dt_or_str)).hour
+    except Exception:
+        return 0
 from exchange import get_futures_prices_only, get_prices
 
 logger = logging.getLogger(__name__)
@@ -87,7 +99,7 @@ def run_backtest(source: str = "cryptovizor") -> dict:
         win = pnl > 0
 
         received = s.get("received_at")
-        hour = received.hour if received else 0
+        hour = _safe_hour(received)
 
         results.append({
             "pair": pair,
