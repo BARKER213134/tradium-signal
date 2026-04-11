@@ -497,6 +497,8 @@ async def _check_once():
 
         # Дозаполняем анализ для AI сигналов без comment
         await _fill_missing_ai_analysis(db)
+    finally:
+        db.close()
 
     # Аномалии — вне db сессии (свой MongoDB доступ)
     try:
