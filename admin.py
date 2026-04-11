@@ -643,14 +643,12 @@ async def api_backtest():
 
 @app.post("/api/backtest/save")
 async def api_backtest_save(payload: dict):
-    """Сохраняет результат бектеста в MongoDB."""
+    """Сохраняет результат бектеста в MongoDB (включая все сигналы)."""
     from database import _get_db, utcnow
-    # Убираем signals array (слишком большой для хранения)
-    to_save = {k: v for k, v in payload.items() if k != "signals"}
-    to_save["saved_at"] = str(utcnow())
+    payload["saved_at"] = str(utcnow())
     _get_db().settings.update_one(
         {"_id": "last_backtest"},
-        {"$set": to_save},
+        {"$set": payload},
         upsert=True,
     )
     return {"ok": True}
