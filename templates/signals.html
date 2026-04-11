@@ -493,6 +493,8 @@ async function deleteHistory(id) {
   loadHistory();
 }
 
+const coinAnalysisCache = {};
+
 async function analyzeCoin(idx) {
   if (!btData || !btData.signals || !btData.signals[idx]) return;
   const s = btData.signals[idx];
@@ -507,6 +509,13 @@ async function analyzeCoin(idx) {
   }
 
   row.style.display = 'table-row';
+
+  // Если уже анализировали — показываем кеш
+  if (coinAnalysisCache[idx]) {
+    txt.textContent = coinAnalysisCache[idx];
+    return;
+  }
+
   btn.textContent = '…';
   btn.disabled = true;
   txt.textContent = 'Анализирую…';
@@ -525,7 +534,9 @@ async function analyzeCoin(idx) {
       }),
     });
     const d = await r.json();
-    txt.textContent = d.ok ? d.analysis : ('Ошибка: ' + (d.error || ''));
+    const result = d.ok ? d.analysis : ('Ошибка: ' + (d.error || ''));
+    txt.textContent = result;
+    coinAnalysisCache[idx] = result;
   } catch(e) {
     txt.textContent = 'Ошибка: ' + e.message;
   } finally {
