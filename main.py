@@ -122,7 +122,7 @@ async def main():
         except Exception as e:
             logger.error(f"BOT4 init fail: {e}")
 
-    setup_watcher(bot, ADMIN_CHAT_ID, bot2=bot2, bot3=bot3, bot4=bot4)
+    setup_watcher(bot, ADMIN_CHAT_ID, bot2=bot2, bot4=bot4)
 
     logger.info("Запуск admin / bots / userbot / watcher…")
     tasks = [
