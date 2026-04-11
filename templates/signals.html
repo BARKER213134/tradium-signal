@@ -500,11 +500,11 @@ async function analyzeCoin(idx) {
   if (!row || !txt || !btn) return;
 
   // Toggle
-  if (row.style.display === 'table-row') {
+  if (row.style.display !== 'none') {
     row.style.display = 'none';
     return;
   }
-  row.style.display = 'table-row';
+  row.style.display = '';
 
   // Если уже есть сохранённый анализ — показываем без запроса
   if (s._analysis) {
