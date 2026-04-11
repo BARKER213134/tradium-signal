@@ -567,6 +567,8 @@ async function analyzeCoin(idx) {
   }
 }
 
+let lastAiBacktestPairs = [];
+
 async function startAiBacktest() {
   const btn = document.getElementById('btAiBtn');
   const label = document.getElementById('btAiLabel');
@@ -576,6 +578,10 @@ async function startAiBacktest() {
     const d = await r.json();
     if (d.error) { alert(d.error); return; }
 
+    // Запоминаем какие пары были в этом бектесте
+    lastAiBacktestPairs = (d.signals||[]).map(s => s.pair);
+
+    // Очищаем предыдущие результаты
     document.getElementById('btAiResult').style.display = 'block';
     const cards = [
       {label:'AI Сигналов', value:d.with_result, cls:''},
@@ -610,19 +616,36 @@ async function startAiBacktest() {
 }
 
 async function clearAiSignals() {
-  if (!confirm('Очистить AI сигналы?')) return;
-  const r = await fetch('/api/signals/clear-ai', {method:'POST'});
+  if (!lastAiBacktestPairs.length) {
+    alert('Сначала запусти "БЕКТЕСТ AI" чтобы определить какие сигналы очистить.');
+    return;
+  }
+  if (!confirm(`Очистить ${lastAiBacktestPairs.length} AI сигналов по которым провёлся бектест?`)) return;
+  const r = await fetch('/api/signals/clear-by-pairs', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({pairs: lastAiBacktestPairs, filter: 'ai'}),
+  });
   const d = await r.json();
   if (d.ok) { alert('Удалено ' + d.deleted); location.reload(); }
 }
 
 async function clearProcessed() {
-  if (!confirm('Удалить все отработанные сигналы из вкладки "Сигнал"? Бектест уже сохранён в AI Настройках.')) return;
+  if (!btData || !btData.signals || !btData.signals.length) {
+    alert('Сначала запусти "НАЧАТЬ БЕКТЕСТ" чтобы определить какие сигналы очистить.');
+    return;
+  }
+  const pairs = btData.signals.map(s => s.pair);
+  if (!confirm(`Удалить ${pairs.length} сигналов по которым провёлся бектест?`)) return;
   try {
-    const r = await fetch('/api/signals/clear-processed', {method: 'POST'});
+    const r = await fetch('/api/signals/clear-by-pairs', {
+      method: 'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({pairs: pairs, filter: 'pattern'}),
+    });
     const d = await r.json();
     if (d.ok) {
-      alert(`Удалено ${d.deleted} сигналов. Вкладка "Сигнал" очищена для новых.`);
+      alert(`Удалено ${d.deleted} сигналов.`);
       location.reload();
     }
   } catch(e) { alert('Ошибка: ' + e.message); }

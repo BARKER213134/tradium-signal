@@ -735,16 +735,59 @@ async def api_backtest_ai():
     return await asyncio.to_thread(run_backtest_filtered, "cryptovizor", "AI_SIGNAL")
 
 
-@app.post("/api/signals/clear-ai")
-async def api_clear_ai():
-    """Очищает AI сигналы (сбрасывает filter_reason)."""
-    from database import _signals as _sc
-    result = _sc().update_many(
-        {"source": "cryptovizor", "filter_reason": {"$regex": "^AI_SIGNAL"}},
-        {"$unset": {"filter_reason": ""}}
-    )
-    broadcast_event("signal_deleted", {"count": result.modified_count})
-    return {"ok": True, "deleted": result.modified_count}
+@app.post("/api/signals/clear-by-pairs")
+async def api_clear_by_pairs(payload: dict):
+    """Удаляет сигналы по списку пар из бектеста + сохраняет summary."""
+    from database import _signals as _sc, _get_db, utcnow
+    pairs = payload.get("pairs", [])
+    filter_type = payload.get("filter", "pattern")  # "pattern" или "ai"
+
+    if not pairs:
+        return {"ok": True, "deleted": 0}
+
+    # Собираем данные для summary
+    query = {"source": "cryptovizor", "pair": {"$in": pairs}}
+    if filter_type == "ai":
+        query["filter_reason"] = {"$regex": "^AI_SIGNAL"}
+    else:
+        query["status"] = {"$in": ["ПАТТЕРН", "VOLUME"]}
+
+    signals = list(_sc().find(query, {"pair":1, "direction":1, "pattern_name":1, "entry":1, "pattern_price":1}))
+
+    if not signals:
+        return {"ok": True, "deleted": 0}
+
+    # Summary
+    coins = []
+    for s in signals:
+        entry = s.get("entry") or 0
+        current = s.get("pattern_price") or entry
+        pnl = ((current - entry) / entry * 100) if entry > 0 else 0
+        if s.get("direction") in ("SHORT", "SELL"):
+            pnl = -pnl
+        coins.append({
+            "pair": (s.get("pair") or "").replace("/USDT", ""),
+            "dir": s.get("direction", ""),
+            "pattern": s.get("pattern_name", ""),
+            "pnl": round(pnl, 2),
+        })
+
+    wins = sum(1 for c in coins if c["pnl"] > 0)
+    summary = {
+        "date": str(utcnow()),
+        "type": f"backtest_{filter_type}",
+        "count": len(coins),
+        "win_rate": round(wins / len(coins) * 100, 1) if coins else 0,
+        "total_pnl": round(sum(c["pnl"] for c in coins), 2),
+        "avg_pnl": round(sum(c["pnl"] for c in coins) / len(coins), 2) if coins else 0,
+        "coins": coins,
+    }
+    _get_db().backtest_history.insert_one(summary)
+
+    # Удаляем
+    result = _sc().delete_many(query)
+    broadcast_event("signal_deleted", {"count": result.deleted_count})
+    return {"ok": True, "deleted": result.deleted_count, "summary": summary}
 
 
 @app.post("/api/backtest")
