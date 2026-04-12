@@ -409,13 +409,25 @@ async function runAnomalyBacktest() {
       }
     }
 
-    // Лучшие/Худшие
+    // Лучшие/Худшие — кликабельные с графиком
+    let _btDealIdx = 0;
     const dealRow = (r) => {
+      const i = _btDealIdx++;
+      const sym = r.symbol;
       const pc = r.pnl >= 0 ? 'color:var(--buy)' : 'color:var(--sell)';
-      return row([{v:r.symbol.replace('USDT','')},{v:r.direction},{v:(r.pnl>=0?'+':'')+r.pnl+'%',s:pc},{v:r.score}]);
+      const entry = r.entry || 0;
+      const time = r.detected_at ? new Date(r.detected_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+      return `<tr style="cursor:pointer;" onclick="toggleBtDeal('btd_${i}','${sym}')">
+        ${[{v:sym.replace('USDT','')},{v:r.direction},{v:(r.pnl>=0?'+':'')+r.pnl+'%',s:pc},{v:r.score},{v:time,s:'color:var(--muted);font-size:10px'}].map(c=>`<td class="mono" style="padding:5px 6px;${c.s||''}">${c.v}</td>`).join('')}
+      </tr>
+      <tr id="btd_${i}" style="display:none;" data-open="0">
+        <td colspan="5" style="padding:0;background:var(--dark-2);">
+          <div id="btdtv_${i}" style="height:300px;"></div>
+        </td>
+      </tr>`;
     };
-    let bestRows = th(['Пара','Напр.','PnL','Score']) + (d.best||[]).map(dealRow).join('');
-    let worstRows = th(['Пара','Напр.','PnL','Score']) + (d.worst||[]).map(dealRow).join('');
+    let bestRows = th(['Пара','Напр.','PnL','Score','Время']) + (d.best||[]).map(dealRow).join('');
+    let worstRows = th(['Пара','Напр.','PnL','Score','Время']) + (d.worst||[]).map(dealRow).join('');
 
     // По часам
     let hourRows = '';
@@ -452,6 +464,38 @@ async function runAnomalyBacktest() {
     box.style.display = 'block';
   } finally {
     btn.disabled = false; btn.textContent = '📊 Бектест аномалий';
+  }
+}
+
+function toggleBtDeal(rowId, symbol) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  if (row.dataset.open === '1') {
+    row.style.display = 'none';
+    row.dataset.open = '0';
+    return;
+  }
+  row.style.display = 'table-row';
+  row.dataset.open = '1';
+
+  const idx = rowId.replace('btd_','');
+  const tvDiv = document.getElementById('btdtv_'+idx);
+  if (tvDiv && !tvDiv.dataset.loaded) {
+    tvDiv.dataset.loaded = '1';
+    tvDiv.innerHTML = `<div id="btdtvw${idx}" style="height:100%;"></div>`;
+    const loadTV = () => {
+      new TradingView.widget({container_id:'btdtvw'+idx, symbol:'BINANCE:'+symbol, interval:'60',
+        timezone:'Etc/UTC', theme:'dark', style:'1', locale:'ru', enable_publishing:false,
+        hide_side_toolbar:true, hide_top_toolbar:false, allow_symbol_change:false,
+        save_image:false, width:'100%', height:'100%'});
+    };
+    if (window.TradingView) loadTV();
+    else {
+      const sc = document.createElement('script');
+      sc.src = 'https://s3.tradingview.com/tv.js';
+      sc.onload = loadTV;
+      document.head.appendChild(sc);
+    }
   }
 }
 
