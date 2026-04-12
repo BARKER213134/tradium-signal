@@ -1013,7 +1013,7 @@ async function clearProcessed() {
     </thead>
     <tbody>
       {% for s in signals %}
-      <tr class="signal-row{% if cv_tab == 'ai_signal' %} ai-clickable{% endif %}{% if cv_tab == 'ai_signal' and s.comment %} ai-done{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if cv_tab == 'ai_signal' %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
+      <tr class="signal-row{% if cv_tab in ('active', 'ai_signal') %} ai-clickable{% endif %}{% if cv_tab in ('active', 'ai_signal') and s.comment %} ai-done{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if cv_tab in ('active', 'ai_signal') %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
         <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT','') }}</td>
@@ -1041,7 +1041,7 @@ async function clearProcessed() {
           {% else %}<span class="badge badge-status">СЛЕЖУ</span>{% endif %}
         </td>
       </tr>
-      {% if cv_tab == 'ai_signal' %}
+      {% if cv_tab in ('active', 'ai_signal') %}
       <tr id="airow{{ loop.index }}" style="display:none;">
         <td colspan="14" style="padding:16px 18px;background:var(--dark-2);border-bottom:1px solid var(--border);">
           <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">AI АНАЛИЗ · {{ (s.pair or '—')|replace('/USDT','') }}</div>
