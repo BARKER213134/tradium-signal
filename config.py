@@ -21,7 +21,8 @@ CHART_WAIT_SECONDS = int(os.getenv("CHART_WAIT_SECONDS", "5"))
 
 # Anthropic API (Claude Vision) для анализа графиков
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = "claude-opus-4-5"
+ANTHROPIC_MODEL = "claude-sonnet-4-6"        # Vision (графики)
+ANTHROPIC_MODEL_FAST = "claude-haiku-4-5-20251001"  # Текст (анализ, фильтр, TP/SL)
 
 # Папка для хранения скачанных графиков
 CHARTS_DIR = os.getenv("CHARTS_DIR", "./charts")

@@ -766,7 +766,7 @@ async def api_analyze_coin(payload: dict):
             pass
 
     import anthropic
-    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST as ANTHROPIC_MODEL
 
     prompt = (
         f"Ты — крипто-аналитик. Проанализируй движение монеты.\n\n"

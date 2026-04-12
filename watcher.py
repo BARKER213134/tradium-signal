@@ -886,7 +886,7 @@ async def _check_ai_signals(db):
 async def _generate_ai_deep_analysis(signal, current_price, s1, r1):
     """Claude делает глубокий анализ сигнала: уровни, TP/SL, оценка, контекст."""
     import anthropic
-    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST as ANTHROPIC_MODEL
 
     pair = (signal.pair or "").replace("/USDT", "")
     entry = signal.entry or current_price
