@@ -908,13 +908,12 @@ async function pollConfluenceStatus() {
       _cfScanning = false;
       dot.style.background = '#00e5a0'; dot.style.boxShadow = '0 0 8px rgba(0,229,160,0.4)';
       progress.style.display = 'none';
-      if (s.progress >= 100 && s.found > 0) loadConfluence();
+      if (s.progress >= 100) loadConfluence();
       _cfScanTarget = Date.now() + (s.next_in||0) * 1000;
-      if (!_cfScanning) {
-        const left = Math.max(0, Math.round((_cfScanTarget - Date.now()) / 1000));
-        const m = Math.floor(left / 60), sc = left % 60;
-        label.textContent = left > 0 ? `Следующий скан ${m}:${String(sc).padStart(2,'0')}` : 'Скан скоро…';
-      }
+      const left = Math.max(0, Math.round((_cfScanTarget - Date.now()) / 1000));
+      const m = Math.floor(left / 60), sc = left % 60;
+      const lastInfo = s.last_scanned ? ` · ${s.last_scanned} пар · +${s.last_found||0} новых` : '';
+      label.textContent = left > 0 ? `Скан через ${m}:${String(sc).padStart(2,'0')}${lastInfo}` : 'Скан скоро…';
     }
   } catch {}
 }

@@ -1348,7 +1348,9 @@ async def _check_confluence():
     confluence_scan_state["running"] = False
     confluence_scan_state["progress"] = 100
     confluence_scan_state["current"] = ""
-    print(f"[CONFLUENCE] Done: {len(results)} found from {len(pairs)} pairs", flush=True)
+    confluence_scan_state["last_scanned"] = len(pairs)
+    confluence_scan_state["last_found"] = len(results)
+    print(f"[CONFLUENCE] Done: {len(results)} new from {len(pairs)} pairs (total in DB: {_confluence().count_documents({})})", flush=True)
     if results:
         _broadcast("confluence_update", {"count": len(results)})
 
