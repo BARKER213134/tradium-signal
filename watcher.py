@@ -1140,43 +1140,71 @@ async def _send_anomaly_alert(r: dict):
     dir_emoji = "🟢" if r["direction"] == "LONG" else "🔴" if r["direction"] == "SHORT" else "⚪"
     pair = r["pair"].replace("/USDT", "")
     ws = r.get("score", 0)
-    stars = int(min(ws / 3, 5))  # wscore 7-15 → 2-5 звёзд
-    score_bar = "⭐" * stars
+    score_bar = "🔥" * min(int(ws / 2), 5)
+    price = r.get("price", 0)
 
-    lines = [
-        f"⚠️ <b>АНОМАЛИЯ · {pair}/USDT</b>",
-        f"",
-        f"Score: <b>{ws}</b> {score_bar}",
-        f"Направление: {dir_emoji} <b>{r['direction']}</b>",
-        f"Цена: <code>{r['price']}</code>",
-        f"",
-    ]
+    # Собираем типы аномалий
+    types = [a["type"] for a in r["anomalies"]]
+    count = len(types)
+
+    # FTT инфо
+    ftt_info = ""
     for a in r["anomalies"]:
-        t = a["type"]
-        v = a["value"]
-        if t == "oi_spike":
-            lines.append(f"📊 OI: <code>{v:+.1f}%</code>")
-        elif t == "funding_extreme":
-            lines.append(f"💰 Funding: <code>{v:.4f}%</code>")
-        elif t == "ls_extreme":
-            lines.append(f"📈 L/S Ratio: <code>{v:.2f}</code>")
-        elif t == "taker_imbalance":
-            lines.append(f"🔄 Taker B/S: <code>{v:.2f}</code>")
-        elif t == "wall":
-            side = v.get("side", "?")
-            wp = v.get("price", 0)
-            wq = v.get("qty", 0)
-            lines.append(f"🧱 Wall: <code>{side} @ {wp} ({wq})</code>")
-        elif t == "trade_speed":
-            lines.append(f"⚡ Speed: <code>×{v}</code> (ускорение сделок)")
-        elif t == "delta_cluster":
-            lines.append(f"📊 Delta: <code>{v:+.0f}</code> на уровне")
-        elif t == "ftt":
-            ftt_emoji = "🟢" if v == "LONG" else "🔴"
+        if a["type"] == "ftt":
+            ftt_dir = "🟢 LONG" if a["value"] == "LONG" else "🔴 SHORT"
             ftt_s = a.get("ftt_score", 0)
-            lines.append(f"{ftt_emoji} FTT: <b>{v}</b> ({ftt_s}/5) wick={a.get('wick_ratio',0)} vol=×{a.get('vol_ratio',0)}")
+            tf = a.get("tf", "1h")
+            ftt_info = f"\n🕯 <b>Разворот (FTT)</b>: {ftt_dir} · {ftt_s}/5 · {tf}"
+            ftt_info += f"\n   Тень: {int(a.get('wick_ratio', 0) * 100)}% свечи · Объём: ×{a.get('vol_ratio', 0)}"
 
-    text = "\n".join(lines)
+    # Delta инфо
+    delta_info = ""
+    for a in r["anomalies"]:
+        if a["type"] == "delta_cluster":
+            delta = a["value"]
+            side = "покупки" if delta > 0 else "продажи"
+            delta_info = f"\n📊 <b>Кластер</b>: {side} доминируют (delta {delta:+,.0f})"
+
+    # Остальные индикаторы одной строкой
+    indicators = []
+    for a in r["anomalies"]:
+        t, v = a["type"], a["value"]
+        if t == "oi_spike":
+            indicators.append(f"OI {v:+.1f}%")
+        elif t == "funding_extreme":
+            side = "лонги платят" if v > 0 else "шорты платят"
+            indicators.append(f"Funding {v:.3f}% ({side})")
+        elif t == "ls_extreme":
+            bias = "перевес лонгов" if v > 1.5 else "перевес шортов"
+            indicators.append(f"L/S {v:.1f} ({bias})")
+        elif t == "taker_imbalance":
+            bias = "агрессивные покупки" if v > 1 else "агрессивные продажи"
+            indicators.append(f"Taker {v:.1f} ({bias})")
+        elif t == "trade_speed":
+            indicators.append(f"Скорость ×{v:.0f}")
+        elif t == "wall":
+            side = "поддержка" if v.get("side") == "bid" else "сопротивление"
+            indicators.append(f"Стена {side} @ {v.get('price')}")
+
+    # Вывод — что это значит
+    if r["direction"] == "LONG":
+        conclusion = "Накопление объёма, возможен рост"
+    elif r["direction"] == "SHORT":
+        conclusion = "Распределение объёма, возможно падение"
+    else:
+        conclusion = "Высокая активность, направление неясно"
+
+    text = (
+        f"⚠️ <b>АНОМАЛИЯ · {pair}/USDT</b>\n"
+        f"\n"
+        f"{dir_emoji} <b>{r['direction']}</b> · Цена: <code>{price}</code>\n"
+        f"Score: <b>{ws}</b>/15 {score_bar} · {count} индикаторов\n"
+    )
+    text += ftt_info
+    text += delta_info
+    if indicators:
+        text += "\n\n" + "\n".join(f"  · {ind}" for ind in indicators)
+    text += f"\n\n💡 <i>{conclusion}</i>"
     try:
         await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Anomaly alert sent: {r.get('symbol')}")
