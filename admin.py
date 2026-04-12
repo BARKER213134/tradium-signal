@@ -799,6 +799,52 @@ async def api_analyze_coin(payload: dict):
         return {"ok": False, "error": str(e)}
 
 
+@app.post("/api/analyze-result")
+async def api_analyze_result(payload: dict):
+    """AI разбор: почему сделка отработала или нет."""
+    pair = payload.get("pair", "")
+    direction = payload.get("direction", "")
+    entry = payload.get("entry", 0)
+    status = payload.get("status", "")  # TP или SL
+    pnl = payload.get("pnl", 0)
+    exit_price = payload.get("exit_price", 0)
+    tp = payload.get("tp", 0)
+    sl = payload.get("sl", 0)
+
+    import anthropic
+    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST as ANTHROPIC_MODEL
+
+    result_text = "✅ TP (прибыль)" if status == "TP" else "❌ SL (убыток)"
+
+    prompt = (
+        f"Ты — крипто-аналитик. Разбери закрытую сделку.\n\n"
+        f"Монета: {pair}\n"
+        f"Направление: {direction}\n"
+        f"Entry: {entry}\n"
+        f"TP: {tp} | SL: {sl}\n"
+        f"Результат: {result_text}\n"
+        f"Exit: {exit_price} | PnL: {pnl}%\n\n"
+        f"Объясни:\n"
+        f"1. Почему сделка {'отработала' if status == 'TP' else 'не отработала'}\n"
+        f"2. Что было сделано правильно\n"
+        f"3. Что можно улучшить\n"
+        f"4. Вывод — урок из этой сделки\n\n"
+        f"На русском. 5-7 предложений."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        message = await asyncio.to_thread(
+            client.messages.create,
+            model=ANTHROPIC_MODEL,
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return {"ok": True, "analysis": message.content[0].text}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/anomalies")
 async def api_anomalies():
     from database import _anomalies

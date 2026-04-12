@@ -1301,7 +1301,7 @@ setInterval(updatePricesAndPnl, 10000);
     </thead>
     <tbody>
       {% for s in signals %}
-      <tr class="signal-row" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}">
+      <tr class="signal-row{% if tab == 'results' %} ai-clickable{% if s.comment %} ai-done{% endif %}{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if tab == 'results' %}onclick="toggleResultAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.status }}', '{{ s.pnl_percent or 0 }}', '{{ s.exit_price or 0 }}', '{{ s.tp1 or 0 }}', '{{ s.sl or 0 }}')" style="cursor:pointer;"{% endif %}>
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
         <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT', '') }}</td>
@@ -1331,7 +1331,7 @@ setInterval(updatePricesAndPnl, 10000);
         </td>
         <td class="trend-cell">
           {% if s.trend %}
-            {% for c in s.trend %}<span class="dot-{{ 'r' if c == 'R' else 'g' }}"></span>{% endfor %}
+            {% for c in s.trend %}{{ '🔴' if c == 'R' else '🟢' }}{% endfor %}
           {% else %}<span class="text-muted">—</span>{% endif %}
         </td>
         <td>
@@ -1340,6 +1340,14 @@ setInterval(updatePricesAndPnl, 10000);
           {% else %}<span class="badge badge-status">{{ s.status or 'СЛЕЖУ' }}</span>{% endif %}
         </td>
       </tr>
+      {% if tab == 'results' %}
+      <tr id="resrow{{ loop.index }}" style="display:none;">
+        <td colspan="15" style="padding:16px 18px;background:var(--dark-2);border-bottom:1px solid var(--border);">
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">РАЗБОР СДЕЛКИ · {{ (s.pair or '—')|replace('/USDT','') }} · {{ s.status }}</div>
+          <div id="restxt{{ loop.index }}" style="font-size:13px;line-height:1.7;color:var(--text-2);white-space:pre-wrap;">Нажми для разбора…</div>
+        </td>
+      </tr>
+      {% endif %}
       {% else %}
       <tr><td colspan="{{ 15 if tab == 'results' else 14 }}" style="text-align:center;padding:80px;" class="text-muted">Сигналов не найдено</td></tr>
       {% endfor %}
@@ -2029,6 +2037,35 @@ async function loadEvents(id) {
       </div>
     `).join('');
   } catch (err) { console.error(err); }
+}
+
+async function toggleResultAnalysis(idx, pair, direction, entry, status, pnl, exitPrice, tp, sl) {
+  const row = document.getElementById('resrow'+idx);
+  const txt = document.getElementById('restxt'+idx);
+  if (!row) return;
+
+  if (row.dataset.open === '1') {
+    row.style.display = 'none';
+    row.dataset.open = '0';
+    return;
+  }
+  row.style.display = 'table-row';
+  row.dataset.open = '1';
+
+  if (txt.textContent && txt.textContent !== 'Нажми для разбора…') return;
+
+  txt.textContent = 'Анализирую сделку…';
+  try {
+    const r = await fetch('/api/analyze-result', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pair, direction, entry: parseFloat(entry), status, pnl: parseFloat(pnl), exit_price: parseFloat(exitPrice), tp: parseFloat(tp), sl: parseFloat(sl)}),
+    });
+    const d = await r.json();
+    txt.textContent = d.ok ? d.analysis : ('Ошибка: ' + (d.error || ''));
+  } catch(e) {
+    txt.textContent = 'Ошибка: ' + e.message;
+  }
 }
 </script>
 {% endif %}
