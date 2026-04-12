@@ -671,7 +671,7 @@ async def _check_cryptovizor(db):
 
 
 async def _ai_score_and_alert_pattern(s, pattern, price, s1, r1, chart_png, candles, db):
-    """AI score + отправка паттерн-алерта в BOT2."""
+    """AI score только (без отправки алерта — алерт отправляется в _check_cryptovizor)."""
     import tempfile, os
     try:
         png_path = None
@@ -696,8 +696,7 @@ async def _ai_score_and_alert_pattern(s, pattern, price, s1, r1, chart_png, cand
             try: os.remove(png_path)
             except Exception: pass
     except Exception as e:
-        logger.error(f"CV AI pattern #{s.id}: {e}")
-    await _send_cryptovizor_alert(s, pattern, price, s1, r1, chart_png)
+        logger.error(f"CV AI score #{s.id}: {e}")
 
 
 async def _fill_missing_ai_analysis(db):
