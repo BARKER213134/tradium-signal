@@ -541,6 +541,12 @@ async def _check_once():
     except Exception as e:
         print(f"[ANOMALY] ERROR: {e}", flush=True)
 
+    # Confluence Scanner
+    try:
+        await _check_confluence()
+    except Exception as e:
+        print(f"[CONFLUENCE] ERROR: {e}", flush=True)
+
 
 async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: float,
                                    s1: float | None, r1: float | None,
@@ -1253,6 +1259,169 @@ async def _send_anomaly_alert(r: dict):
         logger.info(f"Anomaly alert sent: {r.get('symbol')}")
     except Exception as e:
         logger.error(f"Anomaly alert fail: {e}")
+
+
+# ── Confluence Scanner ────────────────────────────────────────────────
+_CONFLUENCE_INTERVAL = 10  # каждый 10-й тик = 5 мин
+_confluence_tick = _CONFLUENCE_INTERVAL - 1  # первый скан сразу
+
+confluence_scan_state = {
+    "running": False, "progress": 0, "total": 0,
+    "found": 0, "current": "", "next_at": 0,
+}
+
+
+async def _check_confluence():
+    """Сканирует ликвидные пары на confluence сетапы."""
+    import time as _time
+    global _confluence_tick
+    _confluence_tick += 1
+    ticks_left = _CONFLUENCE_INTERVAL - (_confluence_tick % _CONFLUENCE_INTERVAL)
+    if ticks_left == _CONFLUENCE_INTERVAL:
+        ticks_left = 0
+    confluence_scan_state["next_at"] = _time.time() + ticks_left * 30
+    if _confluence_tick % _CONFLUENCE_INTERVAL != 0:
+        return
+
+    from anomaly_scanner import get_liquid_pairs, _refresh_batch_cache
+    from confluence_scanner import scan_confluence
+    from database import _confluence, utcnow
+    import datetime
+
+    confluence_scan_state["running"] = True
+    confluence_scan_state["current"] = "загрузка..."
+    confluence_scan_state["found"] = 0
+    confluence_scan_state["progress"] = 0
+
+    try:
+        await asyncio.to_thread(_refresh_batch_cache)
+    except Exception:
+        pass
+
+    pairs = await asyncio.to_thread(get_liquid_pairs, 5_000_000)
+    if not pairs:
+        confluence_scan_state["running"] = False
+        return
+
+    confluence_scan_state["total"] = len(pairs)
+    print(f"[CONFLUENCE] Scanning {len(pairs)} pairs", flush=True)
+
+    now = utcnow()
+    results = []
+    for idx, symbol in enumerate(pairs):
+        confluence_scan_state["current"] = symbol.replace("USDT", "")
+        confluence_scan_state["progress"] = int((idx / len(pairs)) * 100)
+
+        try:
+            r = await asyncio.to_thread(scan_confluence, symbol)
+        except Exception:
+            continue
+        if not r:
+            continue
+
+        # Дедупликация — та же пара за 4 часа
+        existing = _confluence().find_one({
+            "symbol": r["symbol"],
+            "detected_at": {"$gte": datetime.datetime.utcnow() - datetime.timedelta(hours=4)},
+        })
+        if existing:
+            continue
+
+        doc = {
+            "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
+            "score": r["score"], "strength": r["strength"],
+            "direction": r["direction"], "factors": r["factors"],
+            "s1": r.get("s1"), "r1": r.get("r1"),
+            "pattern": r.get("pattern"), "trend_tf": r.get("trend_tf"),
+            "detected_at": now,
+        }
+        _confluence().insert_one(doc)
+        confluence_scan_state["found"] += 1
+        results.append(r)
+        logger.info(f"Confluence: {r['symbol']} score={r['score']} {r['strength']} {r['direction']}")
+
+        # Алерт в BOT5
+        if r["score"] >= 4:
+            await _send_confluence_alert(r)
+
+    confluence_scan_state["running"] = False
+    confluence_scan_state["progress"] = 100
+    confluence_scan_state["current"] = ""
+    print(f"[CONFLUENCE] Done: {len(results)} found from {len(pairs)} pairs", flush=True)
+    if results:
+        _broadcast("confluence_update", {"count": len(results)})
+
+
+_bot5 = None
+
+def _setup_bot5():
+    global _bot5
+    from config import BOT5_BOT_TOKEN
+    if not BOT5_BOT_TOKEN:
+        return
+    try:
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        _bot5 = Bot(token=BOT5_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        logger.info("BOT5 (Confluence) initialized")
+    except Exception as e:
+        logger.error(f"BOT5 init fail: {e}")
+
+
+async def _send_confluence_alert(r: dict):
+    """Отправляет confluence алерт в BOT5."""
+    if not _bot5:
+        _setup_bot5()
+    if not _bot5 or not _admin_chat_id:
+        return
+
+    dir_emoji = "🟢" if r["direction"] == "LONG" else "🔴" if r["direction"] == "SHORT" else "⚪"
+    pair = r["pair"].replace("/USDT", "")
+    score = r["score"]
+    strength = r["strength"]
+    stars = "⭐" * score
+
+    # Факторы
+    factor_lines = []
+    for f in r.get("factors", []):
+        t = f["type"]
+        v = f["value"]
+        if t == "level":
+            factor_lines.append(f"📍 Уровень: {v} (сила: {f.get('strength', 1)})")
+        elif t == "volume":
+            factor_lines.append(f"📊 Объём: {v} от среднего")
+        elif t == "trend":
+            tf_str = " ".join(f"{k}{v}" for k, v in r.get("trend_tf", {}).items())
+            factor_lines.append(f"📈 Тренд: {v} ({tf_str})")
+        elif t == "pattern":
+            factor_lines.append(f"🕯 Паттерн: {v}")
+        elif t == "eth_corr":
+            factor_lines.append(f"💎 ETH: {v}")
+        elif t == "ftt":
+            factor_lines.append(f"🔄 FTT: {v}")
+
+    text = (
+        f"🎯 <b>CONFLUENCE · {strength}</b>\n"
+        f"\n"
+        f"<b>{pair}/USDT</b> · {dir_emoji} <b>{r['direction']}</b>\n"
+        f"Цена: <code>{r['price']}</code>\n"
+        f"Score: <b>{score}/6</b> {stars}\n"
+        f"\n"
+    )
+    if r.get("s1"):
+        text += f"🟢 S1: <code>{r['s1']}</code>\n"
+    if r.get("r1"):
+        text += f"🔴 R1: <code>{r['r1']}</code>\n"
+
+    text += "\n" + "\n".join(factor_lines)
+    text += _eth_line()
+
+    try:
+        await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
+        logger.info(f"Confluence alert: {r['symbol']}")
+    except Exception as e:
+        logger.error(f"Confluence alert fail: {e}")
 
 
 _watcher_running = False

@@ -349,7 +349,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
     query = db.query(Signal).filter(Signal.source == bot)
 
     # Cryptovizor имеет свои вкладки
-    if bot == "anomaly":
+    if bot in ("anomaly", "confluence"):
         return templates.TemplateResponse(request, "signals.html", {
             "signals": [],
             "total": 0,
@@ -1208,6 +1208,128 @@ async def api_anomalies_backtest():
         "best": best_5,
         "worst": worst_5,
         "results": sorted(results, key=lambda x: -abs(x["pnl"]))[:50],
+    }
+
+
+# ── Confluence API ────────────────────────────────────────────────────
+
+@app.get("/api/confluence")
+async def api_confluence():
+    from database import _confluence
+    docs = list(_confluence().find().sort("detected_at", -1).limit(100))
+    for d in docs:
+        d["_id"] = str(d["_id"])
+        if d.get("detected_at"):
+            d["detected_at"] = d["detected_at"].isoformat() if hasattr(d["detected_at"], "isoformat") else str(d["detected_at"])
+    return {"items": docs, "eth_ctx": _sync_eth_ctx()}
+
+
+@app.get("/api/confluence/scan-status")
+async def confluence_scan_status():
+    import time as _time
+    try:
+        from watcher import confluence_scan_state
+        s = dict(confluence_scan_state)
+        next_at = s.pop("next_at", 0)
+        s["next_in"] = max(0, int(next_at - _time.time())) if next_at > 0 else 300
+        return s
+    except ImportError:
+        return {"running": False, "progress": 0, "total": 0, "found": 0, "current": "", "next_in": 300}
+
+
+@app.post("/api/confluence/clear")
+async def api_confluence_clear():
+    from database import _confluence
+    r = _confluence().delete_many({})
+    return {"ok": True, "deleted": r.deleted_count}
+
+
+@app.get("/api/confluence/backtest")
+async def api_confluence_backtest():
+    from database import _confluence
+    from exchange import get_futures_prices_only
+
+    docs = list(_confluence().find().sort("detected_at", -1).limit(200))
+    if not docs:
+        return {"ok": True, "results": [], "summary": {}}
+
+    symbols = list({d.get("symbol", "") for d in docs if d.get("symbol")})
+    pairs = [s.replace("USDT", "/USDT") for s in symbols]
+    prices = await asyncio.to_thread(get_futures_prices_only, pairs)
+
+    results = []
+    wins = losses = 0
+    total_pnl = 0
+
+    for d in docs:
+        sym = d.get("symbol", "")
+        entry = d.get("price")
+        if not entry or not sym:
+            continue
+        current = prices.get(sym)
+        if not current:
+            continue
+
+        direction = d.get("direction", "NEUTRAL")
+        raw_pnl = ((current - entry) / entry) * 100
+        pnl = -raw_pnl if direction == "SHORT" else raw_pnl
+        is_win = pnl > 0
+        if is_win: wins += 1
+        else: losses += 1
+        total_pnl += pnl
+
+        ftypes = [f["type"] for f in d.get("factors", [])]
+        results.append({
+            "symbol": sym, "direction": direction, "score": d.get("score", 0),
+            "strength": d.get("strength", ""), "entry": entry, "current": current,
+            "pnl": round(pnl, 2), "win": is_win, "factors": ftypes,
+            "detected_at": d.get("detected_at", ""),
+        })
+
+    total = wins + losses
+    wr = round((wins / total * 100) if total else 0, 1)
+
+    # По score
+    by_score = {}
+    for r in results:
+        s = r["score"]
+        if s not in by_score:
+            by_score[s] = {"wins": 0, "losses": 0, "pnl": 0}
+        if r["win"]: by_score[s]["wins"] += 1
+        else: by_score[s]["losses"] += 1
+        by_score[s]["pnl"] += r["pnl"]
+    for s in by_score:
+        t = by_score[s]["wins"] + by_score[s]["losses"]
+        by_score[s]["win_rate"] = round((by_score[s]["wins"] / t * 100) if t else 0, 1)
+
+    # По strength
+    by_strength = {}
+    for r in results:
+        st = r["strength"]
+        if st not in by_strength:
+            by_strength[st] = {"wins": 0, "losses": 0, "pnl": 0}
+        if r["win"]: by_strength[st]["wins"] += 1
+        else: by_strength[st]["losses"] += 1
+        by_strength[st]["pnl"] += r["pnl"]
+    for st in by_strength:
+        t = by_strength[st]["wins"] + by_strength[st]["losses"]
+        by_strength[st]["win_rate"] = round((by_strength[st]["wins"] / t * 100) if t else 0, 1)
+
+    sorted_results = sorted(results, key=lambda x: x["pnl"], reverse=True)
+
+    return {
+        "ok": True,
+        "summary": {
+            "total": total, "wins": wins, "losses": losses,
+            "win_rate": wr,
+            "total_pnl": round(total_pnl, 2),
+            "avg_pnl": round(total_pnl / total, 2) if total else 0,
+        },
+        "by_score": by_score,
+        "by_strength": by_strength,
+        "best": sorted_results[:5],
+        "worst": sorted_results[-5:],
+        "results": sorted_results[:50],
     }
 
 

@@ -634,6 +634,208 @@ loadAnomalies();
 setInterval(loadAnomalies, 60000);
 </script>
 
+{% elif bot == 'confluence' %}
+<!-- ── Confluence Scanner ────────────────────────────────────────── -->
+<div class="an-toolbar">
+  <div class="status-pill" id="cfScanStatus" style="font-size:11px;">
+    <div class="dot" id="cfScanDot"></div>
+    <span id="cfScanLabel">—</span>
+  </div>
+  <div id="cfScanProgress" style="display:none;align-items:center;gap:6px;">
+    <div class="an-scan-bar"><div id="cfScanBar" class="an-scan-fill" style="width:0%;"></div></div>
+    <span id="cfScanPercent" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);">0%</span>
+  </div>
+  <span id="cfScanInfo" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
+  <span id="cfStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
+  <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+    <button class="btn-ghost btn-sm" onclick="runConfluenceBacktest()" id="cfBtBtn" style="font-size:10px;padding:5px 12px;">📊 Бектест</button>
+    <button class="delete-btn" onclick="clearConfluence()" style="font-size:10px;padding:5px 12px;">🗑</button>
+  </div>
+</div>
+<div class="an-toolbar" style="padding:10px 18px;">
+  <select id="cfFilterDir" onchange="filterConfluence()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:11px;font-family:var(--font-mono);min-width:140px;">
+    <option value="">Все направления</option>
+    <option value="LONG">🟢 LONG</option>
+    <option value="SHORT">🔴 SHORT</option>
+  </select>
+  <select id="cfFilterScore" onchange="filterConfluence()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">Любой Score</option>
+    <option value="5">5+ (STRONG)</option>
+    <option value="6">6 (MAX)</option>
+  </select>
+  <span id="cfFilterCount" class="an-filter-count"></span>
+</div>
+<div id="cfBacktestResult" style="display:none;margin-bottom:20px;"></div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Время</th>
+        <th>Пара</th>
+        <th>Цена</th>
+        <th>Напр.</th>
+        <th>Score</th>
+        <th>Сила</th>
+        <th>Уровень</th>
+        <th>Паттерн</th>
+        <th>Тренд</th>
+        <th>Объём</th>
+        <th>ETH</th>
+        <th>FTT</th>
+      </tr>
+    </thead>
+    <tbody id="cfBody">
+      <tr><td colspan="12" style="text-align:center;padding:60px;" class="text-muted">Confluence Scanner сканирует каждые 5 мин</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+let _allConfluence = [];
+
+function filterConfluence() {
+  const dir = document.getElementById('cfFilterDir').value;
+  const minScore = parseInt(document.getElementById('cfFilterScore').value) || 0;
+  const filtered = _allConfluence.filter(d => {
+    if (dir && d.direction !== dir) return false;
+    if (minScore && d.score < minScore) return false;
+    return true;
+  });
+  document.getElementById('cfFilterCount').textContent = `${filtered.length} из ${_allConfluence.length}`;
+  renderConfluenceTable(filtered);
+}
+
+function renderConfluenceTable(items) {
+  if (!items.length) {
+    document.getElementById('cfBody').innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
+    return;
+  }
+  document.getElementById('cfBody').innerHTML = items.map((d, i) => renderConfluenceRow(d, i)).join('');
+}
+
+function renderConfluenceRow(d, i) {
+  const dir = d.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>'
+    : d.direction === 'SHORT' ? '<span class="badge badge-sell">SHORT</span>'
+    : '<span class="text-muted">—</span>';
+  const pair = (d.pair||d.symbol||'').replace('/USDT','');
+  const time = d.detected_at ? new Date(d.detected_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+  const stars = '⭐'.repeat(Math.min(d.score, 6));
+  const strCls = d.strength === 'STRONG' ? 'text-buy' : 'text-accent';
+  const sym = d.symbol || (d.pair||'').replace('/','');
+
+  // Факторы
+  let level='—', pattern='—', trend='—', volume='—', eth='—', ftt='—';
+  (d.factors||[]).forEach(f => {
+    if (f.type==='level') level = f.value;
+    if (f.type==='pattern') pattern = f.value;
+    if (f.type==='trend') { const tf=d.trend_tf||{}; trend=Object.entries(tf).map(([k,v])=>v+k).join(' '); }
+    if (f.type==='volume') volume = `<span class="text-accent">${f.value}</span>`;
+    if (f.type==='eth_corr') eth = `<span class="text-buy">${f.eth_1h>=0?'+':''}${f.eth_1h?.toFixed(2)||''}%</span>`;
+    if (f.type==='ftt') ftt = `<span class="${d.direction==='LONG'?'text-buy':'text-sell'}">${f.value}</span>`;
+  });
+
+  return `<tr style="cursor:pointer;" onclick="openChartModal('${sym}','${pair}','${d.direction}','0')">
+    <td class="mono text-muted" style="font-size:11px;">${time}</td>
+    <td class="mono text-accent fw-700">${pair}</td>
+    <td class="mono">${d.price||'—'}</td>
+    <td>${dir}</td>
+    <td class="mono fw-700">${stars}</td>
+    <td class="mono ${strCls} fw-700">${d.strength||'—'}</td>
+    <td class="mono" style="font-size:11px;">${level}</td>
+    <td class="mono">${pattern}</td>
+    <td class="mono" style="font-size:11px;">${trend}</td>
+    <td class="mono">${volume}</td>
+    <td class="mono">${eth}</td>
+    <td class="mono">${ftt}</td>
+  </tr>`;
+}
+
+async function loadConfluence() {
+  try {
+    const r = await fetch('/api/confluence');
+    const d = await r.json();
+    const items = d.items || d;
+    _allConfluence = items;
+    document.getElementById('cfStats').textContent = items.length + ' сигналов';
+    if (d.eth_ctx) _updateEthBar(d.eth_ctx);
+    filterConfluence();
+  } catch {}
+}
+
+async function clearConfluence() {
+  if (!confirm('Очистить все confluence сигналы?')) return;
+  await fetch('/api/confluence/clear', {method:'POST'});
+  loadConfluence();
+}
+
+async function runConfluenceBacktest() {
+  const btn = document.getElementById('cfBtBtn');
+  const box = document.getElementById('cfBacktestResult');
+  btn.disabled = true; btn.textContent = '⏳…';
+  try {
+    const r = await fetch('/api/confluence/backtest');
+    const d = await r.json();
+    if (!d.ok) { box.innerHTML = '<span class="text-sell">Ошибка</span>'; box.style.display='block'; return; }
+    const s = d.summary;
+    const wrCls = s.win_rate >= 50 ? 'text-buy' : 'text-sell';
+    const pnlCls = s.total_pnl >= 0 ? 'text-buy' : 'text-sell';
+    const card = (l,v,c='') => `<div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center;"><div style="font-family:var(--font-mono);font-size:9px;color:var(--muted);text-transform:uppercase;">${l}</div><div class="mono fw-700 ${c}" style="font-size:18px;margin-top:4px;">${v}</div></div>`;
+    box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;">${card('Сделок',s.total)}${card('Win Rate',s.win_rate+'%',wrCls)}${card('Побед/Проигр.',s.wins+'/'+s.losses)}${card('PnL',(s.total_pnl>=0?'+':'')+s.total_pnl+'%',pnlCls)}${card('Avg PnL',(s.avg_pnl>=0?'+':'')+s.avg_pnl+'%',s.avg_pnl>=0?'text-buy':'text-sell')}</div>`;
+    box.style.display = 'block';
+  } catch(e) { box.innerHTML = `<span class="text-sell">${e.message}</span>`; box.style.display='block'; }
+  finally { btn.disabled = false; btn.textContent = '📊 Бектест'; }
+}
+
+// Scan status polling
+let _cfScanning = false;
+let _cfScanTarget = 0;
+
+async function pollConfluenceStatus() {
+  try {
+    const r = await fetch('/api/confluence/scan-status');
+    const s = await r.json();
+    const dot = document.getElementById('cfScanDot');
+    const label = document.getElementById('cfScanLabel');
+    const progress = document.getElementById('cfScanProgress');
+    const bar = document.getElementById('cfScanBar');
+    const pct = document.getElementById('cfScanPercent');
+    if (s.running) {
+      _cfScanning = true;
+      dot.style.background = '#ffa24e'; dot.style.boxShadow = '0 0 8px rgba(255,162,78,0.6)';
+      label.textContent = `Сканирую ${s.current||'…'}`;
+      progress.style.display = 'flex';
+      bar.style.width = s.progress + '%'; pct.textContent = s.progress + '%';
+    } else {
+      _cfScanning = false;
+      dot.style.background = '#00e5a0'; dot.style.boxShadow = '0 0 8px rgba(0,229,160,0.4)';
+      progress.style.display = 'none';
+      if (s.progress >= 100 && s.found > 0) loadConfluence();
+      _cfScanTarget = Date.now() + (s.next_in||0) * 1000;
+      if (!_cfScanning) {
+        const left = Math.max(0, Math.round((_cfScanTarget - Date.now()) / 1000));
+        const m = Math.floor(left / 60), sc = left % 60;
+        label.textContent = left > 0 ? `Следующий скан ${m}:${String(sc).padStart(2,'0')}` : 'Скан скоро…';
+      }
+    }
+  } catch {}
+}
+
+setInterval(() => {
+  if (!_cfScanning && _cfScanTarget > 0) {
+    const left = Math.max(0, Math.round((_cfScanTarget - Date.now()) / 1000));
+    const m = Math.floor(left / 60), s = left % 60;
+    const label = document.getElementById('cfScanLabel');
+    if (label) label.textContent = left > 0 ? `Следующий скан ${m}:${String(s).padStart(2,'0')}` : 'Скан скоро…';
+  }
+}, 1000);
+
+loadConfluence();
+setInterval(loadConfluence, 60000);
+pollConfluenceStatus();
+setInterval(pollConfluenceStatus, 5000);
+</script>
+
 {% elif bot == 'cryptovizor' %}
 <!-- ── Cryptovizor tabs ───────────────────────────────────────────── -->
 <div class="tabs">

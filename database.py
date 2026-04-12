@@ -55,6 +55,10 @@ def _anomalies() -> Collection:
     return _get_db().anomalies
 
 
+def _confluence() -> Collection:
+    return _get_db().confluence
+
+
 
 
 def _counters() -> Collection:
