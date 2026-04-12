@@ -483,8 +483,16 @@ async def _check_once():
     db = SessionLocal()
     try:
         print("[WATCHER] _check_once start", flush=True)
-        await _retry_failed_ai(db)
-        await _filter_stuck(db)
+        try:
+            await asyncio.wait_for(_retry_failed_ai(db), timeout=30)
+        except asyncio.TimeoutError:
+            print("[WATCHER] _retry_failed_ai TIMEOUT", flush=True)
+        except Exception as e:
+            print(f"[WATCHER] _retry_failed_ai ERROR: {e}", flush=True)
+        try:
+            await asyncio.wait_for(_filter_stuck(db), timeout=10)
+        except (asyncio.TimeoutError, Exception) as e:
+            print(f"[WATCHER] _filter_stuck: {e}", flush=True)
 
         # Снимок id до _check_dca4 — чтобы не проверять TP/SL на свежеоткрытых
         opened_before = {
@@ -503,10 +511,11 @@ async def _check_once():
         ]:
             try:
                 print(f"[WATCHER] step: {step_name}", flush=True)
-                await step_fn()
+                await asyncio.wait_for(step_fn(), timeout=120)
+            except asyncio.TimeoutError:
+                print(f"[WATCHER] step '{step_name}' TIMEOUT (120s)", flush=True)
             except Exception as e:
                 print(f"[WATCHER] step '{step_name}' FAILED: {e}", flush=True)
-                logger.error(f"Watcher step '{step_name}' failed: {e}")
     finally:
         db.close()
 
