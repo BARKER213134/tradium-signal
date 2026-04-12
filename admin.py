@@ -1216,7 +1216,7 @@ async def api_anomalies_backtest():
 @app.get("/api/confluence")
 async def api_confluence():
     from database import _confluence
-    docs = list(_confluence().find().sort("detected_at", -1).limit(100))
+    docs = list(_confluence().find().sort("detected_at", 1).limit(100))
     for d in docs:
         d["_id"] = str(d["_id"])
         if d.get("detected_at"):
