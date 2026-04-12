@@ -154,16 +154,10 @@ async def main():
 
     setup_watcher(bot, ADMIN_CHAT_ID, bot2=bot2, bot4=bot4)
 
-    logger.info("Запуск admin / bots / userbot / watcher…")
-    tasks = [
-        _serve_admin(),
-        start_userbot(),
-        start_bot(),
-        start_watcher(),
-    ]
-    if bot2:
-        tasks.append(start_bot2())
-    await asyncio.gather(*tasks)
+    logger.info("Запуск admin (watcher/bots стартуют через lifespan)…")
+    # Watcher, bots, userbot запускаются в lifespan event FastAPI
+    # чтобы избежать deadlock с asyncio.gather + uvicorn
+    await _serve_admin()
 
 
 if __name__ == "__main__":

@@ -1079,7 +1079,11 @@ async def _send_anomaly_alert(r: dict):
         logger.error(f"Anomaly alert fail: {e}")
 
 
+_watcher_running = False
+
 async def start_watcher():
+    global _watcher_running
+    _watcher_running = True
     print(f"[WATCHER] Started (interval={POLL_INTERVAL}s)", flush=True)
     logger.info(f"Price watcher запущен (интервал {POLL_INTERVAL}s)")
     while True:
