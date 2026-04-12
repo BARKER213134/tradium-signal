@@ -248,6 +248,7 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
         <th>L/S</th>
         <th>Taker</th>
         <th>Стена</th>
+        <th>ETH 1h</th>
       </tr>
     </thead>
     <tbody id="anBody">
@@ -285,6 +286,9 @@ function renderAnomalyTable(items) {
   }).join('');
 }
 
+let _anEthVal = '—';
+let _anEthCls = 'text-muted';
+
 async function loadAnomalies() {
   try {
     const r = await fetch('/api/anomalies');
@@ -293,7 +297,12 @@ async function loadAnomalies() {
     _allAnomalies = items;
     document.getElementById('anStats').textContent = items.length + ' аномалий';
     // ETH контекст
-    if (d.eth_ctx) _updateEthBar(d.eth_ctx);
+    if (d.eth_ctx) {
+      _updateEthBar(d.eth_ctx);
+      const e = d.eth_ctx.eth_1h || 0;
+      _anEthVal = (e >= 0 ? '+' : '') + e.toFixed(2) + '%';
+      _anEthCls = e >= 0 ? 'text-buy' : 'text-sell';
+    }
     if (!items.length) return;
     filterAnomalies();
   } catch {}
@@ -337,9 +346,10 @@ function renderAnomalyRow(d, i) {
         <td class="mono">${ls}</td>
         <td class="mono">${taker}</td>
         <td class="mono text-muted" style="font-size:11px;">${wall}</td>
+        <td class="mono ${_anEthCls}">${_anEthVal}</td>
       </tr>
       <tr id="cl_${i}" style="display:none;" data-open="0">
-        <td colspan="13" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
+        <td colspan="14" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
           <div style="display:flex;">
             <div id="antv_${i}" style="width:55%;min-height:380px;border-right:1px solid var(--border);"></div>
             <div id="anai_${i}" style="width:45%;min-height:380px;display:flex;align-items:center;justify-content:center;">
@@ -1144,6 +1154,7 @@ async function clearProcessed() {
         <th>R1</th>
         <th>Паттерн</th>
         <th>AI</th>
+        <th>ETH 1h</th>
         <th>Статус</th>
       </tr>
     </thead>
@@ -1172,6 +1183,9 @@ async function clearProcessed() {
             <span class="ai-score-pill ai-{{ 'good' if s.ai_score >= 70 else 'ok' if s.ai_score >= 40 else 'bad' }}">{{ s.ai_score }}</span>
           {% else %}<span class="text-muted">—</span>{% endif %}
         </td>
+        <td class="mono {% if eth_ctx and eth_ctx.eth_1h >= 0 %}text-buy{% else %}text-sell{% endif %}" style="font-size:11px;">
+          {% if eth_ctx %}{{ '%+.2f'|format(eth_ctx.eth_1h) }}%{% else %}—{% endif %}
+        </td>
         <td>
           {% if s.status == 'ПАТТЕРН' %}<span class="badge badge-ai">ПАТТЕРН</span>
           {% else %}<span class="badge badge-status">СЛЕЖУ</span>{% endif %}
@@ -1179,7 +1193,7 @@ async function clearProcessed() {
       </tr>
       {% if cv_tab in ('active', 'ai_signal') %}
       <tr id="airow{{ loop.index }}" style="display:none;">
-        <td colspan="14" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
+        <td colspan="15" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
           <div style="display:flex;">
             <div id="tvchart{{ loop.index }}" style="width:60%;min-height:400px;border-right:1px solid var(--border);"></div>
             <div id="aitxt{{ loop.index }}" style="width:40%;min-height:400px;display:flex;align-items:center;justify-content:center;">
@@ -1481,6 +1495,7 @@ setInterval(updatePricesAndPnl, 10000);
         <th>SL</th>
         <th>R:R</th>
         <th>AI</th>
+        <th>ETH 1h</th>
         <th>Тренд</th>
         <th>Статус</th>
       </tr>
@@ -1514,6 +1529,9 @@ setInterval(updatePricesAndPnl, 10000);
           {% if s.ai_score is not none %}
             <span class="ai-score-pill ai-{{ 'good' if s.ai_score >= 70 else 'ok' if s.ai_score >= 40 else 'bad' }}">{{ s.ai_score }}</span>
           {% else %}<span class="text-muted">—</span>{% endif %}
+        </td>
+        <td class="mono {% if eth_ctx and eth_ctx.eth_1h >= 0 %}text-buy{% else %}text-sell{% endif %}" style="font-size:11px;">
+          {% if eth_ctx %}{{ '%+.2f'|format(eth_ctx.eth_1h) }}%{% else %}—{% endif %}
         </td>
         <td class="trend-cell">
           {% if s.trend %}
