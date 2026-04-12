@@ -348,9 +348,9 @@ function renderAnomalyRow(d, i) {
         <td class="mono text-muted" style="font-size:11px;">${wall}</td>
         <td class="mono ${_anEthCls}">${_anEthVal}</td>
       </tr>
-      <tr id="cl_${i}" style="display:none;" data-open="0">
+      <tr id="cl_${i}" style="display:none;" data-open="0" onclick="event.stopPropagation();">
         <td colspan="14" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
-          <div style="display:flex;">
+          <div style="display:flex;" onclick="event.stopPropagation();">
             <div id="antv_${i}" style="width:55%;min-height:380px;border-right:1px solid var(--border);"></div>
             <div id="anai_${i}" style="width:45%;min-height:380px;display:flex;align-items:center;justify-content:center;">
               <button class="btn-analyze" onclick="event.stopPropagation();loadAnomalyAnalysis('${sym}',${i})">🤖 Анализировать</button>
@@ -1434,9 +1434,9 @@ async function clearProcessed() {
         </td>
       </tr>
       {% if cv_tab in ('active', 'ai_signal') %}
-      <tr id="airow{{ loop.index }}" style="display:none;">
+      <tr id="airow{{ loop.index }}" style="display:none;" onclick="event.stopPropagation();">
         <td colspan="15" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
-          <div style="display:flex;">
+          <div style="display:flex;" onclick="event.stopPropagation();">
             <div id="tvchart{{ loop.index }}" style="width:60%;min-height:400px;border-right:1px solid var(--border);"></div>
             <div id="aitxt{{ loop.index }}" style="width:40%;min-height:400px;display:flex;align-items:center;justify-content:center;">
               {% if s.comment %}
@@ -1787,9 +1787,9 @@ setInterval(updatePricesAndPnl, 10000);
         </td>
       </tr>
       {% if tab == 'results' %}
-      <tr id="resrow{{ loop.index }}" style="display:none;">
+      <tr id="resrow{{ loop.index }}" style="display:none;" onclick="event.stopPropagation();">
         <td colspan="15" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
-          <div style="display:flex;">
+          <div style="display:flex;" onclick="event.stopPropagation();">
             <div id="restv{{ loop.index }}" style="width:60%;min-height:380px;border-right:1px solid var(--border);"></div>
             <div id="restxt{{ loop.index }}" style="width:40%;min-height:380px;display:flex;align-items:center;justify-content:center;">
               <button class="btn-analyze" onclick="event.stopPropagation();loadResultAnalysis({{ loop.index }},'{{ s.pair|replace("'","") }}','{{ s.direction }}','{{ s.entry }}','{{ s.status }}','{{ s.pnl_percent or 0 }}','{{ s.exit_price or 0 }}','{{ s.tp1 or 0 }}','{{ s.sl or 0 }}')">🤖 Разбор сделки</button>
