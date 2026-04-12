@@ -883,8 +883,8 @@ async def _check_ai_signals(db):
             logger.error(f"AI filter #{s.id}: {e}")
 
 
-async def _generate_ai_deep_analysis(signal, current_price, s1, r1):
-    """Claude делает глубокий анализ сигнала: уровни, TP/SL, оценка, контекст."""
+async def _generate_ai_full_analysis(signal, current_price, s1, r1):
+    """Полный анализ для сайта (comment в БД)."""
     import anthropic
     from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST as ANTHROPIC_MODEL
 
@@ -895,18 +895,19 @@ async def _generate_ai_deep_analysis(signal, current_price, s1, r1):
     trend = signal.trend or ""
 
     prompt = (
-        f"Ты — крипто-трейдер. Дай КРАТКИЙ анализ.\n\n"
+        f"Ты — профессиональный крипто-трейдер.\n\n"
         f"Монета: {pair}/USDT | {direction} | Паттерн: {pattern}\n"
-        f"Тренд: {trend} | Entry: {entry} | Цена: {current_price}\n"
+        f"Тренд (5 TF): {trend} | Entry: {entry} | Цена: {current_price}\n"
         f"S1: {s1 or '—'} | R1: {r1 or '—'}\n\n"
-        f"Ответь СТРОГО в таком формате (без лишнего текста):\n"
-        f"TP1: цена\n"
-        f"TP2: цена\n"
-        f"SL: цена\n"
-        f"R:R: соотношение\n"
-        f"Score: X/10\n"
-        f"Анализ: 2-3 предложения — тех.анализ, контекст, вывод.\n\n"
-        f"Ответ на русском. Максимум 500 символов."
+        f"Дай полный анализ:\n"
+        f"1. TP1, TP2, SL — конкретные цены на основе S1/R1\n"
+        f"2. R:R соотношение\n"
+        f"3. Score: X/10\n"
+        f"4. Технический анализ — как работает паттерн {pattern}, уровни, структура\n"
+        f"5. Рыночный контекст — что делает BTC, тренд альтов\n"
+        f"6. Риски — что может пойти не так, на что обратить внимание\n"
+        f"7. Вывод — стоит ли входить, рекомендация по размеру позиции\n\n"
+        f"Ответ на русском. Развёрнуто, 8-12 предложений."
     )
 
     try:
@@ -914,12 +915,48 @@ async def _generate_ai_deep_analysis(signal, current_price, s1, r1):
         message = await asyncio.to_thread(
             client.messages.create,
             model=ANTHROPIC_MODEL,
-            max_tokens=400,
+            max_tokens=800,
             messages=[{"role": "user", "content": prompt}],
         )
         return message.content[0].text
     except Exception as e:
-        logger.error(f"AI deep analysis error: {e}")
+        logger.error(f"AI full analysis error: {e}")
+        return None
+
+
+async def _generate_ai_tg_summary(signal, current_price, s1, r1):
+    """Короткое саммари для Telegram (помещается в сообщение)."""
+    import anthropic
+    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST as ANTHROPIC_MODEL
+
+    pair = (signal.pair or "").replace("/USDT", "")
+    entry = signal.entry or current_price
+    direction = signal.direction or "LONG"
+    pattern = signal.pattern_name or "unknown"
+    trend = signal.trend or ""
+
+    prompt = (
+        f"Крипто-трейдер. Дай КРАТКИЙ анализ для Telegram.\n\n"
+        f"{pair}/USDT | {direction} | {pattern} | Тренд: {trend}\n"
+        f"Entry: {entry} | Цена: {current_price} | S1: {s1 or '—'} | R1: {r1 or '—'}\n\n"
+        f"Формат строго:\n"
+        f"TP1: цена | TP2: цена | SL: цена\n"
+        f"R:R: X:X | Score: X/10\n"
+        f"Одно предложение — вывод.\n\n"
+        f"На русском. Максимум 200 символов."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        message = await asyncio.to_thread(
+            client.messages.create,
+            model=ANTHROPIC_MODEL,
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return message.content[0].text
+    except Exception as e:
+        logger.error(f"AI TG summary error: {e}")
         return None
 
 
@@ -937,17 +974,18 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     s1 = getattr(signal, "dca1", None)
     r1 = getattr(signal, "dca2", None)
 
-    # Глубокий анализ от Claude
-    analysis = await _generate_ai_deep_analysis(signal, current_price, s1, r1)
-
-    # Сохраняем анализ в БД
-    if analysis:
-        signal.comment = analysis
+    # 1. Полный анализ → сохраняем в БД (для сайта)
+    full_analysis = await _generate_ai_full_analysis(signal, current_price, s1, r1)
+    if full_analysis:
+        signal.comment = full_analysis
         from database import _signals
         _signals().update_one(
             {"id": signal.id},
-            {"$set": {"comment": analysis}}
+            {"$set": {"comment": full_analysis}}
         )
+
+    # 2. Короткое саммари → для Telegram
+    tg_summary = await _generate_ai_tg_summary(signal, current_price, s1, r1)
 
     text = (
         f"🤖 <b>AI SIGNAL · TOP PICK</b>\n"
@@ -963,13 +1001,10 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     if r1:
         text += f"🔴 R1: <code>{r1}</code>\n"
 
-    text += (
-        f"\n"
-        f"⭐ Score: <b>{score}/10</b> {score_bar}\n"
-    )
+    text += f"\n⭐ Score: <b>{score}/10</b> {score_bar}\n"
 
-    if analysis:
-        text += f"\n📝 {analysis}"
+    if tg_summary:
+        text += f"\n📝 {tg_summary}"
 
     try:
         await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
