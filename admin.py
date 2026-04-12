@@ -793,7 +793,7 @@ async def api_analyze_coin(payload: dict):
         f"⚠ Риск 1\n"
         f"⚠ Риск 2\n"
         f"⚠ Риск 3\n\n"
-        f"На русском."
+        f"На русском. БЕЗ markdown, без ## и **. Только plain text."
     )
 
     try:
@@ -840,7 +840,7 @@ async def api_analyze_result(payload: dict):
         f"2. Что было сделано правильно\n"
         f"3. Что можно улучшить\n"
         f"4. Вывод — урок из этой сделки\n\n"
-        f"На русском. 5-7 предложений."
+        f"На русском. БЕЗ markdown, без ## и **. Только plain text. 5-7 предложений."
     )
 
     try:
@@ -995,7 +995,7 @@ async def api_anomaly_analyze(payload: dict):
         f"⚠ Риск 1\n"
         f"⚠ Риск 2\n"
         f"⚠ Риск 3\n\n"
-        f"На русском."
+        f"На русском. БЕЗ markdown, без ## и **. Только plain text."
     )
 
     try:

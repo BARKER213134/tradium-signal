@@ -1173,6 +1173,9 @@ if (sa) sa.onchange = () => {
 function renderAnalysisCard(text, pair) {
   if (!text) return '<div class="ai-analysis-card"><span class="text-muted">Нажми для анализа…</span></div>';
 
+  // Очищаем markdown
+  text = text.replace(/#{1,4}\s*/g, '').replace(/\*\*/g, '').replace(/\*/g, '').replace(/---/g, '');
+
   // Парсим секции
   const lines = text.split('\n');
   let coin='', verdict='', confidence='', score='', tp1='', tp2='', sl='', rr='';

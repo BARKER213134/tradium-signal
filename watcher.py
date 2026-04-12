@@ -921,7 +921,7 @@ async def _generate_ai_full_analysis(signal, current_price, s1, r1):
         f"⚠ Риск 1\n"
         f"⚠ Риск 2\n"
         f"⚠ Риск 3\n\n"
-        f"Ответ на русском."
+        f"Ответ на русском. БЕЗ markdown, без ## и **. Только plain text."
     )
 
     try:
