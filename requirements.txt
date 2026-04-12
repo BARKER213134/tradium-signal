@@ -13,3 +13,4 @@ mplfinance==0.12.10b0
 matplotlib==3.10.3
 pandas==2.2.3
 websockets==13.1
+selenium

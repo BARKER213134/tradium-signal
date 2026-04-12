@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Системные зависимости для matplotlib/mplfinance
+# Системные зависимости для matplotlib/mplfinance + Chrome для Resonance
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         gcc \
@@ -15,6 +15,12 @@ RUN apt-get update \
         libpng-dev \
         pkg-config \
         curl \
+        wget \
+        gnupg \
+    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
 # Сначала requirements — используем кэш слоёв
