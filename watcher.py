@@ -1381,41 +1381,79 @@ async def _send_confluence_alert(r: dict):
     pair = r["pair"].replace("/USDT", "")
     score = r["score"]
     strength = r["strength"]
-    stars = "⭐" * score
+    price = r.get("price", 0)
 
-    # Факторы
-    factor_lines = []
+    # Визуал score
+    filled = "🟢" * score + "⚪" * (6 - score)
+    strength_label = "💪 STRONG" if strength == "STRONG" else "📊 MEDIUM"
+
+    # Тренд TF
+    tf_map = r.get("trend_tf", {})
+    tf_line = " ".join(f"{tf}{emoji}" for tf, emoji in tf_map.items()) if tf_map else "—"
+
+    # Собираем факторы с пояснениями
+    checks = []
+    has_level = has_volume = has_trend = has_pattern = has_eth = has_ftt = False
+
     for f in r.get("factors", []):
         t = f["type"]
-        v = f["value"]
         if t == "level":
-            factor_lines.append(f"📍 Уровень: {v} (сила: {f.get('strength', 1)})")
+            has_level = True
+            lvl_type = "поддержке" if "S1" in f["value"] else "сопротивлении"
+            strength_txt = "двойной (4h+1h)" if f.get("strength", 0) >= 2 else "одинарный"
+            checks.append(f"✅ Цена на {lvl_type} — {strength_txt} уровень")
         elif t == "volume":
-            factor_lines.append(f"📊 Объём: {v} от среднего")
+            has_volume = True
+            checks.append(f"✅ Объём {f['value']} от среднего — подтверждает интерес")
         elif t == "trend":
-            tf_str = " ".join(f"{k}{v}" for k, v in r.get("trend_tf", {}).items())
-            factor_lines.append(f"📈 Тренд: {v} ({tf_str})")
+            has_trend = True
+            checks.append(f"✅ Тренд {f['value']} — большинство TF подтверждают")
         elif t == "pattern":
-            factor_lines.append(f"🕯 Паттерн: {v}")
+            has_pattern = True
+            checks.append(f"✅ Паттерн «{f['value']}» на 1h")
         elif t == "eth_corr":
-            factor_lines.append(f"💎 ETH: {v}")
+            has_eth = True
+            checks.append(f"✅ ETH попутный ({f.get('eth_1h', 0):+.2f}%) — рынок помогает")
         elif t == "ftt":
-            factor_lines.append(f"🔄 FTT: {v}")
+            has_ftt = True
+            checks.append(f"✅ FTT разворот: wick {int(f.get('wick_ratio', 0)*100)}%, объём ×{f.get('vol_ratio', 0)}")
+
+    # Что НЕ совпало
+    if not has_level: checks.append("❌ Нет уровня — цена в воздухе")
+    if not has_volume: checks.append("❌ Объём обычный")
+    if not has_trend: checks.append("❌ Тренд не подтверждён")
+    if not has_pattern: checks.append("❌ Нет паттерна")
+    if not has_eth: checks.append("❌ ETH не попутный")
+    if not has_ftt: checks.append("❌ Нет FTT")
+
+    # Вывод
+    if score >= 5:
+        conclusion = "Сильный сетап — высокая вероятность отработки"
+    elif score == 4:
+        conclusion = "Средний сетап — входить с осторожностью"
+    else:
+        conclusion = "Слабый сетап — лучше пропустить"
 
     text = (
-        f"🎯 <b>CONFLUENCE · {strength}</b>\n"
+        f"🎯 <b>CONFLUENCE SIGNAL</b>\n"
         f"\n"
-        f"<b>{pair}/USDT</b> · {dir_emoji} <b>{r['direction']}</b>\n"
-        f"Цена: <code>{r['price']}</code>\n"
-        f"Score: <b>{score}/6</b> {stars}\n"
+        f"<b>{pair}/USDT</b> · {dir_emoji} <b>{r['direction']}</b> · {strength_label}\n"
+        f"Цена: <code>{price}</code>\n"
         f"\n"
     )
     if r.get("s1"):
-        text += f"🟢 S1: <code>{r['s1']}</code>\n"
+        text += f"🟢 Поддержка: <code>{r['s1']}</code>\n"
     if r.get("r1"):
-        text += f"🔴 R1: <code>{r['r1']}</code>\n"
-
-    text += "\n" + "\n".join(factor_lines)
+        text += f"🔴 Сопротивление: <code>{r['r1']}</code>\n"
+    text += (
+        f"\n"
+        f"<b>Score: {score}/6</b> {filled}\n"
+        f"Тренд: {tf_line}\n"
+        f"\n"
+        f"<b>Чеклист факторов:</b>\n"
+    )
+    text += "\n".join(checks)
+    text += f"\n\n💡 <i>{conclusion}</i>"
     text += _eth_line()
 
     try:
