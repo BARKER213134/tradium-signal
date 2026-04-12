@@ -942,6 +942,107 @@ async def api_anomalies_clear():
     return {"ok": True, "deleted": r.deleted_count}
 
 
+@app.get("/api/anomalies/backtest")
+async def api_anomalies_backtest():
+    """Бектест аномалий: проверяет движение цены после обнаружения."""
+    from database import _anomalies
+    from exchange import get_futures_prices_only
+
+    docs = list(_anomalies().find().sort("detected_at", -1).limit(200))
+    if not docs:
+        return {"ok": True, "results": [], "summary": {}}
+
+    # Текущие цены
+    symbols = list({d.get("symbol", "") for d in docs if d.get("symbol")})
+    pairs = [s.replace("USDT", "/USDT") for s in symbols]
+    prices = await asyncio.to_thread(get_futures_prices_only, pairs)
+
+    results = []
+    wins = 0
+    losses = 0
+    total_pnl = 0
+
+    for d in docs:
+        sym = d.get("symbol", "")
+        entry = d.get("price")
+        if not entry or not sym:
+            continue
+        current = prices.get(sym)
+        if not current:
+            continue
+
+        direction = d.get("direction", "NEUTRAL")
+        raw_pnl = ((current - entry) / entry) * 100
+        pnl = -raw_pnl if direction == "SHORT" else raw_pnl
+
+        is_win = pnl > 0
+        if is_win:
+            wins += 1
+        else:
+            losses += 1
+        total_pnl += pnl
+
+        types = [a["type"] for a in d.get("anomalies", [])]
+        results.append({
+            "symbol": sym,
+            "direction": direction,
+            "score": d.get("score", 0),
+            "entry": entry,
+            "current": current,
+            "pnl": round(pnl, 2),
+            "win": is_win,
+            "types": types,
+            "detected_at": d["detected_at"].isoformat() if hasattr(d.get("detected_at"), "isoformat") else str(d.get("detected_at", "")),
+        })
+
+    total = wins + losses
+    win_rate = round((wins / total * 100) if total else 0, 1)
+
+    # По типу аномалии
+    by_type = {}
+    for r in results:
+        for t in r["types"]:
+            if t not in by_type:
+                by_type[t] = {"wins": 0, "losses": 0, "pnl": 0}
+            if r["win"]:
+                by_type[t]["wins"] += 1
+            else:
+                by_type[t]["losses"] += 1
+            by_type[t]["pnl"] += r["pnl"]
+    for t in by_type:
+        total_t = by_type[t]["wins"] + by_type[t]["losses"]
+        by_type[t]["win_rate"] = round((by_type[t]["wins"] / total_t * 100) if total_t else 0, 1)
+        by_type[t]["avg_pnl"] = round(by_type[t]["pnl"] / total_t, 2) if total_t else 0
+
+    # По score
+    by_score = {}
+    for r in results:
+        s = int(r["score"])
+        if s not in by_score:
+            by_score[s] = {"wins": 0, "losses": 0, "pnl": 0}
+        if r["win"]:
+            by_score[s]["wins"] += 1
+        else:
+            by_score[s]["losses"] += 1
+        by_score[s]["pnl"] += r["pnl"]
+    for s in by_score:
+        total_s = by_score[s]["wins"] + by_score[s]["losses"]
+        by_score[s]["win_rate"] = round((by_score[s]["wins"] / total_s * 100) if total_s else 0, 1)
+
+    return {
+        "ok": True,
+        "summary": {
+            "total": total, "wins": wins, "losses": losses,
+            "win_rate": win_rate,
+            "total_pnl": round(total_pnl, 2),
+            "avg_pnl": round(total_pnl / total, 2) if total else 0,
+        },
+        "by_type": by_type,
+        "by_score": by_score,
+        "results": sorted(results, key=lambda x: -abs(x["pnl"]))[:50],
+    }
+
+
 @app.post("/api/save-coin-analysis")
 async def api_save_coin_analysis(payload: dict):
     """Сохраняет анализ монеты в comment поле сигнала."""
