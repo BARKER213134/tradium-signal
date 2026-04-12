@@ -649,6 +649,36 @@ async function runSync() {
   }
 }
 
+/* ── AI Analysis Card Renderer (shared) ── */
+function renderAnalysisCard(text, pair) {
+  if (!text) return '<div class="ai-analysis-card"><span class="text-muted">Нажми для анализа…</span></div>';
+  text = text.replace(/#{1,4}\s*/g, '').replace(/\*\*/g, '').replace(/\*/g, '').replace(/---/g, '').replace(/✅|☑️|✓/g,'');
+  const rx = (p) => { const m = text.match(p); return m ? m[1].trim() : ''; };
+  const coin = rx(/О МОНЕТЕ[:\s]*\n?([\s\S]*?)(?=ВЕРДИКТ|АНАЛИЗ|SCORE|TP1|$)/i);
+  const verdict = rx(/ВЕРДИКТ[:\s]*(ENTER|SKIP)/i) || rx(/verdict[:\s]*(ENTER|SKIP)/i);
+  const confidence = rx(/УВЕРЕННОСТЬ[:\s]*(HIGH|MEDIUM|LOW)/i);
+  const score = rx(/SCORE[:\s]*([0-9]+(?:[.,\/][0-9]+)?)/i);
+  const tp1 = rx(/TP1[:\s]*([0-9.,]+)/i);
+  const tp2 = rx(/TP2[:\s]*([0-9.,]+)/i);
+  const sl = rx(/SL[:\s]*([0-9.,]+)/i);
+  const rr = rx(/R[:\/ ]R[:\s]*([0-9.:]+(?:\s*[\(\)a-яА-Яa-zA-Z ]*)?)/i);
+  const analysis = rx(/АНАЛИЗ[:\s]*\n?([\s\S]*?)(?=РИСКИ|$)/i);
+  const risks = [];
+  const rb = rx(/РИСКИ[:\s]*\n?([\s\S]*?)$/i);
+  if (rb) rb.split('\n').forEach(l => { l=l.trim(); if(l.startsWith('⚠')) risks.push(l.substring(1).trim()); else if(l.startsWith('-')) risks.push(l.substring(1).trim()); else if(l.length>5&&risks.length<5) risks.push(l); });
+  if (!verdict && !analysis && !coin && !tp1) return `<div class="ai-analysis-card"><div class="ai-text" style="white-space:pre-line;">${text}</div></div>`;
+  const isE = (verdict||'').toUpperCase().includes('ENTER');
+  const vC = isE ? 'ai-verdict-enter' : 'ai-verdict-skip';
+  const vL = isE ? '✅ ENTER' : '❌ SKIP';
+  let h = '<div class="ai-analysis-card">';
+  if (coin) { const pn=(pair||'').replace('/USDT','').replace('USDT',''); h+=`<div class="ai-section"><div class="ai-section-title">О монете · ${pn}</div><div class="ai-text">${coin.replace(/\n/g,' ')}</div></div>`; }
+  if (verdict) { h+=`<div class="ai-verdict-row ${vC}"><span class="ai-verdict-label">${vL}</span>`; if(confidence) h+=`<span class="ai-confidence">Уверенность: ${confidence}</span>`; if(score) h+=`<span class="ai-score-big">Score: ${score}</span>`; h+='</div>'; }
+  if (tp1||tp2||sl||rr) { h+='<div class="ai-levels">'; if(tp1) h+=`<div class="ai-level"><div class="ai-level-label">TP1</div><div class="ai-level-val" style="color:var(--buy)">${tp1}</div></div>`; if(tp2) h+=`<div class="ai-level"><div class="ai-level-label">TP2</div><div class="ai-level-val" style="color:var(--buy)">${tp2}</div></div>`; if(sl) h+=`<div class="ai-level"><div class="ai-level-label">SL</div><div class="ai-level-val" style="color:var(--sell)">${sl}</div></div>`; if(rr) h+=`<div class="ai-level"><div class="ai-level-label">R:R</div><div class="ai-level-val" style="color:var(--cyan)">${rr}</div></div>`; h+='</div>'; }
+  if (analysis) h+=`<div class="ai-section"><div class="ai-section-title">Анализ</div><div class="ai-text">${analysis.replace(/\n/g,'<br>')}</div></div>`;
+  if (risks.length) { h+='<div class="ai-section"><div class="ai-section-title">Риски</div>'; risks.forEach(r=>{h+=`<div class="ai-risk-item">⚠ ${r}</div>`;}); h+='</div>'; }
+  h+='</div>'; return h;
+}
+
 /* ── Toast notifications ── */
 const _toastContainer = document.createElement('div');
 _toastContainer.id = 'toasts';
