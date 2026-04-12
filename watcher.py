@@ -608,8 +608,11 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"{ai_line}\n"
         f"\n"
         f"⚡ <i>Тренд: {_fmt_trend(signal.trend)}</i>"
-        f"{_eth_line()}"
     )
+    # SuperTrend
+    _stp, _std = _check_supertrend_filter(signal.direction)
+    text += _st_line(_stp, _std)
+    text += _eth_line()
 
     try:
         if chart_png:
