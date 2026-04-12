@@ -497,7 +497,7 @@ async def _check_once():
             ("patterns", lambda: _check_patterns(db)),
             ("tp_sl", lambda: _check_tp_sl(db, allowed_ids=opened_before)),
             ("cryptovizor", lambda: _check_cryptovizor(db)),
-            ("ai_signals", lambda: _check_ai_signals(db)),
+            # ai_signals убран — AI filter теперь внутри _check_cryptovizor
             ("ai_analysis", lambda: _fill_missing_ai_analysis(db)),
         ]:
             try:
