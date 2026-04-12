@@ -910,6 +910,13 @@ async def _generate_ai_full_analysis(signal, current_price, s1, r1):
     pattern = signal.pattern_name or "unknown"
     trend = signal.trend or ""
 
+    from exchange import get_eth_market_context
+    ectx = get_eth_market_context()
+    eth_ctx_text = (
+        f"ETH за 1h: {ectx.get('eth_1h', 0):+.2f}% | BTC за 1h: {ectx.get('btc_1h', 0):+.2f}% | "
+        f"ETH/BTC тренд: {ectx.get('eth_btc', '—')}"
+    )
+
     prompt = (
         f"Ты — профессиональный крипто-трейдер. Дай ПОЛНЫЙ анализ сделки.\n\n"
         f"Монета: {pair}/USDT\n"
@@ -919,7 +926,8 @@ async def _generate_ai_full_analysis(signal, current_price, s1, r1):
         f"Entry: {entry}\n"
         f"Текущая цена: {current_price}\n"
         f"Support (S1): {s1 or '—'}\n"
-        f"Resistance (R1): {r1 or '—'}\n\n"
+        f"Resistance (R1): {r1 or '—'}\n"
+        f"Рыночный контекст: {eth_ctx_text}\n\n"
         f"Ответь СТРОГО в таком формате:\n\n"
         f"О МОНЕТЕ:\n"
         f"Что это за проект, для чего используется, капитализация, ликвидность, "
@@ -933,7 +941,8 @@ async def _generate_ai_full_analysis(signal, current_price, s1, r1):
         f"R:R: соотношение\n\n"
         f"АНАЛИЗ:\n"
         f"Описание сетапа — почему паттерн {pattern} здесь работает или нет, "
-        f"структура рынка, уровни, объёмы, контекст BTC. 4-6 предложений.\n\n"
+        f"структура рынка, уровни, объёмы. "
+        f"Как ETH и BTC влияют на эту монету — коррелирует ли она с рынком. 4-6 предложений.\n\n"
         f"РИСКИ:\n"
         f"⚠ Риск 1\n"
         f"⚠ Риск 2\n"

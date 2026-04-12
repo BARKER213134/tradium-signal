@@ -774,6 +774,9 @@ async def api_analyze_coin(payload: dict):
     import anthropic
     from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST as ANTHROPIC_MODEL
 
+    ectx = _sync_eth_ctx()
+    eth_info = f"ETH 1h: {ectx.get('eth_1h',0):+.2f}% | BTC 1h: {ectx.get('btc_1h',0):+.2f}% | ETH/BTC: {ectx.get('eth_btc','—')}"
+
     prompt = (
         f"Ты — профессиональный крипто-трейдер. Дай ПОЛНЫЙ анализ сделки.\n\n"
         f"Монета: {pair}\n"
@@ -781,7 +784,8 @@ async def api_analyze_coin(payload: dict):
         f"Паттерн: {pattern}\n"
         f"Entry: {entry}\n"
         f"Текущая цена: {current}\n"
-        f"PnL: {pnl}%\n\n"
+        f"PnL: {pnl}%\n"
+        f"Рынок сейчас: {eth_info}\n\n"
         f"Ответь в формате:\n\n"
         f"О МОНЕТЕ:\n"
         f"Что за проект, для чего, капитализация, ликвидность. 2-3 предложения.\n\n"
@@ -793,7 +797,7 @@ async def api_analyze_coin(payload: dict):
         f"SL: цена\n"
         f"R:R: соотношение\n\n"
         f"АНАЛИЗ:\n"
-        f"Описание сетапа, структура рынка, уровни. 4-6 предложений.\n\n"
+        f"Описание сетапа, структура рынка, уровни. Как ETH/BTC влияют — коррелирует ли монета с рынком. 4-6 предложений.\n\n"
         f"РИСКИ:\n"
         f"⚠ Риск 1\n"
         f"⚠ Риск 2\n"
@@ -832,6 +836,9 @@ async def api_analyze_result(payload: dict):
 
     result_text = "✅ TP (прибыль)" if status == "TP" else "❌ SL (убыток)"
 
+    ectx = _sync_eth_ctx()
+    eth_info = f"ETH 1h: {ectx.get('eth_1h',0):+.2f}% | BTC 1h: {ectx.get('btc_1h',0):+.2f}%"
+
     prompt = (
         f"Ты — крипто-аналитик. Разбери закрытую сделку.\n\n"
         f"Монета: {pair}\n"
@@ -839,12 +846,14 @@ async def api_analyze_result(payload: dict):
         f"Entry: {entry}\n"
         f"TP: {tp} | SL: {sl}\n"
         f"Результат: {result_text}\n"
-        f"Exit: {exit_price} | PnL: {pnl}%\n\n"
+        f"Exit: {exit_price} | PnL: {pnl}%\n"
+        f"Рынок: {eth_info}\n\n"
         f"Объясни:\n"
         f"1. Почему сделка {'отработала' if status == 'TP' else 'не отработала'}\n"
-        f"2. Что было сделано правильно\n"
-        f"3. Что можно улучшить\n"
-        f"4. Вывод — урок из этой сделки\n\n"
+        f"2. Как ETH/BTC повлияли — шла ли монета с рынком или против\n"
+        f"3. Что было сделано правильно\n"
+        f"4. Что можно улучшить\n"
+        f"5. Вывод — урок из этой сделки\n\n"
         f"На русском. БЕЗ markdown, без ## и **. Только plain text. 5-7 предложений."
     )
 
@@ -974,13 +983,17 @@ async def api_anomaly_analyze(payload: dict):
     import anthropic
     from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST as ANTHROPIC_MODEL
 
+    ectx = _sync_eth_ctx()
+    eth_info = f"ETH 1h: {ectx.get('eth_1h',0):+.2f}% | BTC 1h: {ectx.get('btc_1h',0):+.2f}% | ETH/BTC: {ectx.get('eth_btc','—')}"
+
     prompt = (
         f"Ты — профессиональный крипто-аналитик. Разбери аномалию на фьючерсном рынке.\n\n"
         f"Монета: {symbol.replace('USDT','')}/USDT\n"
         f"Цена: {price}\n"
         f"Направление сигнала: {direction}\n"
         f"Score аномалии: {score}/15\n"
-        f"Количество индикаторов: {len(anomalies)}\n\n"
+        f"Количество индикаторов: {len(anomalies)}\n"
+        f"Рынок: {eth_info}\n\n"
         f"Обнаруженные аномалии:\n{anomaly_text}\n\n"
         f"Ответь в формате:\n\n"
         f"О МОНЕТЕ:\n"
@@ -995,6 +1008,7 @@ async def api_anomaly_analyze(payload: dict):
         f"АНАЛИЗ:\n"
         f"Что означает совокупность этих аномалий. Почему цена может пойти в направлении {direction}. "
         f"Расшифруй каждый индикатор простым языком — что он говорит о рынке. "
+        f"Как коррелирует с ETH/BTC — идёт ли монета с рынком или независимо. "
         f"Вероятность отработки. 5-8 предложений.\n\n"
         f"РИСКИ:\n"
         f"⚠ Риск 1\n"
