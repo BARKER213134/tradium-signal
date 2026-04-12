@@ -671,35 +671,37 @@ setInterval(loadAnomalies, 60000);
   </div>
 </div>
 
-<div class="an-toolbar">
-  <div class="status-pill" id="cfScanStatus" style="font-size:11px;">
-    <div class="dot" id="cfScanDot"></div>
-    <span id="cfScanLabel">—</span>
-  </div>
-  <div id="cfScanProgress" style="display:none;align-items:center;gap:6px;">
-    <div class="an-scan-bar"><div id="cfScanBar" class="an-scan-fill" style="width:0%;"></div></div>
-    <span id="cfScanPercent" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);">0%</span>
-  </div>
-  <span id="cfStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
-  <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
-    <button class="btn-ghost btn-sm" onclick="runConfluenceBacktest()" id="cfBtBtn" style="font-size:10px;padding:5px 12px;">📊 Бектест</button>
-    <button class="delete-btn" onclick="clearConfluence()" style="font-size:10px;padding:5px 12px;">🗑</button>
-  </div>
-</div>
+<div class="an-toolbar" style="padding:14px 20px;">
+  <div style="display:flex;align-items:center;gap:14px;flex:1;flex-wrap:wrap;">
+    <div class="status-pill" id="cfScanStatus" style="font-size:11px;">
+      <div class="dot" id="cfScanDot"></div>
+      <span id="cfScanLabel">—</span>
+    </div>
+    <div id="cfScanProgress" style="display:none;align-items:center;gap:6px;">
+      <div class="an-scan-bar"><div id="cfScanBar" class="an-scan-fill" style="width:0%;"></div></div>
+      <span id="cfScanPercent" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);">0%</span>
+    </div>
+    <span id="cfStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
 
-<div class="an-toolbar" style="padding:10px 18px;">
-  <select id="cfFilterDir" onchange="filterConfluence()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:11px;font-family:var(--font-mono);min-width:140px;">
-    <option value="">Все направления</option>
-    <option value="LONG">🟢 LONG</option>
-    <option value="SHORT">🔴 SHORT</option>
-  </select>
-  <select id="cfFilterScore" onchange="filterConfluence()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:11px;font-family:var(--font-mono);">
-    <option value="">Любой Score</option>
-    <option value="4">4+ (MEDIUM)</option>
-    <option value="5">5+ (STRONG)</option>
-    <option value="6">6 (MAX)</option>
-  </select>
-  <span id="cfFilterCount" class="an-filter-count"></span>
+    <div style="width:1px;height:20px;background:var(--border);margin:0 4px;"></div>
+
+    <select id="cfFilterDir" onchange="filterConfluence()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
+      <option value="">Все</option>
+      <option value="LONG">🟢 LONG</option>
+      <option value="SHORT">🔴 SHORT</option>
+    </select>
+    <select id="cfFilterScore" onchange="filterConfluence()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
+      <option value="">Score</option>
+      <option value="4">4+</option>
+      <option value="5">5+ ⭐</option>
+      <option value="6">6 🔥</option>
+    </select>
+    <span id="cfFilterCount" class="an-filter-count"></span>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <button class="btn-ghost btn-sm" onclick="runConfluenceBacktest()" id="cfBtBtn" style="font-size:10px;padding:6px 14px;">📊 Бектест</button>
+    <button class="delete-btn" onclick="clearConfluence()" style="font-size:10px;padding:6px 10px;">🗑</button>
+  </div>
 </div>
 
 <div id="cfBacktestResult" style="display:none;margin-bottom:20px;"></div>
