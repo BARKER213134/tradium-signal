@@ -288,9 +288,12 @@ function renderAnomalyTable(items) {
 async function loadAnomalies() {
   try {
     const r = await fetch('/api/anomalies');
-    const items = await r.json();
+    const d = await r.json();
+    const items = d.items || d;
     _allAnomalies = items;
     document.getElementById('anStats').textContent = items.length + ' аномалий';
+    // ETH контекст
+    if (d.eth_ctx) _updateEthBar(d.eth_ctx);
     if (!items.length) return;
     filterAnomalies();
   } catch {}

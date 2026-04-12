@@ -63,6 +63,21 @@ def _resolve_chart(p: str) -> str | None:
     return cand if os.path.exists(cand) else None
 
 
+def _eth_line() -> str:
+    """Одна строка с ETH/BTC контекстом для Telegram."""
+    try:
+        from exchange import get_eth_market_context
+        ctx = get_eth_market_context()
+        eth = ctx.get("eth_1h", 0)
+        btc = ctx.get("btc_1h", 0)
+        eb = ctx.get("eth_btc", "—")
+        eth_e = "🟢" if eth >= 0 else "🔴"
+        btc_e = "🟢" if btc >= 0 else "🔴"
+        return f"\n📊 ETH {eth_e}{eth:+.2f}% · BTC {btc_e}{btc:+.2f}% · ETH/BTC {eb}"
+    except Exception:
+        return ""
+
+
 def _fmt_trend(trend: str | None) -> str:
     """GRRRR → 🟢🔴🔴🔴🔴"""
     if not trend:
@@ -125,6 +140,7 @@ async def _send_dca4_alert(signal: Signal, current_price: float):
         f"{ai_block}\n"
         f"\n"
         f"⏳ Ждём паттерн подтверждения"
+        f"{_eth_line()}"
     )
     chart_path = _resolve_chart(signal.chart_path)
     try:
@@ -566,6 +582,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"{ai_line}\n"
         f"\n"
         f"⚡ <i>Тренд: {_fmt_trend(signal.trend)}</i>"
+        f"{_eth_line()}"
     )
 
     try:
@@ -1019,6 +1036,7 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
 
     if tg_summary:
         text += f"\n📝 {tg_summary}"
+    text += _eth_line()
 
     try:
         await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
@@ -1220,6 +1238,7 @@ async def _send_anomaly_alert(r: dict):
     if indicators:
         text += "\n\n" + "\n".join(f"  · {ind}" for ind in indicators)
     text += f"\n\n💡 <i>{conclusion}</i>"
+    text += _eth_line()
     try:
         await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Anomaly alert sent: {r.get('symbol')}")

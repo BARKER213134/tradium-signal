@@ -252,6 +252,62 @@ def get_futures_prices_only(pairs: list[str]) -> dict[str, float]:
     return get_futures_prices(pairs)
 
 
+# ── ETH/BTC market context (кешированный) ───────────────────────────
+_eth_ctx_cache: dict = {}
+_eth_ctx_ts: float = 0
+_ETH_CTX_TTL = 60  # 1 мин
+
+
+def get_eth_market_context() -> dict:
+    """Возвращает ETH 1h%, BTC 1h%, ETH/BTC тренд. Кеш 60с."""
+    global _eth_ctx_cache, _eth_ctx_ts
+    now = time.time()
+    if _eth_ctx_cache and (now - _eth_ctx_ts) < _ETH_CTX_TTL:
+        return _eth_ctx_cache
+
+    ctx = {"eth_1h": 0, "btc_1h": 0, "eth_btc": "—", "eth_price": 0, "btc_price": 0}
+    try:
+        # ETH 1h
+        r = httpx.get(f"{BINANCE_FUTURES}/fapi/v1/klines",
+                      params={"symbol": "ETHUSDT", "interval": "1h", "limit": 2}, timeout=5)
+        if r.status_code == 200:
+            k = r.json()
+            if len(k) >= 2:
+                prev_c = float(k[-2][4])
+                curr_c = float(k[-1][4])
+                ctx["eth_1h"] = round(((curr_c - prev_c) / prev_c) * 100, 2)
+                ctx["eth_price"] = curr_c
+
+        # BTC 1h
+        r = httpx.get(f"{BINANCE_FUTURES}/fapi/v1/klines",
+                      params={"symbol": "BTCUSDT", "interval": "1h", "limit": 2}, timeout=5)
+        if r.status_code == 200:
+            k = r.json()
+            if len(k) >= 2:
+                prev_c = float(k[-2][4])
+                curr_c = float(k[-1][4])
+                ctx["btc_1h"] = round(((curr_c - prev_c) / prev_c) * 100, 2)
+                ctx["btc_price"] = curr_c
+
+        # ETH/BTC тренд (последние 4 свечи 1h)
+        r = httpx.get(f"{BINANCE_BASE}/api/v3/klines",
+                      params={"symbol": "ETHBTC", "interval": "1h", "limit": 4}, timeout=5)
+        if r.status_code == 200:
+            k = r.json()
+            if len(k) >= 4:
+                first = float(k[0][4])
+                last = float(k[-1][4])
+                pct = ((last - first) / first) * 100
+                ctx["eth_btc"] = f"{'↑' if pct > 0.1 else '↓' if pct < -0.1 else '→'} {pct:+.2f}%"
+                ctx["eth_btc_trend"] = "up" if pct > 0.1 else "down" if pct < -0.1 else "flat"
+    except Exception as e:
+        logger.debug(f"ETH context: {e}")
+
+    _eth_ctx_cache = ctx
+    _eth_ctx_ts = now
+    return ctx
+
+
 def get_klines_any(pair: str, timeframe: str, limit: int = 50) -> list[dict]:
     """Сначала spot klines, если пусто → futures."""
     candles = get_klines(pair, timeframe, limit)
