@@ -27,8 +27,6 @@ def scan_confluence(symbol: str) -> Optional[dict]:
     from patterns import detect_patterns, BULLISH, BEARISH
     from continuation_patterns import detect_continuation
     from levels import nearest_levels
-    from anomaly_scanner import _check_ftt_tf
-
     factors = []
     direction_votes = {"LONG": 0, "SHORT": 0}
 
@@ -86,46 +84,46 @@ def scan_confluence(symbol: str) -> Optional[dict]:
                 "ratio": vol_ratio,
             })
 
-    # ── 3. Multi-TF тренд ────────────────────────────────────────
+    # ── 3. Multi-TF тренд (используем уже загруженные 4h и 1h) ──
     tf_bullish = 0
     tf_bearish = 0
     tf_results = {}
 
-    for tf in ["15m", "1h", "4h"]:
-        try:
-            candles = get_klines_any(symbol.replace("USDT", "/USDT"), tf, limit=10)
-            if candles and len(candles) >= 5:
-                # Простая проверка: последние 3 свечи
-                closes = [c["c"] for c in candles[-4:]]
-                if closes[-1] > closes[0]:
-                    tf_bullish += 1
-                    tf_results[tf] = "🟢"
-                else:
-                    tf_bearish += 1
-                    tf_results[tf] = "🔴"
-        except Exception:
-            pass
+    # 1h тренд (последние 4 свечи)
+    if candles_1h and len(candles_1h) >= 5:
+        closes = [c["c"] for c in candles_1h[-4:]]
+        if closes[-1] > closes[0]:
+            tf_bullish += 1
+            tf_results["1h"] = "🟢"
+        else:
+            tf_bearish += 1
+            tf_results["1h"] = "🔴"
 
-    # Добавляем 1d и 1w через быструю проверку
-    for tf in ["1d"]:
-        try:
-            candles = get_klines_any(symbol.replace("USDT", "/USDT"), tf, limit=3)
-            if candles and len(candles) >= 2:
-                if candles[-1]["c"] > candles[-2]["c"]:
-                    tf_bullish += 1
-                    tf_results[tf] = "🟢"
-                else:
-                    tf_bearish += 1
-                    tf_results[tf] = "🔴"
-        except Exception:
-            pass
+    # 4h тренд
+    if candles_4h and len(candles_4h) >= 5:
+        closes = [c["c"] for c in candles_4h[-4:]]
+        if closes[-1] > closes[0]:
+            tf_bullish += 1
+            tf_results["4h"] = "🟢"
+        else:
+            tf_bearish += 1
+            tf_results["4h"] = "🔴"
+
+    # Дневной тренд из 4h свечей (последние 6×4h = 1 день)
+    if candles_4h and len(candles_4h) >= 7:
+        if candles_4h[-1]["c"] > candles_4h[-7]["c"]:
+            tf_bullish += 1
+            tf_results["1d"] = "🟢"
+        else:
+            tf_bearish += 1
+            tf_results["1d"] = "🔴"
 
     total_tf = tf_bullish + tf_bearish
-    if total_tf >= 3:
-        if tf_bullish >= 3:
+    if total_tf >= 2:
+        if tf_bullish >= 2:
             factors.append({"type": "trend", "value": f"{tf_bullish}/{total_tf} bullish", "details": tf_results})
             direction_votes["LONG"] += 2
-        elif tf_bearish >= 3:
+        elif tf_bearish >= 2:
             factors.append({"type": "trend", "value": f"{tf_bearish}/{total_tf} bearish", "details": tf_results})
             direction_votes["SHORT"] += 2
 
@@ -164,21 +162,44 @@ def scan_confluence(symbol: str) -> Optional[dict]:
     except Exception:
         pass
 
-    # ── 6. FTT подтверждение ──────────────────────────────────────
+    # ── 6. FTT подтверждение (из уже загруженных 1h свечей) ─────
     try:
-        ftt = _check_ftt_tf(symbol, "1h")
-        if ftt:
-            ftt_dir = ftt.get("value", "")
-            ftt_score = ftt.get("ftt_score", 0)
-            if ftt_dir == pre_direction and ftt_score >= 3:
-                factors.append({
-                    "type": "ftt",
-                    "value": f"{ftt_dir} {ftt_score}/5",
-                    "ftt_score": ftt_score,
-                    "wick_ratio": ftt.get("wick_ratio", 0),
-                    "vol_ratio": ftt.get("vol_ratio", 0),
-                })
-                direction_votes[pre_direction] += 2
+        if candles_1h and len(candles_1h) >= 5:
+            c = candles_1h[-1]
+            o, h, l, cl = c["c"], c["h"], c["l"], c["c"]
+            o = c["o"]
+            body = abs(cl - o)
+            full_range = h - l
+            if full_range > 0 and body > 0:
+                upper_wick = h - max(o, cl)
+                lower_wick = min(o, cl) - l
+                is_upper_ftt = upper_wick > body * 1.5 and upper_wick > full_range * 0.45
+                is_lower_ftt = lower_wick > body * 1.5 and lower_wick > full_range * 0.45
+
+                if is_upper_ftt or is_lower_ftt:
+                    ftt_dir = "SHORT" if is_upper_ftt else "LONG"
+                    wick = upper_wick if is_upper_ftt else lower_wick
+                    wick_pct = round(wick / full_range, 2)
+
+                    # Проверяем объём
+                    prev_vols = [candles_1h[i].get("v", 0) for i in range(-5, -1)]
+                    avg_vol = sum(prev_vols) / len(prev_vols) if prev_vols else 1
+                    vol_ratio = round(c.get("v", 0) / avg_vol, 1) if avg_vol > 0 else 0
+
+                    ftt_score = 0
+                    if wick_pct > 0.55: ftt_score += 1
+                    if vol_ratio > 1.3: ftt_score += 1
+                    if ftt_dir == pre_direction: ftt_score += 1
+
+                    if ftt_score >= 2 and ftt_dir == pre_direction:
+                        factors.append({
+                            "type": "ftt",
+                            "value": f"{ftt_dir} {ftt_score}/3",
+                            "ftt_score": ftt_score,
+                            "wick_ratio": wick_pct,
+                            "vol_ratio": vol_ratio,
+                        })
+                        direction_votes[pre_direction] += 2
     except Exception:
         pass
 
