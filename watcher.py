@@ -1070,12 +1070,30 @@ async def _check_anomalies():
         _broadcast("anomaly_update", {"count": len(results)})
 
 
+_bot3 = None
+
+def setup_bot3():
+    """Инициализирует BOT3 для аномалий."""
+    global _bot3
+    from config import BOT3_BOT_TOKEN
+    if not BOT3_BOT_TOKEN:
+        return
+    try:
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        _bot3 = Bot(token=BOT3_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        logger.info("BOT3 (Anomaly) initialized")
+    except Exception as e:
+        logger.error(f"BOT3 init fail: {e}")
+
+
 async def _send_anomaly_alert(r: dict):
-    """Отправляет алерт об аномалии."""
-    # Используем уже запущенный бот (не создаём новый)
-    target = _bot2 or _bot4 or _bot
-    if not target or not _admin_chat_id:
-        logger.warning("Anomaly alert: no bot available")
+    """Отправляет алерт об аномалии в BOT3."""
+    if not _bot3:
+        setup_bot3()
+    if not _bot3 or not _admin_chat_id:
+        logger.warning("Anomaly alert: BOT3 not available")
         return
 
     dir_emoji = "🟢" if r["direction"] == "LONG" else "🔴" if r["direction"] == "SHORT" else "⚪"
@@ -1119,7 +1137,7 @@ async def _send_anomaly_alert(r: dict):
 
     text = "\n".join(lines)
     try:
-        await target.send_message(_admin_chat_id, text, parse_mode="HTML")
+        await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Anomaly alert sent: {r.get('symbol')}")
     except Exception as e:
         logger.error(f"Anomaly alert fail: {e}")
