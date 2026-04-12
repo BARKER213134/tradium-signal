@@ -129,25 +129,39 @@ def get_cluster_screenshot(symbol: str, timeframe: str = "H1") -> Optional[bytes
             driver.get("https://resonance.vision/clusters")
             time.sleep(8)
 
-        # Убираем попапы
-        driver.execute_script("""
-            document.querySelectorAll(
-                '[class*="Modal"], [class*="Tour"], [class*="Onboarding"], ' +
-                '[class*="cookie"], [class*="Cookie"], [class*="Welcome"]'
-            ).forEach(e => e.remove());
-        """)
+        # Убираем ВСЕ попапы/модали/туториалы
+        def _clear_popups():
+            driver.execute_script("""
+                document.querySelectorAll(
+                    '[class*="Modal"], [class*="Tour"], [class*="Onboarding"], ' +
+                    '[class*="cookie"], [class*="Cookie"], [class*="Welcome"], ' +
+                    '[class*="Ticker"], [class*="ticker"], [class*="Search"], ' +
+                    '[class*="overlay"], [class*="Overlay"], [class*="popup"], ' +
+                    '[class*="Popup"], [class*="dialog"], [class*="Dialog"]'
+                ).forEach(e => e.remove());
+                // Убираем sidebar
+                document.querySelectorAll('[class*="Sidebar"], [class*="sidebar"]').forEach(e => e.style.display='none');
+            """)
+
+        _clear_popups()
         time.sleep(1)
 
         # Скип туториал
         for b in driver.find_elements(By.TAG_NAME, "button"):
-            if "skip" in b.text.lower():
-                driver.execute_script("arguments[0].click();", b)
-                time.sleep(1)
-                break
+            txt = b.text.strip().lower()
+            if txt in ('skip', 'close', 'got it', 'ok', 'no, thanks'):
+                try:
+                    driver.execute_script("arguments[0].click();", b)
+                    time.sleep(1)
+                except Exception:
+                    pass
+
+        _clear_popups()
+        time.sleep(1)
 
         # Смена пары если не BTC
         if sym_search.upper() != "BTC":
-            # Кликаем на search
+            # Кликаем на search кнопку
             for b in driver.find_elements(By.TAG_NAME, "button"):
                 if "/USDT" in b.text:
                     driver.execute_script("arguments[0].click();", b)
@@ -160,31 +174,34 @@ def get_cluster_screenshot(symbol: str, timeframe: str = "H1") -> Optional[bytes
                 if inp.is_displayed():
                     inp.clear()
                     inp.send_keys(sym_search)
-                    time.sleep(2)
-                    # Кликаем результат
+                    time.sleep(3)
+                    # Кликаем первый результат с нужной парой
                     target = f"{sym_search.upper()}/USDT"
                     results = driver.find_elements(By.XPATH, f"//*[contains(text(), '{target}')]")
                     for r in results:
-                        if r.is_displayed():
+                        if r.is_displayed() and r.tag_name not in ('button', 'input'):
                             driver.execute_script("arguments[0].click();", r)
-                            time.sleep(4)
+                            time.sleep(3)
                             break
                     break
+
+            # Закрываем поиск — ESC
+            from selenium.webdriver.common.keys import Keys
+            driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+            time.sleep(2)
 
         # Выбираем таймфрейм
         tf_map = {"M15": "M15", "M30": "M30", "H1": "H1", "H4": "H4", "1h": "H1", "4h": "H4", "15m": "M15"}
         tf_label = tf_map.get(timeframe, "H1")
         for b in driver.find_elements(By.TAG_NAME, "button"):
-            if b.text.strip() == tf_label:
+            if b.text.strip() == tf_label and b.is_displayed():
                 driver.execute_script("arguments[0].click();", b)
-                time.sleep(3)
+                time.sleep(2)
                 break
 
-        # Убираем sidebar для чистого графика
-        driver.execute_script("""
-            document.querySelectorAll('[class*="Sidebar"], [class*="sidebar"], [class*="cookie"]').forEach(e => e.style.display='none');
-        """)
-        time.sleep(1)
+        # Финальная очистка + ждём загрузку графика
+        _clear_popups()
+        time.sleep(3)
 
         # Скриншот
         png = driver.get_screenshot_as_png()
