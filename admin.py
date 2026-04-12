@@ -15,7 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import ADMIN_USERNAME, ADMIN_PASSWORD, SECRET_KEY, BOTS
 from database import get_db, Signal, Session, desc, func, get_events
-from exchange import get_prices_any as _sync_get_prices, get_all_usdt_symbols as _sync_get_all_usdt_symbols, get_eth_market_context as _sync_eth_ctx
+from exchange import get_prices_any as _sync_get_prices, get_all_usdt_symbols as _sync_get_all_usdt_symbols, get_eth_market_context as _sync_eth_ctx, get_supertrend_eth as _sync_st_eth
 
 from contextlib import asynccontextmanager
 
@@ -358,7 +358,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
             "tab": tab, "stats": {}, "summary": None,
             "pages": 1, "page": 1, "pairs": [],
             "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
-            "eth_ctx": _sync_eth_ctx(),
+            "eth_ctx": _sync_eth_ctx(), "st_eth": _sync_st_eth(),
         })
 
     # API для аномалий
@@ -401,7 +401,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
                 "tab": cv_tab, "stats": {}, "summary": None,
                 "pages": 1, "page": 1, "pairs": [],
                 "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
-                "eth_ctx": _sync_eth_ctx(),
+                "eth_ctx": _sync_eth_ctx(), "st_eth": _sync_st_eth(),
             })
         sort_field = Signal.pattern_triggered_at if cv_tab in ("active", "ai_signal") else Signal.received_at
         signals = query.order_by(desc(sort_field)).limit(200).all()
@@ -413,7 +413,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
             "tab": cv_tab, "stats": {}, "summary": None,
             "pages": 1, "page": 1, "pairs": [],
             "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
-            "eth_ctx": _sync_eth_ctx(),
+            "eth_ctx": _sync_eth_ctx(), "st_eth": _sync_st_eth(),
         })
 
     # ── Фильтр по вкладке ──
@@ -514,7 +514,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
         "filter_direction": direction,
         "filter_has_chart": has_chart,
         "pairs": pairs,
-        "eth_ctx": _sync_eth_ctx(),
+        "eth_ctx": _sync_eth_ctx(), "st_eth": _sync_st_eth(),
     })
 
 
@@ -631,7 +631,7 @@ def _signals_live_sync(db, tab, bot):
             }
             for s in signals
         ],
-        "eth_ctx": _sync_eth_ctx(),
+        "eth_ctx": _sync_eth_ctx(), "st_eth": _sync_st_eth(),
     }
 
 

@@ -583,7 +583,12 @@ pollScanStatus();
 setInterval(pollScanStatus, 5000);
 
 
+let _lastToggleAn = 0;
 async function toggleCluster(rowId, symbol) {
+  const now = Date.now();
+  if (now - _lastToggleAn < 500) return;
+  _lastToggleAn = now;
+
   const row = document.getElementById(rowId);
   if (!row) return;
   if (row.dataset.open === '1') {
@@ -812,7 +817,12 @@ function renderConfluenceRow(d, i) {
   </tr>`;
 }
 
+let _lastToggleCf = 0;
 function toggleConfluenceRow(rowId, symbol) {
+  const now = Date.now();
+  if (now - _lastToggleCf < 500) return;
+  _lastToggleCf = now;
+
   const row = document.getElementById(rowId);
   if (!row) return;
   if (row.dataset.open === '1') {
@@ -1472,7 +1482,8 @@ async function clearProcessed() {
     </thead>
     <tbody>
       {% for s in signals %}
-      <tr class="signal-row{% if cv_tab in ('active', 'ai_signal') %} ai-clickable{% endif %}{% if cv_tab in ('active', 'ai_signal') and s.comment %} ai-done{% endif %}{% if s.st_passed == false %} st-failed{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if cv_tab in ('active', 'ai_signal') %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
+      {% set st_ok = (st_eth and st_eth.confirmed and s.direction == st_eth.direction) if st_eth else true %}
+      <tr class="signal-row{% if cv_tab in ('active', 'ai_signal') %} ai-clickable{% endif %}{% if cv_tab in ('active', 'ai_signal') and s.comment %} ai-done{% endif %}{% if not st_ok and cv_tab in ('active', 'ai_signal') %} st-failed{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if cv_tab in ('active', 'ai_signal') %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
         <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT','') }}</td>
@@ -1618,7 +1629,12 @@ if (sa) sa.onchange = () => {
 
 // renderAnalysisCard определён в base.html (глобальный)
 
+let _lastToggle = 0;
 async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
+  const now = Date.now();
+  if (now - _lastToggle < 500) return;
+  _lastToggle = now;
+
   const row = document.getElementById('airow'+idx);
   const container = document.getElementById('aitxt'+idx);
   if (!row) return;
@@ -2630,7 +2646,12 @@ function renderResultCard(text, pair, status, pnl) {
   return html;
 }
 
+let _lastToggleRes = 0;
 async function toggleResultAnalysis(idx, pair, direction, entry, status, pnl, exitPrice, tp, sl) {
+  const now = Date.now();
+  if (now - _lastToggleRes < 500) return;
+  _lastToggleRes = now;
+
   const row = document.getElementById('resrow'+idx);
   if (!row) return;
 
