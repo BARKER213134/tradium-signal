@@ -17,11 +17,13 @@ _session_cookies = None
 
 
 def _get_driver():
+    import os
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
 
     opts = Options()
-    opts.add_argument("--headless")
+    opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
@@ -29,6 +31,17 @@ def _get_driver():
     opts.add_argument("--disable-extensions")
     opts.add_argument("--disable-logging")
     opts.add_argument("--log-level=3")
+
+    # Railway: chromium вместо chrome
+    chrome_bin = os.environ.get("CHROME_BIN")
+    if chrome_bin:
+        opts.binary_location = chrome_bin
+
+    chromedriver_path = os.environ.get("CHROMEDRIVER_PATH")
+    if chromedriver_path:
+        service = Service(executable_path=chromedriver_path)
+        return webdriver.Chrome(service=service, options=opts)
+
     return webdriver.Chrome(options=opts)
 
 
