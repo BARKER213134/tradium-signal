@@ -614,26 +614,44 @@ async def _check_cryptovizor(db):
             h1 = candles  # уже 1h
             s1, r1 = nearest_levels(h1, current_price, left=3, right=3) if h1 else (None, None)
 
-            # ── Путь 1: паттерн найден → BOT2 ──────────────────
+            # ── Паттерн найден → AI решает: Сигнал AI или Сигнал ──
             if detected:
                 strongest = reversal[0] if reversal else continuation[0]
                 chart_png = render_chart(
                     candles[-30:], s.pair, s.direction,
                     entry=s.entry, s1=s1, r1=r1, pattern=strongest,
                 )
-                s.status = "ПАТТЕРН"
                 s.pattern_triggered = True
                 s.pattern_name = strongest
                 s.pattern_triggered_at = utcnow()
                 s.pattern_price = current_price
                 if s1 is not None: s.dca1 = s1
                 if r1 is not None: s.dca2 = r1
-                db.commit()
-                log_event(s.id, "cryptovizor_pattern", price=current_price,
-                    data={"pattern": strongest, "s1": s1, "r1": r1},
-                    message=f"Cryptovizor: {strongest}")
-                _broadcast("signal_update", {"id": s.id, "status": "ПАТТЕРН", "source": "cryptovizor"})
+
+                # AI score
                 await _ai_score_and_alert_pattern(s, strongest, current_price, s1, r1, chart_png, candles, db)
+
+                # AI filter решает: Сигнал AI или обычный Сигнал
+                ai_passed = await _run_ai_filter(s, current_price, db)
+                if ai_passed:
+                    s.status = "ПАТТЕРН"
+                    s.filter_reason = f"AI_SIGNAL:score={s.ai_score or 0}"
+                    db.commit()
+                    log_event(s.id, "ai_signal", price=current_price,
+                        message=f"AI отобрал: {strongest}, score {s.ai_score}")
+                    _broadcast("signal_new", {"id": s.id, "status": "AI_SIGNAL", "source": "cryptovizor"})
+                    # Алерт в BOT4 + глубокий анализ
+                    await _send_ai_signal_alert(s, {"score": s.ai_score or 0}, current_price)
+                else:
+                    s.status = "ПАТТЕРН"
+                    s.result = f"AI:{s.ai_score or 0}"
+                    db.commit()
+                    log_event(s.id, "cryptovizor_pattern", price=current_price,
+                        data={"pattern": strongest, "s1": s1, "r1": r1},
+                        message=f"Cryptovizor: {strongest}")
+                    _broadcast("signal_new", {"id": s.id, "status": "ПАТТЕРН", "source": "cryptovizor"})
+                    # Обычный алерт в BOT2
+                    await _send_cryptovizor_alert(s, strongest, current_price, s1, r1, chart_png)
                 continue
 
         except Exception as e:
@@ -721,6 +739,37 @@ async def _fill_missing_ai_analysis(db):
                     await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
                 except Exception:
                     pass
+
+
+async def _run_ai_filter(s, current_price, db) -> bool:
+    """Проверяет сигнал по AI критериям. True = проходит в Сигнал AI."""
+    try:
+        from database import _get_db
+        criteria_doc = _get_db().settings.find_one({"_id": "ai_criteria"})
+        user_criteria = criteria_doc.get("criteria", []) if criteria_doc else []
+
+        if not user_criteria:
+            # Нет критериев — пропускаем всё с ai_score >= 60
+            return (s.ai_score or 0) >= 60
+
+        enabled_patterns = {c["label"] for c in user_criteria if c.get("type") == "pattern" and c.get("enabled")}
+        enabled_directions = {c["label"] for c in user_criteria if c.get("type") == "direction" and c.get("enabled")}
+        enabled_hours = {int(c["id"].split(":")[1]) for c in user_criteria if c.get("type") == "hour" and c.get("enabled")}
+        min_ai_score_c = next((c for c in user_criteria if c.get("id") == "min_ai_score"), None)
+
+        hour = s.pattern_triggered_at.hour if s.pattern_triggered_at and hasattr(s.pattern_triggered_at, 'hour') else 0
+
+        pass_pattern = not enabled_patterns or (s.pattern_name in enabled_patterns)
+        pass_direction = not enabled_directions or (s.direction in enabled_directions)
+        pass_hour = not enabled_hours or (hour in enabled_hours)
+        pass_ai = True
+        if min_ai_score_c and min_ai_score_c.get("enabled") and s.ai_score is not None:
+            pass_ai = s.ai_score >= min_ai_score_c.get("value", 0)
+
+        return pass_pattern and pass_direction and pass_hour and pass_ai
+    except Exception as e:
+        logger.error(f"AI filter check #{s.id}: {e}")
+        return False
 
 
 async def _check_ai_signals(db):
