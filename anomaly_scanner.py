@@ -577,7 +577,7 @@ def scan_symbol(symbol: str) -> dict:
     }
 
 
-def scan_batch(symbols: list[str], min_score: float = 7.0) -> list[dict]:
+def scan_batch(symbols: list[str], min_score: float = 10.0) -> list[dict]:
     """Сканирует батч пар. Жёсткий фильтр качества.
 
     Требования для прохождения:

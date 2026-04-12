@@ -1033,7 +1033,7 @@ async def _check_anomalies():
             r = await asyncio.to_thread(scan_symbol, symbol)
         except Exception:
             continue
-        if not r or r["score"] < 7:
+        if not r or r["score"] < 10:
             continue
         if not r.get("has_ftt") and not r.get("has_delta"):
             continue
@@ -1060,7 +1060,7 @@ async def _check_anomalies():
         logger.info(f"Anomaly: {r['symbol']} score={r['score']} dir={r['direction']}")
 
         # Алерт в бот (только сильные)
-        if r["score"] >= 7:
+        if r["score"] >= 10:
             await _send_anomaly_alert(r)
 
     anomaly_scan_state["running"] = False
