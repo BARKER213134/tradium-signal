@@ -1472,21 +1472,8 @@ async def _send_confluence_alert(r: dict):
     text += f"\n\n💡 <i>{conclusion}</i>"
     text += _eth_line()
 
-    # Скриншот с Resonance
-    chart_png = None
     try:
-        from resonance_chart import get_cluster_screenshot
-        chart_png = await asyncio.to_thread(get_cluster_screenshot, r["symbol"], "H1")
-    except Exception as e:
-        logger.debug(f"Resonance screenshot skip: {e}")
-
-    try:
-        if chart_png:
-            from aiogram.types import BufferedInputFile
-            photo = BufferedInputFile(chart_png, filename=f"{r['symbol']}_cluster.png")
-            await _bot5.send_photo(_admin_chat_id, photo=photo, caption=text, parse_mode="HTML")
-        else:
-            await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
+        await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Confluence alert: {r['symbol']}")
     except Exception as e:
         logger.error(f"Confluence alert fail: {e}")
