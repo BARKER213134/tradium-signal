@@ -140,23 +140,23 @@ def three_black_crows(p2, p1, c) -> bool:
 # ─── Публичный API ───────────────────────────────────────────────────────
 
 BULLISH = [
-    ("Hammer", lambda cs: hammer(cs[-1])),
-    ("Inverted Hammer", lambda cs: inverted_hammer(cs[-1]) and _is_bull(cs[-1])),
-    ("Bullish Engulfing", lambda cs: len(cs) >= 2 and bullish_engulfing(cs[-2], cs[-1])),
-    ("Piercing Line", lambda cs: len(cs) >= 2 and piercing_line(cs[-2], cs[-1])),
-    ("Tweezer Bottom", lambda cs: len(cs) >= 2 and tweezer_bottom(cs[-2], cs[-1])),
-    ("Morning Star", lambda cs: len(cs) >= 3 and morning_star(cs[-3], cs[-2], cs[-1])),
-    ("Three White Soldiers", lambda cs: len(cs) >= 3 and three_white_soldiers(cs[-3], cs[-2], cs[-1])),
+    ("Молот", lambda cs: hammer(cs[-1])),
+    ("Перевёрнутый молот", lambda cs: inverted_hammer(cs[-1]) and _is_bull(cs[-1])),
+    ("Бычье поглощение", lambda cs: len(cs) >= 2 and bullish_engulfing(cs[-2], cs[-1])),
+    ("Просвет в облаках", lambda cs: len(cs) >= 2 and piercing_line(cs[-2], cs[-1])),
+    ("Пинцет на дне", lambda cs: len(cs) >= 2 and tweezer_bottom(cs[-2], cs[-1])),
+    ("Утренняя звезда", lambda cs: len(cs) >= 3 and morning_star(cs[-3], cs[-2], cs[-1])),
+    ("Три белых солдата", lambda cs: len(cs) >= 3 and three_white_soldiers(cs[-3], cs[-2], cs[-1])),
 ]
 
 BEARISH = [
-    ("Shooting Star", lambda cs: shooting_star(cs[-1])),
-    ("Hanging Man", lambda cs: hanging_man(cs[-1])),
-    ("Bearish Engulfing", lambda cs: len(cs) >= 2 and bearish_engulfing(cs[-2], cs[-1])),
-    ("Dark Cloud Cover", lambda cs: len(cs) >= 2 and dark_cloud_cover(cs[-2], cs[-1])),
-    ("Tweezer Top", lambda cs: len(cs) >= 2 and tweezer_top(cs[-2], cs[-1])),
-    ("Evening Star", lambda cs: len(cs) >= 3 and evening_star(cs[-3], cs[-2], cs[-1])),
-    ("Three Black Crows", lambda cs: len(cs) >= 3 and three_black_crows(cs[-3], cs[-2], cs[-1])),
+    ("Падающая звезда", lambda cs: shooting_star(cs[-1])),
+    ("Повешенный", lambda cs: hanging_man(cs[-1])),
+    ("Медвежье поглощение", lambda cs: len(cs) >= 2 and bearish_engulfing(cs[-2], cs[-1])),
+    ("Завеса тёмных облаков", lambda cs: len(cs) >= 2 and dark_cloud_cover(cs[-2], cs[-1])),
+    ("Пинцет на вершине", lambda cs: len(cs) >= 2 and tweezer_top(cs[-2], cs[-1])),
+    ("Вечерняя звезда", lambda cs: len(cs) >= 3 and evening_star(cs[-3], cs[-2], cs[-1])),
+    ("Три чёрных ворона", lambda cs: len(cs) >= 3 and three_black_crows(cs[-3], cs[-2], cs[-1])),
 ]
 
 

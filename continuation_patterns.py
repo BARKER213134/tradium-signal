@@ -142,15 +142,15 @@ def descending_triangle(cs: list[dict]) -> bool:
 # ─── Публичный API ───────────────────────────────────────────────────────
 
 BULLISH_CONT = [
-    ("Bull Flag", bull_flag),
-    ("Ascending Triangle", ascending_triangle),
-    ("Rising Three Methods", rising_three_methods),
+    ("Бычий флаг", bull_flag),
+    ("Восходящий треугольник", ascending_triangle),
+    ("Три наступающих", rising_three_methods),
 ]
 
 BEARISH_CONT = [
-    ("Bear Flag", bear_flag),
-    ("Descending Triangle", descending_triangle),
-    ("Falling Three Methods", falling_three_methods),
+    ("Медвежий флаг", bear_flag),
+    ("Нисходящий треугольник", descending_triangle),
+    ("Три отступающих", falling_three_methods),
 ]
 
 
