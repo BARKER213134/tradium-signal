@@ -1319,11 +1319,11 @@ async def _check_confluence():
         if not r:
             continue
 
-        # Дедупликация — та же пара + направление за 12 часов
+        # Дедупликация — та же пара + направление за 4 часа
         existing = _confluence().find_one({
             "symbol": r["symbol"],
             "direction": r["direction"],
-            "detected_at": {"$gte": datetime.datetime.utcnow() - datetime.timedelta(hours=12)},
+            "detected_at": {"$gte": datetime.datetime.utcnow() - datetime.timedelta(hours=4)},
         })
         if existing:
             continue
