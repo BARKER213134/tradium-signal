@@ -777,6 +777,8 @@ async def api_analyze_coin(payload: dict):
         f"Текущая цена: {current}\n"
         f"PnL: {pnl}%\n\n"
         f"Ответь в формате:\n\n"
+        f"О МОНЕТЕ:\n"
+        f"Что за проект, для чего, капитализация, ликвидность. 2-3 предложения.\n\n"
         f"ВЕРДИКТ: ENTER или SKIP\n"
         f"УВЕРЕННОСТЬ: HIGH, MEDIUM или LOW\n"
         f"SCORE: X/10\n\n"
