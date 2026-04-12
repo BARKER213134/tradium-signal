@@ -935,6 +935,91 @@ async def api_anomaly_cluster(symbol: str):
         return {"ok": False, "error": str(e)}
 
 
+@app.post("/api/anomaly-analyze")
+async def api_anomaly_analyze(payload: dict):
+    """AI анализ аномалии — расшифровка + вердикт."""
+    symbol = payload.get("symbol", "")
+    price = payload.get("price", 0)
+    score = payload.get("score", 0)
+    direction = payload.get("direction", "NEUTRAL")
+    anomalies = payload.get("anomalies", [])
+
+    # Формируем описание аномалий
+    anomaly_lines = []
+    type_names = {
+        "ftt": "FTT (Full Tail Turn) — разворотная свеча с длинной тенью и высоким объёмом",
+        "delta_cluster": "Delta Cluster — дисбаланс покупок/продаж на ценовом уровне",
+        "trade_speed": "Speed Print — резкое ускорение количества сделок",
+        "oi_spike": "OI Spike — резкое изменение открытого интереса",
+        "funding_extreme": "Funding Rate — экстремальная ставка финансирования",
+        "ls_extreme": "L/S Ratio — перекос лонг/шорт позиций",
+        "taker_imbalance": "Taker Imbalance — дисбаланс рыночных ордеров",
+        "wall": "Order Book Wall — крупная стена в стакане",
+    }
+    for a in anomalies:
+        t = a.get("type", "")
+        v = a.get("value", "")
+        desc = type_names.get(t, t)
+        anomaly_lines.append(f"- {desc}: значение={v}")
+        if t == "ftt":
+            anomaly_lines.append(f"  FTT score: {a.get('ftt_score',0)}/5, wick: {a.get('wick_ratio',0)}, vol: ×{a.get('vol_ratio',0)}, TF: {a.get('tf','1h')}")
+
+    anomaly_text = "\n".join(anomaly_lines)
+
+    import anthropic
+    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST as ANTHROPIC_MODEL
+
+    prompt = (
+        f"Ты — профессиональный крипто-аналитик. Разбери аномалию на фьючерсном рынке.\n\n"
+        f"Монета: {symbol.replace('USDT','')}/USDT\n"
+        f"Цена: {price}\n"
+        f"Направление сигнала: {direction}\n"
+        f"Score аномалии: {score}/15\n"
+        f"Количество индикаторов: {len(anomalies)}\n\n"
+        f"Обнаруженные аномалии:\n{anomaly_text}\n\n"
+        f"Ответь в формате:\n\n"
+        f"О МОНЕТЕ:\n"
+        f"Что за проект, ликвидность. 1-2 предложения.\n\n"
+        f"ВЕРДИКТ: ENTER или SKIP\n"
+        f"УВЕРЕННОСТЬ: HIGH, MEDIUM или LOW\n"
+        f"SCORE: X/10\n\n"
+        f"TP1: цена\n"
+        f"TP2: цена\n"
+        f"SL: цена\n"
+        f"R:R: соотношение\n\n"
+        f"АНАЛИЗ:\n"
+        f"Что означает совокупность этих аномалий. Почему цена может пойти в направлении {direction}. "
+        f"Расшифруй каждый индикатор простым языком — что он говорит о рынке. "
+        f"Вероятность отработки. 5-8 предложений.\n\n"
+        f"РИСКИ:\n"
+        f"⚠ Риск 1\n"
+        f"⚠ Риск 2\n"
+        f"⚠ Риск 3\n\n"
+        f"На русском."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        message = await asyncio.to_thread(
+            client.messages.create,
+            model=ANTHROPIC_MODEL,
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        analysis = message.content[0].text
+
+        # Сохраняем в MongoDB
+        from database import _anomalies
+        _anomalies().update_one(
+            {"symbol": symbol, "score": score},
+            {"$set": {"comment": analysis}},
+        )
+
+        return {"ok": True, "analysis": analysis}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/api/anomalies/clear")
 async def api_anomalies_clear():
     from database import _anomalies
