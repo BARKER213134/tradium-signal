@@ -164,6 +164,8 @@ SIGNAL_FIELDS = [
     "ai_score", "ai_confidence", "ai_reasoning", "ai_risks", "ai_verdict",
     # Источник сигнала (какой бот его поймал)
     "source",
+    # SuperTrend ETH фильтр
+    "st_passed", "st_direction", "st_streak",
 ]
 
 _DEFAULTS = {
