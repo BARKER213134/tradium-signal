@@ -262,6 +262,7 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 
 <script>
 let _allAnomalies = [];
+let _stEthDir = null;
 
 function filterAnomalies() {
   const dir = document.getElementById('anFilterDir').value;
@@ -306,6 +307,7 @@ async function loadAnomalies() {
       _anEthVal = (e >= 0 ? '+' : '') + e.toFixed(2) + '%';
       _anEthCls = e >= 0 ? 'text-buy' : 'text-sell';
     }
+    if (d.st_eth) _stEthDir = d.st_eth.confirmed ? d.st_eth.direction : null;
     if (!items.length) return;
     filterAnomalies();
   } catch {}
@@ -335,7 +337,7 @@ function renderAnomalyRow(d, i) {
       const time = d.detected_at ? new Date(d.detected_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
 
       const sym = d.symbol || (d.pair||'').replace('/','');
-      const stFail = d.st_passed === false;
+      const stFail = d.st_passed === false || (d.st_passed == null && _stEthDir && d.direction !== _stEthDir);
       return `<tr style="cursor:pointer;${stFail ? 'background:rgba(255,77,109,0.06);border-left:3px solid var(--sell);' : ''}" onclick="toggleCluster('cl_${i}','${sym}')">
         <td class="mono text-muted" style="font-size:11px;">${time}</td>
         <td class="mono text-accent fw-700">${pair}</td>
@@ -748,6 +750,7 @@ setInterval(loadAnomalies, 60000);
 
 <script>
 let _allConfluence = [];
+let _stEthDir = null;
 
 function filterConfluence() {
   const dir = document.getElementById('cfFilterDir').value;
@@ -878,6 +881,7 @@ async function loadConfluence() {
     _allConfluence = items;
     document.getElementById('cfStats').textContent = items.length + ' сигналов';
     if (d.eth_ctx) _updateEthBar(d.eth_ctx);
+    if (d.st_eth) _stEthDir = d.st_eth.confirmed ? d.st_eth.direction : null;
     filterConfluence();
   } catch {}
 }
