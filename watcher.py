@@ -1039,30 +1039,27 @@ async def _check_anomalies():
     from anomaly_scanner import get_liquid_pairs, scan_symbol, _refresh_batch_cache
     from database import _anomalies, utcnow
 
-    logger.info("Anomaly scan starting...")
+    # Сразу показываем что скан идёт
+    anomaly_scan_state["running"] = True
+    anomaly_scan_state["current"] = "загрузка..."
+    anomaly_scan_state["found"] = 0
+    anomaly_scan_state["progress"] = 0
 
-    # Обновляем batch-кеш (2 HTTP запроса вместо 400+)
     try:
         await asyncio.to_thread(_refresh_batch_cache)
     except Exception as e:
         logger.error(f"Batch cache refresh failed: {e}")
 
     pairs = await asyncio.to_thread(get_liquid_pairs, 5_000_000)
-    logger.info(f"Anomaly scan: {len(pairs)} liquid pairs")
     if not pairs:
         anomaly_scan_state["running"] = False
+        anomaly_scan_state["current"] = ""
         return
 
-    # Сканируем ВСЕ пары за один проход
     batch = pairs
-
-    # Обновляем состояние
-    anomaly_scan_state["running"] = True
     anomaly_scan_state["total"] = len(pairs)
     anomaly_scan_state["batch"] = 1
     anomaly_scan_state["batches"] = 1
-    anomaly_scan_state["found"] = 0
-    anomaly_scan_state["progress"] = 0
 
     print(f"[ANOMALY] Scanning {len(batch)} pairs", flush=True)
 
