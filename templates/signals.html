@@ -1128,9 +1128,15 @@ async function clearProcessed() {
       {% if cv_tab in ('active', 'ai_signal') %}
       <tr id="airow{{ loop.index }}" style="display:none;">
         <td colspan="14" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
-          <div style="display:flex;gap:0;">
-            <div id="tvchart{{ loop.index }}" style="width:55%;min-height:400px;border-right:1px solid var(--border);"></div>
-            <div id="aitxt{{ loop.index }}" class="ai-analysis-card" style="width:45%;max-height:400px;overflow-y:auto;">{{ s.comment or '' }}</div>
+          <div style="display:flex;">
+            <div id="tvchart{{ loop.index }}" style="width:60%;min-height:400px;border-right:1px solid var(--border);"></div>
+            <div id="aitxt{{ loop.index }}" style="width:40%;min-height:400px;display:flex;align-items:center;justify-content:center;">
+              {% if s.comment %}
+              <div class="ai-analysis-card" style="max-height:400px;overflow-y:auto;">{{ s.comment }}</div>
+              {% else %}
+              <button class="btn-analyze" onclick="event.stopPropagation();loadAnalysis({{ loop.index }},'{{ s.pair|replace("'","") }}','{{ s.direction }}','{{ s.entry }}','{{ s.pattern_name }}')">🤖 Анализировать</button>
+              {% endif %}
+            </div>
           </div>
         </td>
       </tr>
@@ -1277,18 +1283,20 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
     document.head.appendChild(s);
   }
 
-  // Если уже отрендерен — не запрашиваем
+  // Если уже отрендерен — рендерим сохранённый
   if (container.dataset.loaded === '1') return;
-
-  // Если есть сохранённый текст — рендерим
   const existing = container.textContent.trim();
-  if (existing && existing !== 'Нажми для анализа…' && existing.length > 20) {
+  if (existing && existing.length > 30 && !existing.includes('Анализировать')) {
     container.innerHTML = renderAnalysisCard(existing, pair);
     container.dataset.loaded = '1';
-    return;
   }
+  // Анализ загружается только по кнопке "Анализировать"
+}
 
-  container.innerHTML = '<div class="ai-analysis-card"><span class="text-muted">Анализирую…</span></div>';
+async function loadAnalysis(idx, pair, direction, entry, pattern) {
+  const container = document.getElementById('aitxt'+idx);
+  if (!container) return;
+  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;"><span class="text-muted">Анализирую…</span></div>';
   try {
     const r = await fetch('/api/analyze-coin', {
       method: 'POST',
@@ -1590,6 +1598,17 @@ setInterval(updatePricesAndPnl, 10000);
 .ai-clickable { border-left: 3px solid transparent; transition: border-color 0.2s, background 0.2s; }
 .ai-clickable:hover { background: rgba(255,255,255,0.03); }
 .ai-done { border-left: 3px solid var(--buy); }
+.btn-analyze {
+  padding: 14px 28px; border-radius: 10px; font-size: 14px; font-weight: 700;
+  font-family: var(--font-mono); letter-spacing: 0.05em; cursor: pointer;
+  background: linear-gradient(135deg, rgba(0,102,255,0.15), rgba(0,255,255,0.1));
+  border: 1px solid rgba(0,255,255,0.3); color: var(--cyan);
+  transition: all 0.2s;
+}
+.btn-analyze:hover {
+  background: linear-gradient(135deg, rgba(0,102,255,0.25), rgba(0,255,255,0.2));
+  box-shadow: 0 0 20px rgba(0,255,255,0.15); transform: scale(1.03);
+}
 
 .ai-analysis-card { padding: 20px 24px; font-size: 13px; line-height: 1.6; color: var(--text-2); }
 .ai-analysis-card .ai-section { margin-bottom: 16px; }
