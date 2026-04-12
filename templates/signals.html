@@ -1174,40 +1174,39 @@ function renderAnalysisCard(text, pair) {
   if (!text) return '<div class="ai-analysis-card"><span class="text-muted">Нажми для анализа…</span></div>';
 
   // Очищаем markdown
-  text = text.replace(/#{1,4}\s*/g, '').replace(/\*\*/g, '').replace(/\*/g, '').replace(/---/g, '');
+  text = text.replace(/#{1,4}\s*/g, '').replace(/\*\*/g, '').replace(/\*/g, '').replace(/---/g, '').replace(/✅|☑️|✓/g,'');
 
-  // Парсим секции
-  const lines = text.split('\n');
-  let coin='', verdict='', confidence='', score='', tp1='', tp2='', sl='', rr='';
-  let analysis='', risks=[];
-  let section = '';
+  // Regex-парсинг (работает даже если всё в одной строке)
+  const rx = (pattern) => { const m = text.match(pattern); return m ? m[1].trim() : ''; };
 
-  for (const line of lines) {
-    const l = line.trim();
-    if (!l) continue;
-    if (l.startsWith('О МОНЕТЕ:') || l.startsWith('О монете:')) { section='coin'; coin=''; continue; }
-    if (l.startsWith('ВЕРДИКТ:') || l.startsWith('Вердикт:')) { verdict=l.split(':').slice(1).join(':').trim(); section=''; continue; }
-    if (l.startsWith('УВЕРЕННОСТЬ:') || l.startsWith('Уверенность:')) { confidence=l.split(':').slice(1).join(':').trim(); section=''; continue; }
-    if (l.startsWith('SCORE:') || l.startsWith('Score:')) { score=l.split(':').slice(1).join(':').trim(); section=''; continue; }
-    if (/^TP1:/i.test(l)) { tp1=l.split(':').slice(1).join(':').trim(); continue; }
-    if (/^TP2:/i.test(l)) { tp2=l.split(':').slice(1).join(':').trim(); continue; }
-    if (/^SL:/i.test(l)) { sl=l.split(':').slice(1).join(':').trim(); continue; }
-    if (/^R:R:|^R\/R:/i.test(l)) { rr=l.replace(/^R[:\/]R:\s*/i,'').trim(); continue; }
-    if (l.startsWith('АНАЛИЗ:') || l.startsWith('Анализ:')) { section='analysis'; analysis=''; continue; }
-    if (l.startsWith('РИСКИ:') || l.startsWith('Риски:')) { section='risks'; continue; }
-    if (section==='coin') coin += (coin?' ':'') + l;
-    else if (section==='analysis') analysis += (analysis?' ':'') + l;
-    else if (section==='risks' && l.startsWith('⚠')) risks.push(l.substring(1).trim());
-    else if (section==='risks' && l.startsWith('-')) risks.push(l.substring(1).trim());
-    else if (!section && !verdict) analysis += (analysis?' ':'') + l;
+  const coin = rx(/О МОНЕТЕ[:\s]*\n?([\s\S]*?)(?=ВЕРДИКТ|АНАЛИЗ|SCORE|TP1|$)/i);
+  const verdict = rx(/ВЕРДИКТ[:\s]*(ENTER|SKIP)/i) || rx(/verdict[:\s]*(ENTER|SKIP)/i);
+  const confidence = rx(/УВЕРЕННОСТЬ[:\s]*(HIGH|MEDIUM|LOW)/i);
+  const score = rx(/SCORE[:\s]*([0-9]+(?:[.,\/][0-9]+)?)/i);
+  const tp1 = rx(/TP1[:\s]*([0-9.,]+)/i);
+  const tp2 = rx(/TP2[:\s]*([0-9.,]+)/i);
+  const sl = rx(/SL[:\s]*([0-9.,]+)/i);
+  const rr = rx(/R[:\/ ]R[:\s]*([0-9.:]+(?:\s*[\(\)a-яА-Яa-zA-Z ]*)?)/i);
+  const analysis = rx(/АНАЛИЗ[:\s]*\n?([\s\S]*?)(?=РИСКИ|$)/i);
+
+  // Риски
+  const risks = [];
+  const riskBlock = rx(/РИСКИ[:\s]*\n?([\s\S]*?)$/i);
+  if (riskBlock) {
+    riskBlock.split('\n').forEach(l => {
+      l = l.trim();
+      if (l.startsWith('⚠')) risks.push(l.substring(1).trim());
+      else if (l.startsWith('-')) risks.push(l.substring(1).trim());
+      else if (l.length > 5 && risks.length < 5) risks.push(l);
+    });
   }
 
-  // Если не распарсилось — показываем как текст
-  if (!verdict && !analysis && !coin) {
-    return `<div class="ai-analysis-card"><div class="ai-text">${text.replace(/\n/g,'<br>')}</div></div>`;
+  // Если совсем не распарсилось
+  if (!verdict && !analysis && !coin && !tp1) {
+    return `<div class="ai-analysis-card"><div class="ai-text" style="white-space:pre-line;">${text}</div></div>`;
   }
 
-  const isEnter = verdict.toUpperCase().includes('ENTER');
+  const isEnter = (verdict||'').toUpperCase().includes('ENTER');
   const vClass = isEnter ? 'ai-verdict-enter' : 'ai-verdict-skip';
   const vLabel = isEnter ? '✅ ENTER' : '❌ SKIP';
 
@@ -1215,15 +1214,18 @@ function renderAnalysisCard(text, pair) {
 
   // О монете
   if (coin) {
-    html += `<div class="ai-section"><div class="ai-section-title">О монете · ${(pair||'').replace('/USDT','')}</div><div class="ai-text">${coin}</div></div>`;
+    const pairName = (pair||'').replace('/USDT','').replace('USDT','');
+    html += `<div class="ai-section"><div class="ai-section-title">О монете · ${pairName}</div><div class="ai-text">${coin.replace(/\n/g,' ')}</div></div>`;
   }
 
   // Вердикт
-  html += `<div class="ai-verdict-row ${vClass}">`;
-  html += `<span class="ai-verdict-label">${vLabel}</span>`;
-  if (confidence) html += `<span class="ai-confidence">Уверенность: ${confidence}</span>`;
-  if (score) html += `<span class="ai-score-big">${score}</span>`;
-  html += '</div>';
+  if (verdict) {
+    html += `<div class="ai-verdict-row ${vClass}">`;
+    html += `<span class="ai-verdict-label">${vLabel}</span>`;
+    if (confidence) html += `<span class="ai-confidence">Уверенность: ${confidence}</span>`;
+    if (score) html += `<span class="ai-score-big">Score: ${score}</span>`;
+    html += '</div>';
+  }
 
   // Уровни
   if (tp1 || tp2 || sl || rr) {
@@ -1237,7 +1239,7 @@ function renderAnalysisCard(text, pair) {
 
   // Анализ
   if (analysis) {
-    html += `<div class="ai-section"><div class="ai-section-title">Анализ</div><div class="ai-text">${analysis}</div></div>`;
+    html += `<div class="ai-section"><div class="ai-section-title">Анализ</div><div class="ai-text">${analysis.replace(/\n/g,'<br>')}</div></div>`;
   }
 
   // Риски
