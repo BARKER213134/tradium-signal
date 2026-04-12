@@ -339,7 +339,9 @@ function renderAnomalyRow(d, i) {
         <td colspan="13" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
           <div style="display:flex;">
             <div id="antv_${i}" style="width:55%;min-height:380px;border-right:1px solid var(--border);"></div>
-            <div id="anai_${i}" class="ai-analysis-card" style="width:45%;max-height:380px;overflow-y:auto;"></div>
+            <div id="anai_${i}" style="width:45%;min-height:380px;display:flex;align-items:center;justify-content:center;">
+              <button class="btn-analyze" onclick="event.stopPropagation();loadAnomalyAnalysis('${sym}',${i})">🤖 Анализировать</button>
+            </div>
           </div>
         </td>
       </tr>`;
@@ -538,33 +540,28 @@ async function toggleCluster(rowId, symbol) {
     else sc.onload();
   }
 
-  // AI анализ
-  const aiDiv = document.getElementById('anai_'+idx);
-  if (aiDiv && !aiDiv.dataset.loaded) {
-    // Ищем данные аномалии
-    const anomData = _allAnomalies.find(a => (a.symbol||'') === symbol);
-    if (!anomData) { aiDiv.innerHTML = '<span class="text-muted">Нет данных</span>'; return; }
+}
 
-    aiDiv.innerHTML = '<span class="text-muted">Анализирую аномалию…</span>';
-    try {
-      const r = await fetch('/api/anomaly-analyze', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          symbol: anomData.symbol, price: anomData.price, score: anomData.score,
-          direction: anomData.direction, anomalies: anomData.anomalies,
-        }),
-      });
-      const d = await r.json();
-      if (d.ok) {
-        aiDiv.innerHTML = renderAnalysisCard(d.analysis, anomData.symbol);
-        aiDiv.dataset.loaded = '1';
-      } else {
-        aiDiv.innerHTML = `<span class="text-sell">Ошибка: ${d.error||''}</span>`;
-      }
-    } catch(e) {
-      aiDiv.innerHTML = `<span class="text-sell">${e.message}</span>`;
-    }
+async function loadAnomalyAnalysis(symbol, idx) {
+  const aiDiv = document.getElementById('anai_'+idx);
+  if (!aiDiv) return;
+  const anomData = _allAnomalies.find(a => (a.symbol||'') === symbol);
+  if (!anomData) { aiDiv.innerHTML = '<span class="text-muted">Нет данных</span>'; return; }
+
+  aiDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;"><span class="text-muted">Анализирую…</span></div>';
+  try {
+    const r = await fetch('/api/anomaly-analyze', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        symbol: anomData.symbol, price: anomData.price, score: anomData.score,
+        direction: anomData.direction, anomalies: anomData.anomalies,
+      }),
+    });
+    const d = await r.json();
+    aiDiv.innerHTML = d.ok ? renderAnalysisCard(d.analysis, symbol) : `<span class="text-sell">Ошибка: ${d.error||''}</span>`;
+  } catch(e) {
+    aiDiv.innerHTML = `<span class="text-sell">${e.message}</span>`;
   }
 }
 
@@ -1477,7 +1474,12 @@ setInterval(updatePricesAndPnl, 10000);
       {% if tab == 'results' %}
       <tr id="resrow{{ loop.index }}" style="display:none;">
         <td colspan="15" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
-          <div id="restxt{{ loop.index }}" class="ai-analysis-card"></div>
+          <div style="display:flex;">
+            <div id="restv{{ loop.index }}" style="width:60%;min-height:380px;border-right:1px solid var(--border);"></div>
+            <div id="restxt{{ loop.index }}" style="width:40%;min-height:380px;display:flex;align-items:center;justify-content:center;">
+              <button class="btn-analyze" onclick="event.stopPropagation();loadResultAnalysis({{ loop.index }},'{{ s.pair|replace("'","") }}','{{ s.direction }}','{{ s.entry }}','{{ s.status }}','{{ s.pnl_percent or 0 }}','{{ s.exit_price or 0 }}','{{ s.tp1 or 0 }}','{{ s.sl or 0 }}')">🤖 Разбор сделки</button>
+            </div>
+          </div>
         </td>
       </tr>
       {% endif %}
@@ -2244,7 +2246,6 @@ function renderResultCard(text, pair, status, pnl) {
 
 async function toggleResultAnalysis(idx, pair, direction, entry, status, pnl, exitPrice, tp, sl) {
   const row = document.getElementById('resrow'+idx);
-  const container = document.getElementById('restxt'+idx);
   if (!row) return;
 
   if (row.dataset.open === '1') {
@@ -2255,9 +2256,28 @@ async function toggleResultAnalysis(idx, pair, direction, entry, status, pnl, ex
   row.style.display = 'table-row';
   row.dataset.open = '1';
 
-  if (container.dataset.loaded === '1') return;
+  // TradingView
+  const tvDiv = document.getElementById('restv'+idx);
+  if (tvDiv && !tvDiv.dataset.loaded) {
+    tvDiv.dataset.loaded = '1';
+    const sym = pair.replace('/USDT','') + 'USDT';
+    tvDiv.innerHTML = `<div style="height:100%;"><div id="restvw${idx}" style="height:100%;"></div></div>`;
+    const sc = document.createElement('script');
+    sc.src = 'https://s3.tradingview.com/tv.js';
+    sc.onload = () => {
+      new TradingView.widget({container_id:'restvw'+idx, symbol:'BINANCE:'+sym, interval:'60',
+        timezone:'Etc/UTC', theme:'dark', style:'1', locale:'ru', enable_publishing:false,
+        hide_side_toolbar:true, allow_symbol_change:false, save_image:false, width:'100%', height:'100%'});
+    };
+    if (!window.TradingView) document.head.appendChild(sc);
+    else sc.onload();
+  }
+}
 
-  container.innerHTML = '<div class="ai-analysis-card"><span class="text-muted">Анализирую сделку…</span></div>';
+async function loadResultAnalysis(idx, pair, direction, entry, status, pnl, exitPrice, tp, sl) {
+  const container = document.getElementById('restxt'+idx);
+  if (!container) return;
+  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;"><span class="text-muted">Анализирую…</span></div>';
   try {
     const r = await fetch('/api/analyze-result', {
       method: 'POST',
@@ -2265,10 +2285,9 @@ async function toggleResultAnalysis(idx, pair, direction, entry, status, pnl, ex
       body: JSON.stringify({pair, direction, entry: parseFloat(entry), status, pnl: parseFloat(pnl), exit_price: parseFloat(exitPrice), tp: parseFloat(tp), sl: parseFloat(sl)}),
     });
     const d = await r.json();
-    container.innerHTML = d.ok ? renderResultCard(d.analysis, pair, status, pnl) : `<div class="ai-analysis-card"><span class="text-sell">Ошибка: ${d.error||''}</span></div>`;
-    container.dataset.loaded = '1';
+    container.innerHTML = d.ok ? renderResultCard(d.analysis, pair, status, pnl) : `<span class="text-sell">Ошибка: ${d.error||''}</span>`;
   } catch(e) {
-    container.innerHTML = `<div class="ai-analysis-card"><span class="text-sell">Ошибка: ${e.message}</span></div>`;
+    container.innerHTML = `<span class="text-sell">${e.message}</span>`;
   }
 }
 </script>
