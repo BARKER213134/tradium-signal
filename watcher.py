@@ -482,6 +482,7 @@ async def _check_once():
     сигналы (в этом тике) не проверяются на TP/SL — отложим до следующего тика."""
     db = SessionLocal()
     try:
+        print("[WATCHER] _check_once start", flush=True)
         await _retry_failed_ai(db)
         await _filter_stuck(db)
 
@@ -501,8 +502,10 @@ async def _check_once():
             ("ai_analysis", lambda: _fill_missing_ai_analysis(db)),
         ]:
             try:
+                print(f"[WATCHER] step: {step_name}", flush=True)
                 await step_fn()
             except Exception as e:
+                print(f"[WATCHER] step '{step_name}' FAILED: {e}", flush=True)
                 logger.error(f"Watcher step '{step_name}' failed: {e}")
     finally:
         db.close()
@@ -1150,9 +1153,13 @@ async def start_watcher():
     _watcher_running = True
     print(f"[WATCHER] Started (interval={POLL_INTERVAL}s)", flush=True)
     logger.info(f"Price watcher запущен (интервал {POLL_INTERVAL}s)")
+    tick = 0
     while True:
+        tick += 1
         try:
+            print(f"[WATCHER] tick {tick}", flush=True)
             await _check_once()
+            print(f"[WATCHER] tick {tick} done", flush=True)
         except Exception as e:
             logger.error(f"Watcher ошибка: {e}")
         await asyncio.sleep(POLL_INTERVAL)
