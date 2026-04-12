@@ -1019,21 +1019,18 @@ async def _check_anomalies():
         anomaly_scan_state["running"] = False
         return
 
-    # Разбиваем на 4 батча
-    chunk_size = max(len(pairs) // 4, 50)
-    start = _anomaly_batch_idx * chunk_size
-    batch = pairs[start:start + chunk_size]
-    _anomaly_batch_idx = (_anomaly_batch_idx + 1) % 4
+    # Сканируем ВСЕ пары за один проход
+    batch = pairs
 
     # Обновляем состояние
     anomaly_scan_state["running"] = True
     anomaly_scan_state["total"] = len(pairs)
-    anomaly_scan_state["batch"] = _anomaly_batch_idx
-    anomaly_scan_state["batches"] = 4
+    anomaly_scan_state["batch"] = 1
+    anomaly_scan_state["batches"] = 1
     anomaly_scan_state["found"] = 0
     anomaly_scan_state["progress"] = 0
 
-    logger.info(f"Anomaly scan batch {_anomaly_batch_idx}/4: {len(batch)} pairs")
+    print(f"[ANOMALY] Scanning {len(batch)} pairs", flush=True)
 
     now = utcnow()
     results = []
