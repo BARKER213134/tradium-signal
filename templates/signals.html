@@ -332,7 +332,8 @@ function renderAnomalyRow(d, i) {
       const time = d.detected_at ? new Date(d.detected_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
 
       const sym = d.symbol || (d.pair||'').replace('/','');
-      return `<tr style="cursor:pointer;" onclick="toggleCluster('cl_${i}','${sym}')">
+      const stFail = d.st_passed === false;
+      return `<tr style="cursor:pointer;${stFail ? 'background:rgba(255,77,109,0.06);border-left:3px solid var(--sell);' : ''}" onclick="toggleCluster('cl_${i}','${sym}')">
         <td class="mono text-muted" style="font-size:11px;">${time}</td>
         <td class="mono text-accent fw-700">${pair}</td>
         <td class="mono">${d.price||'—'}</td>
@@ -775,7 +776,8 @@ function renderConfluenceRow(d, i) {
     if (f.type==='ftt') ftt = `<span class="${d.direction==='LONG'?'text-buy':'text-sell'}">${f.value}</span>`;
   });
 
-  return `<tr style="cursor:pointer;" onclick="toggleConfluenceRow('cfr_${i}','${sym}')">
+  const stFail = d.st_passed === false;
+  return `<tr style="cursor:pointer;${stFail ? 'background:rgba(255,77,109,0.06);border-left:3px solid var(--sell);' : ''}" onclick="toggleConfluenceRow('cfr_${i}','${sym}')">
     <td class="mono text-muted" style="font-size:11px;">${time}</td>
     <td class="mono text-accent fw-700">${pair}</td>
     <td class="mono">${d.price||'—'}</td>
@@ -1459,7 +1461,7 @@ async function clearProcessed() {
     </thead>
     <tbody>
       {% for s in signals %}
-      <tr class="signal-row{% if cv_tab in ('active', 'ai_signal') %} ai-clickable{% endif %}{% if cv_tab in ('active', 'ai_signal') and s.comment %} ai-done{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if cv_tab in ('active', 'ai_signal') %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
+      <tr class="signal-row{% if cv_tab in ('active', 'ai_signal') %} ai-clickable{% endif %}{% if cv_tab in ('active', 'ai_signal') and s.comment %} ai-done{% endif %}{% if s.st_passed == false %} st-failed{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if cv_tab in ('active', 'ai_signal') %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
         <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT','') }}</td>
@@ -1969,6 +1971,7 @@ setInterval(updatePricesAndPnl, 10000);
 
 /* ── Tradium-only styles (shared styles in base.html) ── */
 .signal-row { cursor: pointer; }
+.st-failed { background: rgba(255,77,109,0.06) !important; border-left: 3px solid var(--sell) !important; }
 .ai-clickable { border-left: 3px solid transparent; transition: border-color 0.2s, background 0.2s; }
 .ai-clickable:hover { background: rgba(255,255,255,0.03); }
 .ai-done { border-left: 3px solid var(--buy); }

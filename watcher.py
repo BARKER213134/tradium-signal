@@ -63,6 +63,26 @@ def _resolve_chart(p: str) -> str | None:
     return cand if os.path.exists(cand) else None
 
 
+def _check_supertrend_filter(direction: str) -> tuple[bool, dict]:
+    """Проверяет SuperTrend ETH фильтр. Возвращает (passed, st_data)."""
+    try:
+        from exchange import get_supertrend_eth
+        st = get_supertrend_eth()
+        passed = st.get("confirmed", False) and st.get("direction") == direction
+        return passed, st
+    except Exception:
+        return True, {"direction": "?", "streak": 0, "confirmed": False}
+
+
+def _st_line(passed: bool, st: dict) -> str:
+    """Строка SuperTrend для Telegram."""
+    d = st.get("direction", "?")
+    s = st.get("streak", 0)
+    emoji = "🟢" if d == "LONG" else "🔴"
+    status = "✅ ST подтверждён" if passed else "⚠️ ST не совпадает"
+    return f"\n{emoji} SuperTrend ETH: <b>{d}</b> ({s} свечей) · {status}"
+
+
 def _eth_line() -> str:
     """Одна строка с ETH/BTC контекстом для Telegram."""
     try:
@@ -666,27 +686,34 @@ async def _check_cryptovizor(db):
                 # AI score
                 await _ai_score_and_alert_pattern(s, strongest, current_price, s1, r1, chart_png, candles, db)
 
+                # SuperTrend ETH фильтр
+                st_passed, st_data = _check_supertrend_filter(s.direction)
+
                 # AI filter решает: Сигнал AI или обычный Сигнал
                 ai_passed = await _run_ai_filter(s, current_price, db)
                 if ai_passed:
                     s.status = "ПАТТЕРН"
                     s.filter_reason = f"AI_SIGNAL:score={s.ai_score or 0}"
+                    s.st_passed = st_passed
                     db.commit()
                     log_event(s.id, "ai_signal", price=current_price,
-                        message=f"AI отобрал: {strongest}, score {s.ai_score}")
+                        message=f"AI отобрал: {strongest}, score {s.ai_score}, ST={'✅' if st_passed else '❌'}")
                     _broadcast("signal_new", {"id": s.id, "status": "AI_SIGNAL", "source": "cryptovizor"})
-                    # Алерт в BOT4 + глубокий анализ
-                    await _send_ai_signal_alert(s, {"score": s.ai_score or 0}, current_price)
+                    # Алерт только если ST подтверждён
+                    if st_passed:
+                        await _send_ai_signal_alert(s, {"score": s.ai_score or 0, "st": st_data}, current_price)
                 else:
                     s.status = "ПАТТЕРН"
                     s.result = f"AI:{s.ai_score or 0}"
+                    s.st_passed = st_passed
                     db.commit()
                     log_event(s.id, "cryptovizor_pattern", price=current_price,
                         data={"pattern": strongest, "s1": s1, "r1": r1},
-                        message=f"Cryptovizor: {strongest}")
+                        message=f"Cryptovizor: {strongest}, ST={'✅' if st_passed else '❌'}")
                     _broadcast("signal_new", {"id": s.id, "status": "ПАТТЕРН", "source": "cryptovizor"})
-                    # Обычный алерт в BOT2
-                    await _send_cryptovizor_alert(s, strongest, current_price, s1, r1, chart_png)
+                    # Алерт только если ST подтверждён
+                    if st_passed:
+                        await _send_cryptovizor_alert(s, strongest, current_price, s1, r1, chart_png)
                 continue
 
         except Exception as e:
@@ -1051,6 +1078,9 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
 
     if tg_summary:
         text += f"\n📝 {tg_summary}"
+    _st = ai_result.get("st", {})
+    if _st:
+        text += _st_line(True, _st)
     text += _eth_line()
 
     try:
@@ -1137,18 +1167,23 @@ async def _check_anomalies():
         if existing:
             continue
 
+        # SuperTrend фильтр
+        st_passed, st_data = _check_supertrend_filter(r["direction"])
+
         doc = {
             "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
             "score": r["score"], "direction": r["direction"],
             "anomalies": r["anomalies"], "detected_at": now,
+            "st_passed": st_passed,
         }
         _anomalies().insert_one(doc)
         anomaly_scan_state["found"] += 1
         results.append(r)
-        logger.info(f"Anomaly: {r['symbol']} score={r['score']} dir={r['direction']}")
+        logger.info(f"Anomaly: {r['symbol']} score={r['score']} dir={r['direction']} ST={'✅' if st_passed else '❌'}")
 
-        # Алерт в бот (только сильные)
-        if r["score"] >= 10:
+        # Алерт только если ST подтверждён
+        if r["score"] >= 10 and st_passed:
+            r["_st"] = st_data
             await _send_anomaly_alert(r)
 
     anomaly_scan_state["running"] = False
@@ -1253,6 +1288,10 @@ async def _send_anomaly_alert(r: dict):
     if indicators:
         text += "\n\n" + "\n".join(f"  · {ind}" for ind in indicators)
     text += f"\n\n💡 <i>{conclusion}</i>"
+    # SuperTrend метка
+    _st = r.get("_st", {})
+    if _st:
+        text += _st_line(True, _st)
     text += _eth_line()
 
     # Скриншот с Resonance
@@ -1342,6 +1381,8 @@ async def _check_confluence():
         if existing:
             continue
 
+        st_passed, st_data = _check_supertrend_filter(r["direction"])
+
         doc = {
             "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
             "score": r["score"], "strength": r["strength"],
@@ -1349,14 +1390,16 @@ async def _check_confluence():
             "s1": r.get("s1"), "r1": r.get("r1"),
             "pattern": r.get("pattern"), "trend_tf": r.get("trend_tf"),
             "detected_at": now,
+            "st_passed": st_passed,
         }
         _confluence().insert_one(doc)
         confluence_scan_state["found"] += 1
         results.append(r)
-        logger.info(f"Confluence: {r['symbol']} score={r['score']} {r['strength']} {r['direction']}")
+        logger.info(f"Confluence: {r['symbol']} score={r['score']} {r['strength']} {r['direction']} ST={'✅' if st_passed else '❌'}")
 
-        # Алерт в BOT5
-        if r["score"] >= 4:
+        # Алерт только если ST подтверждён
+        if r["score"] >= 4 and st_passed:
+            r["_st"] = st_data
             await _send_confluence_alert(r)
 
     confluence_scan_state["running"] = False
@@ -1470,6 +1513,9 @@ async def _send_confluence_alert(r: dict):
     )
     text += "\n".join(checks)
     text += f"\n\n💡 <i>{conclusion}</i>"
+    _st = r.get("_st", {})
+    if _st:
+        text += _st_line(True, _st)
     text += _eth_line()
 
     try:

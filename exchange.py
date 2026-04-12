@@ -252,6 +252,80 @@ def get_futures_prices_only(pairs: list[str]) -> dict[str, float]:
     return get_futures_prices(pairs)
 
 
+# ── SuperTrend ETH (кешированный) ─────────────────────────────────────
+_st_cache: dict = {}
+_st_cache_ts: float = 0
+_ST_TTL = 60  # 1 мин
+
+
+def _calc_supertrend(candles, period=10, multiplier=3.0):
+    """Считает SuperTrend, возвращает (direction, streak)."""
+    if not candles or len(candles) < period + 1:
+        return None, 0
+
+    trs = []
+    for i in range(1, len(candles)):
+        c = candles[i]
+        prev_c = candles[i - 1]["c"]
+        tr = max(c["h"] - c["l"], abs(c["h"] - prev_c), abs(c["l"] - prev_c))
+        trs.append(tr)
+
+    atr_values = []
+    for i in range(len(trs)):
+        if i < period - 1:
+            atr_values.append(None)
+        elif i == period - 1:
+            atr_values.append(sum(trs[:period]) / period)
+        else:
+            atr_values.append((atr_values[-1] * (period - 1) + trs[i]) / period)
+
+    direction = 1
+    upper_band = lower_band = 0
+    streak = 0
+
+    for i in range(period, len(candles)):
+        atr = atr_values[i - 1]
+        if atr is None:
+            continue
+        hl2 = (candles[i]["h"] + candles[i]["l"]) / 2
+        bu = hl2 + multiplier * atr
+        bl = hl2 - multiplier * atr
+        if bu < upper_band or candles[i - 1]["c"] > upper_band:
+            upper_band = bu
+        if bl > lower_band or candles[i - 1]["c"] < lower_band:
+            lower_band = bl
+        prev = direction
+        if candles[i]["c"] > upper_band:
+            direction = 1
+        elif candles[i]["c"] < lower_band:
+            direction = -1
+        streak = streak + 1 if direction == prev else 1
+
+    return ("LONG" if direction == 1 else "SHORT"), streak
+
+
+def get_supertrend_eth() -> dict:
+    """Возвращает SuperTrend ETH 1h: direction, streak, confirmed. Кеш 60с."""
+    global _st_cache, _st_cache_ts
+    now = time.time()
+    if _st_cache and (now - _st_cache_ts) < _ST_TTL:
+        return _st_cache
+
+    try:
+        candles = get_klines_any("ETH/USDT", "1h", limit=50)
+        direction, streak = _calc_supertrend(candles)
+        _st_cache = {
+            "direction": direction or "NEUTRAL",
+            "streak": streak,
+            "confirmed": streak >= 3,
+        }
+    except Exception:
+        _st_cache = {"direction": "NEUTRAL", "streak": 0, "confirmed": False}
+
+    _st_cache_ts = now
+    return _st_cache
+
+
 # ── ETH/BTC market context (кешированный) ───────────────────────────
 _eth_ctx_cache: dict = {}
 _eth_ctx_ts: float = 0
