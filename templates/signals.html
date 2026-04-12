@@ -775,7 +775,7 @@ function renderConfluenceRow(d, i) {
     if (f.type==='ftt') ftt = `<span class="${d.direction==='LONG'?'text-buy':'text-sell'}">${f.value}</span>`;
   });
 
-  return `<tr style="cursor:pointer;" onclick="openChartModal('${sym}','${pair}','${d.direction}','0')">
+  return `<tr style="cursor:pointer;" onclick="toggleConfluenceRow('cfr_${i}','${sym}')">
     <td class="mono text-muted" style="font-size:11px;">${time}</td>
     <td class="mono text-accent fw-700">${pair}</td>
     <td class="mono">${d.price||'—'}</td>
@@ -788,7 +788,65 @@ function renderConfluenceRow(d, i) {
     <td class="mono">${volume}</td>
     <td class="mono">${eth}</td>
     <td class="mono">${ftt}</td>
+  </tr>
+  <tr id="cfr_${i}" style="display:none;" data-open="0" onclick="event.stopPropagation();">
+    <td colspan="12" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
+      <div style="display:flex;" onclick="event.stopPropagation();">
+        <div id="cftv_${i}" style="width:60%;min-height:400px;border-right:1px solid var(--border);"></div>
+        <div id="cfai_${i}" style="width:40%;min-height:400px;display:flex;align-items:center;justify-content:center;">
+          <button class="btn-analyze" onclick="event.stopPropagation();loadConfluenceAnalysis('${sym}',${i},'${d.direction}','${d.price}','${d.score}')">🤖 Анализировать</button>
+        </div>
+      </div>
+    </td>
   </tr>`;
+}
+
+function toggleConfluenceRow(rowId, symbol) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  if (row.dataset.open === '1') {
+    row.style.display = 'none';
+    row.dataset.open = '0';
+    return;
+  }
+  row.style.display = 'table-row';
+  row.dataset.open = '1';
+
+  // TradingView
+  const idx = rowId.replace('cfr_','');
+  const tvDiv = document.getElementById('cftv_'+idx);
+  if (tvDiv && !tvDiv.dataset.loaded) {
+    tvDiv.dataset.loaded = '1';
+    tvDiv.innerHTML = `<div id="cftvw${idx}" style="height:100%;"></div>`;
+    const loadTV = () => {
+      new TradingView.widget({container_id:'cftvw'+idx, symbol:'BINANCE:'+symbol, interval:'60',
+        timezone:'Etc/UTC', theme:'dark', style:'1', locale:'ru', enable_publishing:false,
+        hide_side_toolbar:true, allow_symbol_change:false, save_image:false, width:'100%', height:'100%'});
+    };
+    if (window.TradingView) loadTV();
+    else { const sc=document.createElement('script'); sc.src='https://s3.tradingview.com/tv.js'; sc.onload=loadTV; document.head.appendChild(sc); }
+  }
+}
+
+async function loadConfluenceAnalysis(symbol, idx, direction, price, score) {
+  const container = document.getElementById('cfai_'+idx);
+  if (!container) return;
+  const cfData = _allConfluence.find(a => (a.symbol||'') === symbol);
+  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;"><span class="text-muted">Анализирую…</span></div>';
+  try {
+    const r = await fetch('/api/anomaly-analyze', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        symbol: symbol, price: parseFloat(price), score: parseFloat(score),
+        direction: direction, anomalies: cfData ? cfData.factors : [],
+      }),
+    });
+    const d = await r.json();
+    container.innerHTML = d.ok ? renderAnalysisCard(d.analysis, symbol) : `<span class="text-sell">Ошибка: ${d.error||''}</span>`;
+  } catch(e) {
+    container.innerHTML = `<span class="text-sell">${e.message}</span>`;
+  }
 }
 
 async function loadConfluence() {
