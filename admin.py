@@ -401,7 +401,8 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
                 "pages": 1, "page": 1, "pairs": [],
                 "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
             })
-        signals = query.order_by(desc(Signal.received_at)).limit(200).all()
+        sort_field = Signal.pattern_triggered_at if cv_tab in ("active", "ai_signal") else Signal.received_at
+        signals = query.order_by(desc(sort_field)).limit(200).all()
         return templates.TemplateResponse(request, "signals.html", {
             "signals": signals,
             "total": len(signals),
