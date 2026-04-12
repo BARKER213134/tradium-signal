@@ -1047,14 +1047,17 @@ async def api_anomalies_clear():
 
 
 @app.get("/api/anomalies/backtest")
-async def api_anomalies_backtest():
-    """Бектест аномалий: проверяет движение цены после обнаружения."""
+async def api_anomalies_backtest(st: int = 0):
+    """Бектест аномалий. st=1 — только прошедшие SuperTrend фильтр."""
     from database import _anomalies
     from exchange import get_futures_prices_only
 
-    docs = list(_anomalies().find().sort("detected_at", -1).limit(200))
+    query = {}
+    if st:
+        query["st_passed"] = True
+    docs = list(_anomalies().find(query).sort("detected_at", -1).limit(200))
     if not docs:
-        return {"ok": True, "results": [], "summary": {}}
+        return {"ok": True, "results": [], "summary": {}, "st_filter": bool(st)}
 
     # Текущие цены
     symbols = list({d.get("symbol", "") for d in docs if d.get("symbol")})
@@ -1208,6 +1211,7 @@ async def api_anomalies_backtest():
         "best": best_5,
         "worst": worst_5,
         "results": sorted(results, key=lambda x: -abs(x["pnl"]))[:50],
+        "st_filter": bool(st),
     }
 
 
@@ -1245,11 +1249,13 @@ async def api_confluence_clear():
 
 
 @app.get("/api/confluence/backtest")
-async def api_confluence_backtest():
+async def api_confluence_backtest(st: int = 0):
+    """st=1 — только прошедшие SuperTrend фильтр."""
     from database import _confluence
     from exchange import get_futures_prices_only
 
-    docs = list(_confluence().find().sort("detected_at", -1).limit(200))
+    query = {"st_passed": True} if st else {}
+    docs = list(_confluence().find(query).sort("detected_at", -1).limit(200))
     if not docs:
         return {"ok": True, "results": [], "summary": {}}
 
@@ -1330,6 +1336,7 @@ async def api_confluence_backtest():
         "best": sorted_results[:5],
         "worst": sorted_results[-5:],
         "results": sorted_results[:50],
+        "st_filter": bool(st),
     }
 
 

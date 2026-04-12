@@ -205,6 +205,9 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
   <span id="anStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
 
   <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+    <label style="font-family:var(--font-mono);font-size:10px;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:4px;">
+      <input type="checkbox" id="anBtST" style="accent-color:var(--cyan);"> ST фильтр
+    </label>
     <button class="btn-ghost btn-sm" onclick="runAnomalyBacktest()" id="anBtBtn" style="font-size:10px;padding:5px 12px;">📊 Бектест</button>
     <button class="delete-btn" onclick="clearAnomalies()" style="font-size:10px;padding:5px 12px;">🗑</button>
   </div>
@@ -370,9 +373,10 @@ async function clearAnomalies() {
 async function runAnomalyBacktest() {
   const btn = document.getElementById('anBtBtn');
   const box = document.getElementById('anBacktestResult');
+  const stChecked = document.getElementById('anBtST').checked;
   btn.disabled = true; btn.textContent = '⏳ Считаю…';
   try {
-    const r = await fetch('/api/anomalies/backtest');
+    const r = await fetch('/api/anomalies/backtest?st=' + (stChecked ? 1 : 0));
     const d = await r.json();
     if (!d.ok) { box.innerHTML = '<span class="text-sell">Ошибка</span>'; box.style.display='block'; return; }
     const s = d.summary;
@@ -449,7 +453,9 @@ async function runAnomalyBacktest() {
       }
     }
 
+    const stLabel = d.st_filter ? '<span style="color:var(--cyan);font-family:var(--font-mono);font-size:11px;">✅ SuperTrend фильтр</span>' : '<span style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">Без фильтра</span>';
     box.innerHTML = `
+      <div style="margin-bottom:8px;">${stLabel}</div>
       <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px;">
         ${card('Сделок',s.total)}
         ${card('Win Rate',s.win_rate+'%',wrCls)}
@@ -700,6 +706,9 @@ setInterval(loadAnomalies, 60000);
     <span id="cfFilterCount" class="an-filter-count"></span>
 
     <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+      <label style="font-family:var(--font-mono);font-size:10px;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" id="cfBtST" style="accent-color:var(--cyan);"> ST фильтр
+      </label>
       <button class="btn-ghost btn-sm" onclick="runConfluenceBacktest()" id="cfBtBtn" style="font-size:10px;padding:6px 14px;">📊 Бектест</button>
       <button class="delete-btn" onclick="clearConfluence()" style="font-size:10px;padding:6px 10px;">🗑</button>
     </div>
@@ -872,16 +881,18 @@ async function clearConfluence() {
 async function runConfluenceBacktest() {
   const btn = document.getElementById('cfBtBtn');
   const box = document.getElementById('cfBacktestResult');
+  const stChecked = document.getElementById('cfBtST').checked;
   btn.disabled = true; btn.textContent = '⏳…';
   try {
-    const r = await fetch('/api/confluence/backtest');
+    const r = await fetch('/api/confluence/backtest?st=' + (stChecked ? 1 : 0));
     const d = await r.json();
     if (!d.ok) { box.innerHTML = '<span class="text-sell">Ошибка</span>'; box.style.display='block'; return; }
     const s = d.summary;
     const wrCls = s.win_rate >= 50 ? 'text-buy' : 'text-sell';
     const pnlCls = s.total_pnl >= 0 ? 'text-buy' : 'text-sell';
     const card = (l,v,c='') => `<div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center;"><div style="font-family:var(--font-mono);font-size:9px;color:var(--muted);text-transform:uppercase;">${l}</div><div class="mono fw-700 ${c}" style="font-size:18px;margin-top:4px;">${v}</div></div>`;
-    box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;">${card('Сделок',s.total)}${card('Win Rate',s.win_rate+'%',wrCls)}${card('Побед/Проигр.',s.wins+'/'+s.losses)}${card('PnL',(s.total_pnl>=0?'+':'')+s.total_pnl+'%',pnlCls)}${card('Avg PnL',(s.avg_pnl>=0?'+':'')+s.avg_pnl+'%',s.avg_pnl>=0?'text-buy':'text-sell')}</div>`;
+    const stLabel = d.st_filter ? '<span style="color:var(--cyan);font-family:var(--font-mono);font-size:11px;">✅ SuperTrend фильтр</span>' : '<span style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">Без фильтра</span>';
+    box.innerHTML = `<div style="margin-bottom:8px;">${stLabel}</div><div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;">${card('Сделок',s.total)}${card('Win Rate',s.win_rate+'%',wrCls)}${card('Побед/Проигр.',s.wins+'/'+s.losses)}${card('PnL',(s.total_pnl>=0?'+':'')+s.total_pnl+'%',pnlCls)}${card('Avg PnL',(s.avg_pnl>=0?'+':'')+s.avg_pnl+'%',s.avg_pnl>=0?'text-buy':'text-sell')}</div>`;
     box.style.display = 'block';
   } catch(e) { box.innerHTML = `<span class="text-sell">${e.message}</span>`; box.style.display='block'; }
   finally { btn.disabled = false; btn.textContent = '📊 Бектест'; }
