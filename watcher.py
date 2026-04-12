@@ -594,6 +594,15 @@ async def _check_cryptovizor(db):
             if not candles or len(candles) < 10:
                 continue
 
+            # Ждём НОВУЮ свечу — паттерн должен появиться ПОСЛЕ создания сигнала
+            last_candle_open_ms = candles[-1].get("t", 0)  # open_time в ms
+            signal_created_ms = 0
+            if s.received_at and hasattr(s.received_at, 'timestamp'):
+                signal_created_ms = int(s.received_at.timestamp() * 1000)
+
+            if signal_created_ms and last_candle_open_ms and last_candle_open_ms < signal_created_ms:
+                continue  # свеча открылась до сигнала — ждём следующую
+
             # Reversal-паттерны в направлении главного тренда (вход в сделку)
             reversal = detect_patterns(candles, s.direction)
             # Continuation-паттерны
