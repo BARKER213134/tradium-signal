@@ -523,7 +523,7 @@ async def _check_once():
     try:
         await _check_anomalies()
     except Exception as e:
-        logger.error(f"Anomaly scan error: {e}")
+        print(f"[ANOMALY] ERROR: {e}", flush=True)
 
 
 async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: float,
@@ -1014,7 +1014,7 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
 
 _anomaly_batch_idx = 0
 _ANOMALY_INTERVAL = 10  # каждый 10-й тик (10×30с = 5 мин)
-_anomaly_tick = 0
+_anomaly_tick = _ANOMALY_INTERVAL - 1  # первый скан на первом тике
 
 # Состояние скана — читается из admin API
 anomaly_scan_state = {
@@ -1109,6 +1109,7 @@ async def _check_anomalies():
     anomaly_scan_state["running"] = False
     anomaly_scan_state["progress"] = 100
     anomaly_scan_state["current"] = ""
+    print(f"[ANOMALY] Done: {len(results)} found (score>=10) from {len(batch)} pairs", flush=True)
     if results:
         _broadcast("anomaly_update", {"count": len(results)})
 
