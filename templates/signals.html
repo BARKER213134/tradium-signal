@@ -1043,9 +1043,8 @@ async function clearProcessed() {
       </tr>
       {% if cv_tab in ('active', 'ai_signal') %}
       <tr id="airow{{ loop.index }}" style="display:none;">
-        <td colspan="14" style="padding:16px 18px;background:var(--dark-2);border-bottom:1px solid var(--border);">
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">AI АНАЛИЗ · {{ (s.pair or '—')|replace('/USDT','') }}</div>
-          <div id="aitxt{{ loop.index }}" style="font-size:13px;line-height:1.7;color:var(--text-2);white-space:pre-wrap;">{{ s.comment or 'Нажми для анализа…' }}</div>
+        <td colspan="14" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
+          <div id="aitxt{{ loop.index }}" class="ai-analysis-card">{{ s.comment or '' }}</div>
         </td>
       </tr>
       {% endif %}
@@ -1146,9 +1145,87 @@ if (sa) sa.onchange = () => {
   refreshDeleteBtn();
 };
 
+function renderAnalysisCard(text, pair) {
+  if (!text) return '<div class="ai-analysis-card"><span class="text-muted">Нажми для анализа…</span></div>';
+
+  // Парсим секции
+  const lines = text.split('\n');
+  let coin='', verdict='', confidence='', score='', tp1='', tp2='', sl='', rr='';
+  let analysis='', risks=[];
+  let section = '';
+
+  for (const line of lines) {
+    const l = line.trim();
+    if (!l) continue;
+    if (l.startsWith('О МОНЕТЕ:') || l.startsWith('О монете:')) { section='coin'; coin=''; continue; }
+    if (l.startsWith('ВЕРДИКТ:') || l.startsWith('Вердикт:')) { verdict=l.split(':').slice(1).join(':').trim(); section=''; continue; }
+    if (l.startsWith('УВЕРЕННОСТЬ:') || l.startsWith('Уверенность:')) { confidence=l.split(':').slice(1).join(':').trim(); section=''; continue; }
+    if (l.startsWith('SCORE:') || l.startsWith('Score:')) { score=l.split(':').slice(1).join(':').trim(); section=''; continue; }
+    if (/^TP1:/i.test(l)) { tp1=l.split(':').slice(1).join(':').trim(); continue; }
+    if (/^TP2:/i.test(l)) { tp2=l.split(':').slice(1).join(':').trim(); continue; }
+    if (/^SL:/i.test(l)) { sl=l.split(':').slice(1).join(':').trim(); continue; }
+    if (/^R:R:|^R\/R:/i.test(l)) { rr=l.replace(/^R[:\/]R:\s*/i,'').trim(); continue; }
+    if (l.startsWith('АНАЛИЗ:') || l.startsWith('Анализ:')) { section='analysis'; analysis=''; continue; }
+    if (l.startsWith('РИСКИ:') || l.startsWith('Риски:')) { section='risks'; continue; }
+    if (section==='coin') coin += (coin?' ':'') + l;
+    else if (section==='analysis') analysis += (analysis?' ':'') + l;
+    else if (section==='risks' && l.startsWith('⚠')) risks.push(l.substring(1).trim());
+    else if (section==='risks' && l.startsWith('-')) risks.push(l.substring(1).trim());
+    else if (!section && !verdict) analysis += (analysis?' ':'') + l;
+  }
+
+  // Если не распарсилось — показываем как текст
+  if (!verdict && !analysis && !coin) {
+    return `<div class="ai-analysis-card"><div class="ai-text">${text.replace(/\n/g,'<br>')}</div></div>`;
+  }
+
+  const isEnter = verdict.toUpperCase().includes('ENTER');
+  const vClass = isEnter ? 'ai-verdict-enter' : 'ai-verdict-skip';
+  const vLabel = isEnter ? '✅ ENTER' : '❌ SKIP';
+
+  let html = '<div class="ai-analysis-card">';
+
+  // О монете
+  if (coin) {
+    html += `<div class="ai-section"><div class="ai-section-title">О монете · ${(pair||'').replace('/USDT','')}</div><div class="ai-text">${coin}</div></div>`;
+  }
+
+  // Вердикт
+  html += `<div class="ai-verdict-row ${vClass}">`;
+  html += `<span class="ai-verdict-label">${vLabel}</span>`;
+  if (confidence) html += `<span class="ai-confidence">Уверенность: ${confidence}</span>`;
+  if (score) html += `<span class="ai-score-big">${score}</span>`;
+  html += '</div>';
+
+  // Уровни
+  if (tp1 || tp2 || sl || rr) {
+    html += '<div class="ai-levels">';
+    if (tp1) html += `<div class="ai-level"><div class="ai-level-label">TP1</div><div class="ai-level-val" style="color:var(--buy)">${tp1}</div></div>`;
+    if (tp2) html += `<div class="ai-level"><div class="ai-level-label">TP2</div><div class="ai-level-val" style="color:var(--buy)">${tp2}</div></div>`;
+    if (sl) html += `<div class="ai-level"><div class="ai-level-label">SL</div><div class="ai-level-val" style="color:var(--sell)">${sl}</div></div>`;
+    if (rr) html += `<div class="ai-level"><div class="ai-level-label">R:R</div><div class="ai-level-val" style="color:var(--cyan)">${rr}</div></div>`;
+    html += '</div>';
+  }
+
+  // Анализ
+  if (analysis) {
+    html += `<div class="ai-section"><div class="ai-section-title">Анализ</div><div class="ai-text">${analysis}</div></div>`;
+  }
+
+  // Риски
+  if (risks.length) {
+    html += '<div class="ai-section"><div class="ai-section-title">Риски</div>';
+    risks.forEach(r => { html += `<div class="ai-risk-item">⚠ ${r}</div>`; });
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
 async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
   const row = document.getElementById('airow'+idx);
-  const txt = document.getElementById('aitxt'+idx);
+  const container = document.getElementById('aitxt'+idx);
   if (!row) return;
 
   if (row.dataset.open === '1') {
@@ -1159,10 +1236,18 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
   row.style.display = 'table-row';
   row.dataset.open = '1';
 
-  // Если уже есть анализ — не запрашиваем
-  if (txt.textContent && txt.textContent !== 'Нажми для анализа…') return;
+  // Если уже отрендерен — не запрашиваем
+  if (container.dataset.loaded === '1') return;
 
-  txt.textContent = 'Анализирую…';
+  // Если есть сохранённый текст — рендерим
+  const existing = container.textContent.trim();
+  if (existing && existing !== 'Нажми для анализа…' && existing.length > 20) {
+    container.innerHTML = renderAnalysisCard(existing, pair);
+    container.dataset.loaded = '1';
+    return;
+  }
+
+  container.innerHTML = '<div class="ai-analysis-card"><span class="text-muted">Анализирую…</span></div>';
   try {
     const r = await fetch('/api/analyze-coin', {
       method: 'POST',
@@ -1171,8 +1256,8 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
     });
     const d = await r.json();
     const result = d.ok ? d.analysis : ('Ошибка: ' + (d.error || ''));
-    txt.textContent = result;
-    // Сохраняем в БД
+    container.innerHTML = renderAnalysisCard(result, pair);
+    container.dataset.loaded = '1';
     if (d.ok) {
       fetch('/api/save-coin-analysis', {
         method: 'POST',
@@ -1342,9 +1427,8 @@ setInterval(updatePricesAndPnl, 10000);
       </tr>
       {% if tab == 'results' %}
       <tr id="resrow{{ loop.index }}" style="display:none;">
-        <td colspan="15" style="padding:16px 18px;background:var(--dark-2);border-bottom:1px solid var(--border);">
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px;">РАЗБОР СДЕЛКИ · {{ (s.pair or '—')|replace('/USDT','') }} · {{ s.status }}</div>
-          <div id="restxt{{ loop.index }}" style="font-size:13px;line-height:1.7;color:var(--text-2);white-space:pre-wrap;">Нажми для разбора…</div>
+        <td colspan="15" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
+          <div id="restxt{{ loop.index }}" class="ai-analysis-card"></div>
         </td>
       </tr>
       {% endif %}
@@ -1465,6 +1549,47 @@ setInterval(updatePricesAndPnl, 10000);
 .ai-clickable { border-left: 3px solid transparent; transition: border-color 0.2s, background 0.2s; }
 .ai-clickable:hover { background: rgba(255,255,255,0.03); }
 .ai-done { border-left: 3px solid var(--buy); }
+
+.ai-analysis-card { padding: 20px 24px; font-size: 13px; line-height: 1.6; color: var(--text-2); }
+.ai-analysis-card .ai-section { margin-bottom: 16px; }
+.ai-analysis-card .ai-section:last-child { margin-bottom: 0; }
+.ai-analysis-card .ai-section-title {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+  margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+}
+.ai-analysis-card .ai-verdict-row {
+  display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  padding: 12px 16px; border-radius: 8px; margin-bottom: 12px;
+}
+.ai-verdict-enter { background: rgba(0,229,160,0.08); border: 1px solid rgba(0,229,160,0.25); }
+.ai-verdict-skip { background: rgba(255,77,109,0.08); border: 1px solid rgba(255,77,109,0.25); }
+.ai-analysis-card .ai-verdict-label {
+  font-family: var(--font-mono); font-size: 14px; font-weight: 800;
+}
+.ai-verdict-enter .ai-verdict-label { color: var(--buy); }
+.ai-verdict-skip .ai-verdict-label { color: var(--sell); }
+.ai-analysis-card .ai-confidence {
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+}
+.ai-analysis-card .ai-score-big {
+  font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--cyan);
+}
+.ai-analysis-card .ai-levels {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+  padding: 10px 0; margin-bottom: 8px;
+}
+.ai-analysis-card .ai-level {
+  font-family: var(--font-mono); font-size: 12px; text-align: center;
+  padding: 6px; border-radius: 6px; background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+}
+.ai-analysis-card .ai-level-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+.ai-analysis-card .ai-level-val { font-weight: 700; margin-top: 2px; }
+.ai-analysis-card .ai-risk-item {
+  padding: 4px 0; font-size: 12px; color: var(--sell); opacity: 0.85;
+}
+.ai-analysis-card .ai-text { color: var(--text-2); font-size: 13px; line-height: 1.7; }
 
 /* ── Modal ── */
 .modal {
@@ -2039,9 +2164,27 @@ async function loadEvents(id) {
   } catch (err) { console.error(err); }
 }
 
+function renderResultCard(text, pair, status, pnl) {
+  if (!text) return '';
+  const isTP = status === 'TP';
+  const icon = isTP ? '✅' : '❌';
+  const cls = isTP ? 'ai-verdict-enter' : 'ai-verdict-skip';
+  const color = isTP ? 'var(--buy)' : 'var(--sell)';
+
+  let html = '<div class="ai-analysis-card">';
+  html += `<div class="ai-verdict-row ${cls}">`;
+  html += `<span class="ai-verdict-label">${icon} ${status}</span>`;
+  html += `<span class="ai-score-big" style="color:${color}">${pnl >= 0 ? '+' : ''}${parseFloat(pnl).toFixed(2)}%</span>`;
+  html += `<span class="ai-confidence">${pair}</span>`;
+  html += '</div>';
+  html += `<div class="ai-section"><div class="ai-section-title">Разбор сделки</div><div class="ai-text">${text.replace(/\n/g,'<br>')}</div></div>`;
+  html += '</div>';
+  return html;
+}
+
 async function toggleResultAnalysis(idx, pair, direction, entry, status, pnl, exitPrice, tp, sl) {
   const row = document.getElementById('resrow'+idx);
-  const txt = document.getElementById('restxt'+idx);
+  const container = document.getElementById('restxt'+idx);
   if (!row) return;
 
   if (row.dataset.open === '1') {
@@ -2052,9 +2195,9 @@ async function toggleResultAnalysis(idx, pair, direction, entry, status, pnl, ex
   row.style.display = 'table-row';
   row.dataset.open = '1';
 
-  if (txt.textContent && txt.textContent !== 'Нажми для разбора…') return;
+  if (container.dataset.loaded === '1') return;
 
-  txt.textContent = 'Анализирую сделку…';
+  container.innerHTML = '<div class="ai-analysis-card"><span class="text-muted">Анализирую сделку…</span></div>';
   try {
     const r = await fetch('/api/analyze-result', {
       method: 'POST',
@@ -2062,9 +2205,10 @@ async function toggleResultAnalysis(idx, pair, direction, entry, status, pnl, ex
       body: JSON.stringify({pair, direction, entry: parseFloat(entry), status, pnl: parseFloat(pnl), exit_price: parseFloat(exitPrice), tp: parseFloat(tp), sl: parseFloat(sl)}),
     });
     const d = await r.json();
-    txt.textContent = d.ok ? d.analysis : ('Ошибка: ' + (d.error || ''));
+    container.innerHTML = d.ok ? renderResultCard(d.analysis, pair, status, pnl) : `<div class="ai-analysis-card"><span class="text-sell">Ошибка: ${d.error||''}</span></div>`;
+    container.dataset.loaded = '1';
   } catch(e) {
-    txt.textContent = 'Ошибка: ' + e.message;
+    container.innerHTML = `<div class="ai-analysis-card"><span class="text-sell">Ошибка: ${e.message}</span></div>`;
   }
 }
 </script>
