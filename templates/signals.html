@@ -363,49 +363,86 @@ async function runAnomalyBacktest() {
     const wrCls = s.win_rate >= 50 ? 'text-buy' : 'text-sell';
     const pnlCls = s.total_pnl >= 0 ? 'text-buy' : 'text-sell';
 
-    let typeRows = '';
-    const typeNames = {ftt:'FTT',delta_cluster:'Delta',trade_speed:'Speed',oi_spike:'OI',funding_extreme:'Funding',ls_extreme:'L/S',taker_imbalance:'Taker',wall:'Wall'};
+    const TN = {ftt:'FTT (разворот)',delta_cluster:'Delta кластер',trade_speed:'Speed Print',oi_spike:'OI Spike',funding_extreme:'Funding',ls_extreme:'L/S Ratio',taker_imbalance:'Taker',wall:'Стена'};
+    const card = (label,val,cls='') => `<div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center;"><div style="font-family:var(--font-mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">${label}</div><div class="mono fw-700 ${cls}" style="font-size:18px;margin-top:4px;">${val}</div></div>`;
+    const tbl = (rows) => `<table style="width:100%;font-size:11px;"><tbody>${rows}</tbody></table>`;
+    const row = (cells) => `<tr>${cells.map(c=>`<td class="mono" style="padding:5px 6px;${c.s||''}">${c.v}</td>`).join('')}</tr>`;
+    const th = (cells) => `<thead><tr>${cells.map(c=>`<th style="padding:5px 6px;font-size:10px;">${c}</th>`).join('')}</tr></thead>`;
+    const sec = (title) => `<div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.12em;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);">${title}</div>`;
+
+    // Тип аномалии
+    let typeRows = th(['Тип','Win%','W/L','Avg PnL']);
     for (const [t,v] of Object.entries(d.by_type).sort((a,b) => b[1].win_rate - a[1].win_rate)) {
-      const n = typeNames[t] || t;
-      const tc = v.win_rate >= 50 ? 'text-buy' : 'text-sell';
-      typeRows += `<tr><td class="mono">${n}</td><td class="mono ${tc}">${v.win_rate}%</td><td class="mono">${v.wins}/${v.wins+v.losses}</td><td class="mono ${v.avg_pnl>=0?'text-buy':'text-sell'}">${v.avg_pnl>=0?'+':''}${v.avg_pnl}%</td></tr>`;
+      const tc = v.win_rate >= 50 ? 'color:var(--buy)' : 'color:var(--sell)';
+      const pc = v.avg_pnl >= 0 ? 'color:var(--buy)' : 'color:var(--sell)';
+      typeRows += row([{v:TN[t]||t},{v:v.win_rate+'%',s:tc},{v:`${v.wins}/${v.wins+v.losses}`},{v:(v.avg_pnl>=0?'+':'')+v.avg_pnl+'%',s:pc}]);
     }
 
-    let scoreRows = '';
+    // Score
+    let scoreRows = th(['Score','Win%','W/L']);
     for (const sc of Object.keys(d.by_score).sort((a,b) => b-a)) {
       const v = d.by_score[sc];
-      const tc = v.win_rate >= 50 ? 'text-buy' : 'text-sell';
-      scoreRows += `<tr><td class="mono">${sc}</td><td class="mono ${tc}">${v.win_rate}%</td><td class="mono">${v.wins}/${v.wins+v.losses}</td></tr>`;
+      const tc = v.win_rate >= 50 ? 'color:var(--buy)' : 'color:var(--sell)';
+      scoreRows += row([{v:sc},{v:v.win_rate+'%',s:tc},{v:`${v.wins}/${v.wins+v.losses}`}]);
+    }
+
+    // Направление
+    let dirRows = th(['Напр.','Win%','W/L','Avg PnL']);
+    for (const [dr,v] of Object.entries(d.by_direction||{})) {
+      const tc = v.win_rate >= 50 ? 'color:var(--buy)' : 'color:var(--sell)';
+      const pc = v.avg_pnl >= 0 ? 'color:var(--buy)' : 'color:var(--sell)';
+      dirRows += row([{v:dr},{v:v.win_rate+'%',s:tc},{v:`${v.wins}/${v.wins+v.losses}`},{v:(v.avg_pnl>=0?'+':'')+v.avg_pnl+'%',s:pc}]);
+    }
+
+    // Комбинации
+    let comboRows = '';
+    const combos = Object.entries(d.by_combo||{}).sort((a,b) => b[1].win_rate - a[1].win_rate);
+    if (combos.length) {
+      comboRows = th(['Комбинация','Win%','Кол-во','Avg PnL']);
+      for (const [c,v] of combos) {
+        const tc = v.win_rate >= 50 ? 'color:var(--buy)' : 'color:var(--sell)';
+        const pc = v.avg_pnl >= 0 ? 'color:var(--buy)' : 'color:var(--sell)';
+        const name = c.replace(/ftt/g,'FTT').replace(/delta_cluster/g,'Delta').replace(/trade_speed/g,'Speed').replace(/oi_spike/g,'OI');
+        comboRows += row([{v:name},{v:v.win_rate+'%',s:tc},{v:v.count},{v:(v.avg_pnl>=0?'+':'')+v.avg_pnl+'%',s:pc}]);
+      }
+    }
+
+    // Лучшие/Худшие
+    const dealRow = (r) => {
+      const pc = r.pnl >= 0 ? 'color:var(--buy)' : 'color:var(--sell)';
+      return row([{v:r.symbol.replace('USDT','')},{v:r.direction},{v:(r.pnl>=0?'+':'')+r.pnl+'%',s:pc},{v:r.score}]);
+    };
+    let bestRows = th(['Пара','Напр.','PnL','Score']) + (d.best||[]).map(dealRow).join('');
+    let worstRows = th(['Пара','Напр.','PnL','Score']) + (d.worst||[]).map(dealRow).join('');
+
+    // По часам
+    let hourRows = '';
+    const hours = Object.entries(d.by_hour||{}).sort((a,b) => a[0]-b[0]);
+    if (hours.length) {
+      hourRows = th(['Час UTC','Win%','Кол-во']);
+      for (const [h,v] of hours) {
+        const tc = v.win_rate >= 50 ? 'color:var(--buy)' : 'color:var(--sell)';
+        hourRows += row([{v:h+':00'},{v:v.win_rate+'%',s:tc},{v:v.wins+v.losses}]);
+      }
     }
 
     box.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
-        <div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center;">
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Сделок</div>
-          <div class="mono fw-700" style="font-size:20px;margin-top:4px;">${s.total}</div>
-        </div>
-        <div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center;">
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Win Rate</div>
-          <div class="mono fw-700 ${wrCls}" style="font-size:20px;margin-top:4px;">${s.win_rate}%</div>
-        </div>
-        <div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center;">
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Общий PnL</div>
-          <div class="mono fw-700 ${pnlCls}" style="font-size:20px;margin-top:4px;">${s.total_pnl>=0?'+':''}${s.total_pnl}%</div>
-        </div>
-        <div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center;">
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Средний PnL</div>
-          <div class="mono fw-700 ${s.avg_pnl>=0?'text-buy':'text-sell'}" style="font-size:20px;margin-top:4px;">${s.avg_pnl>=0?'+':''}${s.avg_pnl}%</div>
-        </div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px;">
+        ${card('Сделок',s.total)}
+        ${card('Win Rate',s.win_rate+'%',wrCls)}
+        ${card('Побед/Проигр.',s.wins+'/'+s.losses)}
+        ${card('Общий PnL',(s.total_pnl>=0?'+':'')+s.total_pnl+'%',pnlCls)}
+        ${card('Средний PnL',(s.avg_pnl>=0?'+':'')+s.avg_pnl+'%',s.avg_pnl>=0?'text-buy':'text-sell')}
       </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
+        <div>${sec('По типу аномалии')}${tbl(typeRows)}</div>
+        <div>${sec('По Score')}${tbl(scoreRows)}</div>
+        <div>${sec('По направлению')}${tbl(dirRows)}</div>
+      </div>
+      ${comboRows ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">\n<div>${sec('Лучшие комбинации')}${tbl(comboRows)}</div>\n<div>${sec('По часам (UTC)')}${tbl(hourRows)}</div>\n</div>` : ''}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-        <div>
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">По типу аномалии</div>
-          <table style="width:100%;font-size:12px;"><thead><tr><th>Тип</th><th>Win%</th><th>W/L</th><th>Avg PnL</th></tr></thead><tbody>${typeRows}</tbody></table>
-        </div>
-        <div>
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px;">По Score</div>
-          <table style="width:100%;font-size:12px;"><thead><tr><th>Score</th><th>Win%</th><th>W/L</th></tr></thead><tbody>${scoreRows}</tbody></table>
-        </div>
+        <div>${sec('Лучшие сделки')}${tbl(bestRows)}</div>
+        <div>${sec('Худшие сделки')}${tbl(worstRows)}</div>
       </div>`;
     box.style.display = 'block';
   } catch(e) {

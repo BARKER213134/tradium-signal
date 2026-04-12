@@ -1114,6 +1114,65 @@ async def api_anomalies_backtest():
         total_s = by_score[s]["wins"] + by_score[s]["losses"]
         by_score[s]["win_rate"] = round((by_score[s]["wins"] / total_s * 100) if total_s else 0, 1)
 
+    # По направлению
+    by_dir = {}
+    for r in results:
+        d = r["direction"]
+        if d not in by_dir:
+            by_dir[d] = {"wins": 0, "losses": 0, "pnl": 0}
+        if r["win"]:
+            by_dir[d]["wins"] += 1
+        else:
+            by_dir[d]["losses"] += 1
+        by_dir[d]["pnl"] += r["pnl"]
+    for d in by_dir:
+        total_d = by_dir[d]["wins"] + by_dir[d]["losses"]
+        by_dir[d]["win_rate"] = round((by_dir[d]["wins"] / total_d * 100) if total_d else 0, 1)
+        by_dir[d]["avg_pnl"] = round(by_dir[d]["pnl"] / total_d, 2) if total_d else 0
+
+    # По комбинациям (какие пары типов лучше отрабатывают)
+    by_combo = {}
+    for r in results:
+        key_types = sorted([t for t in r["types"] if t in ("ftt", "delta_cluster", "trade_speed", "oi_spike")])
+        if len(key_types) < 2:
+            continue
+        combo = " + ".join(key_types)
+        if combo not in by_combo:
+            by_combo[combo] = {"wins": 0, "losses": 0, "pnl": 0}
+        if r["win"]:
+            by_combo[combo]["wins"] += 1
+        else:
+            by_combo[combo]["losses"] += 1
+        by_combo[combo]["pnl"] += r["pnl"]
+    for c in by_combo:
+        total_c = by_combo[c]["wins"] + by_combo[c]["losses"]
+        by_combo[c]["win_rate"] = round((by_combo[c]["wins"] / total_c * 100) if total_c else 0, 1)
+        by_combo[c]["avg_pnl"] = round(by_combo[c]["pnl"] / total_c, 2) if total_c else 0
+        by_combo[c]["count"] = total_c
+
+    # Лучшие и худшие
+    sorted_results = sorted(results, key=lambda x: x["pnl"], reverse=True)
+    best_5 = sorted_results[:5]
+    worst_5 = sorted_results[-5:]
+
+    # По часу обнаружения
+    by_hour = {}
+    for r in results:
+        try:
+            h = int(r["detected_at"][11:13])
+        except Exception:
+            h = 0
+        if h not in by_hour:
+            by_hour[h] = {"wins": 0, "losses": 0, "pnl": 0}
+        if r["win"]:
+            by_hour[h]["wins"] += 1
+        else:
+            by_hour[h]["losses"] += 1
+        by_hour[h]["pnl"] += r["pnl"]
+    for h in by_hour:
+        total_h = by_hour[h]["wins"] + by_hour[h]["losses"]
+        by_hour[h]["win_rate"] = round((by_hour[h]["wins"] / total_h * 100) if total_h else 0, 1)
+
     return {
         "ok": True,
         "summary": {
@@ -1124,6 +1183,11 @@ async def api_anomalies_backtest():
         },
         "by_type": by_type,
         "by_score": by_score,
+        "by_direction": by_dir,
+        "by_combo": by_combo,
+        "by_hour": {str(k): v for k, v in sorted(by_hour.items())},
+        "best": best_5,
+        "worst": worst_5,
         "results": sorted(results, key=lambda x: -abs(x["pnl"]))[:50],
     }
 
