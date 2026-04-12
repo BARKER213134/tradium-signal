@@ -1297,21 +1297,8 @@ async def _send_anomaly_alert(r: dict):
         text += _st_line(True, _st)
     text += _eth_line()
 
-    # Скриншот с Resonance
-    chart_png = None
     try:
-        from resonance_chart import get_cluster_screenshot
-        chart_png = await asyncio.to_thread(get_cluster_screenshot, r.get("symbol", ""), "H1")
-    except Exception as e:
-        logger.debug(f"Resonance screenshot skip: {e}")
-
-    try:
-        if chart_png:
-            from aiogram.types import BufferedInputFile
-            photo = BufferedInputFile(chart_png, filename=f"{r.get('symbol','')}_cluster.png")
-            await _bot3.send_photo(_admin_chat_id, photo=photo, caption=text, parse_mode="HTML")
-        else:
-            await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
+        await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Anomaly alert sent: {r.get('symbol')}")
     except Exception as e:
         logger.error(f"Anomaly alert fail: {e}")
