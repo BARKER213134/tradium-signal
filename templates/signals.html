@@ -1029,8 +1029,8 @@ setInterval(pollConfluenceStatus, 5000);
 <!-- Chart Modal -->
 <div id="journalChartModal">
   <div style="width:85vw;max-width:1000px;height:75vh;background:var(--dark);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);" onclick="event.stopPropagation();">
-    <div id="jChartHeader" style="display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);font-family:var(--font-mono);">
-      <div id="jChartTitle" style="font-size:14px;font-weight:700;color:var(--text);"></div>
+    <div id="jChartHeader" style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-family:var(--font-mono);gap:8px;">
+      <div id="jChartTitle" style="font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;"></div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button onclick="if(_currentJournalIdx>0)openJournalChart(_currentJournalIdx-1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">◀</button>
         <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
@@ -1119,10 +1119,11 @@ async function openJournalChart(idx) {
   const sym = s.symbol || (s.pair || '').replace('/', '');
   const dirE = s.direction === 'LONG' ? '🟢' : '🔴';
 
-  const srcBadge = s.source === 'anomaly' ? '⚠️ Аномалия' : s.source === 'confluence' ? '🎯 Confluence' : '🚀 Cryptovizor';
+  const srcBadge = s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : '🚀';
+  const srcName = s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? 'Confluence' : 'CV';
   const patternInfo = s.pattern ? ` · ${s.pattern}` : '';
-  const scoreInfo = s.score ? ` · Score: ${s.score}` : '';
-  title.innerHTML = `${srcBadge} · ${pair}/USDT · ${dirE} ${s.direction} · Entry: <code>${s.entry}</code>${patternInfo}${scoreInfo}`;
+  const scoreInfo = s.score ? ` · ${s.score}` : '';
+  title.innerHTML = `${srcBadge} ${srcName} · <b>${pair}</b> · ${dirE} ${s.direction} · <code>${s.entry}</code>${scoreInfo}`;
   const counter = document.getElementById('jChartCounter');
   if (counter) counter.textContent = `${idx + 1}/${_journalData.length}`;
   container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Загрузка графика…</div>';
