@@ -1031,9 +1031,12 @@ setInterval(pollConfluenceStatus, 5000);
   <div style="width:85vw;max-width:1000px;height:75vh;background:var(--dark);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);" onclick="event.stopPropagation();">
     <div id="jChartHeader" style="display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);font-family:var(--font-mono);">
       <div id="jChartTitle" style="font-size:14px;font-weight:700;color:var(--text);"></div>
-      <div style="display:flex;align-items:center;gap:12px;">
-        <span style="font-size:10px;color:var(--muted);">← → переключить</span>
-        <button onclick="document.getElementById('journalChartModal').classList.remove('open')" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;">×</button>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button onclick="if(_currentJournalIdx>0)openJournalChart(_currentJournalIdx-1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">◀</button>
+        <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
+        <button onclick="if(_currentJournalIdx<_journalData.length-1)openJournalChart(_currentJournalIdx+1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">▶</button>
+        <span style="font-size:9px;color:var(--muted);margin-left:4px;">A/D</span>
+        <button onclick="document.getElementById('journalChartModal').classList.remove('open')" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;padding:0 8px;">×</button>
       </div>
     </div>
     <div id="jChartContainer" style="height:calc(100% - 48px);"></div>
@@ -1117,6 +1120,8 @@ async function openJournalChart(idx) {
   const dirE = s.direction === 'LONG' ? '🟢' : '🔴';
 
   title.innerHTML = `${pair}/USDT · ${dirE} ${s.direction} · Entry: <code>${s.entry}</code>`;
+  const counter = document.getElementById('jChartCounter');
+  if (counter) counter.textContent = `${idx + 1}/${_journalData.length}`;
   container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Загрузка графика…</div>';
   modal.classList.add('open');
 
@@ -1206,11 +1211,11 @@ document.addEventListener('keydown', (e) => {
   const modal = document.getElementById('journalChartModal');
   if (!modal.classList.contains('open')) return;
   if (e.key === 'Escape') { modal.classList.remove('open'); return; }
-  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+  if (e.key === 'a' || e.key === 'A' || e.key === 'ф' || e.key === 'Ф') {
     e.preventDefault();
     if (_currentJournalIdx > 0) openJournalChart(_currentJournalIdx - 1);
   }
-  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+  if (e.key === 'd' || e.key === 'D' || e.key === 'в' || e.key === 'В') {
     e.preventDefault();
     if (_currentJournalIdx < _journalData.length - 1) openJournalChart(_currentJournalIdx + 1);
   }
