@@ -349,7 +349,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
     query = db.query(Signal).filter(Signal.source == bot)
 
     # Cryptovizor имеет свои вкладки
-    if bot in ("anomaly", "confluence", "journal"):
+    if bot in ("anomaly", "confluence", "journal", "autotrading"):
         return templates.TemplateResponse(request, "signals.html", {
             "signals": [],
             "total": 0,
@@ -1341,6 +1341,57 @@ async def api_confluence_backtest(st: int = 0):
 
 
 # ── Journal API ──────────────────────────────────────────────────────
+
+# ── Paper Trading API ─────────────────────────────────────────────────
+
+@app.get("/api/paper/status")
+async def api_paper_status():
+    import paper_trader as pt
+    balance = pt.get_balance()
+    positions = pt.get_open_positions()
+    stats = pt.get_stats()
+    # Текущие цены для PnL
+    from exchange import get_prices_any
+    if positions:
+        pairs = [p.get("pair", p["symbol"].replace("USDT", "/USDT")) for p in positions]
+        prices = await asyncio.to_thread(get_prices_any, pairs)
+        for p in positions:
+            cur = prices.get(p["symbol"])
+            if cur and p.get("entry"):
+                raw = ((cur - p["entry"]) / p["entry"]) * 100
+                pnl = -raw if p["direction"] == "SHORT" else raw
+                p["live_pnl"] = round(pnl * p.get("leverage", 1), 2)
+                p["live_price"] = cur
+            p["_id"] = str(p.get("_id", ""))
+            if p.get("opened_at") and hasattr(p["opened_at"], "isoformat"):
+                p["opened_at"] = p["opened_at"].isoformat()
+    return {
+        "balance": balance,
+        "initial": pt.INITIAL_BALANCE,
+        "pnl_pct": round((balance - pt.INITIAL_BALANCE) / pt.INITIAL_BALANCE * 100, 2),
+        "positions": positions,
+        "stats": stats,
+    }
+
+
+@app.get("/api/paper/history")
+async def api_paper_history(limit: int = 50):
+    import paper_trader as pt
+    history = pt.get_history(limit)
+    for h in history:
+        h["_id"] = str(h.get("_id", ""))
+        for f in ("opened_at", "closed_at"):
+            if h.get(f) and hasattr(h[f], "isoformat"):
+                h[f] = h[f].isoformat()
+    return {"items": history}
+
+
+@app.post("/api/paper/reset")
+async def api_paper_reset():
+    import paper_trader as pt
+    pt.reset_trading()
+    return {"ok": True}
+
 
 @app.get("/api/journal")
 async def api_journal():

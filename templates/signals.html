@@ -963,6 +963,116 @@ pollConfluenceStatus();
 setInterval(pollConfluenceStatus, 5000);
 </script>
 
+{% elif bot == 'autotrading' %}
+<!-- ── Авто-торговля ──────────────────────────────────────────────── -->
+<style>
+.at-card { background:var(--dark-2); border:1px solid var(--border); border-radius:10px; padding:16px 20px; text-align:center; }
+.at-card-label { font-family:var(--font-mono); font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
+.at-card-value { font-family:var(--font-mono); font-size:22px; font-weight:800; margin-top:4px; }
+.at-pos { padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; font-size:12px; }
+.at-pos:last-child { border-bottom:none; }
+</style>
+
+<div id="atDashboard">
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px;">
+    <div class="at-card"><div class="at-card-label">Баланс</div><div class="at-card-value" id="atBalance">$1,000</div></div>
+    <div class="at-card"><div class="at-card-label">PnL</div><div class="at-card-value" id="atPnl">0%</div></div>
+    <div class="at-card"><div class="at-card-label">Позиции</div><div class="at-card-value" id="atOpen">0/5</div></div>
+    <div class="at-card"><div class="at-card-label">Win Rate</div><div class="at-card-value" id="atWR">—</div></div>
+    <div class="at-card"><div class="at-card-label">Сделок</div><div class="at-card-value" id="atTotal">0</div></div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div>
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">Открытые позиции</div>
+      <div id="atPositions" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;min-height:100px;">
+        <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет открытых позиций</div>
+      </div>
+    </div>
+    <div>
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">Последние сделки</div>
+      <div id="atHistory" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;min-height:100px;">
+        <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:16px;text-align:right;">
+    <button class="delete-btn" onclick="resetPaper()" style="font-size:10px;padding:5px 12px;">🔄 Сброс ($1000)</button>
+  </div>
+</div>
+
+<script>
+async function loadPaperStatus() {
+  try {
+    const r = await fetch('/api/paper/status');
+    const d = await r.json();
+
+    document.getElementById('atBalance').textContent = '$' + d.balance.toLocaleString('en',{minimumFractionDigits:2});
+    document.getElementById('atBalance').className = 'at-card-value ' + (d.pnl_pct >= 0 ? 'text-buy' : 'text-sell');
+    document.getElementById('atPnl').textContent = (d.pnl_pct >= 0 ? '+' : '') + d.pnl_pct + '%';
+    document.getElementById('atPnl').className = 'at-card-value ' + (d.pnl_pct >= 0 ? 'text-buy' : 'text-sell');
+    document.getElementById('atOpen').textContent = d.positions.length + '/5';
+    document.getElementById('atWR').textContent = d.stats.total ? d.stats.win_rate + '%' : '—';
+    document.getElementById('atWR').className = 'at-card-value ' + (d.stats.win_rate >= 50 ? 'text-buy' : d.stats.total ? 'text-sell' : '');
+    document.getElementById('atTotal').textContent = d.stats.total;
+
+    // Позиции
+    const posDiv = document.getElementById('atPositions');
+    if (d.positions.length) {
+      posDiv.innerHTML = d.positions.map(p => {
+        const dirE = p.direction === 'LONG' ? '🟢' : '🔴';
+        const pnl = p.live_pnl || 0;
+        const pnlCls = pnl >= 0 ? 'text-buy' : 'text-sell';
+        const pair = p.symbol ? p.symbol.replace('USDT','') : '?';
+        return `<div class="at-pos">
+          <span class="mono text-accent fw-700" style="min-width:80px;">${pair}</span>
+          <span>${dirE} ${p.direction}</span>
+          <span class="mono">×${p.leverage || 1}</span>
+          <span class="mono">Entry: ${p.entry}</span>
+          <span class="mono ${pnlCls} fw-700">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%</span>
+          <span class="mono text-muted" style="font-size:10px;margin-left:auto;">${p.source || ''}</span>
+        </div>`;
+      }).join('');
+    } else {
+      posDiv.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">AI ждёт сигналы…</div>';
+    }
+  } catch {}
+
+  // История
+  try {
+    const r2 = await fetch('/api/paper/history?limit=10');
+    const d2 = await r2.json();
+    const histDiv = document.getElementById('atHistory');
+    if (d2.items && d2.items.length) {
+      histDiv.innerHTML = d2.items.map(h => {
+        const win = (h.pnl_usdt || 0) > 0;
+        const icon = win ? '✅' : '❌';
+        const pair = h.symbol ? h.symbol.replace('USDT','') : '?';
+        const pnlCls = win ? 'text-buy' : 'text-sell';
+        return `<div class="at-pos">
+          <span>${icon}</span>
+          <span class="mono fw-700" style="min-width:70px;">${pair}</span>
+          <span>${h.direction}</span>
+          <span class="mono ${pnlCls} fw-700">${(h.pnl_pct||0) >= 0 ? '+' : ''}${(h.pnl_pct||0).toFixed(1)}%</span>
+          <span class="mono ${pnlCls}">$${(h.pnl_usdt||0) >= 0 ? '+' : ''}${(h.pnl_usdt||0).toFixed(2)}</span>
+          <span class="text-muted" style="font-size:10px;margin-left:auto;">${h.ai_review || h.ai_reasoning || ''}</span>
+        </div>`;
+      }).join('');
+    }
+  } catch {}
+}
+
+async function resetPaper() {
+  if (!confirm('Сбросить Paper Trading? Депозит вернётся к $1000.')) return;
+  await fetch('/api/paper/reset', {method:'POST'});
+  loadPaperStatus();
+}
+
+loadPaperStatus();
+setInterval(loadPaperStatus, 15000);
+</script>
+
 {% elif bot == 'journal' %}
 <!-- ── Журнал ─────────────────────────────────────────────────────── -->
 <style>

@@ -593,6 +593,7 @@ async def _check_once():
             ("cryptovizor", lambda: _check_cryptovizor(db)),
             # ai_signals убран — AI filter теперь внутри _check_cryptovizor
             ("ai_analysis", lambda: _fill_missing_ai_analysis(db)),
+            ("paper_positions", lambda: _check_paper_positions()),
         ]:
             try:
                 print(f"[WATCHER] step: {step_name}", flush=True)
@@ -682,6 +683,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         else:
             await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Cryptovizor alert sent #{signal.id} {pair} {pattern}")
+        await _paper_on_signal({"symbol": sym, "direction": signal.direction, "entry": current_price, "source": "cryptovizor", "pattern": pattern, "score": getattr(signal, "ai_score", None), "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
     except Exception as e:
         logger.error(f"Cryptovizor alert fail #{signal.id}: {e}")
 
@@ -1156,6 +1158,7 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     try:
         await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"AI signal alert sent #{signal.id}")
+        await _paper_on_signal({"symbol": sym, "direction": signal.direction, "entry": current_price, "source": "ai_signal", "pattern": signal.pattern_name, "score": score, "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
     except Exception as e:
         logger.error(f"AI signal alert fail: {e}")
 
@@ -1376,6 +1379,7 @@ async def _send_anomaly_alert(r: dict):
     try:
         await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Anomaly alert sent: {r.get('symbol')}")
+        await _paper_on_signal({"symbol": r["symbol"], "direction": r["direction"], "entry": r.get("price",0), "source": "anomaly", "score": r.get("score",0), "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
     except Exception as e:
         logger.error(f"Anomaly alert fail: {e}")
 
@@ -1592,8 +1596,43 @@ async def _send_confluence_alert(r: dict):
     try:
         await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Confluence alert: {r['symbol']}")
+        await _paper_on_signal({"symbol": r["symbol"], "direction": r["direction"], "entry": r.get("price",0), "source": "confluence", "pattern": r.get("pattern",""), "score": r.get("score",0), "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
     except Exception as e:
         logger.error(f"Confluence alert fail: {e}")
+
+
+# ── Paper Trading positions check ─────────────────────────────────────
+
+async def _check_paper_positions():
+    """Проверяет открытые Paper Trading позиции на TP/SL."""
+    try:
+        import paper_trader as pt
+        positions = pt.get_open_positions()
+        if not positions:
+            return
+        # Получаем цены
+        pairs = list({p.get("pair", p["symbol"].replace("USDT", "/USDT")) for p in positions})
+        prices = await get_prices_any(pairs)
+        closed = pt.check_positions(prices)
+        # AI review для закрытых
+        for c in closed:
+            trades, _ = pt._get_collections()
+            trade = trades.find_one({"trade_id": c["trade_id"]})
+            if trade:
+                review = await pt.ai_review_trade(trade)
+                if review:
+                    trades.update_one({"trade_id": c["trade_id"]}, {"$set": {"ai_review": review}})
+    except Exception as e:
+        logger.debug(f"Paper positions check: {e}")
+
+
+async def _paper_on_signal(signal_data: dict):
+    """Передаёт сигнал в Paper Trader."""
+    try:
+        import paper_trader as pt
+        await pt.on_signal(signal_data)
+    except Exception as e:
+        logger.debug(f"Paper on_signal: {e}")
 
 
 _watcher_running = False

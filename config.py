@@ -55,6 +55,7 @@ BOTS = [
     {"id": "anomaly", "label": "Аномалии"},
     {"id": "confluence", "label": "Confluence"},
     {"id": "journal", "label": "Журнал"},
+    {"id": "autotrading", "label": "Авто-торговля"},
 ]
 
 # Админка
