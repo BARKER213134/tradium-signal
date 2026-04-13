@@ -1031,7 +1031,10 @@ setInterval(pollConfluenceStatus, 5000);
   <div style="width:85vw;max-width:1000px;height:75vh;background:var(--dark);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);" onclick="event.stopPropagation();">
     <div id="jChartHeader" style="display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);font-family:var(--font-mono);">
       <div id="jChartTitle" style="font-size:14px;font-weight:700;color:var(--text);"></div>
-      <button onclick="document.getElementById('journalChartModal').classList.remove('open')" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;">×</button>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="font-size:10px;color:var(--muted);">← → переключить</span>
+        <button onclick="document.getElementById('journalChartModal').classList.remove('open')" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;">×</button>
+      </div>
     </div>
     <div id="jChartContainer" style="height:calc(100% - 48px);"></div>
   </div>
@@ -1097,7 +1100,11 @@ function renderJournal(items) {
   }).join('');
 }
 
+let _currentJournalIdx = -1;
+
 async function openJournalChart(idx) {
+  if (idx < 0 || idx >= _journalData.length) return;
+  _currentJournalIdx = idx;
   const s = _journalData[idx];
   if (!s) return;
 
@@ -1196,7 +1203,17 @@ document.getElementById('journalChartModal').onclick = function(e) {
   if (e.target === this) this.classList.remove('open');
 };
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') document.getElementById('journalChartModal').classList.remove('open');
+  const modal = document.getElementById('journalChartModal');
+  if (!modal.classList.contains('open')) return;
+  if (e.key === 'Escape') { modal.classList.remove('open'); return; }
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (_currentJournalIdx > 0) openJournalChart(_currentJournalIdx - 1);
+  }
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (_currentJournalIdx < _journalData.length - 1) openJournalChart(_currentJournalIdx + 1);
+  }
 });
 
 loadJournal();
