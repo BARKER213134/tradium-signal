@@ -112,11 +112,13 @@ async def _check_kc_change():
 
         if _last_kc_direction is None:
             _last_kc_direction = d
+            print(f"[KC] Initial: {d}", flush=True)
             return
 
         if d != _last_kc_direction:
             old = _last_kc_direction
             _last_kc_direction = d
+            print(f"[KC] CHANGED: {old} → {d} !!!", flush=True)
             logger.info(f"KC CHANGED: {old} → {d}")
 
             if d == "NEUTRAL":
@@ -194,7 +196,7 @@ async def _check_kc_change():
             except Exception:
                 pass
     except Exception as e:
-        logger.debug(f"KC change check: {e}")
+        print(f"[KC] ERROR: {e}", flush=True)
 
 
 def _kc_line(passed: bool, kc: dict) -> str:
