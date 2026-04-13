@@ -394,11 +394,20 @@ def check_pump_potential(symbol: str) -> dict:
     except Exception as e:
         logger.debug(f"Pump check {symbol}: {e}")
 
+    # Всегда добавляем данные даже если нормальные
+    if not any(f.startswith("📊") for f in result["factors"]):
+        result["factors"].insert(0, f"📊 Объём ×{result['volume_spike']} от среднего")
+    if not any(f.startswith("📈") for f in result["factors"]):
+        oi = result["oi_change"]
+        result["factors"].append(f"📈 OI {oi:+.1f}%")
+    if not any(f.startswith("💰") for f in result["factors"]):
+        fr = result["funding"]
+        if fr != 0:
+            result["factors"].append(f"💰 Funding {fr:.3f}%")
+
     # Label
     if result["score"] >= 2:
         result["label"] = "🚀 HIGH POTENTIAL"
-    elif result["score"] == 1:
-        result["label"] = ""
     else:
         result["label"] = ""
 

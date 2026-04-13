@@ -86,13 +86,14 @@ async def _pump_check(symbol: str) -> dict:
         if not p:
             return {"score": 0, "factors": [], "text": ""}
         text = ""
-        if p.get("factors"):
-            lines = "\n".join(f"  {f}" for f in p["factors"])
+        factors = p.get("factors", [])
+        if factors:
+            lines = "\n".join(f"  {f}" for f in factors)
             label = p.get("label", "")
             if label:
                 text = f"\n\n{label}\n{lines}"
             else:
-                text = f"\n{lines}"
+                text = f"\n\n{lines}"
         p["text"] = text
         return p
     except Exception:
