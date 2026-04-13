@@ -1181,6 +1181,14 @@ setInterval(loadPaperStatus, 15000);
   <div class="journal-hero-desc">Все сигналы из Cryptovizor, Аномалий и Confluence. Нажми на строку — увидишь график с точкой входа.</div>
 </div>
 
+<!-- Поиск монеты -->
+<div class="an-toolbar" style="padding:12px 18px;margin-bottom:0;">
+  <span style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">🔍 Монета:</span>
+  <input id="jCoinSearch" type="text" placeholder="DUSK, ETH, BTC..." oninput="onCoinSearch(this.value)" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:12px;font-family:var(--font-mono);width:160px;outline:none;" autocomplete="off">
+  <span id="jCoinCount" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
+</div>
+<div id="jCoinChart" style="display:none;height:400px;background:#0a0e14;border:1px solid var(--border);border-radius:0 0 12px 12px;margin-bottom:16px;"></div>
+
 <div class="an-toolbar" style="padding:12px 18px;">
   <select id="jFilterSrc" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все источники</option>
@@ -1241,6 +1249,121 @@ setInterval(loadPaperStatus, 15000);
 <script>
 let _journalData = [];
 let _lwcLoaded = false;
+
+let _coinSearchTimer = null;
+
+function onCoinSearch(val) {
+  clearTimeout(_coinSearchTimer);
+  const q = val.trim().toUpperCase();
+  if (q.length < 2) {
+    document.getElementById('jCoinChart').style.display = 'none';
+    document.getElementById('jCoinCount').textContent = '';
+    return;
+  }
+  _coinSearchTimer = setTimeout(() => loadCoinChart(q), 500);
+}
+
+async function loadCoinChart(coin) {
+  const chartDiv = document.getElementById('jCoinChart');
+  const countEl = document.getElementById('jCoinCount');
+
+  // Находим все сигналы по этой монете
+  const sym = coin.replace('/','').replace('USDT','') + 'USDT';
+  const signals = _journalData.filter(s => {
+    const sSym = (s.symbol || '').toUpperCase();
+    return sSym === sym || sSym.startsWith(coin);
+  });
+
+  if (!signals.length) {
+    countEl.textContent = '0 сигналов';
+    chartDiv.style.display = 'none';
+    return;
+  }
+
+  countEl.textContent = `${signals.length} сигналов`;
+  chartDiv.style.display = 'block';
+  chartDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Загрузка…</div>';
+
+  // LWC
+  if (!_lwcLoaded) {
+    await new Promise(resolve => {
+      const sc = document.createElement('script');
+      sc.src = 'https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
+      sc.onload = () => { _lwcLoaded = true; resolve(); };
+      if (window.LightweightCharts) { _lwcLoaded = true; resolve(); }
+      else document.head.appendChild(sc);
+    });
+  }
+
+  // Свечи
+  try {
+    const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=1h&limit=200`);
+    const d = await r.json();
+    if (!d.ok || !d.candles.length) {
+      chartDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">Нет данных для ' + coin + '</div>';
+      return;
+    }
+
+    chartDiv.innerHTML = '';
+    const chart = LightweightCharts.createChart(chartDiv, {
+      layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
+      grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#1a1e2a' },
+      timeScale: { borderColor: '#1a1e2a', timeVisible: true },
+      width: chartDiv.clientWidth, height: 400,
+    });
+    const series = chart.addCandlestickSeries({
+      upColor: '#00e5a0', downColor: '#ff4d6d',
+      borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
+      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
+    });
+    series.setData(d.candles);
+
+    // Все маркеры
+    const markers = [];
+    for (const s of signals) {
+      const ts = s.at_ts || 0;
+      if (!ts) continue;
+      let mc = d.candles[d.candles.length - 1];
+      let minD = Infinity;
+      for (const c of d.candles) {
+        const diff = Math.abs(c.time - ts);
+        if (diff < minD) { minD = diff; mc = c; }
+      }
+      const isLong = s.direction === 'LONG';
+      const srcIcon = s.source === 'anomaly' ? '⚠' : s.source === 'confluence' ? '🎯' : '🚀';
+      markers.push({
+        time: mc.time,
+        position: isLong ? 'belowBar' : 'aboveBar',
+        color: isLong ? '#00e5a0' : '#ff4d6d',
+        shape: isLong ? 'arrowUp' : 'arrowDown',
+        text: `${srcIcon} ${s.direction} ${s.entry || ''}`,
+      });
+    }
+    // Сортируем по времени
+    markers.sort((a, b) => a.time - b.time);
+    // Убираем дубли по time
+    const unique = [];
+    let lastT = 0;
+    for (const m of markers) {
+      if (m.time !== lastT) { unique.push(m); lastT = m.time; }
+    }
+    series.setMarkers(unique);
+
+    // Entry линии для последних 3 сигналов
+    const recent = signals.slice(0, 3);
+    for (const s of recent) {
+      if (s.entry) {
+        series.createPriceLine({ price: s.entry, color: '#ffd23e44', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+      }
+    }
+
+    chart.timeScale().fitContent();
+  } catch (e) {
+    chartDiv.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">${e.message}</div>`;
+  }
+}
 
 async function loadJournal() {
   try {
