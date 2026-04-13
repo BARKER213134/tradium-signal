@@ -1213,8 +1213,14 @@ setInterval(loadPaperStatus, 15000);
     <option value="pass">✅ Прошли</option>
     <option value="fail">❌ Не прошли</option>
   </select>
+  <input id="jFilterScore" type="number" placeholder="Min Score" min="0" step="1" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);width:85px;">
+  <select id="jFilterPump" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">Pump: все</option>
+    <option value="high">🔥 HIGH</option>
+  </select>
   <span id="jStats" class="an-filter-count"></span>
 </div>
+<div id="jSourceStats" style="display:flex;gap:10px;padding:8px 18px;font-family:var(--font-mono);font-size:10px;color:var(--muted);"></div>
 
 <div class="table-wrap">
   <table>
@@ -1386,15 +1392,38 @@ function filterJournal() {
   const src = document.getElementById('jFilterSrc').value;
   const dir = document.getElementById('jFilterDir').value;
   const kc = document.getElementById('jFilterKC').value;
+  const minScore = parseFloat(document.getElementById('jFilterScore').value) || 0;
+  const pump = document.getElementById('jFilterPump').value;
+
   let filtered = _journalData.filter(s => {
     if (src && s.source !== src) return false;
     if (dir && s.direction !== dir) return false;
     if (kc === 'pass' && s.st_passed !== true) return false;
     if (kc === 'fail' && s.st_passed !== false) return false;
+    if (minScore && (s.score || 0) < minScore) return false;
+    if (pump === 'high' && (s.pump_score || 0) < 2) return false;
     return true;
   });
   _journalFiltered = filtered;
   document.getElementById('jStats').textContent = `${filtered.length} из ${_journalData.length}`;
+
+  // Статистика по источникам
+  const stats = {};
+  for (const s of filtered) {
+    const k = s.source;
+    if (!stats[k]) stats[k] = {total: 0, long: 0, short: 0};
+    stats[k].total++;
+    if (s.direction === 'LONG') stats[k].long++;
+    else stats[k].short++;
+  }
+  const names = {cryptovizor: '🚀 CV', anomaly: '⚠ Аном', confluence: '🎯 Conf'};
+  const statsEl = document.getElementById('jSourceStats');
+  if (statsEl) {
+    statsEl.innerHTML = Object.entries(stats).map(([k, v]) =>
+      `<span>${names[k]||k}: <b>${v.total}</b> (🟢${v.long} 🔴${v.short})</span>`
+    ).join('<span style="color:var(--border);">|</span>');
+  }
+
   renderJournal(filtered);
 }
 
@@ -1553,6 +1582,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 loadJournal();
+setInterval(loadJournal, 30000);
 </script>
 
 {% elif bot == 'cryptovizor' %}
