@@ -54,6 +54,7 @@ BOTS = [
     {"id": BOT2_NAME, "label": BOT2_LABEL},
     {"id": "anomaly", "label": "Аномалии"},
     {"id": "confluence", "label": "Confluence"},
+    {"id": "journal", "label": "Журнал"},
 ]
 
 # Админка

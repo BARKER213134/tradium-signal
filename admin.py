@@ -349,7 +349,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
     query = db.query(Signal).filter(Signal.source == bot)
 
     # Cryptovizor имеет свои вкладки
-    if bot in ("anomaly", "confluence"):
+    if bot in ("anomaly", "confluence", "journal"):
         return templates.TemplateResponse(request, "signals.html", {
             "signals": [],
             "total": 0,
@@ -1338,6 +1338,96 @@ async def api_confluence_backtest(st: int = 0):
         "results": sorted_results[:50],
         "st_filter": bool(st),
     }
+
+
+# ── Journal API ──────────────────────────────────────────────────────
+
+@app.get("/api/journal")
+async def api_journal():
+    """Все сигналы из 3 источников — для вкладки Журнал."""
+    from database import _signals, _anomalies, _confluence
+
+    items = []
+
+    # Cryptovizor signals (не tradium)
+    for s in _signals().find({"source": {"$ne": "tradium"}, "status": "ПАТТЕРН"}).sort("received_at", -1).limit(100):
+        items.append({
+            "source": "cryptovizor",
+            "symbol": (s.get("pair") or "").replace("/", "").upper(),
+            "pair": s.get("pair", ""),
+            "direction": s.get("direction", ""),
+            "entry": s.get("pattern_price") or s.get("entry"),
+            "tp1": s.get("dca2"),  # R1
+            "sl": s.get("dca1"),   # S1
+            "pattern": s.get("pattern_name", ""),
+            "score": s.get("ai_score"),
+            "st_passed": s.get("st_passed"),
+            "pump_score": s.get("pump_score", 0),
+            "at": s["received_at"].isoformat() if hasattr(s.get("received_at"), "isoformat") else str(s.get("received_at", "")),
+            "at_ts": int(s["received_at"].timestamp()) if hasattr(s.get("received_at"), "timestamp") else 0,
+        })
+
+    # Anomalies
+    for a in _anomalies().find().sort("detected_at", -1).limit(100):
+        types = [x["type"] for x in a.get("anomalies", [])]
+        items.append({
+            "source": "anomaly",
+            "symbol": a.get("symbol", ""),
+            "pair": a.get("pair", ""),
+            "direction": a.get("direction", ""),
+            "entry": a.get("price"),
+            "tp1": None,
+            "sl": None,
+            "pattern": ", ".join(types[:3]),
+            "score": a.get("score"),
+            "st_passed": a.get("st_passed"),
+            "pump_score": a.get("pump_score", 0),
+            "at": a["detected_at"].isoformat() if hasattr(a.get("detected_at"), "isoformat") else str(a.get("detected_at", "")),
+            "at_ts": int(a["detected_at"].timestamp()) if hasattr(a.get("detected_at"), "timestamp") else 0,
+        })
+
+    # Confluence
+    for c in _confluence().find().sort("detected_at", -1).limit(100):
+        ftypes = [f["type"] for f in c.get("factors", [])]
+        items.append({
+            "source": "confluence",
+            "symbol": c.get("symbol", ""),
+            "pair": c.get("pair", ""),
+            "direction": c.get("direction", ""),
+            "entry": c.get("price"),
+            "tp1": c.get("r1"),
+            "sl": c.get("s1"),
+            "pattern": c.get("pattern") or c.get("strength", ""),
+            "score": c.get("score"),
+            "st_passed": c.get("st_passed"),
+            "pump_score": c.get("pump_score", 0),
+            "at": c["detected_at"].isoformat() if hasattr(c.get("detected_at"), "isoformat") else str(c.get("detected_at", "")),
+            "at_ts": int(c["detected_at"].timestamp()) if hasattr(c.get("detected_at"), "timestamp") else 0,
+        })
+
+    # Сортируем по дате (новые сверху)
+    items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
+    return {"items": items[:200]}
+
+
+@app.get("/api/journal-candles")
+async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
+    """Свечи для Lightweight Charts."""
+    from exchange import get_klines_any
+    pair = symbol.replace("USDT", "/USDT") if "USDT" in symbol else symbol
+    candles = await asyncio.to_thread(get_klines_any, pair, tf, limit)
+    if not candles:
+        return {"ok": False, "error": "no data"}
+    data = []
+    for c in candles:
+        data.append({
+            "time": int(c["t"] / 1000),
+            "open": c["o"],
+            "high": c["h"],
+            "low": c["l"],
+            "close": c["c"],
+        })
+    return {"ok": True, "candles": data}
 
 
 @app.post("/api/save-coin-analysis")

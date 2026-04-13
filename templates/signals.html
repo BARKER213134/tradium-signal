@@ -963,6 +963,245 @@ pollConfluenceStatus();
 setInterval(pollConfluenceStatus, 5000);
 </script>
 
+{% elif bot == 'journal' %}
+<!-- ── Журнал ─────────────────────────────────────────────────────── -->
+<style>
+.journal-hero {
+  padding: 16px 20px; margin-bottom: 16px;
+  background: linear-gradient(135deg, rgba(0,102,255,0.06), rgba(0,255,255,0.03));
+  border: 1px solid rgba(0,255,255,0.12); border-radius: 12px;
+}
+.journal-hero-title { font-size: 15px; font-weight: 800; color: var(--text); }
+.journal-hero-desc { font-size: 11px; color: var(--muted); margin-top: 4px; }
+#journalChartModal {
+  display:none; position:fixed; inset:0; z-index:200;
+  align-items:center; justify-content:center;
+  background:rgba(0,0,0,0.75); backdrop-filter:blur(4px);
+}
+#journalChartModal.open { display:flex; }
+</style>
+
+<div class="journal-hero">
+  <div class="journal-hero-title">📖 Журнал сигналов</div>
+  <div class="journal-hero-desc">Все сигналы из Cryptovizor, Аномалий и Confluence. Нажми на строку — увидишь график с точкой входа.</div>
+</div>
+
+<div class="an-toolbar" style="padding:12px 18px;">
+  <select id="jFilterSrc" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">Все источники</option>
+    <option value="cryptovizor">Cryptovizor</option>
+    <option value="anomaly">Аномалии</option>
+    <option value="confluence">Confluence</option>
+  </select>
+  <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">Все</option>
+    <option value="LONG">🟢 LONG</option>
+    <option value="SHORT">🔴 SHORT</option>
+  </select>
+  <select id="jFilterKC" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">KC: все</option>
+    <option value="pass">✅ Прошли</option>
+    <option value="fail">❌ Не прошли</option>
+  </select>
+  <span id="jStats" class="an-filter-count"></span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Время</th>
+        <th>Источник</th>
+        <th>Пара</th>
+        <th>Напр.</th>
+        <th>Entry</th>
+        <th>Паттерн/Score</th>
+        <th>KC</th>
+        <th>Pump</th>
+      </tr>
+    </thead>
+    <tbody id="jBody">
+      <tr><td colspan="8" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Chart Modal -->
+<div id="journalChartModal">
+  <div style="width:85vw;max-width:1000px;height:75vh;background:var(--dark);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);" onclick="event.stopPropagation();">
+    <div id="jChartHeader" style="display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);font-family:var(--font-mono);">
+      <div id="jChartTitle" style="font-size:14px;font-weight:700;color:var(--text);"></div>
+      <button onclick="document.getElementById('journalChartModal').classList.remove('open')" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;">×</button>
+    </div>
+    <div id="jChartContainer" style="height:calc(100% - 48px);"></div>
+  </div>
+</div>
+
+<script>
+let _journalData = [];
+let _lwcLoaded = false;
+
+async function loadJournal() {
+  try {
+    const r = await fetch('/api/journal');
+    const d = await r.json();
+    _journalData = d.items || [];
+    filterJournal();
+  } catch {}
+}
+
+function filterJournal() {
+  const src = document.getElementById('jFilterSrc').value;
+  const dir = document.getElementById('jFilterDir').value;
+  const kc = document.getElementById('jFilterKC').value;
+  let filtered = _journalData.filter(s => {
+    if (src && s.source !== src) return false;
+    if (dir && s.direction !== dir) return false;
+    if (kc === 'pass' && s.st_passed !== true) return false;
+    if (kc === 'fail' && s.st_passed !== false) return false;
+    return true;
+  });
+  document.getElementById('jStats').textContent = `${filtered.length} из ${_journalData.length}`;
+  renderJournal(filtered);
+}
+
+function renderJournal(items) {
+  const tbody = document.getElementById('jBody');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
+    return;
+  }
+  tbody.innerHTML = items.map((s, i) => {
+    const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
+    const pair = (s.pair || s.symbol || '').replace('/USDT', '');
+    const time = s.at ? new Date(s.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+    const srcBadge = s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : '🚀';
+    const srcName = s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? 'Confluence' : 'CV';
+    const stFail = s.st_passed === false;
+    const pumpHigh = (s.pump_score || 0) >= 2;
+    const rowCls = pumpHigh ? 'pump-high' : (stFail ? 'st-failed' : '');
+    const kcMark = s.st_passed === true ? '✅' : s.st_passed === false ? '❌' : '—';
+    const pumpMark = pumpHigh ? '🔥' : '—';
+    const sym = s.symbol || (s.pair || '').replace('/','');
+
+    return `<tr class="${rowCls}" style="cursor:pointer;" onclick="openJournalChart(${i})">
+      <td class="mono text-muted" style="font-size:11px;">${time}</td>
+      <td style="font-size:11px;">${srcBadge} ${srcName}</td>
+      <td class="mono text-accent fw-700">${pair}</td>
+      <td>${dir}</td>
+      <td class="mono">${s.entry || '—'}</td>
+      <td class="mono" style="font-size:11px;">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}</td>
+      <td>${kcMark}</td>
+      <td>${pumpMark}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function openJournalChart(idx) {
+  const s = _journalData[idx];
+  if (!s) return;
+
+  const modal = document.getElementById('journalChartModal');
+  const container = document.getElementById('jChartContainer');
+  const title = document.getElementById('jChartTitle');
+
+  const pair = (s.pair || s.symbol || '').replace('/USDT', '');
+  const sym = s.symbol || (s.pair || '').replace('/', '');
+  const dirE = s.direction === 'LONG' ? '🟢' : '🔴';
+
+  title.innerHTML = `${pair}/USDT · ${dirE} ${s.direction} · Entry: <code>${s.entry}</code>`;
+  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Загрузка графика…</div>';
+  modal.classList.add('open');
+
+  // Загружаем LWC если не загружен
+  if (!_lwcLoaded) {
+    await new Promise((resolve) => {
+      const sc = document.createElement('script');
+      sc.src = 'https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
+      sc.onload = () => { _lwcLoaded = true; resolve(); };
+      document.head.appendChild(sc);
+    });
+  }
+
+  // Загружаем свечи
+  try {
+    const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=1h&limit=100`);
+    const d = await r.json();
+    if (!d.ok || !d.candles.length) {
+      container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">Нет данных</div>';
+      return;
+    }
+
+    container.innerHTML = '';
+    const chart = LightweightCharts.createChart(container, {
+      layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
+      grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#1a1e2a' },
+      timeScale: { borderColor: '#1a1e2a', timeVisible: true },
+      width: container.clientWidth,
+      height: container.clientHeight,
+    });
+
+    const series = chart.addCandlestickSeries({
+      upColor: '#00e5a0', downColor: '#ff4d6d',
+      borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
+      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
+    });
+    series.setData(d.candles);
+
+    // Маркер входа
+    const entryTs = s.at_ts || 0;
+    let markerCandle = d.candles[d.candles.length - 1];
+    if (entryTs) {
+      // Находим ближайшую свечу к моменту входа
+      let minDiff = Infinity;
+      for (const c of d.candles) {
+        const diff = Math.abs(c.time - entryTs);
+        if (diff < minDiff) { minDiff = diff; markerCandle = c; }
+      }
+    }
+
+    const isLong = s.direction === 'LONG';
+    series.setMarkers([{
+      time: markerCandle.time,
+      position: isLong ? 'belowBar' : 'aboveBar',
+      color: isLong ? '#00e5a0' : '#ff4d6d',
+      shape: isLong ? 'arrowUp' : 'arrowDown',
+      text: `${s.direction} Entry ${s.entry}`,
+    }]);
+
+    // Entry линия
+    if (s.entry) {
+      series.createPriceLine({ price: s.entry, color: '#ffd23e', lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' });
+    }
+    // TP1
+    if (s.tp1) {
+      series.createPriceLine({ price: s.tp1, color: '#00e5a0', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP1' });
+    }
+    // SL
+    if (s.sl) {
+      series.createPriceLine({ price: s.sl, color: '#ff4d6d', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
+    }
+
+    chart.timeScale().fitContent();
+
+  } catch (e) {
+    container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">Ошибка: ${e.message}</div>`;
+  }
+}
+
+// Закрытие по клику вне / ESC
+document.getElementById('journalChartModal').onclick = function(e) {
+  if (e.target === this) this.classList.remove('open');
+};
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.getElementById('journalChartModal').classList.remove('open');
+});
+
+loadJournal();
+</script>
+
 {% elif bot == 'cryptovizor' %}
 <!-- ── Cryptovizor tabs ───────────────────────────────────────────── -->
 <div class="tabs">
