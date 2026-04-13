@@ -1119,7 +1119,10 @@ async function openJournalChart(idx) {
   const sym = s.symbol || (s.pair || '').replace('/', '');
   const dirE = s.direction === 'LONG' ? '🟢' : '🔴';
 
-  title.innerHTML = `${pair}/USDT · ${dirE} ${s.direction} · Entry: <code>${s.entry}</code>`;
+  const srcBadge = s.source === 'anomaly' ? '⚠️ Аномалия' : s.source === 'confluence' ? '🎯 Confluence' : '🚀 Cryptovizor';
+  const patternInfo = s.pattern ? ` · ${s.pattern}` : '';
+  const scoreInfo = s.score ? ` · Score: ${s.score}` : '';
+  title.innerHTML = `${srcBadge} · ${pair}/USDT · ${dirE} ${s.direction} · Entry: <code>${s.entry}</code>${patternInfo}${scoreInfo}`;
   const counter = document.getElementById('jChartCounter');
   if (counter) counter.textContent = `${idx + 1}/${_journalData.length}`;
   container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Загрузка графика…</div>';
