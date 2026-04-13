@@ -1675,8 +1675,19 @@ async def _send_confluence_alert(r: dict):
     if r.get("s1"): lvl += f"🟢 S1: <code>{r['s1']}</code> | "
     if r.get("r1"): lvl += f"🔴 R1: <code>{r['r1']}</code>"
 
+    # Яркий заголовок для score >= 5
+    if score >= 5:
+        strong_header = (
+            f"⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐\n"
+            f"🏆 <b>STRONG CONFLUENCE · {score}/6</b> 🏆\n"
+            f"⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐\n\n"
+        )
+    else:
+        strong_header = ""
+
     text = (
         f"{hp}"
+        f"{strong_header}"
         f"🎯 <b>CONFLUENCE · {strength_label}</b>\n"
         f"\n"
         f"<b>{pair}/USDT</b> · {dir_emoji} <b>{r['direction']}</b>\n"
