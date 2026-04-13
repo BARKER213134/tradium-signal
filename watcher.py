@@ -101,28 +101,50 @@ async def _pump_check(symbol: str) -> dict:
 
 
 def _kc_line(passed: bool, kc: dict) -> str:
-    """Строка Keltner Channel для Telegram."""
+    """Строка Keltner для Telegram."""
     d = kc.get("direction", "NEUTRAL")
     if d == "NEUTRAL":
-        return "\n⚪ Keltner ETH: <b>NEUTRAL</b> · все сигналы проходят"
+        return "⚪ KC: NEUTRAL"
     emoji = "🟢" if d == "LONG" else "🔴"
-    status = "✅ KC подтверждён" if passed else "⚠️ KC не совпадает"
-    return f"\n{emoji} Keltner ETH: <b>{d}</b> · {status}"
+    mark = "✅" if passed else "⚠️"
+    return f"{emoji} KC: {d} · {mark}"
 
 
 def _eth_line() -> str:
-    """Одна строка с ETH/BTC контекстом для Telegram."""
+    """ETH/BTC контекст."""
     try:
         from exchange import get_eth_market_context
         ctx = get_eth_market_context()
         eth = ctx.get("eth_1h", 0)
         btc = ctx.get("btc_1h", 0)
-        eb = ctx.get("eth_btc", "—")
         eth_e = "🟢" if eth >= 0 else "🔴"
         btc_e = "🟢" if btc >= 0 else "🔴"
-        return f"\n📊 ETH {eth_e}{eth:+.2f}% · BTC {btc_e}{btc:+.2f}% · ETH/BTC {eb}"
+        return f"📊 ETH {eth_e}{eth:+.2f}% · BTC {btc_e}{btc:+.2f}%"
     except Exception:
         return ""
+
+
+def _market_block(pump: dict, kc_passed: bool, kc_data: dict) -> str:
+    """Блок Рынок + Фильтры для всех ботов."""
+    lines = []
+    # HIGH POTENTIAL заголовок
+    hp = pump.get("label", "")
+
+    # Рынок
+    lines.append("\n─── Рынок ───")
+    vol = pump.get("volume_spike", 0)
+    oi = pump.get("oi_change", 0)
+    fund = pump.get("funding", 0)
+    lines.append(f"📊 Vol ×{vol} | 📈 OI {oi:+.1f}% | 💰 Fund {fund:.3f}%")
+    if hp:
+        lines.append(hp)
+
+    # Фильтры
+    lines.append("\n─── Фильтры ───")
+    lines.append(_kc_line(kc_passed, kc_data))
+    lines.append(_eth_line())
+
+    return "\n".join(lines)
 
 
 def _fmt_trend(trend: str | None) -> str:
@@ -622,31 +644,35 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     s1_line = f"\n🟢 <b>S1:</b> <code>{s1}</code>" if s1 else ""
     r1_line = f"\n🔴 <b>R1:</b> <code>{r1}</code>" if r1 else ""
 
+    sym = (signal.pair or "").replace("/", "").upper()
+    _stp, _std = _check_keltner_filter(signal.direction)
+    _pump = await _pump_check(sym)
+    hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
+
+    lvl = ""
+    if s1: lvl += f"🟢 S1: <code>{s1}</code> | "
+    if r1: lvl += f"🔴 R1: <code>{r1}</code>"
+
     text = (
-        f"🚀 <b>CRYPTOVIZOR · ПАТТЕРН НАЙДЕН</b>\n"
+        f"{hp}"
+        f"🚀 <b>CRYPTOVIZOR · ПАТТЕРН</b>\n"
         f"\n"
         f"<b>{pair}/USDT</b> · 1h · {dir_emoji} <b>{dir_label}</b>\n"
+        f"<code>{sym}</code>\n"
         f"\n"
-        f"🎴 <b>Паттерн:</b> {pattern}\n"
-        f"🎯 <b>Цена сигнала:</b> <code>{signal.entry}</code>\n"
-        f"💰 <b>Сейчас:</b> <code>{current_price}</code>"
-        f"{pnl_line}"
-        f"{s1_line}{r1_line}"
-        f"{ai_line}\n"
+        f"─── Сигнал ───\n"
+        f"🕯 Паттерн: <b>{pattern}</b>\n"
+        f"🎯 Entry: <code>{signal.entry}</code> → Сейчас: <code>{current_price}</code>"
+        f"{pnl_line}\n"
+        f"{lvl}\n"
+        f"{ai_line}"
+        f"⚡ Тренд: {_fmt_trend(signal.trend)}\n"
         f"\n"
-        f"⚡ <i>Тренд: {_fmt_trend(signal.trend)}</i>"
+        f"{_market_block(_pump, _stp, _std)}"
     )
-    # Keltner + Pump check
-    _stp, _std = _check_keltner_filter(signal.direction)
-    text += _kc_line(_stp, _std)
-    sym = (signal.pair or "").replace("/", "").upper()
-    _pump = await _pump_check(sym)
-    text += _pump["text"]
-    text += _eth_line()
     # Сохраняем pump в БД
-    if _pump["score"] > 0:
-        from database import _signals as _sc
-        _sc().update_one({"id": signal.id}, {"$set": {"pump_score": _pump["score"], "pump_factors": _pump["factors"]}})
+    from database import _signals as _sc
+    _sc().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
 
     try:
         if chart_png:
@@ -1097,34 +1123,35 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     # 2. Короткое саммари → для Telegram
     tg_summary = await _generate_ai_tg_summary(signal, current_price, s1, r1)
 
+    sym = (signal.pair or "").replace("/", "").upper()
+    _st = ai_result.get("st", {})
+    _stp = _st.get("confirmed", False) and _st.get("direction") == signal.direction if _st else True
+    _pump = await _pump_check(sym)
+    hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
+
+    lvl = ""
+    if s1: lvl += f"🟢 S1: <code>{s1}</code> | "
+    if r1: lvl += f"🔴 R1: <code>{r1}</code>"
+
     text = (
+        f"{hp}"
         f"🤖 <b>AI SIGNAL · TOP PICK</b>\n"
         f"\n"
         f"<b>{pair}/USDT</b> · 1h · {dir_emoji} <b>{signal.direction}</b>\n"
+        f"<code>{sym}</code>\n"
         f"\n"
-        f"🎴 Паттерн: <b>{signal.pattern_name}</b>\n"
-        f"🎯 Entry: <code>{signal.entry}</code>\n"
-        f"💰 Сейчас: <code>{current_price}</code>\n"
+        f"─── Сигнал ───\n"
+        f"🕯 Паттерн: <b>{signal.pattern_name}</b>\n"
+        f"🎯 Entry: <code>{signal.entry}</code> → Сейчас: <code>{current_price}</code>\n"
+        f"{lvl}\n"
+        f"⭐ Score: <b>{score}/10</b> {score_bar}\n"
     )
-    if s1:
-        text += f"🟢 S1: <code>{s1}</code>\n"
-    if r1:
-        text += f"🔴 R1: <code>{r1}</code>\n"
-
-    text += f"\n⭐ Score: <b>{score}/10</b> {score_bar}\n"
-
     if tg_summary:
-        text += f"\n📝 {tg_summary}"
-    _st = ai_result.get("st", {})
-    if _st:
-        text += _kc_line(True, _st)
-    sym = (signal.pair or "").replace("/", "").upper()
-    _pump = await _pump_check(sym)
-    text += _pump["text"]
-    text += _eth_line()
-    if _pump["score"] > 0:
-        from database import _signals as _sc2
-        _sc2().update_one({"id": signal.id}, {"$set": {"pump_score": _pump["score"], "pump_factors": _pump["factors"]}})
+        text += f"\n📝 {tg_summary}\n"
+    text += f"\n{_market_block(_pump, _stp, _st or {})}"
+
+    from database import _signals as _sc2
+    _sc2().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
 
     try:
         await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
@@ -1320,26 +1347,31 @@ async def _send_anomaly_alert(r: dict):
     else:
         conclusion = "Высокая активность, направление неясно"
 
+    sym = r.get("symbol", "")
+    _st = r.get("_st", {})
+    _stp = True if _st else True
+    _pump = await _pump_check(sym)
+    hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
+
     text = (
+        f"{hp}"
         f"⚠️ <b>АНОМАЛИЯ · {pair}/USDT</b>\n"
         f"\n"
         f"{dir_emoji} <b>{r['direction']}</b> · Цена: <code>{price}</code>\n"
+        f"<code>{sym}</code>\n"
         f"Score: <b>{ws}</b>/15 {score_bar} · {count} индикаторов\n"
+        f"\n"
+        f"─── Аномалии ───"
     )
     text += ftt_info
     text += delta_info
     if indicators:
-        text += "\n\n" + "\n".join(f"  · {ind}" for ind in indicators)
+        text += "\n" + "\n".join(f"  · {ind}" for ind in indicators)
     text += f"\n\n💡 <i>{conclusion}</i>"
-    _st = r.get("_st", {})
-    if _st:
-        text += _kc_line(True, _st)
-    _pump = await _pump_check(r.get("symbol", ""))
-    text += _pump["text"]
-    text += _eth_line()
-    if _pump["score"] > 0:
-        from database import _anomalies as _anc
-        _anc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump["score"], "pump_factors": _pump["factors"]}})
+    text += f"\n\n{_market_block(_pump, _stp, _st or {})}"
+
+    from database import _anomalies as _anc
+    _anc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
 
     try:
         await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
@@ -1527,35 +1559,35 @@ async def _send_confluence_alert(r: dict):
     else:
         conclusion = "Слабый сетап — лучше пропустить"
 
+    sym = r.get("symbol", "")
+    _st = r.get("_st", {})
+    _stp = True
+    _pump = await _pump_check(sym)
+    hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
+
+    lvl = ""
+    if r.get("s1"): lvl += f"🟢 S1: <code>{r['s1']}</code> | "
+    if r.get("r1"): lvl += f"🔴 R1: <code>{r['r1']}</code>"
+
     text = (
-        f"🎯 <b>CONFLUENCE SIGNAL</b>\n"
+        f"{hp}"
+        f"🎯 <b>CONFLUENCE · {strength_label}</b>\n"
         f"\n"
-        f"<b>{pair}/USDT</b> · {dir_emoji} <b>{r['direction']}</b> · {strength_label}\n"
+        f"<b>{pair}/USDT</b> · {dir_emoji} <b>{r['direction']}</b>\n"
+        f"<code>{sym}</code>\n"
         f"Цена: <code>{price}</code>\n"
-        f"\n"
-    )
-    if r.get("s1"):
-        text += f"🟢 Поддержка: <code>{r['s1']}</code>\n"
-    if r.get("r1"):
-        text += f"🔴 Сопротивление: <code>{r['r1']}</code>\n"
-    text += (
-        f"\n"
-        f"<b>Score: {score}/6</b> {filled}\n"
+        f"{lvl}\n"
+        f"Score: <b>{score}/6</b> {filled}\n"
         f"Тренд: {tf_line}\n"
         f"\n"
-        f"<b>Чеклист факторов:</b>\n"
+        f"─── Факторы ───\n"
     )
     text += "\n".join(checks)
     text += f"\n\n💡 <i>{conclusion}</i>"
-    _st = r.get("_st", {})
-    if _st:
-        text += _kc_line(True, _st)
-    _pump = await _pump_check(r.get("symbol", ""))
-    text += _pump["text"]
-    text += _eth_line()
-    if _pump["score"] > 0:
-        from database import _confluence as _cfc
-        _cfc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump["score"], "pump_factors": _pump["factors"]}})
+    text += f"\n\n{_market_block(_pump, _stp, _st or {})}"
+
+    from database import _confluence as _cfc
+    _cfc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
 
     try:
         await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
