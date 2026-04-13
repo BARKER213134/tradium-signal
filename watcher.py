@@ -67,7 +67,9 @@ def _check_keltner_filter(direction: str) -> tuple[bool, dict]:
     """Проверяет Keltner Channel ETH фильтр. Возвращает (passed, kc_data).
     NEUTRAL = все сигналы проходят."""
     try:
-        from exchange import get_keltner_eth
+        from exchange import get_keltner_eth, _kc_cache_ts
+        import exchange
+        exchange._kc_cache_ts = 0  # Сбрасываем кеш для свежих данных
         kc = get_keltner_eth()
         d = kc.get("direction", "NEUTRAL")
         if d == "NEUTRAL":
