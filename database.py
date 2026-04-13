@@ -166,6 +166,8 @@ SIGNAL_FIELDS = [
     "source",
     # Keltner Channel ETH фильтр
     "st_passed", "st_direction", "st_streak",
+    # Pump potential
+    "pump_score", "pump_factors",
 ]
 
 _DEFAULTS = {

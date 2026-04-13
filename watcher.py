@@ -78,20 +78,25 @@ def _check_keltner_filter(direction: str) -> tuple[bool, dict]:
         return True, {"direction": "NEUTRAL", "confirmed": False}
 
 
-async def _pump_line(symbol: str) -> str:
-    """Проверяет Volume+OI+Funding и возвращает строку для Telegram."""
+async def _pump_check(symbol: str) -> dict:
+    """Проверяет Volume+OI+Funding. Возвращает dict с score, factors, text."""
     try:
         from exchange import check_pump_potential
         p = await asyncio.to_thread(check_pump_potential, symbol)
-        if not p or not p.get("factors"):
-            return ""
-        lines = "\n".join(f"  {f}" for f in p["factors"])
-        label = p.get("label", "")
-        if label:
-            return f"\n\n{label}\n{lines}"
-        return f"\n{lines}"
+        if not p:
+            return {"score": 0, "factors": [], "text": ""}
+        text = ""
+        if p.get("factors"):
+            lines = "\n".join(f"  {f}" for f in p["factors"])
+            label = p.get("label", "")
+            if label:
+                text = f"\n\n{label}\n{lines}"
+            else:
+                text = f"\n{lines}"
+        p["text"] = text
+        return p
     except Exception:
-        return ""
+        return {"score": 0, "factors": [], "text": ""}
 
 
 def _kc_line(passed: bool, kc: dict) -> str:
@@ -634,8 +639,13 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     _stp, _std = _check_keltner_filter(signal.direction)
     text += _kc_line(_stp, _std)
     sym = (signal.pair or "").replace("/", "").upper()
-    text += await _pump_line(sym)
+    _pump = await _pump_check(sym)
+    text += _pump["text"]
     text += _eth_line()
+    # Сохраняем pump в БД
+    if _pump["score"] > 0:
+        from database import _signals as _sc
+        _sc().update_one({"id": signal.id}, {"$set": {"pump_score": _pump["score"], "pump_factors": _pump["factors"]}})
 
     try:
         if chart_png:
@@ -1108,8 +1118,12 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     if _st:
         text += _kc_line(True, _st)
     sym = (signal.pair or "").replace("/", "").upper()
-    text += await _pump_line(sym)
+    _pump = await _pump_check(sym)
+    text += _pump["text"]
     text += _eth_line()
+    if _pump["score"] > 0:
+        from database import _signals as _sc2
+        _sc2().update_one({"id": signal.id}, {"$set": {"pump_score": _pump["score"], "pump_factors": _pump["factors"]}})
 
     try:
         await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
@@ -1319,8 +1333,12 @@ async def _send_anomaly_alert(r: dict):
     _st = r.get("_st", {})
     if _st:
         text += _kc_line(True, _st)
-    text += await _pump_line(r.get("symbol", ""))
+    _pump = await _pump_check(r.get("symbol", ""))
+    text += _pump["text"]
     text += _eth_line()
+    if _pump["score"] > 0:
+        from database import _anomalies as _anc
+        _anc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump["score"], "pump_factors": _pump["factors"]}})
 
     try:
         await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
@@ -1531,8 +1549,12 @@ async def _send_confluence_alert(r: dict):
     _st = r.get("_st", {})
     if _st:
         text += _kc_line(True, _st)
-    text += await _pump_line(r.get("symbol", ""))
+    _pump = await _pump_check(r.get("symbol", ""))
+    text += _pump["text"]
     text += _eth_line()
+    if _pump["score"] > 0:
+        from database import _confluence as _cfc
+        _cfc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump["score"], "pump_factors": _pump["factors"]}})
 
     try:
         await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")

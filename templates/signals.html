@@ -338,8 +338,9 @@ function renderAnomalyRow(d, i) {
 
       const sym = d.symbol || (d.pair||'').replace('/','');
       const stFail = d.st_passed === false;
-      return `<tr style="cursor:pointer;${stFail ? 'background:rgba(255,77,109,0.06);border-left:3px solid var(--sell);' : ''}" onclick="toggleCluster('cl_${i}','${sym}')">
-        <td class="mono text-muted" style="font-size:11px;">${time}</td>
+      const pumpHigh = (d.pump_score || 0) >= 2;
+      const rowCls = pumpHigh ? 'pump-high' : (stFail ? 'st-failed' : '');
+      return `<tr class="${rowCls}" style="cursor:pointer;" onclick="toggleCluster('cl_${i}','${sym}')">
         <td class="mono text-accent fw-700">${pair}</td>
         <td class="mono">${d.price||'—'}</td>
         <td>${dir}</td>
@@ -794,7 +795,9 @@ function renderConfluenceRow(d, i) {
   });
 
   const stFail = d.st_passed === false;
-  return `<tr style="cursor:pointer;${stFail ? 'background:rgba(255,77,109,0.06);border-left:3px solid var(--sell);' : ''}" onclick="toggleConfluenceRow('cfr_${i}','${sym}')">
+  const pumpHigh = (d.pump_score || 0) >= 2;
+  const rowCls = pumpHigh ? 'pump-high' : (stFail ? 'st-failed' : '');
+  return `<tr class="${rowCls}" style="cursor:pointer;" onclick="toggleConfluenceRow('cfr_${i}','${sym}')">
     <td class="mono text-muted" style="font-size:11px;">${time}</td>
     <td class="mono text-accent fw-700">${pair}</td>
     <td class="mono">${d.price||'—'}</td>
@@ -1486,7 +1489,7 @@ async function clearProcessed() {
     </thead>
     <tbody>
       {% for s in signals %}
-      <tr class="signal-row{% if cv_tab in ('active', 'ai_signal') %} ai-clickable{% endif %}{% if cv_tab in ('active', 'ai_signal') and s.comment %} ai-done{% endif %}{% if cv_tab in ('active', 'ai_signal') and s.st_passed is not none and not s.st_passed %} st-failed{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if cv_tab in ('active', 'ai_signal') %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
+      <tr class="signal-row{% if cv_tab in ('active', 'ai_signal') %} ai-clickable{% endif %}{% if cv_tab in ('active', 'ai_signal') and s.comment %} ai-done{% endif %}{% if s.pump_score is not none and s.pump_score >= 2 %} pump-high{% elif cv_tab in ('active', 'ai_signal') and s.st_passed is not none and not s.st_passed %} st-failed{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if cv_tab in ('active', 'ai_signal') %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
         <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT','') }}</td>
