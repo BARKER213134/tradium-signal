@@ -100,6 +100,103 @@ async def _pump_check(symbol: str) -> dict:
         return {"score": 0, "factors": [], "text": ""}
 
 
+_last_kc_direction = None
+
+async def _check_kc_change():
+    """Проверяет смену Keltner и алертит во все боты."""
+    global _last_kc_direction
+    try:
+        from exchange import get_keltner_eth
+        kc = get_keltner_eth()
+        d = kc.get("direction", "NEUTRAL")
+
+        if _last_kc_direction is None:
+            _last_kc_direction = d
+            return
+
+        if d != _last_kc_direction:
+            old = _last_kc_direction
+            _last_kc_direction = d
+            logger.info(f"KC CHANGED: {old} → {d}")
+
+            if d == "NEUTRAL":
+                emoji = "⚪"
+                text = (
+                    f"🔔🔔🔔🔔🔔🔔🔔🔔🔔🔔\n"
+                    f"\n"
+                    f"⚡ <b>KELTNER ETH СМЕНИЛСЯ!</b>\n"
+                    f"\n"
+                    f"{emoji} <b>{old}</b> → <b>NEUTRAL</b>\n"
+                    f"\n"
+                    f"📌 ETH вернулся в канал\n"
+                    f"📌 Все сигналы теперь проходят\n"
+                    f"📌 LONG и SHORT разрешены\n"
+                    f"\n"
+                    f"🔔🔔🔔🔔🔔🔔🔔🔔🔔🔔"
+                )
+            elif d == "LONG":
+                emoji = "🟢"
+                text = (
+                    f"🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀\n"
+                    f"\n"
+                    f"⚡ <b>KELTNER ETH → LONG!</b>\n"
+                    f"\n"
+                    f"{emoji} <b>{old}</b> → <b>LONG</b>\n"
+                    f"\n"
+                    f"📌 ETH пробил верхнюю границу канала\n"
+                    f"📌 Только LONG сигналы проходят\n"
+                    f"📌 SHORT сигналы будут отфильтрованы\n"
+                    f"\n"
+                    f"🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"
+                )
+            else:
+                emoji = "🔴"
+                text = (
+                    f"🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻\n"
+                    f"\n"
+                    f"⚡ <b>KELTNER ETH → SHORT!</b>\n"
+                    f"\n"
+                    f"{emoji} <b>{old}</b> → <b>SHORT</b>\n"
+                    f"\n"
+                    f"📌 ETH пробил нижнюю границу канала\n"
+                    f"📌 Только SHORT сигналы проходят\n"
+                    f"📌 LONG сигналы будут отфильтрованы\n"
+                    f"\n"
+                    f"🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻"
+                )
+
+            text += _eth_line()
+
+            # Отправляем во ВСЕ боты
+            for bot in [_bot, _bot2, _bot4]:
+                if bot and _admin_chat_id:
+                    try:
+                        await bot.send_message(_admin_chat_id, text, parse_mode="HTML")
+                    except Exception:
+                        pass
+            if _bot3 and _admin_chat_id:
+                try:
+                    await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
+                except Exception:
+                    pass
+            if _bot5 and _admin_chat_id:
+                try:
+                    await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
+                except Exception:
+                    pass
+            # BOT6
+            try:
+                from paper_trader import _bot6, _setup_bot6
+                if not _bot6:
+                    _setup_bot6()
+                if _bot6:
+                    await _bot6.send_message(_admin_chat_id, text, parse_mode="HTML")
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug(f"KC change check: {e}")
+
+
 def _kc_line(passed: bool, kc: dict) -> str:
     """Строка Keltner для Telegram."""
     d = kc.get("direction", "NEUTRAL")
@@ -568,6 +665,7 @@ async def _check_once():
     db = SessionLocal()
     try:
         print("[WATCHER] _check_once start", flush=True)
+        await _check_kc_change()
         try:
             await asyncio.wait_for(_retry_failed_ai(db), timeout=30)
         except asyncio.TimeoutError:
