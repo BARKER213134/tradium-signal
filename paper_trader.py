@@ -168,7 +168,7 @@ def check_positions(prices: dict):
 async def ai_decide(signal_data: dict) -> dict:
     """AI решает: входить или нет. Возвращает решение."""
     import anthropic
-    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST
+    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
     from exchange import get_keltner_eth, get_eth_market_context
 
     balance = get_balance()
@@ -226,7 +226,7 @@ async def ai_decide(signal_data: dict) -> dict:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         message = await asyncio.to_thread(
             client.messages.create,
-            model=ANTHROPIC_MODEL_FAST,
+            model=ANTHROPIC_MODEL,  # Sonnet — лучшее качество решений
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -247,7 +247,7 @@ async def ai_decide(signal_data: dict) -> dict:
 async def ai_review_trade(trade: dict) -> str:
     """AI анализирует закрытую сделку."""
     import anthropic
-    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST
+    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 
     prompt = (
         f"Разбери закрытую Paper Trade сделку:\n"
@@ -261,7 +261,7 @@ async def ai_review_trade(trade: dict) -> str:
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         msg = await asyncio.to_thread(
-            client.messages.create, model=ANTHROPIC_MODEL_FAST, max_tokens=100,
+            client.messages.create, model=ANTHROPIC_MODEL, max_tokens=100,
             messages=[{"role": "user", "content": prompt}],
         )
         return msg.content[0].text.strip()
