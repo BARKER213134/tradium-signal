@@ -329,6 +329,82 @@ def get_keltner_eth() -> dict:
 get_supertrend_eth = get_keltner_eth
 
 
+# ── Pump Check (Volume + OI + Funding) ────────────────────────────────
+
+def check_pump_potential(symbol: str) -> dict:
+    """Проверяет Volume Spike + OI change + Funding для одной монеты.
+    Возвращает {volume_spike, oi_change, funding, score, label}."""
+    import httpx
+    FAPI = "https://fapi.binance.com"
+    result = {"volume_spike": 0, "oi_change": 0, "funding": 0, "score": 0, "factors": []}
+
+    try:
+        # 1. Volume Spike — текущий vs средний за 5 свечей 1h
+        r = httpx.get(f"{FAPI}/fapi/v1/klines",
+                      params={"symbol": symbol, "interval": "1h", "limit": 6}, timeout=5)
+        if r.status_code == 200:
+            k = r.json()
+            if len(k) >= 6:
+                curr_vol = float(k[-1][5])
+                avg_vol = sum(float(k[i][5]) for i in range(-6, -1)) / 5
+                if avg_vol > 0:
+                    ratio = curr_vol / avg_vol
+                    result["volume_spike"] = round(ratio, 1)
+                    if ratio >= 2.0:
+                        result["score"] += 1
+                        result["factors"].append(f"📊 Объём ×{ratio:.1f} от среднего")
+
+        # 2. OI Change — за последний час
+        r = httpx.get(f"{FAPI}/futures/data/openInterestHist",
+                      params={"symbol": symbol, "period": "1h", "limit": 2}, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            if len(data) >= 2:
+                prev = float(data[-2].get("sumOpenInterestValue", 0))
+                curr = float(data[-1].get("sumOpenInterestValue", 0))
+                if prev > 0:
+                    change = ((curr - prev) / prev) * 100
+                    result["oi_change"] = round(change, 2)
+                    if abs(change) >= 3.0:
+                        result["score"] += 1
+                        result["factors"].append(f"📈 OI {change:+.1f}%")
+
+        # 3. Funding Rate
+        from anomaly_scanner import _batch_cache
+        funding = _batch_cache.get("funding", {}).get(symbol)
+        if funding is not None:
+            result["funding"] = round(funding, 4)
+            if abs(funding) >= 0.03:
+                result["score"] += 1
+                side = "лонги платят" if funding > 0 else "шорты платят"
+                result["factors"].append(f"💰 Funding {funding:.3f}% ({side})")
+        else:
+            # Fallback
+            r = httpx.get(f"{FAPI}/fapi/v1/premiumIndex",
+                          params={"symbol": symbol}, timeout=5)
+            if r.status_code == 200:
+                d = r.json()
+                fr = float(d.get("lastFundingRate", 0)) * 100
+                result["funding"] = round(fr, 4)
+                if abs(fr) >= 0.03:
+                    result["score"] += 1
+                    side = "лонги платят" if fr > 0 else "шорты платят"
+                    result["factors"].append(f"💰 Funding {fr:.3f}% ({side})")
+
+    except Exception as e:
+        logger.debug(f"Pump check {symbol}: {e}")
+
+    # Label
+    if result["score"] >= 2:
+        result["label"] = "🚀 HIGH POTENTIAL"
+    elif result["score"] == 1:
+        result["label"] = ""
+    else:
+        result["label"] = ""
+
+    return result
+
+
 # ── ETH/BTC market context (кешированный) ───────────────────────────
 _eth_ctx_cache: dict = {}
 _eth_ctx_ts: float = 0

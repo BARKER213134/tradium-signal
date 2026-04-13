@@ -78,6 +78,22 @@ def _check_keltner_filter(direction: str) -> tuple[bool, dict]:
         return True, {"direction": "NEUTRAL", "confirmed": False}
 
 
+async def _pump_line(symbol: str) -> str:
+    """Проверяет Volume+OI+Funding и возвращает строку для Telegram."""
+    try:
+        from exchange import check_pump_potential
+        p = await asyncio.to_thread(check_pump_potential, symbol)
+        if not p or not p.get("factors"):
+            return ""
+        lines = "\n".join(f"  {f}" for f in p["factors"])
+        label = p.get("label", "")
+        if label:
+            return f"\n\n{label}\n{lines}"
+        return f"\n{lines}"
+    except Exception:
+        return ""
+
+
 def _kc_line(passed: bool, kc: dict) -> str:
     """Строка Keltner Channel для Telegram."""
     d = kc.get("direction", "NEUTRAL")
@@ -614,9 +630,11 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"\n"
         f"⚡ <i>Тренд: {_fmt_trend(signal.trend)}</i>"
     )
-    # SuperTrend
+    # Keltner + Pump check
     _stp, _std = _check_keltner_filter(signal.direction)
     text += _kc_line(_stp, _std)
+    sym = (signal.pair or "").replace("/", "").upper()
+    text += await _pump_line(sym)
     text += _eth_line()
 
     try:
@@ -1089,6 +1107,8 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     _st = ai_result.get("st", {})
     if _st:
         text += _kc_line(True, _st)
+    sym = (signal.pair or "").replace("/", "").upper()
+    text += await _pump_line(sym)
     text += _eth_line()
 
     try:
@@ -1296,10 +1316,10 @@ async def _send_anomaly_alert(r: dict):
     if indicators:
         text += "\n\n" + "\n".join(f"  · {ind}" for ind in indicators)
     text += f"\n\n💡 <i>{conclusion}</i>"
-    # SuperTrend метка
     _st = r.get("_st", {})
     if _st:
         text += _kc_line(True, _st)
+    text += await _pump_line(r.get("symbol", ""))
     text += _eth_line()
 
     try:
@@ -1511,6 +1531,7 @@ async def _send_confluence_alert(r: dict):
     _st = r.get("_st", {})
     if _st:
         text += _kc_line(True, _st)
+    text += await _pump_line(r.get("symbol", ""))
     text += _eth_line()
 
     try:
