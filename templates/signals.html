@@ -1019,20 +1019,30 @@ async function loadPaperStatus() {
 
     // Позиции
     const posDiv = document.getElementById('atPositions');
+    window._paperPositions = d.positions;
     if (d.positions.length) {
-      posDiv.innerHTML = d.positions.map(p => {
+      posDiv.innerHTML = d.positions.map((p, idx) => {
         const dirE = p.direction === 'LONG' ? '🟢' : '🔴';
         const pnl = p.live_pnl || 0;
         const pnlCls = pnl >= 0 ? 'text-buy' : 'text-sell';
         const pair = p.symbol ? p.symbol.replace('USDT','') : '?';
-        return `<div class="at-pos">
-          <span class="mono text-accent fw-700" style="min-width:80px;">${pair}</span>
+        const tp = p.tp1 ? `TP: ${p.tp1}` : '';
+        const sl = p.sl ? `SL: ${p.sl}` : '';
+        const size = p.size_usdt ? `$${p.size_usdt}` : '';
+        const price = p.live_price ? p.live_price : '—';
+        return `<div class="at-pos" style="cursor:pointer;flex-wrap:wrap;" onclick="togglePaperChart(${idx})">
+          <span class="mono text-accent fw-700" style="min-width:70px;">${pair}</span>
           <span>${dirE} ${p.direction}</span>
           <span class="mono">×${p.leverage || 1}</span>
+          <span class="mono">${size}</span>
           <span class="mono">Entry: ${p.entry}</span>
+          <span class="mono text-muted">Now: ${price}</span>
           <span class="mono ${pnlCls} fw-700">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%</span>
-          <span class="mono text-muted" style="font-size:10px;margin-left:auto;">${p.source || ''}</span>
-        </div>`;
+          <span class="mono text-muted" style="font-size:10px;">${p.source || ''}</span>
+          <span class="mono text-buy" style="font-size:9px;">${tp}</span>
+          <span class="mono text-sell" style="font-size:9px;">${sl}</span>
+        </div>
+        <div id="paperChart${idx}" style="display:none;height:300px;background:#0a0e14;border-bottom:1px solid var(--border);" onclick="event.stopPropagation();"></div>`;
       }).join('');
     } else {
       posDiv.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">AI ждёт сигналы…</div>';
@@ -1060,6 +1070,76 @@ async function loadPaperStatus() {
         </div>`;
       }).join('');
     }
+  } catch {}
+}
+
+let _lwcPaperLoaded = false;
+
+async function togglePaperChart(idx) {
+  const div = document.getElementById('paperChart'+idx);
+  if (!div) return;
+  if (div.style.display !== 'none') {
+    div.style.display = 'none';
+    return;
+  }
+  div.style.display = 'block';
+  if (div.dataset.loaded) return;
+
+  const p = window._paperPositions[idx];
+  if (!p) return;
+  const sym = p.symbol || '';
+
+  // Load LWC
+  if (!_lwcPaperLoaded) {
+    await new Promise(resolve => {
+      const sc = document.createElement('script');
+      sc.src = 'https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
+      sc.onload = () => { _lwcPaperLoaded = true; resolve(); };
+      if (window.LightweightCharts) { _lwcPaperLoaded = true; resolve(); }
+      else document.head.appendChild(sc);
+    });
+  }
+
+  try {
+    const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=1h&limit=60`);
+    const d = await r.json();
+    if (!d.ok) return;
+
+    div.innerHTML = '';
+    const chart = LightweightCharts.createChart(div, {
+      layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
+      grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
+      rightPriceScale: { borderColor: '#1a1e2a' },
+      timeScale: { borderColor: '#1a1e2a', timeVisible: true },
+      width: div.clientWidth, height: 300,
+    });
+    const series = chart.addCandlestickSeries({
+      upColor: '#00e5a0', downColor: '#ff4d6d',
+      borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
+      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
+    });
+    series.setData(d.candles);
+
+    // Entry marker
+    const entryTs = p.opened_at ? Math.floor(new Date(p.opened_at).getTime()/1000) : 0;
+    let mc = d.candles[d.candles.length-1];
+    if (entryTs) {
+      let minD = Infinity;
+      for (const c of d.candles) { const diff = Math.abs(c.time - entryTs); if (diff < minD) { minD = diff; mc = c; } }
+    }
+    const isLong = p.direction === 'LONG';
+    series.setMarkers([{
+      time: mc.time,
+      position: isLong ? 'belowBar' : 'aboveBar',
+      color: isLong ? '#00e5a0' : '#ff4d6d',
+      shape: isLong ? 'arrowUp' : 'arrowDown',
+      text: `${p.direction} ${p.entry}`,
+    }]);
+    if (p.entry) series.createPriceLine({ price: p.entry, color: '#ffd23e', lineWidth: 2, lineStyle: 0, title: 'Entry' });
+    if (p.tp1) series.createPriceLine({ price: p.tp1, color: '#00e5a0', lineWidth: 1, lineStyle: 2, title: 'TP1' });
+    if (p.sl) series.createPriceLine({ price: p.sl, color: '#ff4d6d', lineWidth: 1, lineStyle: 2, title: 'SL' });
+    chart.timeScale().fitContent();
+    div.dataset.loaded = '1';
   } catch {}
 }
 
