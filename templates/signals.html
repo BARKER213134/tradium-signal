@@ -1042,7 +1042,7 @@ async function loadPaperStatus() {
           <span class="mono text-buy" style="font-size:9px;">${tp}</span>
           <span class="mono text-sell" style="font-size:9px;">${sl}</span>
         </div>
-        <div id="paperChart${idx}" style="display:none;height:300px;background:#0a0e14;border-bottom:1px solid var(--border);" onclick="event.stopPropagation();"></div>`;
+        <div id="paperChart${idx}" style="display:none;height:300px;background:#0a0e14;border-bottom:1px solid var(--border);" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();"></div>`;
       }).join('');
     } else {
       posDiv.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">AI ждёт сигналы…</div>';
@@ -1074,8 +1074,13 @@ async function loadPaperStatus() {
 }
 
 let _lwcPaperLoaded = false;
+let _lastPaperToggle = 0;
 
 async function togglePaperChart(idx) {
+  const now = Date.now();
+  if (now - _lastPaperToggle < 500) return;
+  _lastPaperToggle = now;
+
   const div = document.getElementById('paperChart'+idx);
   if (!div) return;
   if (div.style.display !== 'none') {
