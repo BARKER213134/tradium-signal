@@ -620,7 +620,7 @@
             </div>
             {% endif %}
             {% if st_eth is defined and st_eth %}
-            <div style="display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;padding:6px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;">
+            <div id="kcBar" style="display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;padding:6px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;">
               <span style="color:var(--muted);">KC</span>
               {% if st_eth.direction == 'NEUTRAL' %}
               <span style="color:var(--muted);font-weight:700;">NEUTRAL</span>
@@ -676,7 +676,36 @@ async function runSync() {
   }
 }
 
-/* ── ETH/BTC bar update ── */
+/* ── ETH/BTC + KC auto-update ── */
+async function _refreshHeaderData() {
+  try {
+    const r = await fetch('/api/header-data');
+    const d = await r.json();
+    if (d.eth_ctx) _updateEthBar(d.eth_ctx);
+    if (d.st_eth) _updateKcBar(d.st_eth);
+  } catch {}
+}
+setInterval(_refreshHeaderData, 30000);
+
+function _updateKcBar(kc) {
+  const kcEl = document.getElementById('kcBar');
+  if (!kcEl || !kc) return;
+  const spans = kcEl.querySelectorAll('span');
+  if (spans.length >= 2) {
+    const d = kc.direction || 'NEUTRAL';
+    if (d === 'NEUTRAL') {
+      spans[1].className = '';
+      spans[1].style.color = 'var(--muted)';
+      spans[1].style.fontWeight = '700';
+      spans[1].textContent = 'NEUTRAL';
+    } else {
+      spans[1].className = d === 'LONG' ? 'text-buy' : 'text-sell';
+      spans[1].style.fontWeight = '700';
+      spans[1].textContent = d;
+    }
+  }
+}
+
 function _updateEthBar(ctx) {
   const bar = document.getElementById('ethBar');
   if (!bar || !ctx) return;

@@ -1344,6 +1344,12 @@ async def api_confluence_backtest(st: int = 0):
 
 # ── Paper Trading API ─────────────────────────────────────────────────
 
+@app.get("/api/header-data")
+async def api_header_data():
+    """ETH/BTC + Keltner для автообновления шапки."""
+    return {"eth_ctx": _sync_eth_ctx(), "st_eth": _sync_kc_eth()}
+
+
 @app.get("/api/paper/status")
 async def api_paper_status():
     import paper_trader as pt
