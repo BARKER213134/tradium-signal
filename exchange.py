@@ -258,7 +258,7 @@ _kc_cache_ts: float = 0
 _KC_TTL = 60  # 1 мин
 
 
-def _calc_keltner(candles, period=20, multiplier=1.5):
+def _calc_keltner(candles, period=20, multiplier=2.0):
     """Keltner Channel: EMA(period) ± multiplier × ATR.
     Возвращает direction: LONG/SHORT/NEUTRAL."""
     if not candles or len(candles) < period + 1:
