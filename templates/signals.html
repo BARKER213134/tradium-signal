@@ -455,7 +455,7 @@ async function runAnomalyBacktest() {
       }
     }
 
-    const stLabel = d.st_filter ? '<span style="color:var(--cyan);font-family:var(--font-mono);font-size:11px;">✅ SuperTrend фильтр</span>' : '<span style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">Без фильтра</span>';
+    const stLabel = d.st_filter ? '<span style="color:var(--cyan);font-family:var(--font-mono);font-size:11px;">✅ Keltner фильтр</span>' : '<span style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">Без фильтра</span>';
     box.innerHTML = `
       <div style="margin-bottom:8px;">${stLabel}</div>
       <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px;">
@@ -905,7 +905,7 @@ async function runConfluenceBacktest() {
     const wrCls = s.win_rate >= 50 ? 'text-buy' : 'text-sell';
     const pnlCls = s.total_pnl >= 0 ? 'text-buy' : 'text-sell';
     const card = (l,v,c='') => `<div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:14px;text-align:center;"><div style="font-family:var(--font-mono);font-size:9px;color:var(--muted);text-transform:uppercase;">${l}</div><div class="mono fw-700 ${c}" style="font-size:18px;margin-top:4px;">${v}</div></div>`;
-    const stLabel = d.st_filter ? '<span style="color:var(--cyan);font-family:var(--font-mono);font-size:11px;">✅ SuperTrend фильтр</span>' : '<span style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">Без фильтра</span>';
+    const stLabel = d.st_filter ? '<span style="color:var(--cyan);font-family:var(--font-mono);font-size:11px;">✅ Keltner фильтр</span>' : '<span style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">Без фильтра</span>';
     box.innerHTML = `<div style="margin-bottom:8px;">${stLabel}</div><div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;">${card('Сделок',s.total)}${card('Win Rate',s.win_rate+'%',wrCls)}${card('Побед/Проигр.',s.wins+'/'+s.losses)}${card('PnL',(s.total_pnl>=0?'+':'')+s.total_pnl+'%',pnlCls)}${card('Avg PnL',(s.avg_pnl>=0?'+':'')+s.avg_pnl+'%',s.avg_pnl>=0?'text-buy':'text-sell')}</div>`;
     box.style.display = 'block';
   } catch(e) { box.innerHTML = `<span class="text-sell">${e.message}</span>`; box.style.display='block'; }

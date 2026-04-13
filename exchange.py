@@ -252,23 +252,31 @@ def get_futures_prices_only(pairs: list[str]) -> dict[str, float]:
     return get_futures_prices(pairs)
 
 
-# ── SuperTrend ETH (кешированный) ─────────────────────────────────────
-_st_cache: dict = {}
-_st_cache_ts: float = 0
-_ST_TTL = 60  # 1 мин
+# ── Keltner Channel ETH (кешированный) ────────────────────────────────
+_kc_cache: dict = {}
+_kc_cache_ts: float = 0
+_KC_TTL = 60  # 1 мин
 
 
-def _calc_supertrend(candles, period=10, multiplier=3.0):
-    """Считает SuperTrend, возвращает (direction, streak)."""
+def _calc_keltner(candles, period=20, multiplier=1.5):
+    """Keltner Channel: EMA(period) ± multiplier × ATR.
+    Возвращает direction: LONG/SHORT/NEUTRAL."""
     if not candles or len(candles) < period + 1:
-        return None, 0
+        return "NEUTRAL"
 
+    # EMA
+    closes = [c["c"] for c in candles]
+    ema = [closes[0]]
+    m = 2 / (period + 1)
+    for v in closes[1:]:
+        ema.append(v * m + ema[-1] * (1 - m))
+
+    # ATR
     trs = []
     for i in range(1, len(candles)):
         c = candles[i]
         prev_c = candles[i - 1]["c"]
-        tr = max(c["h"] - c["l"], abs(c["h"] - prev_c), abs(c["l"] - prev_c))
-        trs.append(tr)
+        trs.append(max(c["h"] - c["l"], abs(c["h"] - prev_c), abs(c["l"] - prev_c)))
 
     atr_values = []
     for i in range(len(trs)):
@@ -279,51 +287,46 @@ def _calc_supertrend(candles, period=10, multiplier=3.0):
         else:
             atr_values.append((atr_values[-1] * (period - 1) + trs[i]) / period)
 
-    direction = 1
-    upper_band = lower_band = 0
-    streak = 0
+    # Последняя свеча
+    i = len(candles) - 1
+    atr = atr_values[i - 1] if i - 1 < len(atr_values) else None
+    if atr is None:
+        return "NEUTRAL"
 
-    for i in range(period, len(candles)):
-        atr = atr_values[i - 1]
-        if atr is None:
-            continue
-        hl2 = (candles[i]["h"] + candles[i]["l"]) / 2
-        bu = hl2 + multiplier * atr
-        bl = hl2 - multiplier * atr
-        if bu < upper_band or candles[i - 1]["c"] > upper_band:
-            upper_band = bu
-        if bl > lower_band or candles[i - 1]["c"] < lower_band:
-            lower_band = bl
-        prev = direction
-        if candles[i]["c"] > upper_band:
-            direction = 1
-        elif candles[i]["c"] < lower_band:
-            direction = -1
-        streak = streak + 1 if direction == prev else 1
+    upper = ema[i] + multiplier * atr
+    lower = ema[i] - multiplier * atr
+    price = candles[i]["c"]
 
-    return ("LONG" if direction == 1 else "SHORT"), streak
+    if price > upper:
+        return "LONG"
+    elif price < lower:
+        return "SHORT"
+    return "NEUTRAL"
 
 
-def get_supertrend_eth() -> dict:
-    """Возвращает SuperTrend ETH 1h: direction, streak, confirmed. Кеш 60с."""
-    global _st_cache, _st_cache_ts
+def get_keltner_eth() -> dict:
+    """Keltner Channel ETH 1h: direction (LONG/SHORT/NEUTRAL), confirmed. Кеш 60с."""
+    global _kc_cache, _kc_cache_ts
     now = time.time()
-    if _st_cache and (now - _st_cache_ts) < _ST_TTL:
-        return _st_cache
+    if _kc_cache and (now - _kc_cache_ts) < _KC_TTL:
+        return _kc_cache
 
     try:
         candles = get_klines_any("ETH/USDT", "1h", limit=50)
-        direction, streak = _calc_supertrend(candles)
-        _st_cache = {
-            "direction": direction or "NEUTRAL",
-            "streak": streak,
-            "confirmed": streak >= 3,
+        direction = _calc_keltner(candles)
+        _kc_cache = {
+            "direction": direction,
+            "confirmed": direction != "NEUTRAL",
         }
     except Exception:
-        _st_cache = {"direction": "NEUTRAL", "streak": 0, "confirmed": False}
+        _kc_cache = {"direction": "NEUTRAL", "confirmed": False}
 
-    _st_cache_ts = now
-    return _st_cache
+    _kc_cache_ts = now
+    return _kc_cache
+
+
+# Обратная совместимость
+get_supertrend_eth = get_keltner_eth
 
 
 # ── ETH/BTC market context (кешированный) ───────────────────────────

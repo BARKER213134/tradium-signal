@@ -63,24 +63,29 @@ def _resolve_chart(p: str) -> str | None:
     return cand if os.path.exists(cand) else None
 
 
-def _check_supertrend_filter(direction: str) -> tuple[bool, dict]:
-    """Проверяет SuperTrend ETH фильтр. Возвращает (passed, st_data)."""
+def _check_keltner_filter(direction: str) -> tuple[bool, dict]:
+    """Проверяет Keltner Channel ETH фильтр. Возвращает (passed, kc_data).
+    NEUTRAL = все сигналы проходят."""
     try:
-        from exchange import get_supertrend_eth
-        st = get_supertrend_eth()
-        passed = st.get("confirmed", False) and st.get("direction") == direction
-        return passed, st
+        from exchange import get_keltner_eth
+        kc = get_keltner_eth()
+        d = kc.get("direction", "NEUTRAL")
+        if d == "NEUTRAL":
+            return True, kc  # Флет — пропускаем всё
+        passed = d == direction
+        return passed, kc
     except Exception:
-        return True, {"direction": "?", "streak": 0, "confirmed": False}
+        return True, {"direction": "NEUTRAL", "confirmed": False}
 
 
-def _st_line(passed: bool, st: dict) -> str:
-    """Строка SuperTrend для Telegram."""
-    d = st.get("direction", "?")
-    s = st.get("streak", 0)
+def _kc_line(passed: bool, kc: dict) -> str:
+    """Строка Keltner Channel для Telegram."""
+    d = kc.get("direction", "NEUTRAL")
+    if d == "NEUTRAL":
+        return "\n⚪ Keltner ETH: <b>NEUTRAL</b> · все сигналы проходят"
     emoji = "🟢" if d == "LONG" else "🔴"
-    status = "✅ ST подтверждён" if passed else "⚠️ ST не совпадает"
-    return f"\n{emoji} SuperTrend ETH: <b>{d}</b> ({s} свечей) · {status}"
+    status = "✅ KC подтверждён" if passed else "⚠️ KC не совпадает"
+    return f"\n{emoji} Keltner ETH: <b>{d}</b> · {status}"
 
 
 def _eth_line() -> str:
@@ -610,8 +615,8 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"⚡ <i>Тренд: {_fmt_trend(signal.trend)}</i>"
     )
     # SuperTrend
-    _stp, _std = _check_supertrend_filter(signal.direction)
-    text += _st_line(_stp, _std)
+    _stp, _std = _check_keltner_filter(signal.direction)
+    text += _kc_line(_stp, _std)
     text += _eth_line()
 
     try:
@@ -690,7 +695,7 @@ async def _check_cryptovizor(db):
                 await _ai_score_and_alert_pattern(s, strongest, current_price, s1, r1, chart_png, candles, db)
 
                 # SuperTrend ETH фильтр
-                st_passed, st_data = _check_supertrend_filter(s.direction)
+                st_passed, st_data = _check_keltner_filter(s.direction)
 
                 # AI filter решает: Сигнал AI или обычный Сигнал
                 ai_passed = await _run_ai_filter(s, current_price, db)
@@ -1083,7 +1088,7 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
         text += f"\n📝 {tg_summary}"
     _st = ai_result.get("st", {})
     if _st:
-        text += _st_line(True, _st)
+        text += _kc_line(True, _st)
     text += _eth_line()
 
     try:
@@ -1171,7 +1176,7 @@ async def _check_anomalies():
             continue
 
         # SuperTrend фильтр
-        st_passed, st_data = _check_supertrend_filter(r["direction"])
+        st_passed, st_data = _check_keltner_filter(r["direction"])
 
         doc = {
             "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
@@ -1294,7 +1299,7 @@ async def _send_anomaly_alert(r: dict):
     # SuperTrend метка
     _st = r.get("_st", {})
     if _st:
-        text += _st_line(True, _st)
+        text += _kc_line(True, _st)
     text += _eth_line()
 
     try:
@@ -1371,7 +1376,7 @@ async def _check_confluence():
         if existing:
             continue
 
-        st_passed, st_data = _check_supertrend_filter(r["direction"])
+        st_passed, st_data = _check_keltner_filter(r["direction"])
 
         doc = {
             "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
@@ -1505,7 +1510,7 @@ async def _send_confluence_alert(r: dict):
     text += f"\n\n💡 <i>{conclusion}</i>"
     _st = r.get("_st", {})
     if _st:
-        text += _st_line(True, _st)
+        text += _kc_line(True, _st)
     text += _eth_line()
 
     try:

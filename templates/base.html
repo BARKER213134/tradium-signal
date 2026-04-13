@@ -619,10 +619,12 @@
             {% endif %}
             {% if st_eth is defined and st_eth %}
             <div style="display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;padding:6px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;">
-              <span style="color:var(--muted);">ST</span>
+              <span style="color:var(--muted);">KC</span>
+              {% if st_eth.direction == 'NEUTRAL' %}
+              <span style="color:var(--muted);font-weight:700;">NEUTRAL</span>
+              {% else %}
               <span class="{{ 'text-buy' if st_eth.direction == 'LONG' else 'text-sell' }}" style="font-weight:700;">{{ st_eth.direction }}</span>
-              <span style="color:var(--muted);font-size:10px;">({{ st_eth.streak }})</span>
-              {% if st_eth.confirmed %}<span style="color:var(--buy);">✓</span>{% else %}<span style="color:var(--sell);">✗</span>{% endif %}
+              {% endif %}
             </div>
             {% endif %}
             {% if bot == 'tradium' %}
