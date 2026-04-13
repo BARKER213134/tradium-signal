@@ -48,6 +48,9 @@ BOT3_BOT_TOKEN = os.getenv("BOT3_BOT_TOKEN", "")
 # Пятый бот — Confluence Scanner
 BOT5_BOT_TOKEN = os.getenv("BOT5_BOT_TOKEN", "")
 
+# Шестой бот — Paper Trading
+BOT6_BOT_TOKEN = os.getenv("BOT6_BOT_TOKEN", "")
+
 # Список ботов для UI
 BOTS = [
     {"id": "tradium", "label": "Tradium"},

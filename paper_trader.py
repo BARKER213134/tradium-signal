@@ -296,7 +296,100 @@ async def on_signal(signal_data: dict):
         source=signal_data.get("source", ""),
         reasoning=decision.get("reasoning", ""),
     )
+    # Алерт в Telegram
+    await _send_open_alert(pos, decision)
     return pos
+
+
+_bot6 = None
+
+def _setup_bot6():
+    global _bot6
+    from config import BOT6_BOT_TOKEN
+    if not BOT6_BOT_TOKEN:
+        return
+    try:
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        _bot6 = Bot(token=BOT6_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    except Exception as e:
+        logger.error(f"BOT6 init: {e}")
+
+
+async def _send_open_alert(pos: dict, decision: dict):
+    """Алерт при открытии позиции."""
+    if not _bot6:
+        _setup_bot6()
+    if not _bot6:
+        return
+    from config import ADMIN_CHAT_ID
+
+    pair = pos["symbol"].replace("USDT", "")
+    dirE = "🟢" if pos["direction"] == "LONG" else "🔴"
+    balance = get_balance()
+
+    text = (
+        f"📈 <b>PAPER TRADE · ОТКРЫТИЕ</b>\n"
+        f"\n"
+        f"<b>{pair}/USDT</b> · {dirE} <b>{pos['direction']}</b>\n"
+        f"<code>{pos['symbol']}</code>\n"
+        f"\n"
+        f"─── Позиция ───\n"
+        f"🎯 Entry: <code>{pos['entry']}</code>\n"
+        f"🟢 TP1: <code>{pos['tp1']}</code>\n"
+        f"🔴 SL: <code>{pos['sl']}</code>\n"
+        f"⚡ Плечо: ×{pos['leverage']} | Размер: {pos['size_pct']}% (${pos['size_usdt']})\n"
+        f"\n"
+        f"─── AI решение ───\n"
+        f"💡 {decision.get('reasoning', '')}\n"
+        f"\n"
+        f"💰 Баланс: ${balance:.2f} | Источник: {pos.get('source', '')}"
+    )
+    try:
+        await _bot6.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"BOT6 open alert: {e}")
+
+
+async def _send_close_alert(trade: dict, review: str = ""):
+    """Алерт при закрытии позиции."""
+    if not _bot6:
+        _setup_bot6()
+    if not _bot6:
+        return
+    from config import ADMIN_CHAT_ID
+
+    pair = trade["symbol"].replace("USDT", "")
+    dirE = "🟢" if trade["direction"] == "LONG" else "🔴"
+    pnl = trade.get("pnl_pct", 0)
+    pnl_usd = trade.get("pnl_usdt", 0)
+    status = trade.get("status", "")
+    icon = "✅" if status == "TP" else "❌"
+    balance = get_balance()
+
+    text = (
+        f"{icon} <b>PAPER TRADE · ЗАКРЫТИЕ · {status}</b>\n"
+        f"\n"
+        f"<b>{pair}/USDT</b> · {dirE} <b>{trade['direction']}</b>\n"
+        f"<code>{trade['symbol']}</code>\n"
+        f"\n"
+        f"─── Результат ───\n"
+        f"🎯 Entry: <code>{trade['entry']}</code> → Exit: <code>{trade.get('exit_price')}</code>\n"
+        f"📊 PnL: <b>{pnl:+.2f}%</b> (${pnl_usd:+.2f})\n"
+        f"⚡ Плечо: ×{trade.get('leverage',1)}\n"
+        f"\n"
+        f"─── AI анализ ───\n"
+        f"📝 Причина входа: {trade.get('ai_reasoning', '')}\n"
+    )
+    if review:
+        text += f"🔍 Разбор: {review}\n"
+    text += f"\n💰 Баланс: ${balance:.2f}"
+
+    try:
+        await _bot6.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"BOT6 close alert: {e}")
 
 
 def reset_trading():

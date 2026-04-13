@@ -1622,6 +1622,7 @@ async def _check_paper_positions():
                 review = await pt.ai_review_trade(trade)
                 if review:
                     trades.update_one({"trade_id": c["trade_id"]}, {"$set": {"ai_review": review}})
+                await pt._send_close_alert(trade, review or "")
     except Exception as e:
         logger.debug(f"Paper positions check: {e}")
 
