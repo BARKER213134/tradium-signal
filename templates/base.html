@@ -793,6 +793,75 @@ function showToast(msg, type='info') {
 </script>
 <style>
 @keyframes toastIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.sortable { cursor:pointer; user-select:none; transition:color 0.15s; white-space:nowrap; }
+.sortable:hover { color:var(--accent); }
 </style>
+<script>
+// Generic DOM table sort for server-rendered tables
+function domTableSort(thEl, colIdx, type) {
+  const table = thEl.closest('table');
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+
+  // Toggle direction
+  const cur = thEl.dataset.sortDir || '';
+  const dir = cur === 'desc' ? 'asc' : 'desc';
+
+  // Reset all sortable th in this table
+  table.querySelectorAll('thead .sortable').forEach(th => {
+    th.dataset.sortDir = '';
+    th.textContent = th.textContent.replace(/ [▲▼]$/, '');
+  });
+  thEl.dataset.sortDir = dir;
+  thEl.textContent = thEl.textContent.replace(/ [▲▼]$/, '') + (dir === 'asc' ? ' ▲' : ' ▼');
+
+  // Collect rows (skip hidden accordion rows)
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const pairs = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const cells = row.querySelectorAll('td');
+    if (!cells.length || cells.length < colIdx + 1) continue;
+    // If row has onclick or checkbox it's a data row
+    if (!row.classList.contains('signal-row') && !row.querySelector('td:first-child input[type=checkbox]') && !row.style.cursor) {
+      continue;
+    }
+    // Collect this row + any following hidden rows (accordions)
+    const group = [row];
+    let j = i + 1;
+    while (j < rows.length && (rows[j].style.display === 'none' || rows[j].id)) {
+      const nextCells = rows[j].querySelectorAll('td');
+      if (nextCells.length <= 2 && nextCells[0] && nextCells[0].colSpan > 1) {
+        group.push(rows[j]);
+        j++;
+      } else break;
+    }
+    i = j - 1;
+
+    let val = cells[colIdx].textContent.trim().replace(/[▲▼🟢🔴⚡⭐✅❌🔥📡⚠️🎯🚀]/g, '').trim();
+    if (type === 'num') {
+      val = parseFloat(val.replace(/[^0-9.\-+]/g, '')) || -Infinity;
+    } else if (type === 'date') {
+      // parse dd.mm, HH:MM
+      const m = val.match(/(\d+)\.(\d+),?\s*(\d+):(\d+)/);
+      if (m) val = `${m[2]}.${m[1]} ${m[3]}:${m[4]}`;
+      else val = val.toLowerCase();
+    } else {
+      val = val.toLowerCase();
+    }
+    pairs.push({ val, group });
+  }
+
+  pairs.sort((a, b) => {
+    if (a.val < b.val) return dir === 'asc' ? -1 : 1;
+    if (a.val > b.val) return dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  for (const p of pairs) {
+    for (const r of p.group) tbody.appendChild(r);
+  }
+}
+</script>
 </body>
 </html>

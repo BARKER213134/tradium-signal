@@ -238,11 +238,11 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
   <table>
     <thead>
       <tr>
-        <th>Время</th>
-        <th>Пара</th>
-        <th>Цена</th>
-        <th>Напр.</th>
-        <th>Score</th>
+        <th class="sortable" onclick="anSort('detected_at')" id="anSortTime">Время ▼</th>
+        <th class="sortable" onclick="anSort('symbol')" id="anSortPair">Пара</th>
+        <th class="sortable" onclick="anSort('price')" id="anSortPrice">Цена</th>
+        <th class="sortable" onclick="anSort('direction')" id="anSortDir">Напр.</th>
+        <th class="sortable" onclick="anSort('score')" id="anSortScore">Score</th>
         <th>Speed</th>
         <th>Delta</th>
         <th>FTT</th>
@@ -263,6 +263,20 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 <script>
 let _allAnomalies = [];
 let _stEthDir = null;
+let _anSortField = 'detected_at';
+let _anSortAsc = false;
+
+function anSort(field) {
+  if (_anSortField === field) _anSortAsc = !_anSortAsc;
+  else { _anSortField = field; _anSortAsc = field === 'symbol' || field === 'direction'; }
+  const cols = {detected_at:'anSortTime',symbol:'anSortPair',price:'anSortPrice',direction:'anSortDir',score:'anSortScore'};
+  const labels = {detected_at:'Время',symbol:'Пара',price:'Цена',direction:'Напр.',score:'Score'};
+  for (const [f, id] of Object.entries(cols)) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = labels[f] + (f === _anSortField ? (_anSortAsc ? ' ▲' : ' ▼') : '');
+  }
+  filterAnomalies();
+}
 
 function filterAnomalies() {
   const dir = document.getElementById('anFilterDir').value;
@@ -276,6 +290,15 @@ function filterAnomalies() {
     return true;
   });
 
+  filtered.sort((a, b) => {
+    let va = a[_anSortField], vb = b[_anSortField];
+    if (_anSortField === 'symbol') { va = (a.symbol||a.pair||'').toLowerCase(); vb = (b.symbol||b.pair||'').toLowerCase(); }
+    if (va == null) va = typeof vb === 'number' ? -Infinity : '';
+    if (vb == null) vb = typeof va === 'number' ? -Infinity : '';
+    if (va < vb) return _anSortAsc ? -1 : 1;
+    if (va > vb) return _anSortAsc ? 1 : -1;
+    return 0;
+  });
   document.getElementById('anFilterCount').textContent = `${filtered.length} из ${_allAnomalies.length}`;
   renderAnomalyTable(filtered);
 }
@@ -729,12 +752,12 @@ setInterval(loadAnomalies, 60000);
   <table>
     <thead>
       <tr>
-        <th>Время</th>
-        <th>Пара</th>
-        <th>Цена</th>
-        <th>Напр.</th>
-        <th>Score</th>
-        <th>Сила</th>
+        <th class="sortable" onclick="cfSort('detected_at')" id="cfSortTime">Время ▼</th>
+        <th class="sortable" onclick="cfSort('symbol')" id="cfSortPair">Пара</th>
+        <th class="sortable" onclick="cfSort('price')" id="cfSortPrice">Цена</th>
+        <th class="sortable" onclick="cfSort('direction')" id="cfSortDir">Напр.</th>
+        <th class="sortable" onclick="cfSort('score')" id="cfSortScore">Score</th>
+        <th class="sortable" onclick="cfSort('strength')" id="cfSortStr">Сила</th>
         <th>Уровень</th>
         <th>Паттерн</th>
         <th>Тренд</th>
@@ -752,6 +775,20 @@ setInterval(loadAnomalies, 60000);
 <script>
 let _allConfluence = [];
 let _stEthDir = null;
+let _cfSortField = 'detected_at';
+let _cfSortAsc = false;
+
+function cfSort(field) {
+  if (_cfSortField === field) _cfSortAsc = !_cfSortAsc;
+  else { _cfSortField = field; _cfSortAsc = field === 'symbol' || field === 'direction' || field === 'strength'; }
+  const cols = {detected_at:'cfSortTime',symbol:'cfSortPair',price:'cfSortPrice',direction:'cfSortDir',score:'cfSortScore',strength:'cfSortStr'};
+  const labels = {detected_at:'Время',symbol:'Пара',price:'Цена',direction:'Напр.',score:'Score',strength:'Сила'};
+  for (const [f, id] of Object.entries(cols)) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = labels[f] + (f === _cfSortField ? (_cfSortAsc ? ' ▲' : ' ▼') : '');
+  }
+  filterConfluence();
+}
 
 function filterConfluence() {
   const dir = document.getElementById('cfFilterDir').value;
@@ -760,6 +797,15 @@ function filterConfluence() {
     if (dir && d.direction !== dir) return false;
     if (minScore && d.score < minScore) return false;
     return true;
+  });
+  filtered.sort((a, b) => {
+    let va = a[_cfSortField], vb = b[_cfSortField];
+    if (_cfSortField === 'symbol') { va = (a.symbol||a.pair||'').toLowerCase(); vb = (b.symbol||b.pair||'').toLowerCase(); }
+    if (va == null) va = typeof vb === 'number' ? -Infinity : '';
+    if (vb == null) vb = typeof va === 'number' ? -Infinity : '';
+    if (va < vb) return _cfSortAsc ? -1 : 1;
+    if (va > vb) return _cfSortAsc ? 1 : -1;
+    return 0;
   });
   document.getElementById('cfFilterCount').textContent = `${filtered.length} из ${_allConfluence.length}`;
   renderConfluenceTable(filtered);
@@ -1319,8 +1365,6 @@ setInterval(loadPaperStatus, 15000);
   to { transform:translateX(120%); opacity:0; }
 }
 tr.j-new-row { animation: jNewGlow 3s ease-out; }
-.sortable { cursor:pointer; user-select:none; transition:color 0.15s; white-space:nowrap; }
-.sortable:hover { color:var(--accent); }
 @keyframes jNewGlow {
   0% { background:rgba(0,229,160,0.25); }
   100% { background:transparent; }
@@ -2488,19 +2532,19 @@ async function clearProcessed() {
     <thead>
       <tr>
         <th style="width:32px;"></th>
-        <th>Время</th>
-        <th>Пара</th>
-        <th>Напр.</th>
+        <th class="sortable" onclick="domTableSort(this,1,'date')">Время ▼</th>
+        <th class="sortable" onclick="domTableSort(this,2,'str')">Пара</th>
+        <th class="sortable" onclick="domTableSort(this,3,'str')">Напр.</th>
         <th>Тренд</th>
-        <th>Цена сигнала</th>
-        <th>Цена сейчас</th>
-        <th>PnL %</th>
-        <th>S1</th>
-        <th>R1</th>
-        <th>Паттерн</th>
-        <th>AI</th>
+        <th class="sortable" onclick="domTableSort(this,5,'num')">Цена сигнала</th>
+        <th class="sortable" onclick="domTableSort(this,6,'num')">Цена сейчас</th>
+        <th class="sortable" onclick="domTableSort(this,7,'num')">PnL %</th>
+        <th class="sortable" onclick="domTableSort(this,8,'num')">S1</th>
+        <th class="sortable" onclick="domTableSort(this,9,'num')">R1</th>
+        <th class="sortable" onclick="domTableSort(this,10,'str')">Паттерн</th>
+        <th class="sortable" onclick="domTableSort(this,11,'num')">AI</th>
         <th>ETH 1h</th>
-        <th>Статус</th>
+        <th class="sortable" onclick="domTableSort(this,13,'str')">Статус</th>
       </tr>
     </thead>
     <tbody>
@@ -2829,25 +2873,25 @@ setInterval(updatePricesAndPnl, 10000);
     <thead>
       <tr>
         <th style="width:32px;"></th>
-        <th>Время</th>
-        <th>Пара</th>
-        <th>TF</th>
-        <th>Направление</th>
-        <th>DCA #4</th>
-        <th>Entry</th>
+        <th class="sortable" onclick="domTableSort(this,1,'date')">Время ▼</th>
+        <th class="sortable" onclick="domTableSort(this,2,'str')">Пара</th>
+        <th class="sortable" onclick="domTableSort(this,3,'str')">TF</th>
+        <th class="sortable" onclick="domTableSort(this,4,'str')">Направление</th>
+        <th class="sortable" onclick="domTableSort(this,5,'num')">DCA #4</th>
+        <th class="sortable" onclick="domTableSort(this,6,'num')">Entry</th>
         {% if tab == 'results' %}
-        <th>Exit</th>
-        <th>PnL</th>
+        <th class="sortable" onclick="domTableSort(this,7,'num')">Exit</th>
+        <th class="sortable" onclick="domTableSort(this,8,'num')">PnL</th>
         {% else %}
-        <th>Цена</th>
+        <th class="sortable" onclick="domTableSort(this,7,'num')">Цена</th>
         {% endif %}
-        <th>TP</th>
-        <th>SL</th>
-        <th>R:R</th>
-        <th>AI</th>
+        <th class="sortable" onclick="domTableSort(this,{% if tab == 'results' %}9{% else %}8{% endif %},'num')">TP</th>
+        <th class="sortable" onclick="domTableSort(this,{% if tab == 'results' %}10{% else %}9{% endif %},'num')">SL</th>
+        <th class="sortable" onclick="domTableSort(this,{% if tab == 'results' %}11{% else %}10{% endif %},'num')">R:R</th>
+        <th class="sortable" onclick="domTableSort(this,{% if tab == 'results' %}12{% else %}11{% endif %},'num')">AI</th>
         <th>ETH 1h</th>
         <th>Тренд</th>
-        <th>Статус</th>
+        <th class="sortable" onclick="domTableSort(this,{% if tab == 'results' %}15{% else %}14{% endif %},'str')">Статус</th>
       </tr>
     </thead>
     <tbody>
