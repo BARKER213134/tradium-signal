@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -519,6 +519,165 @@ async def api_peek_tradium(limit: int = 10):
         return {"ok": True, "source_group_id": SOURCE_GROUP_ID, "count": len(out), "messages": out}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/backfill-tradium-charts")
+async def api_backfill_tradium_charts(payload: dict | None = None):
+    """Для backfilled Tradium сигналов без графика:
+    1) ищет в Telegram следующее фото после текстового сообщения (в том же топике)
+    2) скачивает фото и сохраняет в GridFS
+    3) прогоняет через Claude Vision (analyze_chart) → извлекает DCA1-4
+    4) обновляет signal: has_chart=True, dca1-dca4, pattern_price
+
+    Body: {"hours": 72, "limit": 20}
+    """
+    payload = payload or {}
+    hours = float(payload.get("hours") or 72)
+    limit = int(payload.get("limit") or 20)
+    try:
+        from userbot import _tg_client
+    except Exception:
+        _tg_client = None
+    if _tg_client is None or not _tg_client.is_connected():
+        return {"ok": False, "error": "Telethon client not connected"}
+    asyncio.create_task(_run_backfill_tradium_charts(_tg_client, hours, limit))
+    return {"ok": True, "started": True, "hours": hours, "limit": limit}
+
+
+async def _run_backfill_tradium_charts(client, hours: float, limit: int):
+    import logging as _log
+    import os
+    from datetime import datetime, timezone, timedelta
+    from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+    log = _log.getLogger("backfill-tradium-charts")
+    try:
+        from database import _signals, save_chart
+        from ai_analyzer import analyze_chart
+        from config import SOURCE_GROUP_ID, TRADIUM_SETUP_TOPIC_ID, CHARTS_DIR
+        os.makedirs(CHARTS_DIR, exist_ok=True)
+
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
+        query = {
+            "source": "tradium",
+            "received_at": {"$gte": cutoff},
+            "$or": [{"dca4": None}, {"dca4": {"$exists": False}}, {"has_chart": False}],
+            "message_id": {"$ne": None},
+            "pair": {"$ne": None},
+        }
+        docs = list(_signals().find(query).sort("received_at", -1).limit(limit))
+        log.info(f"[tradium-charts] {len(docs)} сигналов без графика за {hours}ч")
+
+        updated = charts_found = ai_ok = 0
+        for s in docs:
+            msg_id = s.get("message_id")
+            sig_id = s.get("id")
+            pair = s.get("pair", "")
+            if not msg_id or not sig_id:
+                continue
+            log.info(f"[tradium-charts] #{sig_id} {pair} msg_id={msg_id} — ищу график")
+
+            # Ищем фото в пределах 15 следующих сообщений в топике Trade Setup Screener
+            chart_msg = None
+            try:
+                # Telethon: offset_id + reverse=True → идём вперёд от msg_id
+                async for m in client.iter_messages(
+                    SOURCE_GROUP_ID,
+                    reply_to=TRADIUM_SETUP_TOPIC_ID,
+                    offset_id=msg_id,
+                    limit=15,
+                    reverse=True,
+                ):
+                    if m.id <= msg_id:
+                        continue
+                    is_photo = isinstance(m.media, MessageMediaPhoto)
+                    is_doc_image = (
+                        isinstance(m.media, MessageMediaDocument)
+                        and m.media.document.mime_type
+                        and m.media.document.mime_type.startswith("image/")
+                    ) if m.media else False
+                    if is_photo or is_doc_image:
+                        chart_msg = m
+                        break
+            except Exception as e:
+                log.warning(f"[tradium-charts] #{sig_id} iter_messages failed: {e}")
+                continue
+
+            if not chart_msg:
+                log.info(f"[tradium-charts] #{sig_id} {pair} — график не найден")
+                continue
+
+            # Скачиваем
+            chart_filename = f"{sig_id}_{chart_msg.id}.jpg"
+            chart_path = os.path.join(CHARTS_DIR, chart_filename)
+            try:
+                await client.download_media(chart_msg, file=chart_path)
+            except Exception as e:
+                log.warning(f"[tradium-charts] #{sig_id} download failed: {e}")
+                continue
+            charts_found += 1
+
+            # В GridFS
+            try:
+                with open(chart_path, "rb") as f:
+                    save_chart(sig_id, f.read(), filename=chart_filename)
+            except Exception:
+                pass
+
+            # AI Vision
+            try:
+                chart_data = await analyze_chart(chart_path)
+            except Exception as e:
+                log.warning(f"[tradium-charts] #{sig_id} AI failed: {e}")
+                chart_data = {"_error": str(e)}
+
+            def _tof(v):
+                try: return float(v) if v is not None else None
+                except: return None
+
+            updates = {
+                "has_chart": True,
+                "chart_message_id": chart_msg.id,
+                "chart_path": chart_path,
+                "chart_received_at": datetime.now(timezone.utc).replace(tzinfo=None),
+            }
+            if not chart_data.get("_error"):
+                ai_ok += 1
+                updates.update({
+                    "chart_analyzed": True,
+                    "chart_ai_raw": chart_data.get("_raw", ""),
+                    "chart_pair": chart_data.get("pair"),
+                    "chart_direction": chart_data.get("direction"),
+                    "chart_entry": _tof(chart_data.get("entry")),
+                    "chart_sl": _tof(chart_data.get("sl")),
+                    "chart_tp1": _tof(chart_data.get("tp1")),
+                    "chart_tp2": _tof(chart_data.get("tp2")),
+                    "chart_tp3": _tof(chart_data.get("tp3")),
+                    "chart_notes": chart_data.get("notes") or chart_data.get("pattern", ""),
+                    "dca1": _tof(chart_data.get("dca1")),
+                    "dca2": _tof(chart_data.get("dca2")),
+                    "dca3": _tof(chart_data.get("dca3")),
+                    "dca4": _tof(chart_data.get("dca4")),
+                })
+            _signals().update_one({"_id": s["_id"]}, {"$set": updates})
+            updated += 1
+            log.info(f"[tradium-charts] ✅ #{sig_id} {pair} chart={charts_found} dca4={updates.get('dca4')}")
+
+        log.info(f"[tradium-charts] DONE: updated={updated}, charts={charts_found}, ai_ok={ai_ok}")
+        try:
+            from watcher import _bot, _admin_chat_id
+            if _bot and _admin_chat_id:
+                await _bot.send_message(
+                    _admin_chat_id,
+                    f"📊 <b>Tradium графики подтянуты</b>\n\n"
+                    f"Обработано: {updated}\n"
+                    f"📸 Графиков найдено: {charts_found}\n"
+                    f"🤖 AI прошло: {ai_ok}",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+    except Exception:
+        log.exception("[tradium-charts] crashed")
 
 
 @app.post("/api/activate-tradium-archive")
