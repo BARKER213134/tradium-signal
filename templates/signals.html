@@ -627,22 +627,22 @@ async function toggleCluster(rowId, symbol) {
 
   const idx = rowId.replace('cl_','');
 
-  // TradingView
+  // Lightweight Charts с точкой входа
   const tvDiv = document.getElementById('antv_'+idx);
   if (tvDiv && !tvDiv.dataset.loaded) {
     tvDiv.dataset.loaded = '1';
-    tvDiv.innerHTML = `<div class="tradingview-widget-container" style="height:100%;"><div id="antvw${idx}" style="height:100%;"></div></div>`;
-    const sc = document.createElement('script');
-    sc.src = 'https://s3.tradingview.com/tv.js';
-    sc.onload = () => {
-      new TradingView.widget({container_id:'antvw'+idx, symbol:'BINANCE:'+symbol, interval:'60',
-        timezone:'Etc/UTC', theme:'dark', style:'1', locale:'ru', enable_publishing:false,
-        hide_side_toolbar:true, allow_symbol_change:false, save_image:false, width:'100%', height:'100%'});
-    };
-    if (!window.TradingView) document.head.appendChild(sc);
-    else sc.onload();
+    tvDiv.style.padding = '0';
+    const anom = _allAnomalies.find(a => (a.symbol||'') === symbol) || {};
+    _renderLwcSignalChart('antv_'+idx, {
+      symbol,
+      direction: anom.direction || 'LONG',
+      entry: anom.price,
+      at: anom.detected_at,
+      title: symbol.replace('USDT','') + ' · Аномалия',
+      score: anom.score,
+      source: 'anomaly',
+    });
   }
-
 }
 
 async function loadAnomalyAnalysis(symbol, idx) {
@@ -885,19 +885,25 @@ function toggleConfluenceRow(rowId, symbol) {
   row.style.display = 'table-row';
   row.dataset.open = '1';
 
-  // TradingView
+  // Lightweight Charts с точкой входа
   const idx = rowId.replace('cfr_','');
   const tvDiv = document.getElementById('cftv_'+idx);
   if (tvDiv && !tvDiv.dataset.loaded) {
     tvDiv.dataset.loaded = '1';
-    tvDiv.innerHTML = `<div id="cftvw${idx}" style="height:100%;"></div>`;
-    const loadTV = () => {
-      new TradingView.widget({container_id:'cftvw'+idx, symbol:'BINANCE:'+symbol, interval:'60',
-        timezone:'Etc/UTC', theme:'dark', style:'1', locale:'ru', enable_publishing:false,
-        hide_side_toolbar:true, allow_symbol_change:false, save_image:false, width:'100%', height:'100%'});
-    };
-    if (window.TradingView) loadTV();
-    else { const sc=document.createElement('script'); sc.src='https://s3.tradingview.com/tv.js'; sc.onload=loadTV; document.head.appendChild(sc); }
+    tvDiv.style.padding = '0';
+    const conf = _allConfluence.find(c => (c.symbol||'') === symbol) || {};
+    _renderLwcSignalChart('cftv_'+idx, {
+      symbol,
+      direction: conf.direction || 'LONG',
+      entry: conf.price,
+      tp1: conf.r1,
+      sl: conf.s1,
+      at: conf.detected_at,
+      title: symbol.replace('USDT','') + ' · Confluence',
+      score: conf.score,
+      pattern: conf.pattern,
+      source: 'confluence',
+    });
   }
 }
 
@@ -2649,7 +2655,7 @@ async function clearProcessed() {
     </thead>
     <tbody>
       {% for s in signals %}
-      <tr class="signal-row{% if cv_tab in ('active', 'ai_signal') %} ai-clickable{% endif %}{% if cv_tab in ('active', 'ai_signal') and s.comment %} ai-done{% endif %}{% if s.pump_score is not none and s.pump_score >= 2 %} pump-high{% elif cv_tab in ('active', 'ai_signal') and s.st_passed is not none and not s.st_passed %} st-failed{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if cv_tab in ('active', 'ai_signal') %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
+      <tr class="signal-row{% if cv_tab in ('active', 'ai_signal') %} ai-clickable{% endif %}{% if cv_tab in ('active', 'ai_signal') and s.comment %} ai-done{% endif %}{% if s.pump_score is not none and s.pump_score >= 2 %} pump-high{% elif cv_tab in ('active', 'ai_signal') and s.st_passed is not none and not s.st_passed %} st-failed{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" data-ts="{{ (s.pattern_triggered_at or s.received_at).timestamp()|int if (s.pattern_triggered_at or s.received_at) and (s.pattern_triggered_at or s.received_at) is not string else '' }}" data-tp1="{{ s.dca2 or '' }}" data-sl="{{ s.dca1 or '' }}" {% if cv_tab in ('active', 'ai_signal') %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
         <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT','') }}</td>
@@ -2813,34 +2819,28 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
   row.style.display = 'table-row';
   row.dataset.open = '1';
 
-  // TradingView график
+  // Lightweight Charts с точкой входа
   const tvDiv = document.getElementById('tvchart'+idx);
   if (tvDiv && !tvDiv.dataset.loaded) {
     tvDiv.dataset.loaded = '1';
+    tvDiv.style.padding = '0';
     const sym = pair.replace('/USDT','') + 'USDT';
-    tvDiv.innerHTML = `<div class="tradingview-widget-container" style="height:100%;width:100%;"><div id="tvw${idx}" style="height:100%;"></div></div>`;
-    const s = document.createElement('script');
-    s.src = 'https://s3.tradingview.com/tv.js';
-    s.onload = () => {
-      new TradingView.widget({
-        container_id: 'tvw'+idx,
-        symbol: 'BINANCE:'+sym,
-        interval: '60',
-        timezone: 'Etc/UTC',
-        theme: 'dark',
-        style: '1',
-        locale: 'ru',
-        toolbar_bg: '#111',
-        enable_publishing: false,
-        hide_side_toolbar: true,
-        hide_top_toolbar: false,
-        allow_symbol_change: false,
-        save_image: false,
-        width: '100%',
-        height: '100%',
-      });
-    };
-    document.head.appendChild(s);
+    // Данные из data-атрибутов строки
+    const rowEl = document.querySelector(`tr[data-pair="${pair}"]`);
+    const ts = rowEl ? parseInt(rowEl.dataset.ts || '0') : 0;
+    const tp1 = rowEl ? parseFloat(rowEl.dataset.tp1 || '0') || null : null;
+    const sl = rowEl ? parseFloat(rowEl.dataset.sl || '0') || null : null;
+    _renderLwcSignalChart('tvchart'+idx, {
+      symbol: sym,
+      direction,
+      entry: parseFloat(entry) || entry,
+      tp1,
+      sl,
+      at: ts || null,
+      title: pair.replace('/USDT','') + ' · CV',
+      pattern,
+      source: 'cryptovizor',
+    });
   }
 
   // Если уже отрендерен — рендерим сохранённый

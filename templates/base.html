@@ -862,6 +862,149 @@ function domTableSort(thEl, colIdx, type) {
     for (const r of p.group) tbody.appendChild(r);
   }
 }
+
+// ─── Lightweight Charts signal renderer ────────────────────────────
+// Рисует свечной график с маркером входа, linemarkers для Entry/TP/SL,
+// TF-переключатель и tooltip. Используется в accordion-ах Cryptovizor,
+// Аномалий и Confluence (замена TradingView виджета).
+window._lwcLoaded = window._lwcLoaded || false;
+async function _ensureLwc() {
+  if (window.LightweightCharts) { window._lwcLoaded = true; return; }
+  if (window._lwcLoaded) return;
+  await new Promise(resolve => {
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
+    s.onload = () => { window._lwcLoaded = true; resolve(); };
+    s.onerror = () => resolve();
+    document.head.appendChild(s);
+  });
+}
+
+function _sigTooltipHTML(o) {
+  const dirC = o.direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
+  const dirE = o.direction === 'LONG' ? '🟢' : '🔴';
+  let html = `<div style="font-weight:800;font-size:13px;margin-bottom:6px;color:${dirC}">${dirE} ${o.title || (o.symbol || '')}</div>`;
+  const row = (l, v, c) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0;"><span style="color:var(--muted)">${l}</span><span style="font-weight:600;color:${c||'var(--text)'}">${v}</span></div>`;
+  if (o.direction) html += row('Направление', o.direction, dirC);
+  if (o.entry) html += row('Entry', o.entry);
+  if (o.tp1) html += row('TP1', o.tp1, 'var(--buy)');
+  if (o.sl) html += row('SL', o.sl, 'var(--sell)');
+  if (o.pattern) html += row('Паттерн', o.pattern);
+  if (o.score != null) html += row('Score', '⭐ ' + o.score);
+  if (o.at) {
+    const d = new Date(typeof o.at === 'number' ? o.at * 1000 : o.at);
+    html += row('Время', d.toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}));
+  }
+  return html;
+}
+
+async function _renderLwcSignalChart(containerId, opts) {
+  // opts: { symbol, direction, entry, tp1, sl, at, title, pattern, score, tf (default '1h') }
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container._signalOpts = opts;
+  const tf = opts.tf || container.dataset.tf || '1h';
+  container.dataset.tf = tf;
+
+  await _ensureLwc();
+  if (!window.LightweightCharts) {
+    container.innerHTML = '<div style="padding:20px;color:var(--sell);">LWC не загрузился</div>';
+    return;
+  }
+
+  const sym = (opts.symbol || '').replace('/', '').toUpperCase();
+  container.innerHTML = `
+    <div class="lwc-sig-wrap" style="display:flex;flex-direction:column;height:100%;position:relative;">
+      <div class="lwc-sig-tfbar" style="display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--border);background:rgba(0,0,0,0.25);">
+        ${['15m','30m','1h','4h','1d'].map(t => `<button class="lwc-tf-btn${t===tf?' active':''}" data-tf="${t}" onclick="event.stopPropagation();_setLwcTF('${containerId}','${t}')" style="background:var(--dark);color:${t===tf?'#000':'var(--muted)'};border:1px solid ${t===tf?'var(--accent)':'var(--border)'};border-radius:6px;padding:3px 10px;font-size:11px;font-family:var(--font-mono);cursor:pointer;min-width:36px;text-align:center;font-weight:${t===tf?'700':'500'};${t===tf?'background:var(--accent);':''}">${t==='1d'?'1D':t}</button>`).join('')}
+      </div>
+      <div class="lwc-sig-chart" style="flex:1;min-height:300px;position:relative;"></div>
+    </div>`;
+  const chartDiv = container.querySelector('.lwc-sig-chart');
+
+  let r, d;
+  try {
+    r = await fetch(`/api/journal-candles?symbol=${sym}&tf=${tf}&limit=150`);
+    d = await r.json();
+  } catch (e) {
+    chartDiv.innerHTML = `<div style="padding:20px;color:var(--sell);">Ошибка: ${e.message}</div>`;
+    return;
+  }
+  if (!d || !d.ok || !d.candles || !d.candles.length) {
+    chartDiv.innerHTML = '<div style="padding:20px;color:var(--muted);text-align:center;">Нет данных для ' + sym + '</div>';
+    return;
+  }
+  const chart = LightweightCharts.createChart(chartDiv, {
+    layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
+    grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
+    crosshair: { mode: 0 },
+    rightPriceScale: { borderColor: '#1a1e2a' },
+    timeScale: { borderColor: '#1a1e2a', timeVisible: true },
+    width: chartDiv.clientWidth, height: chartDiv.clientHeight || 320,
+  });
+  const series = chart.addCandlestickSeries({
+    upColor:'#00e5a0', downColor:'#ff4d6d',
+    borderUpColor:'#00e5a0', borderDownColor:'#ff4d6d',
+    wickUpColor:'#00e5a0', wickDownColor:'#ff4d6d',
+  });
+  series.setData(d.candles);
+
+  // Marker — ближайшая к моменту сигнала свеча
+  const ts = opts.at ? (typeof opts.at === 'number' ? opts.at : Math.floor(new Date(opts.at).getTime()/1000)) : null;
+  let mc = d.candles[d.candles.length-1];
+  if (ts) {
+    let minD = Infinity;
+    for (const c of d.candles) {
+      const diff = Math.abs(c.time - ts);
+      if (diff < minD) { minD = diff; mc = c; }
+    }
+  }
+  const isLong = opts.direction === 'LONG';
+  const srcIcon = opts.source === 'tradium' ? '📡' : opts.source === 'anomaly' ? '⚠' : opts.source === 'confluence' ? '🎯' : '🚀';
+  series.setMarkers([{
+    time: mc.time,
+    position: isLong ? 'belowBar' : 'aboveBar',
+    color: isLong ? '#00e5a0' : '#ff4d6d',
+    shape: isLong ? 'arrowUp' : 'arrowDown',
+    text: `${srcIcon} ${opts.entry || ''}`,
+  }]);
+
+  if (opts.entry) series.createPriceLine({ price: +opts.entry, color:'#ffd23e', lineWidth:2, lineStyle:0, axisLabelVisible:true, title:'Entry' });
+  if (opts.tp1) series.createPriceLine({ price: +opts.tp1, color:'#00e5a0', lineWidth:1, lineStyle:2, axisLabelVisible:true, title:'TP1' });
+  if (opts.sl) series.createPriceLine({ price: +opts.sl, color:'#ff4d6d', lineWidth:1, lineStyle:2, axisLabelVisible:true, title:'SL' });
+
+  // Tooltip на ховер маркера
+  let tip = chartDiv.querySelector('.lwc-sig-tip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.className = 'lwc-sig-tip';
+    tip.style.cssText = 'position:absolute;z-index:50;pointer-events:none;background:rgba(10,14,20,0.96);border:1px solid rgba(0,229,160,0.3);border-radius:10px;padding:10px 14px;font-family:var(--font-mono);font-size:11px;color:var(--text);min-width:200px;backdrop-filter:blur(8px);box-shadow:0 8px 32px rgba(0,0,0,0.6);display:none;';
+    chartDiv.appendChild(tip);
+  }
+  chart.subscribeCrosshairMove(p => {
+    if (!p.time || p.time !== mc.time) { tip.style.display = 'none'; return; }
+    tip.innerHTML = _sigTooltipHTML(opts);
+    tip.style.display = 'block';
+    if (p.point) {
+      const cw = chartDiv.clientWidth;
+      let left = p.point.x + 16;
+      if (left + 240 > cw) left = p.point.x - 256;
+      if (left < 0) left = 8;
+      let top = p.point.y - 20;
+      if (top < 0) top = 8;
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+    }
+  });
+  chart.timeScale().fitContent();
+}
+
+function _setLwcTF(containerId, tf) {
+  const container = document.getElementById(containerId);
+  if (!container || !container._signalOpts) return;
+  const opts = { ...container._signalOpts, tf };
+  _renderLwcSignalChart(containerId, opts);
+}
 </script>
 </body>
 </html>
