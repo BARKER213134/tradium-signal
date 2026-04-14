@@ -576,18 +576,24 @@ async def _run_backfill_tradium_charts(client, hours: float, limit: int):
                 continue
             log.info(f"[tradium-charts] #{sig_id} {pair} msg_id={msg_id} — ищу график")
 
-            # Ищем фото в пределах 15 следующих сообщений в топике Trade Setup Screener
+            # Ищем фото в пределах 20 следующих сообщений в топике Trade Setup Screener.
+            # Пробуем несколько стратегий — Telethon reverse+reply_to нестабилен.
             chart_msg = None
             try:
-                # Telethon: offset_id + reverse=True → идём вперёд от msg_id
-                async for m in client.iter_messages(
-                    SOURCE_GROUP_ID,
-                    reply_to=TRADIUM_SETUP_TOPIC_ID,
-                    offset_id=msg_id,
-                    limit=15,
-                    reverse=True,
-                ):
-                    if m.id <= msg_id:
+                # Сначала прямое обращение: берём msg_id+1, msg_id+2, ..., msg_id+20
+                for cand_id in range(msg_id + 1, msg_id + 21):
+                    try:
+                        m = await client.get_messages(SOURCE_GROUP_ID, ids=cand_id)
+                    except Exception:
+                        m = None
+                    if m is None:
+                        continue
+                    # Убедимся что сообщение относится к нужному топику
+                    topic_ok = True
+                    if TRADIUM_SETUP_TOPIC_ID and m.reply_to:
+                        top = getattr(m.reply_to, "reply_to_top_id", None) or m.reply_to.reply_to_msg_id
+                        topic_ok = (top == TRADIUM_SETUP_TOPIC_ID)
+                    if not topic_ok:
                         continue
                     is_photo = isinstance(m.media, MessageMediaPhoto)
                     is_doc_image = (
@@ -597,9 +603,10 @@ async def _run_backfill_tradium_charts(client, hours: float, limit: int):
                     ) if m.media else False
                     if is_photo or is_doc_image:
                         chart_msg = m
+                        log.info(f"[tradium-charts] #{sig_id} chart_msg_id={m.id} (offset +{cand_id - msg_id})")
                         break
             except Exception as e:
-                log.warning(f"[tradium-charts] #{sig_id} iter_messages failed: {e}")
+                log.warning(f"[tradium-charts] #{sig_id} search failed: {e}")
                 continue
 
             if not chart_msg:
