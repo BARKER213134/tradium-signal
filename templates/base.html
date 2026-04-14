@@ -742,19 +742,28 @@ function _renderReversalBar(d) {
   }
 }
 
+function _closeReversalModal() {
+  const m = document.getElementById('reversalModal');
+  if (m) m.classList.remove('open');
+}
+
 function toggleReversalModal() {
   if (!_lastReversal) return;
   let modal = document.getElementById('reversalModal');
   if (modal && modal.classList.contains('open')) {
-    modal.classList.remove('open');
+    _closeReversalModal();
     return;
   }
   if (!modal) {
     modal = document.createElement('div');
     modal.id = 'reversalModal';
-    modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);';
-    modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('open'); };
+    modal.style.cssText = 'position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);';
+    modal.onclick = (e) => { if (e.target === modal) _closeReversalModal(); };
     document.body.appendChild(modal);
+    // ESC
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') _closeReversalModal();
+    });
   }
   const d = _lastReversal;
   const dir = d.direction;
@@ -782,7 +791,7 @@ function toggleReversalModal() {
           <div style="font-size:32px;font-weight:800;color:${mainColor};margin-top:6px;">${bullEmoji} ${score > 0 ? '+' : ''}${score}</div>
           <div style="font-size:12px;color:${mainColor};text-transform:uppercase;letter-spacing:0.1em;margin-top:2px;">${d.strength} ${dir}</div>
         </div>
-        <button onclick="document.getElementById('reversalModal').classList.remove('open')" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;">×</button>
+        <button onclick="_closeReversalModal()" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;padding:0 8px;">×</button>
       </div>
       <div style="margin:20px 0;padding:12px;background:rgba(255,255,255,0.03);border-radius:10px;font-size:11px;">
         <div style="color:var(--muted);margin-bottom:8px;">За последние 2 часа:</div>
@@ -816,8 +825,7 @@ function toggleReversalModal() {
         Обновляется каждые 30с · Backtest precision: 88.6%
       </div>
     </div>`;
-  modal.style.display = 'flex';
-  requestAnimationFrame(() => modal.classList.add('open'));
+  modal.classList.add('open');
 }
 
 // Первичная загрузка
@@ -934,7 +942,8 @@ function showToast(msg, type='info') {
   50% { box-shadow: 0 0 0 6px rgba(0, 229, 160, 0); }
 }
 #reversalBar:hover { background:rgba(255,255,255,0.06)!important; }
-#reversalModal.open { display:flex!important; }
+#reversalModal { display:none; }
+#reversalModal.open { display:flex; }
 .sortable { cursor:pointer; user-select:none; transition:color 0.15s; white-space:nowrap; }
 .sortable:hover { color:var(--accent); }
 </style>
