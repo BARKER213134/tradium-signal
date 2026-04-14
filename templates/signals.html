@@ -1174,6 +1174,19 @@ setInterval(loadPaperStatus, 15000);
   background:rgba(0,0,0,0.75); backdrop-filter:blur(4px);
 }
 #journalChartModal.open { display:flex; }
+.signal-tooltip {
+  position:absolute; z-index:300; pointer-events:none;
+  background:rgba(10,14,20,0.96); border:1px solid rgba(0,229,160,0.3);
+  border-radius:10px; padding:10px 14px; font-family:var(--font-mono);
+  font-size:11px; color:var(--text); min-width:200px; max-width:320px;
+  backdrop-filter:blur(8px); box-shadow:0 8px 32px rgba(0,0,0,0.6);
+  transition:opacity 0.15s;
+}
+.signal-tooltip .tt-header { font-weight:800; font-size:13px; margin-bottom:6px; }
+.signal-tooltip .tt-row { display:flex; justify-content:space-between; padding:2px 0; gap:12px; }
+.signal-tooltip .tt-label { color:var(--muted); }
+.signal-tooltip .tt-val { font-weight:600; text-align:right; }
+.signal-tooltip .tt-divider { border-top:1px solid rgba(255,255,255,0.06); margin:4px 0; }
 </style>
 
 <div class="journal-hero">
@@ -1263,8 +1276,67 @@ setInterval(loadPaperStatus, 15000);
 let _journalData = [];
 let _journalFiltered = [];
 let _lwcLoaded = false;
-
 let _coinSearchTimer = null;
+let _markerMap = new Map(); // time → signal data for tooltip
+
+function _srcLabel(src) {
+  return src === 'anomaly' ? '⚠️ Аномалия' : src === 'confluence' ? '🎯 Confluence' : '🚀 Cryptovizor';
+}
+function _fmtPrice(v) { return v != null ? String(v) : '—'; }
+
+function _buildTooltipHTML(s) {
+  const dirC = s.direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
+  const dirE = s.direction === 'LONG' ? '🟢' : '🔴';
+  const kcText = s.st_passed === true ? '✅ Прошёл' : s.st_passed === false ? '❌ Не прошёл' : '—';
+  const pumpText = (s.pump_score || 0) >= 2 ? '🔥 HIGH' : (s.pump_score || 0) === 1 ? '⚡ MED' : '—';
+  const time = s.at ? new Date(s.at).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+  let html = `<div class="tt-header" style="color:${dirC}">${dirE} ${_srcLabel(s.source)}</div>`;
+  html += `<div class="tt-row"><span class="tt-label">Пара</span><span class="tt-val">${s.symbol || s.pair || ''}</span></div>`;
+  html += `<div class="tt-row"><span class="tt-label">Направление</span><span class="tt-val" style="color:${dirC}">${s.direction}</span></div>`;
+  html += `<div class="tt-row"><span class="tt-label">Entry</span><span class="tt-val">${_fmtPrice(s.entry)}</span></div>`;
+  if (s.tp1) html += `<div class="tt-row"><span class="tt-label">TP1</span><span class="tt-val" style="color:var(--buy)">${_fmtPrice(s.tp1)}</span></div>`;
+  if (s.sl) html += `<div class="tt-row"><span class="tt-label">SL</span><span class="tt-val" style="color:var(--sell)">${_fmtPrice(s.sl)}</span></div>`;
+  html += `<div class="tt-divider"></div>`;
+  if (s.pattern) html += `<div class="tt-row"><span class="tt-label">Паттерн</span><span class="tt-val">${s.pattern}</span></div>`;
+  if (s.score != null) html += `<div class="tt-row"><span class="tt-label">Score</span><span class="tt-val">⭐ ${s.score}</span></div>`;
+  html += `<div class="tt-row"><span class="tt-label">KC</span><span class="tt-val">${kcText}</span></div>`;
+  html += `<div class="tt-row"><span class="tt-label">Pump</span><span class="tt-val">${pumpText}</span></div>`;
+  html += `<div class="tt-row"><span class="tt-label">Время</span><span class="tt-val">${time}</span></div>`;
+  return html;
+}
+
+function _attachTooltip(chart, container, markerMap) {
+  let tip = container.querySelector('.signal-tooltip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.className = 'signal-tooltip';
+    tip.style.display = 'none';
+    container.style.position = 'relative';
+    container.appendChild(tip);
+  }
+  chart.subscribeCrosshairMove(param => {
+    if (!param.time || !markerMap.has(param.time)) {
+      tip.style.display = 'none';
+      return;
+    }
+    const s = markerMap.get(param.time);
+    tip.innerHTML = _buildTooltipHTML(s);
+    tip.style.display = 'block';
+    // Position
+    const pt = param.point;
+    if (pt) {
+      const cw = container.clientWidth;
+      const tw = 240;
+      let left = pt.x + 16;
+      if (left + tw > cw) left = pt.x - tw - 16;
+      if (left < 0) left = 8;
+      let top = pt.y - 20;
+      if (top < 0) top = 8;
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+    }
+  });
+}
 
 function onCoinSearch(val) {
   clearTimeout(_coinSearchTimer);
@@ -1334,8 +1406,9 @@ async function loadCoinChart(coin) {
     });
     series.setData(d.candles);
 
-    // Все маркеры
+    // Все маркеры + tooltip map
     const markers = [];
+    const coinMarkerMap = new Map();
     for (const s of signals) {
       const ts = s.at_ts || 0;
       if (!ts) continue;
@@ -1354,6 +1427,7 @@ async function loadCoinChart(coin) {
         shape: isLong ? 'arrowUp' : 'arrowDown',
         text: `${srcIcon} ${s.direction} ${s.entry || ''}`,
       });
+      coinMarkerMap.set(mc.time, s);
     }
     // Сортируем по времени
     markers.sort((a, b) => a.time - b.time);
@@ -1364,6 +1438,9 @@ async function loadCoinChart(coin) {
       if (m.time !== lastT) { unique.push(m); lastT = m.time; }
     }
     series.setMarkers(unique);
+
+    // Tooltip для маркеров
+    _attachTooltip(chart, chartDiv, coinMarkerMap);
 
     // Entry линии для последних 3 сигналов
     const recent = signals.slice(0, 3);
@@ -1526,7 +1603,6 @@ async function openJournalChart(idx) {
     const entryTs = s.at_ts || 0;
     let markerCandle = d.candles[d.candles.length - 1];
     if (entryTs) {
-      // Находим ближайшую свечу к моменту входа
       let minDiff = Infinity;
       for (const c of d.candles) {
         const diff = Math.abs(c.time - entryTs);
@@ -1542,6 +1618,11 @@ async function openJournalChart(idx) {
       shape: isLong ? 'arrowUp' : 'arrowDown',
       text: `${s.direction} Entry ${s.entry}`,
     }]);
+
+    // Tooltip для маркера в модалке
+    const modalMarkerMap = new Map();
+    modalMarkerMap.set(markerCandle.time, s);
+    _attachTooltip(chart, container, modalMarkerMap);
 
     // Entry линия
     if (s.entry) {
