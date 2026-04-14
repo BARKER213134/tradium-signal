@@ -1676,29 +1676,50 @@ async function loadCoinChart(coin) {
       const srcIcon = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠' : s.source === 'confluence' ? '🎯' : s.source === 'paper' ? '🤖' : '🚀';
       markers.push({
         time: mc.time,
-        position: isLong ? 'belowBar' : 'aboveBar',
-        color: isLong ? '#00e5a0' : '#ff4d6d',
-        shape: isLong ? 'arrowUp' : 'arrowDown',
-        text: srcIcon,  // только иконка источника, детали в tooltip
+        direction: s.direction,
+        isLong,
+        srcIcon,
+        entry: s.entry,
+        source: s.source,
       });
       coinMarkerMap.set(mc.time, s);
     }
-    // Сортируем по времени
-    markers.sort((a, b) => a.time - b.time);
-    // Группируем маркеры по свече — если несколько сигналов на одной свече,
-    // объединяем в один маркер с иконками всех источников
-    const byTime = new Map();
+    // Группируем по (time, direction). Чтобы на одной свече разные направления
+    // не сталкивались — каждый LONG/SHORT рисуется отдельным маркером
+    // (LONG belowBar, SHORT aboveBar).
+    const grouped = new Map(); // key: `${time}_${direction}` → {time, isLong, items: [...]}
     for (const m of markers) {
-      if (!byTime.has(m.time)) {
-        byTime.set(m.time, m);
+      const key = `${m.time}_${m.direction}`;
+      if (!grouped.has(key)) {
+        grouped.set(key, { time: m.time, isLong: m.isLong, items: [m] });
       } else {
-        const existing = byTime.get(m.time);
-        if (!existing.text.includes(m.text)) {
-          existing.text = existing.text + m.text;
-        }
+        grouped.get(key).items.push(m);
       }
     }
-    const unique = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+    const unique = [];
+    for (const g of grouped.values()) {
+      const items = g.items;
+      // Уникальные источники
+      const icons = [...new Set(items.map(i => i.srcIcon))].join('');
+      // Основная цена — первого сигнала, с округлением
+      const entry = items[0].entry;
+      const entryStr = entry != null ? (typeof entry === 'number' ? entry.toString() : entry) : '';
+      let text;
+      if (items.length === 1) {
+        text = entryStr ? `${icons} ${entryStr}` : icons;
+      } else {
+        text = `${icons} ${entryStr} ×${items.length}`;
+      }
+      unique.push({
+        time: g.time,
+        position: g.isLong ? 'belowBar' : 'aboveBar',
+        color: g.isLong ? '#00e5a0' : '#ff4d6d',
+        shape: g.isLong ? 'arrowUp' : 'arrowDown',
+        text,
+        size: 1,
+      });
+    }
+    unique.sort((a, b) => a.time - b.time);
     series.setMarkers(unique);
 
     // Tooltip для маркеров
