@@ -103,6 +103,111 @@ async def _pump_check(symbol: str) -> dict:
 
 
 _last_kc_direction = None
+_last_reversal_zone = None  # 'STRONG_BULL' / 'BULL' / 'NEUTRAL' / 'BEAR' / 'STRONG_BEAR'
+
+
+def _reversal_zone(score: int) -> str:
+    if score >= 70: return "STRONG_BULL"
+    if score >= 30: return "BULL"
+    if score <= -70: return "STRONG_BEAR"
+    if score <= -30: return "BEAR"
+    return "NEUTRAL"
+
+
+async def _check_reversal_flip():
+    """Алертит во все боты когда Reversal Meter пересекает зону (±30 или ±70)."""
+    global _last_reversal_zone
+    try:
+        from reversal_meter import compute_score
+        meter = await asyncio.to_thread(compute_score)
+        score = meter["score"]
+        direction = meter["direction"]
+        strength = meter["strength"]
+        zone = _reversal_zone(score)
+
+        if _last_reversal_zone is None:
+            _last_reversal_zone = zone
+            print(f"[REVERSAL] Initial zone: {zone} (score={score})", flush=True)
+            return
+
+        if zone == _last_reversal_zone:
+            return
+
+        old = _last_reversal_zone
+        _last_reversal_zone = zone
+        print(f"[REVERSAL] {old} → {zone} (score={score})", flush=True)
+        logger.info(f"Reversal zone change: {old} → {zone} (score={score})")
+
+        # Форматируем алерт
+        sign = "+" if score > 0 else ""
+        if zone == "STRONG_BULL":
+            header = "🔥🔥🔥 STRONG BULLISH REVERSAL 🔥🔥🔥"
+            emoji = "🚀"
+        elif zone == "BULL":
+            header = "🟢 BULLISH BREWING"
+            emoji = "🟢"
+        elif zone == "STRONG_BEAR":
+            header = "🔥🔥🔥 STRONG BEARISH REVERSAL 🔥🔥🔥"
+            emoji = "📉"
+        elif zone == "BEAR":
+            header = "🔴 BEARISH BREWING"
+            emoji = "🔴"
+        else:
+            header = "⚪ NEUTRAL"
+            emoji = "⚪"
+
+        cv = meter.get("cv_count", {})
+        cf = meter.get("conf_count", {})
+
+        text = (
+            f"🔔🔔🔔🔔🔔🔔🔔🔔🔔🔔\n"
+            f"\n"
+            f"{emoji} <b>REVERSAL METER FLIP</b>\n"
+            f"\n"
+            f"{header}\n"
+            f"\n"
+            f"Score: <b>{sign}{score}</b> (было: {old})\n"
+            f"\n"
+            f"📊 За 2ч:\n"
+            f"  CV: 🟢{cv.get('L',0)} 🔴{cv.get('S',0)}\n"
+            f"  Conf: 🟢{cf.get('L',0)} 🔴{cf.get('S',0)}\n"
+            f"\n"
+            f"💡 <i>Следите за следующими сигналами — {'LONG' if score > 0 else 'SHORT' if score < 0 else ''} сейчас в фаворе.</i>\n"
+            f"\n"
+            f"🔔🔔🔔🔔🔔🔔🔔🔔🔔🔔"
+        )
+
+        # Отправляем во все боты (кроме паузы для rate limit)
+        for bot in [_bot, _bot2, _bot4]:
+            if bot and _admin_chat_id:
+                try:
+                    await bot.send_message(_admin_chat_id, text, parse_mode="HTML")
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    pass
+        if _bot3 and _admin_chat_id:
+            try:
+                await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
+        if _bot5 and _admin_chat_id:
+            try:
+                await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
+        try:
+            from paper_trader import _bot6, _setup_bot6
+            if not _bot6:
+                _setup_bot6()
+            if _bot6:
+                await _bot6.send_message(_admin_chat_id, text, parse_mode="HTML")
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"[REVERSAL] ERROR: {e}", flush=True)
+
 
 async def _check_kc_change():
     """Проверяет смену Keltner и алертит во все боты."""
@@ -246,6 +351,18 @@ def _market_block(pump: dict, kc_passed: bool, kc_data: dict) -> str:
     lines.append(_eth_line())
 
     return "\n".join(lines)
+
+
+async def _reversal_block(signal_direction: str | None = None) -> str:
+    """Возвращает блок Reversal Meter для Telegram сообщения.
+    Информативно: показывает согласуется ли сигнал с направлением разворота."""
+    try:
+        from reversal_meter import compute_score, format_telegram_block
+        meter = await asyncio.to_thread(compute_score)
+        return "\n" + format_telegram_block(meter, signal_direction)
+    except Exception as e:
+        logger.debug(f"Reversal block fail: {e}")
+        return ""
 
 
 def _fmt_trend(trend: str | None) -> str:
@@ -671,6 +788,10 @@ async def _check_once():
         print("[WATCHER] _check_once start", flush=True)
         await _check_kc_change()
         try:
+            await _check_reversal_flip()
+        except Exception as e:
+            print(f"[WATCHER] _check_reversal_flip ERROR: {e}", flush=True)
+        try:
             await asyncio.wait_for(_retry_failed_ai(db), timeout=30)
         except asyncio.TimeoutError:
             print("[WATCHER] _retry_failed_ai TIMEOUT", flush=True)
@@ -773,6 +894,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"\n"
         f"{_market_block(_pump, _stp, _std)}"
     )
+    text += await _reversal_block(signal.direction)
     # Сохраняем pump в БД
     from database import _signals as _sc
     _sc().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
@@ -1253,6 +1375,7 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     if tg_summary:
         text += f"\n📝 {tg_summary}\n"
     text += f"\n{_market_block(_pump, _stp, _st or {})}"
+    text += await _reversal_block(signal.direction)
 
     from database import _signals as _sc2
     _sc2().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
@@ -1476,6 +1599,7 @@ async def _send_anomaly_alert(r: dict):
         text += "\n" + "\n".join(f"  · {ind}" for ind in indicators)
     text += f"\n\n💡 <i>{conclusion}</i>"
     text += f"\n\n{_market_block(_pump, _stp, _st or {})}"
+    text += await _reversal_block(r.get("direction"))
 
     from database import _anomalies as _anc
     _anc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
@@ -1707,6 +1831,7 @@ async def _send_confluence_alert(r: dict):
     text += "\n".join(checks)
     text += f"\n\n💡 <i>{conclusion}</i>"
     text += f"\n\n{_market_block(_pump, _stp, _st or {})}"
+    text += await _reversal_block(r.get("direction"))
 
     from database import _confluence as _cfc
     _cfc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})

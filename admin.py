@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1029,6 +1029,17 @@ async def _run_backfill_patterns(limit: int, status: str):
             pass
     except Exception:
         log.exception("[backfill-patterns] crashed")
+
+
+@app.get("/api/reversal-meter")
+async def api_reversal_meter():
+    """Composite Reversal Meter: score -100..+100 + компоненты + CV/Conf counts."""
+    try:
+        from reversal_meter import compute_score
+        return await asyncio.to_thread(compute_score)
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()[-2000:]}
 
 
 @app.get("/api/userbot-status")
