@@ -1401,10 +1401,28 @@ async def api_paper_reset():
 
 @app.get("/api/journal")
 async def api_journal():
-    """Все сигналы из 3 источников — для вкладки Журнал."""
+    """Все сигналы из 4 источников — для вкладки Журнал."""
     from database import _signals, _anomalies, _confluence
 
     items = []
+
+    # Tradium signals
+    for s in _signals().find({"source": "tradium"}).sort("received_at", -1).limit(100):
+        items.append({
+            "source": "tradium",
+            "symbol": (s.get("pair") or "").replace("/", "").upper(),
+            "pair": s.get("pair", ""),
+            "direction": s.get("direction", ""),
+            "entry": s.get("entry"),
+            "tp1": s.get("tp1"),
+            "sl": s.get("sl"),
+            "pattern": s.get("trend") or s.get("comment") or "",
+            "score": s.get("ai_score"),
+            "st_passed": s.get("st_passed"),
+            "pump_score": s.get("pump_score", 0),
+            "at": s["received_at"].isoformat() if hasattr(s.get("received_at"), "isoformat") else str(s.get("received_at", "")),
+            "at_ts": int(s["received_at"].timestamp()) if hasattr(s.get("received_at"), "timestamp") else 0,
+        })
 
     # Cryptovizor signals (только с паттерном, сортируем по времени паттерна)
     for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True}).sort("pattern_triggered_at", -1).limit(300):

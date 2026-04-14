@@ -1319,6 +1319,8 @@ setInterval(loadPaperStatus, 15000);
   to { transform:translateX(120%); opacity:0; }
 }
 tr.j-new-row { animation: jNewGlow 3s ease-out; }
+.sortable { cursor:pointer; user-select:none; transition:color 0.15s; white-space:nowrap; }
+.sortable:hover { color:var(--accent); }
 @keyframes jNewGlow {
   0% { background:rgba(0,229,160,0.25); }
   100% { background:transparent; }
@@ -1351,6 +1353,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <button class="tf-btn" onclick="_setCoinTF('1d')">1D</button>
   </div>
   <div style="margin-left:auto;display:flex;gap:12px;font-size:10px;color:var(--muted);font-family:var(--font-mono);">
+    <span>📡 Tradium</span>
     <span>🚀 CV</span>
     <span>⚠ Аномалия</span>
     <span>🎯 Confluence</span>
@@ -1363,6 +1366,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
 <div class="an-toolbar" style="padding:12px 18px;">
   <select id="jFilterSrc" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все источники</option>
+    <option value="tradium">Tradium</option>
     <option value="cryptovizor">Cryptovizor</option>
     <option value="anomaly">Аномалии</option>
     <option value="confluence">Confluence</option>
@@ -1391,14 +1395,14 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <table>
     <thead>
       <tr>
-        <th>Время</th>
-        <th>Источник</th>
-        <th>Пара</th>
-        <th>Напр.</th>
-        <th>Entry</th>
-        <th>Паттерн/Score</th>
-        <th>KC</th>
-        <th>Pump</th>
+        <th class="sortable" onclick="jSort('at_ts')" id="jSortTime">Время ▼</th>
+        <th class="sortable" onclick="jSort('source')" id="jSortSrc">Источник</th>
+        <th class="sortable" onclick="jSort('symbol')" id="jSortPair">Пара</th>
+        <th class="sortable" onclick="jSort('direction')" id="jSortDir">Напр.</th>
+        <th class="sortable" onclick="jSort('entry')" id="jSortEntry">Entry</th>
+        <th class="sortable" onclick="jSort('score')" id="jSortScore">Паттерн/Score</th>
+        <th class="sortable" onclick="jSort('st_passed')" id="jSortKC">KC</th>
+        <th class="sortable" onclick="jSort('pump_score')" id="jSortPump">Pump</th>
       </tr>
     </thead>
     <tbody id="jBody">
@@ -1462,7 +1466,7 @@ function _setModalTF(tf) {
 }
 
 function _srcLabel(src) {
-  return src === 'anomaly' ? '⚠️ Аномалия' : src === 'confluence' ? '🎯 Confluence' : '🚀 Cryptovizor';
+  return src === 'tradium' ? '📡 Tradium' : src === 'anomaly' ? '⚠️ Аномалия' : src === 'confluence' ? '🎯 Confluence' : '🚀 Cryptovizor';
 }
 function _fmtPrice(v) { return v != null ? String(v) : '—'; }
 
@@ -1604,7 +1608,7 @@ async function loadCoinChart(coin) {
         if (diff < minD) { minD = diff; mc = c; }
       }
       const isLong = s.direction === 'LONG';
-      const srcIcon = s.source === 'anomaly' ? '⚠' : s.source === 'confluence' ? '🎯' : '🚀';
+      const srcIcon = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠' : s.source === 'confluence' ? '🎯' : '🚀';
       markers.push({
         time: mc.time,
         position: isLong ? 'belowBar' : 'aboveBar',
@@ -1744,6 +1748,17 @@ function filterJournal() {
     if (pump === 'high' && (s.pump_score || 0) < 2) return false;
     return true;
   });
+  // Apply current sort
+  filtered.sort((a, b) => {
+    let va = a[_jSortField], vb = b[_jSortField];
+    if (va == null) va = typeof va === 'number' ? -Infinity : '';
+    if (vb == null) vb = typeof vb === 'number' ? -Infinity : '';
+    if (typeof va === 'boolean') { va = va ? 1 : 0; vb = vb ? 1 : 0; }
+    if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+    if (va < vb) return _jSortAsc ? -1 : 1;
+    if (va > vb) return _jSortAsc ? 1 : -1;
+    return 0;
+  });
   _journalFiltered = filtered;
   document.getElementById('jStats').textContent = `${filtered.length} из ${_journalData.length}`;
 
@@ -1756,7 +1771,7 @@ function filterJournal() {
     if (s.direction === 'LONG') stats[k].long++;
     else stats[k].short++;
   }
-  const names = {cryptovizor: '🚀 CV', anomaly: '⚠ Аном', confluence: '🎯 Conf'};
+  const names = {tradium: '📡 Tradium', cryptovizor: '🚀 CV', anomaly: '⚠ Аном', confluence: '🎯 Conf'};
   const statsEl = document.getElementById('jSourceStats');
   if (statsEl) {
     statsEl.innerHTML = Object.entries(stats).map(([k, v]) =>
@@ -1777,8 +1792,8 @@ function renderJournal(items) {
     const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
     const pair = (s.pair || s.symbol || '').replace('/USDT', '');
     const time = s.at ? new Date(s.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
-    const srcBadge = s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : '🚀';
-    const srcName = s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? 'Confluence' : 'CV';
+    const srcBadge = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : '🚀';
+    const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? 'Confluence' : 'CV';
     const stFail = s.st_passed === false;
     const pumpHigh = (s.pump_score || 0) >= 2;
     const rowCls = pumpHigh ? 'pump-high' : (stFail ? 'st-failed' : '');
@@ -1803,6 +1818,36 @@ function renderJournal(items) {
 }
 
 let _currentJournalIdx = -1;
+let _jSortField = 'at_ts';
+let _jSortAsc = false; // default: newest first
+
+function jSort(field) {
+  if (_jSortField === field) {
+    _jSortAsc = !_jSortAsc;
+  } else {
+    _jSortField = field;
+    _jSortAsc = field === 'symbol' || field === 'source' || field === 'direction'; // alpha = asc default
+  }
+  // Update header arrows
+  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',st_passed:'jSortKC',pump_score:'jSortPump'};
+  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн/Score',st_passed:'KC',pump_score:'Pump'};
+  for (const [f, id] of Object.entries(cols)) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = labels[f] + (f === _jSortField ? (_jSortAsc ? ' ▲' : ' ▼') : '');
+  }
+  // Sort filtered data
+  _journalFiltered.sort((a, b) => {
+    let va = a[field], vb = b[field];
+    if (va == null) va = field === 'score' || field === 'entry' || field === 'pump_score' || field === 'at_ts' ? -Infinity : '';
+    if (vb == null) vb = field === 'score' || field === 'entry' || field === 'pump_score' || field === 'at_ts' ? -Infinity : '';
+    if (typeof va === 'boolean') { va = va ? 1 : 0; vb = vb ? 1 : 0; }
+    if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+    if (va < vb) return _jSortAsc ? -1 : 1;
+    if (va > vb) return _jSortAsc ? 1 : -1;
+    return 0;
+  });
+  renderJournal(_journalFiltered);
+}
 
 async function openJournalChart(idx, forceTF) {
   if (idx < 0 || idx >= _journalFiltered.length) return;
