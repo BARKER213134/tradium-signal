@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/peek-tradium", "/api/peek-tradium-setups") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -391,6 +391,57 @@ async def _run_backfill_missed(client, hours: float, only: str | None):
             pass
     except Exception:
         log.exception("[backfill-api] crashed")
+
+
+@app.get("/api/peek-tradium-forum")
+async def api_peek_tradium_forum():
+    """Проверяет форумные топики в Tradium группе."""
+    try:
+        from userbot import _tg_client
+        from config import SOURCE_GROUP_ID
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    if _tg_client is None or not _tg_client.is_connected():
+        return {"ok": False, "error": "Telethon not connected"}
+    try:
+        from telethon.tl.functions.channels import GetForumTopicsRequest
+        entity = await _tg_client.get_entity(SOURCE_GROUP_ID)
+        is_forum = getattr(entity, "forum", False)
+        info = {
+            "chat_id": SOURCE_GROUP_ID,
+            "title": getattr(entity, "title", None),
+            "is_forum": is_forum,
+            "topics": [],
+            "topic_samples": {},
+        }
+        if is_forum:
+            try:
+                result = await _tg_client(GetForumTopicsRequest(
+                    channel=entity, offset_date=None, offset_id=0, offset_topic=0, limit=50
+                ))
+                for t in result.topics:
+                    info["topics"].append({
+                        "id": t.id,
+                        "title": getattr(t, "title", None),
+                        "top_message": t.top_message,
+                    })
+                for t in result.topics[:5]:
+                    samples = []
+                    try:
+                        async for m in _tg_client.iter_messages(entity, limit=3, reply_to=t.id):
+                            samples.append({
+                                "id": m.id,
+                                "date": m.date.isoformat() if m.date else None,
+                                "text_preview": (m.raw_text or "")[:200],
+                            })
+                    except Exception as e:
+                        samples.append({"error": str(e)})
+                    info["topic_samples"][f"{t.id}:{t.title}"] = samples
+            except Exception as e:
+                info["forum_error"] = str(e)
+        return {"ok": True, **info}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.get("/api/peek-tradium-setups")
