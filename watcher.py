@@ -1361,6 +1361,7 @@ async def _check_anomalies():
         if r["score"] >= 10 and st_passed:
             r["_st"] = st_data
             await _send_anomaly_alert(r)
+            await asyncio.sleep(1.5)  # Telegram rate limit protection
 
     anomaly_scan_state["running"] = False
     anomaly_scan_state["progress"] = 100
@@ -1576,6 +1577,7 @@ async def _check_confluence():
         if r["score"] >= 4 and st_passed:
             r["_st"] = st_data
             await _send_confluence_alert(r)
+            await asyncio.sleep(1.5)  # Telegram rate limit protection
 
     confluence_scan_state["running"] = False
     confluence_scan_state["progress"] = 100
