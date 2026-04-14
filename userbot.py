@@ -9,6 +9,7 @@ from config import (
     API_ID, API_HASH, PHONE,
     SOURCE_GROUP_ID, CHART_WAIT_SECONDS, CHARTS_DIR,
     BOT2_SOURCE_GROUP, BOT2_NAME,
+    TRADIUM_SETUP_TOPIC_ID,
 )
 from database import SessionLocal, Signal, utcnow, log_event
 from parser import parse_signal, format_signal_message
@@ -397,11 +398,19 @@ async def _setup_telethon_client():
         except Exception as e:
             logger.error(f"[userbot] Не удалось найти Cryptovizor: {e}")
 
-    # ── Handler Tradium (текст/фото) ──────────────────────────────
+    # ── Handler Tradium (текст/фото) — только топик "Trade Setup Screener" ──
     @client.on(events.NewMessage(chats=SOURCE_GROUP_ID))
     async def handler(event):
         try:
             msg = event.message
+            # Фильтр по форум-топику: пропускаем всё что не из Trade Setup Screener
+            if TRADIUM_SETUP_TOPIC_ID and msg.reply_to:
+                top_id = getattr(msg.reply_to, "reply_to_top_id", None) or msg.reply_to.reply_to_msg_id
+                if top_id != TRADIUM_SETUP_TOPIC_ID:
+                    return
+            elif TRADIUM_SETUP_TOPIC_ID and not msg.reply_to:
+                # Сообщения без reply_to = General topic, пропускаем
+                return
             is_photo = isinstance(msg.media, MessageMediaPhoto)
             is_doc_image = (
                 isinstance(msg.media, MessageMediaDocument) and
@@ -414,7 +423,7 @@ async def _setup_telethon_client():
         except Exception:
             logger.exception("[userbot] Tradium handler crashed")
 
-    logger.info(f"👂 Слушаем Tradium группу: {SOURCE_GROUP_ID}")
+    logger.info(f"👂 Слушаем Tradium группу: {SOURCE_GROUP_ID} (topic {TRADIUM_SETUP_TOPIC_ID})")
 
     # ── Handler Cryptovizor ───────────────────────────────────────
     if cryptovizor_id is not None:

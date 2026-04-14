@@ -15,6 +15,8 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
 # Группа Tradium WORKSPACE (супергруппа)
 # Telethon: супергруппы = -100 + числовой ID
 SOURCE_GROUP_ID = int(os.getenv("SOURCE_GROUP_ID", "-1002423680272"))
+# Топик (форум) внутри группы с Trade Setup Screener — только отсюда парсим сетапы
+TRADIUM_SETUP_TOPIC_ID = int(os.getenv("TRADIUM_SETUP_TOPIC_ID", "3204"))
 
 # Сколько секунд ждать график после текстового сообщения
 CHART_WAIT_SECONDS = int(os.getenv("CHART_WAIT_SECONDS", "5"))

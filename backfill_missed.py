@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 from telethon import TelegramClient
 
-from config import API_ID, API_HASH, SOURCE_GROUP_ID, BOT2_SOURCE_GROUP, BOT2_NAME
+from config import API_ID, API_HASH, SOURCE_GROUP_ID, BOT2_SOURCE_GROUP, BOT2_NAME, TRADIUM_SETUP_TOPIC_ID
 from database import SessionLocal, Signal, utcnow, init_db, log_event, _signals
 from exchange import get_futures_prices_only
 from parser import parse_signal
@@ -147,12 +147,16 @@ async def backfill_cryptovizor(client, since: datetime, hard_limit: int = 2000) 
 
 
 async def backfill_tradium(client, since: datetime, hard_limit: int = 500) -> int:
-    """Идёт по истории Tradium с момента since (UTC naive). Только текст, без графиков."""
+    """Идёт по истории Tradium с момента since (UTC naive). Только текст, без графиков.
+    Фильтрует по форум-топику TRADIUM_SETUP_TOPIC_ID (Trade Setup Screener)."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    logger.info(f"[TR] Загружаю сообщения с {since} до сейчас (max {hard_limit})…")
+    topic = TRADIUM_SETUP_TOPIC_ID
+    logger.info(f"[TR] Загружаю сообщения из топика {topic} с {since} до сейчас (max {hard_limit})…")
 
     messages = []
-    async for m in client.iter_messages(SOURCE_GROUP_ID, limit=hard_limit):
+    # iter_messages поддерживает reply_to=topic_id для форум-топиков
+    kw = {"reply_to": topic} if topic else {}
+    async for m in client.iter_messages(SOURCE_GROUP_ID, limit=hard_limit, **kw):
         msg_date = m.date
         if msg_date.tzinfo is not None:
             msg_date_naive = msg_date.replace(tzinfo=None)
