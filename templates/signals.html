@@ -1801,10 +1801,11 @@ function filterJournal() {
     return true;
   });
   // Apply current sort
+  const _numFields = new Set(['at_ts','score','entry','pump_score']);
   filtered.sort((a, b) => {
     let va = a[_jSortField], vb = b[_jSortField];
-    if (va == null) va = typeof va === 'number' ? -Infinity : '';
-    if (vb == null) vb = typeof vb === 'number' ? -Infinity : '';
+    if (va == null || va === '') va = _numFields.has(_jSortField) ? -Infinity : '';
+    if (vb == null || vb === '') vb = _numFields.has(_jSortField) ? -Infinity : '';
     if (typeof va === 'boolean') { va = va ? 1 : 0; vb = vb ? 1 : 0; }
     if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
     if (va < vb) return _jSortAsc ? -1 : 1;
@@ -1930,10 +1931,11 @@ function jSort(field) {
     if (el) el.textContent = labels[f] + (f === _jSortField ? (_jSortAsc ? ' ▲' : ' ▼') : '');
   }
   // Sort filtered data
+  const _nf = new Set(['at_ts','score','entry','pump_score']);
   _journalFiltered.sort((a, b) => {
     let va = a[field], vb = b[field];
-    if (va == null) va = field === 'score' || field === 'entry' || field === 'pump_score' || field === 'at_ts' ? -Infinity : '';
-    if (vb == null) vb = field === 'score' || field === 'entry' || field === 'pump_score' || field === 'at_ts' ? -Infinity : '';
+    if (va == null || va === '') va = _nf.has(field) ? -Infinity : '';
+    if (vb == null || vb === '') vb = _nf.has(field) ? -Infinity : '';
     if (typeof va === 'boolean') { va = va ? 1 : 0; vb = vb ? 1 : 0; }
     if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
     if (va < vb) return _jSortAsc ? -1 : 1;
