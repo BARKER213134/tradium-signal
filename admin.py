@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -519,6 +519,124 @@ async def api_peek_tradium(limit: int = 10):
         return {"ok": True, "source_group_id": SOURCE_GROUP_ID, "count": len(out), "messages": out}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/activate-tradium-archive")
+async def api_activate_tradium_archive(payload: dict | None = None):
+    """Переводит backfilled Tradium сетапы из АРХИВ в СЛЕЖУ, сбрасывает флаги,
+    после чего watcher сам определит достигли ли они TP/SL/паттерна по рынку.
+    is_forwarded=True сохраняется чтобы не слать Telegram алерты задним числом.
+
+    Body (optional): {"hours": 48} — сколько часов назад максимум
+    """
+    payload = payload or {}
+    hours = float(payload.get("hours") or 72)
+    asyncio.create_task(_run_activate_tradium_archive(hours))
+    return {"ok": True, "started": True, "hours": hours}
+
+
+async def _run_activate_tradium_archive(hours: float):
+    import logging as _log
+    from datetime import datetime, timezone, timedelta
+    log = _log.getLogger("activate-tradium")
+    try:
+        from database import _signals
+        from exchange import get_prices_any as sync_get_prices
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
+        query = {
+            "source": "tradium",
+            "status": "АРХИВ",
+            "received_at": {"$gte": cutoff},
+            "pair": {"$ne": None},
+            "tp1": {"$ne": None},
+            "sl": {"$ne": None},
+            "entry": {"$ne": None},
+        }
+        docs = list(_signals().find(query))
+        log.info(f"[activate-tradium] {len(docs)} backfilled Tradium сетапов для активации")
+        if not docs:
+            return
+
+        # Текущие цены
+        pairs = [d.get("pair") for d in docs if d.get("pair")]
+        try:
+            prices = await asyncio.to_thread(sync_get_prices, pairs)
+        except Exception:
+            prices = {}
+
+        activated = tp_hit = sl_hit = pattern_hit = 0
+        for d in docs:
+            pair = d.get("pair")
+            entry = d.get("entry")
+            tp1 = d.get("tp1")
+            sl = d.get("sl")
+            direction = d.get("direction")
+            cur = prices.get(pair) if pair else None
+
+            # Определяем текущий статус по цене
+            new_status = "СЛЕЖУ"
+            exit_price = None
+            pnl_pct = None
+            if cur and direction and tp1 and sl and entry:
+                is_long = direction in ("LONG", "BUY")
+                if is_long:
+                    if cur >= tp1:
+                        new_status = "TP"; exit_price = tp1
+                        pnl_pct = (tp1 - entry) / entry * 100
+                    elif cur <= sl:
+                        new_status = "SL"; exit_price = sl
+                        pnl_pct = (sl - entry) / entry * 100
+                    elif cur >= entry:
+                        new_status = "ПАТТЕРН"  # entry reached = setup triggered
+                else:  # SHORT
+                    if cur <= tp1:
+                        new_status = "TP"; exit_price = tp1
+                        pnl_pct = (entry - tp1) / entry * 100
+                    elif cur >= sl:
+                        new_status = "SL"; exit_price = sl
+                        pnl_pct = (entry - sl) / entry * 100
+                    elif cur <= entry:
+                        new_status = "ПАТТЕРН"
+
+            updates = {
+                "status": new_status,
+                "dca4_triggered": False,
+                "pattern_triggered": new_status == "ПАТТЕРН",
+                "is_forwarded": True,  # не шлём Telegram алерт задним числом
+            }
+            if exit_price is not None:
+                updates["exit_price"] = exit_price
+                updates["closed_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+                updates["pnl_percent"] = pnl_pct
+                updates["result"] = new_status
+            if new_status == "ПАТТЕРН":
+                updates["pattern_triggered_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+
+            _signals().update_one({"_id": d["_id"]}, {"$set": updates})
+            activated += 1
+            if new_status == "TP": tp_hit += 1
+            elif new_status == "SL": sl_hit += 1
+            elif new_status == "ПАТТЕРН": pattern_hit += 1
+            log.info(f"[activate-tradium] {pair} {direction} entry={entry} cur={cur} → {new_status}")
+
+        log.info(f"[activate-tradium] DONE: activated={activated}, TP={tp_hit}, SL={sl_hit}, ПАТТЕРН={pattern_hit}")
+        try:
+            from watcher import _bot, _admin_chat_id
+            if _bot and _admin_chat_id:
+                await _bot.send_message(
+                    _admin_chat_id,
+                    f"🔄 <b>Tradium архив активирован</b>\n\n"
+                    f"Обработано: {activated}\n"
+                    f"✅ TP: {tp_hit}\n"
+                    f"❌ SL: {sl_hit}\n"
+                    f"🎯 ПАТТЕРН: {pattern_hit}\n"
+                    f"👁 СЛЕЖУ: {activated - tp_hit - sl_hit - pattern_hit}",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+    except Exception:
+        log.exception("[activate-tradium] crashed")
 
 
 @app.post("/api/backfill-patterns")
