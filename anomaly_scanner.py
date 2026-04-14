@@ -98,11 +98,14 @@ def get_all_futures_pairs() -> list[str]:
         r = httpx.get(f"{FAPI}/fapi/v1/exchangeInfo", timeout=15)
         if r.status_code != 200:
             return _pairs_cache
+        import re
+        _bad_sym = re.compile(r'[\u4e00-\u9fff]|^\d+USDT$')
         symbols = [
             s["symbol"] for s in r.json().get("symbols", [])
             if s.get("contractType") == "PERPETUAL"
             and s.get("quoteAsset") == "USDT"
             and s.get("status") == "TRADING"
+            and not _bad_sym.search(s["symbol"])
         ]
         _pairs_cache = symbols
         _pairs_cache_ts = now
