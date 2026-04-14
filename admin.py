@@ -1406,8 +1406,10 @@ async def api_journal():
 
     items = []
 
-    # Cryptovizor signals (source=cryptovizor, все статусы)
-    for s in _signals().find({"source": "cryptovizor"}).sort("received_at", -1).limit(300):
+    # Cryptovizor signals (только с паттерном, сортируем по времени паттерна)
+    for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True}).sort("pattern_triggered_at", -1).limit(300):
+        # Время = когда паттерн сработал (не когда монета добавлена)
+        at_dt = s.get("pattern_triggered_at") or s.get("received_at")
         items.append({
             "source": "cryptovizor",
             "symbol": (s.get("pair") or "").replace("/", "").upper(),
@@ -1420,8 +1422,8 @@ async def api_journal():
             "score": s.get("ai_score"),
             "st_passed": s.get("st_passed"),
             "pump_score": s.get("pump_score", 0),
-            "at": s["received_at"].isoformat() if hasattr(s.get("received_at"), "isoformat") else str(s.get("received_at", "")),
-            "at_ts": int(s["received_at"].timestamp()) if hasattr(s.get("received_at"), "timestamp") else 0,
+            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
+            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
 
     # Anomalies
