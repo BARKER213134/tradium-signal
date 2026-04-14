@@ -1464,7 +1464,7 @@ async def api_journal():
 
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
-    return {"items": items[:500]}
+    return {"items": items[:900]}
 
 
 @app.get("/api/journal-candles")
