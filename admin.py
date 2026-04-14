@@ -1407,7 +1407,7 @@ async def api_journal():
     items = []
 
     # Tradium signals
-    for s in _signals().find({"source": "tradium"}).sort("received_at", -1).limit(100):
+    for s in _signals().find({"source": "tradium"}).sort("received_at", -1):
         items.append({
             "source": "tradium",
             "symbol": (s.get("pair") or "").replace("/", "").upper(),
@@ -1425,7 +1425,7 @@ async def api_journal():
         })
 
     # Cryptovizor signals (только с паттерном, сортируем по времени паттерна)
-    for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True}).sort("pattern_triggered_at", -1).limit(300):
+    for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True}).sort("pattern_triggered_at", -1):
         # Время = когда паттерн сработал (не когда монета добавлена)
         at_dt = s.get("pattern_triggered_at") or s.get("received_at")
         items.append({
@@ -1445,7 +1445,7 @@ async def api_journal():
         })
 
     # Anomalies
-    for a in _anomalies().find().sort("detected_at", -1).limit(300):
+    for a in _anomalies().find().sort("detected_at", -1):
         types = [x["type"] for x in a.get("anomalies", [])]
         items.append({
             "source": "anomaly",
@@ -1464,7 +1464,7 @@ async def api_journal():
         })
 
     # Confluence
-    for c in _confluence().find().sort("detected_at", -1).limit(300):
+    for c in _confluence().find().sort("detected_at", -1):
         ftypes = [f["type"] for f in c.get("factors", [])]
         items.append({
             "source": "confluence",
@@ -1484,7 +1484,7 @@ async def api_journal():
 
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
-    return {"items": items[:900]}
+    return {"items": items}
 
 
 @app.get("/api/journal-candles")

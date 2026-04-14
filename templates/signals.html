@@ -1365,6 +1365,15 @@ setInterval(loadPaperStatus, 15000);
   to { transform:translateX(120%); opacity:0; }
 }
 tr.j-new-row { animation: jNewGlow 3s ease-out; }
+.j-pagination { display:flex; align-items:center; gap:4px; font-family:var(--font-mono); font-size:11px; }
+.j-page-btn {
+  background:var(--dark); color:var(--muted); border:1px solid var(--border);
+  border-radius:6px; padding:3px 10px; font-size:11px; font-family:var(--font-mono);
+  cursor:pointer; transition:all 0.15s; min-width:28px; text-align:center;
+}
+.j-page-btn:hover { border-color:var(--accent); color:var(--text); }
+.j-page-btn.active { background:var(--accent); color:#000; border-color:var(--accent); font-weight:700; }
+.j-page-btn:disabled { opacity:0.3; cursor:default; }
 @keyframes jNewGlow {
   0% { background:rgba(0,229,160,0.25); }
   100% { background:transparent; }
@@ -1432,6 +1441,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   </select>
   <span id="jStats" class="an-filter-count"></span>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:14px;cursor:pointer;margin-left:4px;">🔔</button>
+  <div id="jPagination" class="j-pagination" style="display:none;margin-left:auto;"></div>
 </div>
 <div id="jSourceStats" style="display:flex;gap:10px;padding:8px 18px;font-family:var(--font-mono);font-size:10px;color:var(--muted);"></div>
 
@@ -1804,6 +1814,7 @@ function filterJournal() {
     return 0;
   });
   _journalFiltered = filtered;
+  _jPage = 1;
   document.getElementById('jStats').textContent = `${filtered.length} из ${_journalData.length}`;
 
   // Статистика по источникам
@@ -1823,10 +1834,48 @@ function filterJournal() {
     ).join('<span style="color:var(--border);">|</span>');
   }
 
-  renderJournal(filtered);
+  renderJournalPage();
 }
 
-function renderJournal(items) {
+function jGoPage(p) {
+  const totalPages = Math.ceil(_journalFiltered.length / _jPerPage);
+  _jPage = Math.max(1, Math.min(p, totalPages));
+  renderJournalPage();
+}
+
+function renderJournalPage() {
+  const items = _journalFiltered;
+  const totalPages = Math.ceil(items.length / _jPerPage) || 1;
+  if (_jPage > totalPages) _jPage = totalPages;
+  const start = (_jPage - 1) * _jPerPage;
+  const pageItems = items.slice(start, start + _jPerPage);
+
+  // Pagination controls
+  const pagDiv = document.getElementById('jPagination');
+  if (items.length > _jPerPage) {
+    pagDiv.style.display = 'flex';
+    let html = `<button class="j-page-btn" onclick="jGoPage(1)" ${_jPage===1?'disabled':''}>«</button>`;
+    html += `<button class="j-page-btn" onclick="jGoPage(${_jPage-1})" ${_jPage===1?'disabled':''}>‹</button>`;
+    // Page numbers
+    let pStart = Math.max(1, _jPage - 2);
+    let pEnd = Math.min(totalPages, pStart + 4);
+    if (pEnd - pStart < 4) pStart = Math.max(1, pEnd - 4);
+    for (let p = pStart; p <= pEnd; p++) {
+      html += `<button class="j-page-btn${p===_jPage?' active':''}" onclick="jGoPage(${p})">${p}</button>`;
+    }
+    html += `<button class="j-page-btn" onclick="jGoPage(${_jPage+1})" ${_jPage===totalPages?'disabled':''}>›</button>`;
+    html += `<button class="j-page-btn" onclick="jGoPage(${totalPages})" ${_jPage===totalPages?'disabled':''}>»</button>`;
+    html += `<span style="color:var(--muted);margin-left:6px;">${start+1}-${Math.min(start+_jPerPage, items.length)} из ${items.length}</span>`;
+    pagDiv.innerHTML = html;
+  } else {
+    pagDiv.style.display = 'none';
+  }
+
+  renderJournal(pageItems, start);
+}
+
+function renderJournal(items, startIdx) {
+  startIdx = startIdx || 0;
   const tbody = document.getElementById('jBody');
   if (!items.length) {
     tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
@@ -1848,7 +1897,8 @@ function renderJournal(items) {
     const isNew = window._newSignalKeys && window._newSignalKeys.has(_signalKey(s));
     const newCls = isNew ? ' j-new-row' : '';
 
-    return `<tr class="${rowCls}${newCls}" style="cursor:pointer;" onclick="openJournalChart(${i})">
+    const globalIdx = startIdx + i;
+    return `<tr class="${rowCls}${newCls}" style="cursor:pointer;" onclick="openJournalChart(${globalIdx})">
       <td class="mono text-muted" style="font-size:11px;">${time}</td>
       <td style="font-size:11px;">${srcBadge} ${srcName}</td>
       <td class="mono text-accent fw-700">${pair}</td>
@@ -1863,7 +1913,9 @@ function renderJournal(items) {
 
 let _currentJournalIdx = -1;
 let _jSortField = 'at_ts';
-let _jSortAsc = false; // default: newest first
+let _jSortAsc = false;
+let _jPage = 1;
+const _jPerPage = 100;
 
 function jSort(field) {
   if (_jSortField === field) {
@@ -1890,7 +1942,8 @@ function jSort(field) {
     if (va > vb) return _jSortAsc ? 1 : -1;
     return 0;
   });
-  renderJournal(_journalFiltered);
+  _jPage = 1;
+  renderJournalPage();
 }
 
 async function openJournalChart(idx, forceTF) {
