@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path == "/login" or path == "/health" or path.startswith("/static"):
+        if path == "/login" or path == "/health" or path == "/api/userbot-status" or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -319,6 +319,34 @@ async def health():
         return {"ok": True, "db": "ok"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/userbot-status")
+async def api_userbot_status():
+    """Диагностика userbot: подключён ли Telethon, когда был последний сигнал из каждого канала."""
+    from database import _signals, utcnow
+    from pymongo import DESCENDING
+    try:
+        from userbot import _tg_client
+    except Exception:
+        _tg_client = None
+    last_cv = _signals().find_one({"source": "cryptovizor"}, sort=[("received_at", DESCENDING)])
+    last_tr = _signals().find_one({"source": "tradium"}, sort=[("received_at", DESCENDING)])
+    now = utcnow()
+    def _info(doc):
+        if not doc or not doc.get("received_at"):
+            return {"at": None, "age_minutes": None, "pair": None}
+        dt = doc["received_at"]
+        return {
+            "at": dt.isoformat() if hasattr(dt, "isoformat") else str(dt),
+            "age_minutes": int((now - dt).total_seconds() / 60),
+            "pair": doc.get("pair"),
+        }
+    return {
+        "client_connected": _tg_client.is_connected() if _tg_client else False,
+        "cryptovizor": _info(last_cv),
+        "tradium": _info(last_tr),
+    }
 
 
 @app.get("/")

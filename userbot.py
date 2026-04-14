@@ -356,24 +356,34 @@ def _to_float(val) -> float | None:
         return None
 
 
-async def start_userbot():
-    """Запускает Telethon userbot."""
-    ensure_charts_dir()
+async def _setup_telethon_client():
+    """Создаёт Telethon клиент, резолвит каналы, регистрирует хендлеры.
+    Возвращает подключённый клиент или None если не получилось."""
     global _tg_client
     session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_userbot")
     client = TelegramClient(session_path, API_ID, API_HASH)
-    await client.connect()
+    try:
+        await client.connect()
+    except Exception as e:
+        logger.error(f"[userbot] connect failed: {e}")
+        return None
     if not await client.is_user_authorized():
         logger.error(
             "❌ Userbot не авторизован! Запусти `python authorize.py` чтобы войти. "
             "Сервер продолжит работать без live-сигналов из Telegram."
         )
         await client.disconnect()
-        return
+        return None
     _tg_client = client
-    logger.info("✅ Userbot запущен!")
+    logger.info("✅ Userbot подключён")
 
-    # Резолвим Cryptovizor диалог по имени
+    # Прогреваем кэш Tradium
+    try:
+        await client.get_entity(SOURCE_GROUP_ID)
+    except Exception as e:
+        logger.warning(f"[userbot] Tradium entity warmup failed: {e}")
+
+    # Резолвим Cryptovizor диалог по имени (пересоздаём на каждом reconnect)
     cryptovizor_id = None
     if BOT2_SOURCE_GROUP:
         try:
@@ -382,98 +392,180 @@ async def start_userbot():
                     cryptovizor_id = d.id
                     logger.info(f"✅ Cryptovizor найден: id={d.id} name='{d.name}'")
                     break
+            if cryptovizor_id is None:
+                logger.warning(f"[userbot] Cryptovizor '{BOT2_SOURCE_GROUP}' не найден среди диалогов")
         except Exception as e:
-            logger.error(f"Не удалось найти Cryptovizor: {e}")
+            logger.error(f"[userbot] Не удалось найти Cryptovizor: {e}")
 
+    # ── Handler Tradium (текст/фото) ──────────────────────────────
     @client.on(events.NewMessage(chats=SOURCE_GROUP_ID))
     async def handler(event):
-        msg = event.message
-
-        # Фото или документ-изображение?
-        is_photo = isinstance(msg.media, MessageMediaPhoto)
-        is_doc_image = (
-            isinstance(msg.media, MessageMediaDocument) and
-            msg.media.document.mime_type.startswith("image/")
-        ) if msg.media else False
-
-        if is_photo or is_doc_image:
-            await handle_photo_message(event, client)
-        elif msg.raw_text and len(msg.raw_text.strip()) > 5:
-            await handle_text_message(event, client)
+        try:
+            msg = event.message
+            is_photo = isinstance(msg.media, MessageMediaPhoto)
+            is_doc_image = (
+                isinstance(msg.media, MessageMediaDocument) and
+                msg.media.document.mime_type.startswith("image/")
+            ) if msg.media else False
+            if is_photo or is_doc_image:
+                await handle_photo_message(event, client)
+            elif msg.raw_text and len(msg.raw_text.strip()) > 5:
+                await handle_text_message(event, client)
+        except Exception:
+            logger.exception("[userbot] Tradium handler crashed")
 
     logger.info(f"👂 Слушаем Tradium группу: {SOURCE_GROUP_ID}")
 
-    # ── Handler для Cryptovizor ───────────────────────────────────
+    # ── Handler Cryptovizor ───────────────────────────────────────
     if cryptovizor_id is not None:
         @client.on(events.NewMessage(chats=cryptovizor_id))
         async def cryptovizor_handler(event):
-            if not event.raw_text:
-                return
-            await handle_cryptovizor_message(event.raw_text, event.message.id)
+            try:
+                if not event.raw_text:
+                    return
+                await handle_cryptovizor_message(event.raw_text, event.message.id)
+            except Exception:
+                logger.exception("[userbot] Cryptovizor handler crashed")
         logger.info(f"👂 Слушаем Cryptovizor: {cryptovizor_id}")
 
-    await client.run_until_disconnected()
+    return client
+
+
+async def _watchdog(client):
+    """Мониторит активность каналов; форсирует disconnect если оба замолчали > 30 мин.
+    Также пишет heartbeat каждые 5 минут."""
+    from database import _signals
+    from pymongo import DESCENDING
+    SILENCE_LIMIT = 30 * 60  # 30 минут
+    HEARTBEAT_EVERY = 5 * 60
+    last_heartbeat = 0
+    while True:
+        try:
+            await asyncio.sleep(60)
+            if not client.is_connected():
+                logger.warning("[userbot] watchdog: client not connected, exiting watchdog")
+                return
+            now_ts = utcnow().timestamp()
+            if now_ts - last_heartbeat >= HEARTBEAT_EVERY:
+                logger.info("[userbot] alive (watchdog heartbeat)")
+                last_heartbeat = now_ts
+            # Проверяем тишину обоих каналов
+            try:
+                last_cv = _signals().find_one({"source": "cryptovizor"}, sort=[("received_at", DESCENDING)])
+                last_tr = _signals().find_one({"source": "tradium"}, sort=[("received_at", DESCENDING)])
+                cv_age = (utcnow() - last_cv["received_at"]).total_seconds() if last_cv and last_cv.get("received_at") else 9e9
+                tr_age = (utcnow() - last_tr["received_at"]).total_seconds() if last_tr and last_tr.get("received_at") else 9e9
+                # Если оба молчат больше лимита — подозреваем что подписки умерли, форсируем reconnect
+                if cv_age > SILENCE_LIMIT and tr_age > SILENCE_LIMIT:
+                    logger.warning(f"[userbot] watchdog: both channels silent (CV {cv_age/60:.0f}m, Tradium {tr_age/60:.0f}m) → force reconnect")
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
+                    return
+            except Exception as e:
+                logger.debug(f"[userbot] watchdog db check: {e}")
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("[userbot] watchdog error")
+
+
+async def start_userbot():
+    """Supervisor: поднимает Telethon клиент в бесконечном цикле с reconnect."""
+    ensure_charts_dir()
+    while True:
+        client = None
+        watchdog_task = None
+        try:
+            client = await _setup_telethon_client()
+            if client is None:
+                logger.warning("[userbot] setup returned None, retrying in 60s")
+                await asyncio.sleep(60)
+                continue
+            logger.info("✅ Userbot запущен (с auto-reconnect)")
+            watchdog_task = asyncio.create_task(_watchdog(client))
+            await client.run_until_disconnected()
+            logger.warning("[userbot] disconnected, reconnecting in 30s")
+        except Exception:
+            logger.exception("[userbot] supervisor crash")
+        finally:
+            if watchdog_task and not watchdog_task.done():
+                watchdog_task.cancel()
+            if client:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+        await asyncio.sleep(30)
 
 
 async def handle_cryptovizor_message(text: str, message_id: int):
     """Парсит сообщение Cryptovizor и сохраняет сигналы (по одному на тикер)."""
-    signals_data = parse_cryptovizor_message(text)
-    if not signals_data:
-        return
-
-    # Cryptovizor = перпетуалы → сразу futures API
-    pairs = [s["pair"] for s in signals_data]
-    prices_raw = await asyncio.to_thread(get_futures_prices_only, pairs)
-
-    db = SessionLocal()
     try:
-        created = 0
-        for sd in signals_data:
-            pair = sd["pair"]
-            norm = pair.replace("/", "").upper()
-            current_price = prices_raw.get(norm)
+        signals_data = parse_cryptovizor_message(text)
+        if not signals_data:
+            return
 
-            # Если ни spot ни futures не дали цену — пропускаем
-            if current_price is None:
-                logger.debug(f"[CV] {pair} — нет ни на spot ни на futures, пропускаем")
-                continue
+        # Cryptovizor = перпетуалы → сразу futures API
+        pairs = [s["pair"] for s in signals_data]
+        try:
+            prices_raw = await asyncio.to_thread(get_futures_prices_only, pairs)
+        except Exception as e:
+            logger.exception(f"[CV] futures prices fetch failed: {e}")
+            prices_raw = {}
 
-            # Уникальность: не создаём дубликаты если message_id уже был с тем же pair
-            unique_msg_id = message_id * 100 + created
-            existing = db.query(Signal).filter(
-                Signal.source == BOT2_NAME
-            ).filter(Signal.message_id == unique_msg_id).first()
-            if existing:
-                continue
+        db = SessionLocal()
+        try:
+            created = 0
+            for sd in signals_data:
+                pair = sd["pair"]
+                norm = pair.replace("/", "").upper()
+                current_price = prices_raw.get(norm)
 
-            signal = Signal(
-                source=BOT2_NAME,
-                message_id=unique_msg_id,
-                raw_text=text,
-                pair=pair,
-                direction=sd["direction"],
-                trend=sd["trend"],
-                timeframe="1h",
-                entry=current_price,
-                status="СЛЕЖУ",
-                received_at=utcnow(),
-            )
-            db.add(signal)
-            db.commit()
-            db.refresh(signal)
-            created += 1
-            logger.info(
-                f"[CV] #{signal.id} {pair} {sd['direction']} entry={current_price}"
-            )
-            log_event(
-                signal.id, "created",
-                data={"pair": pair, "direction": sd["direction"], "source": BOT2_NAME},
-                message="Cryptovizor signal parsed",
-            )
-            try:
-                from admin import broadcast_event
-                broadcast_event("signal_new", {"id": signal.id, "source": BOT2_NAME})
-            except Exception:
-                pass
-    finally:
-        db.close()
+                # Если ни spot ни futures не дали цену — пропускаем
+                if current_price is None:
+                    logger.debug(f"[CV] {pair} — нет цены на futures, пропускаем")
+                    continue
+
+                # Уникальность: не создаём дубликаты если message_id уже был с тем же pair
+                unique_msg_id = message_id * 100 + created
+                existing = db.query(Signal).filter(
+                    Signal.source == BOT2_NAME
+                ).filter(Signal.message_id == unique_msg_id).first()
+                if existing:
+                    continue
+
+                signal = Signal(
+                    source=BOT2_NAME,
+                    message_id=unique_msg_id,
+                    raw_text=text,
+                    pair=pair,
+                    direction=sd["direction"],
+                    trend=sd["trend"],
+                    timeframe="1h",
+                    entry=current_price,
+                    status="СЛЕЖУ",
+                    received_at=utcnow(),
+                )
+                db.add(signal)
+                db.commit()
+                db.refresh(signal)
+                created += 1
+                logger.info(
+                    f"[CV] #{signal.id} {pair} {sd['direction']} entry={current_price}"
+                )
+                log_event(
+                    signal.id, "created",
+                    data={"pair": pair, "direction": sd["direction"], "source": BOT2_NAME},
+                    message="Cryptovizor signal parsed",
+                )
+                try:
+                    from admin import broadcast_event
+                    broadcast_event("signal_new", {"id": signal.id, "source": BOT2_NAME})
+                except Exception:
+                    pass
+        finally:
+            db.close()
+    except Exception:
+        logger.exception(f"[CV] handle_cryptovizor_message crashed (msg_id={message_id})")
