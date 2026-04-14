@@ -1388,13 +1388,8 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
 .tf-btn.active { background:var(--accent); color:#000; border-color:var(--accent); font-weight:700; }
 </style>
 
-<div class="journal-hero">
-  <div class="journal-hero-title">📖 Журнал сигналов</div>
-  <div class="journal-hero-desc">Все сигналы из Cryptovizor, Аномалий и Confluence. Нажми на строку — увидишь график с точкой входа.</div>
-</div>
-
-<!-- Поиск монеты -->
-<div class="an-toolbar" style="padding:12px 18px;margin-bottom:0;">
+<!-- Строка 1: Поиск монеты -->
+<div class="an-toolbar" style="padding:10px 18px;margin-bottom:0;">
   <span style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">🔍 Монета:</span>
   <input id="jCoinSearch" type="text" placeholder="DUSK, ETH, BTC..." oninput="onCoinSearch(this.value)" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:12px;font-family:var(--font-mono);width:160px;outline:none;" autocomplete="off">
   <span id="jCoinCount" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
@@ -1405,45 +1400,48 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <button class="tf-btn" onclick="_setCoinTF('4h')">4h</button>
     <button class="tf-btn" onclick="_setCoinTF('1d')">1D</button>
   </div>
-  <div style="margin-left:auto;display:flex;gap:12px;font-size:10px;color:var(--muted);font-family:var(--font-mono);">
-    <span>📡 Tradium</span>
-    <span>🚀 CV</span>
-    <span>⚠ Аномалия</span>
-    <span>🎯 Confluence</span>
-    <span style="color:var(--buy);">▲ LONG</span>
-    <span style="color:var(--sell);">▼ SHORT</span>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:10px;font-size:10px;color:var(--muted);font-family:var(--font-mono);">
+    <span>📡 Tradium</span><span>🚀 CV</span><span>⚠ Аном</span><span>🎯 Conf</span>
+    <span style="color:var(--buy);">▲ LONG</span><span style="color:var(--sell);">▼ SHORT</span>
   </div>
 </div>
-<div id="jCoinChart" style="display:none;height:400px;background:#0a0e14;border:1px solid var(--border);border-radius:0 0 12px 12px;margin-bottom:16px;"></div>
+<div id="jCoinChart" style="display:none;height:400px;background:#0a0e14;border:1px solid var(--border);border-radius:0 0 12px 12px;margin-bottom:12px;"></div>
 
-<div class="an-toolbar" style="padding:12px 18px;">
-  <select id="jFilterSrc" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
+<!-- Строка 2: Фильтры -->
+<div class="an-toolbar" style="padding:8px 18px;gap:6px;flex-wrap:wrap;">
+  <select id="jFilterSrc" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все источники</option>
-    <option value="tradium">Tradium</option>
-    <option value="cryptovizor">Cryptovizor</option>
-    <option value="anomaly">Аномалии</option>
-    <option value="confluence">Confluence</option>
+    <option value="tradium">📡 Tradium</option>
+    <option value="cryptovizor">🚀 CV</option>
+    <option value="anomaly">⚠ Аномалии</option>
+    <option value="confluence">🎯 Confluence</option>
   </select>
-  <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
+  <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все</option>
     <option value="LONG">🟢 LONG</option>
     <option value="SHORT">🔴 SHORT</option>
   </select>
-  <select id="jFilterKC" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
+  <select id="jFilterKC" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">KC: все</option>
     <option value="pass">✅ Прошли</option>
     <option value="fail">❌ Не прошли</option>
   </select>
-  <input id="jFilterScore" type="number" placeholder="Min Score" min="0" step="1" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);width:85px;">
-  <select id="jFilterPump" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
+  <input id="jFilterScore" type="number" placeholder="Min Score" min="0" step="1" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);width:80px;">
+  <select id="jFilterPump" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Pump: все</option>
     <option value="high">🔥 HIGH</option>
   </select>
-  <span id="jStats" class="an-filter-count"></span>
-  <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:14px;cursor:pointer;margin-left:4px;">🔔</button>
-  <div id="jPagination" class="j-pagination" style="display:none;margin-left:auto;"></div>
+  <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
 </div>
-<div id="jSourceStats" style="display:flex;gap:10px;padding:8px 18px;font-family:var(--font-mono);font-size:10px;color:var(--muted);"></div>
+
+<!-- Строка 3: Статистика + Пагинация -->
+<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 18px;border-bottom:1px solid var(--border);">
+  <div id="jSourceStats" style="display:flex;gap:10px;font-family:var(--font-mono);font-size:10px;color:var(--muted);flex-wrap:wrap;"></div>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <span id="jStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);white-space:nowrap;"></span>
+    <div id="jPagination" class="j-pagination" style="display:none;"></div>
+  </div>
+</div>
 
 <div class="table-wrap">
   <table>
