@@ -1406,8 +1406,8 @@ async def api_journal():
 
     items = []
 
-    # Cryptovizor signals (не tradium, все статусы кроме СЛЕЖУ)
-    for s in _signals().find({"source": {"$ne": "tradium"}, "status": {"$ne": "СЛЕЖУ"}}).sort("received_at", -1).limit(300):
+    # Cryptovizor signals (source=cryptovizor, все статусы)
+    for s in _signals().find({"source": "cryptovizor"}).sort("received_at", -1).limit(300):
         items.append({
             "source": "cryptovizor",
             "symbol": (s.get("pair") or "").replace("/", "").upper(),
