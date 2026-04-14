@@ -371,7 +371,7 @@ async def _run_backfill_missed(client, hours: float, only: str | None):
                 log.exception("[backfill-api] CV failed")
         if only != "cv":
             try:
-                tr_added = await backfill_tradium(client, since_tr, hard_limit=500)
+                tr_added = await backfill_tradium(client, since_tr, hard_limit=5000)
             except Exception:
                 log.exception("[backfill-api] Tradium failed")
 

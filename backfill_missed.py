@@ -241,7 +241,7 @@ async def main():
     ap.add_argument("--only", choices=["cv", "tradium"], default=None,
                     help="Только один источник")
     ap.add_argument("--limit-cv", type=int, default=2000)
-    ap.add_argument("--limit-tr", type=int, default=500)
+    ap.add_argument("--limit-tr", type=int, default=5000)
     args = ap.parse_args()
 
     init_db()
