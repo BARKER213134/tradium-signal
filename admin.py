@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/peek-tradium") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -391,6 +391,37 @@ async def _run_backfill_missed(client, hours: float, only: str | None):
             pass
     except Exception:
         log.exception("[backfill-api] crashed")
+
+
+@app.get("/api/peek-tradium")
+async def api_peek_tradium(limit: int = 10):
+    """Показывает последние N сообщений из Tradium группы напрямую через Telethon
+    (без сохранения в БД). Для диагностики: молчит группа или парсер не ловит."""
+    try:
+        from userbot import _tg_client
+        from config import SOURCE_GROUP_ID
+        from parser import parse_signal
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    if _tg_client is None or not _tg_client.is_connected():
+        return {"ok": False, "error": "Telethon not connected"}
+    try:
+        out = []
+        async for m in _tg_client.iter_messages(SOURCE_GROUP_ID, limit=limit):
+            text = (m.raw_text or "")[:300]
+            parsed = parse_signal(text) if text else {}
+            valid = bool(parsed.get("trend") and parsed.get("tp1") and parsed.get("sl") and parsed.get("entry"))
+            out.append({
+                "id": m.id,
+                "date": m.date.isoformat() if m.date else None,
+                "text_preview": text[:200],
+                "has_media": m.media is not None,
+                "parser_valid_signal": valid,
+                "parsed_pair": parsed.get("pair"),
+            })
+        return {"ok": True, "source_group_id": SOURCE_GROUP_ID, "count": len(out), "messages": out}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/api/backfill-patterns")
