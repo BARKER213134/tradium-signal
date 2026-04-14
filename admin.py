@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -391,6 +391,84 @@ async def _run_backfill_missed(client, hours: float, only: str | None):
             pass
     except Exception:
         log.exception("[backfill-api] crashed")
+
+
+@app.post("/api/backfill-patterns")
+async def api_backfill_patterns(payload: dict | None = None):
+    """Прогон pattern detection задним числом для backfilled CV сигналов.
+    Body: {"limit": 100, "status": "АРХИВ"}
+    """
+    payload = payload or {}
+    limit = int(payload.get("limit") or 100)
+    status = payload.get("status") or "АРХИВ"
+    asyncio.create_task(_run_backfill_patterns(limit, status))
+    return {"ok": True, "started": True, "limit": limit, "status": status}
+
+
+async def _run_backfill_patterns(limit: int, status: str):
+    """Фоновая задача: pattern detection задним числом."""
+    import logging as _log
+    log = _log.getLogger("backfill-patterns-api")
+    try:
+        from backfill_patterns import get_klines_around, detect_pattern_on_candles
+        from database import _signals
+        import time as _t
+        query = {
+            "source": "cryptovizor",
+            "status": status,
+            "pattern_triggered": True,
+            "$or": [{"pattern_name": None}, {"pattern_name": ""}, {"pattern_name": {"$exists": False}}],
+            "pair": {"$ne": None},
+            "direction": {"$ne": None},
+        }
+        docs = list(_signals().find(query).sort("received_at", -1).limit(limit))
+        log.info(f"[backfill-patterns] {len(docs)} candidates (status={status})")
+        found = no_data = no_pattern = 0
+        for s in docs:
+            pair = s.get("pair", "")
+            direction = s.get("direction", "")
+            received_at = s.get("received_at")
+            if not received_at:
+                continue
+            candles = await asyncio.to_thread(get_klines_around, pair, received_at, 24, 60)
+            if not candles:
+                no_data += 1
+                continue
+            signal_ms = int(received_at.timestamp() * 1000)
+            pattern, candle = detect_pattern_on_candles(candles, direction, signal_ms)
+            if not pattern:
+                no_pattern += 1
+                continue
+            from datetime import datetime as _dt, timezone as _tz
+            pt_dt = _dt.fromtimestamp(candle["t"] / 1000, tz=_tz.utc).replace(tzinfo=None)
+            _signals().update_one(
+                {"_id": s["_id"]},
+                {"$set": {
+                    "status": "ПАТТЕРН",
+                    "pattern_triggered_at": pt_dt,
+                    "pattern_name": pattern,
+                    "pattern_price": candle["c"],
+                }}
+            )
+            found += 1
+            log.info(f"[backfill-patterns] ✅ {pair} {direction} → {pattern} @ {pt_dt}")
+            await asyncio.sleep(0.05)
+        log.info(f"[backfill-patterns] DONE: found={found}, no_pattern={no_pattern}, no_data={no_data}")
+        try:
+            from watcher import _bot, _admin_chat_id
+            if _bot and _admin_chat_id:
+                await _bot.send_message(
+                    _admin_chat_id,
+                    f"📊 <b>Backfill patterns завершён</b>\n\n"
+                    f"✅ Найдено паттернов: {found}\n"
+                    f"⚪ Без паттерна: {no_pattern}\n"
+                    f"❓ Без данных: {no_data}",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+    except Exception:
+        log.exception("[backfill-patterns] crashed")
 
 
 @app.get("/api/userbot-status")
