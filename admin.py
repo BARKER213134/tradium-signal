@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path == "/login" or path == "/health" or path == "/api/userbot-status" or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -319,6 +319,78 @@ async def health():
         return {"ok": True, "db": "ok"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/backfill-missed")
+async def api_backfill_missed(payload: dict | None = None):
+    """Подтягивает пропущенные сигналы из Tradium и Cryptovizor каналов
+    через живой Telethon клиент userbot. Запускается в фоновой задаче.
+
+    Body (optional): {"hours": 24, "only": "cv|tradium|null"}
+    """
+    payload = payload or {}
+    hours = float(payload.get("hours") or 0)
+    only = payload.get("only")
+
+    try:
+        from userbot import _tg_client
+    except Exception:
+        _tg_client = None
+    if _tg_client is None or not _tg_client.is_connected():
+        return {"ok": False, "error": "Telethon client not connected"}
+
+    # Запускаем в фоне чтобы не держать HTTP запрос
+    asyncio.create_task(_run_backfill_missed(_tg_client, hours, only))
+    return {"ok": True, "started": True, "hours": hours or "since-last-signal", "only": only or "both"}
+
+
+async def _run_backfill_missed(client, hours: float, only: str | None):
+    """Фоновая задача: подтянуть пропущенные сигналы. Использует backfill_missed функции."""
+    import logging as _log
+    log = _log.getLogger("backfill-missed-api")
+    try:
+        from datetime import datetime, timezone, timedelta
+        from backfill_missed import backfill_cryptovizor, backfill_tradium, _last_signal_time
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if hours and hours > 0:
+            since_cv = since_tr = now - timedelta(hours=hours)
+        else:
+            last_cv = _last_signal_time("cryptovizor")
+            last_tr = _last_signal_time("tradium")
+            since_cv = last_cv if last_cv else now - timedelta(hours=24)
+            since_tr = last_tr if last_tr else now - timedelta(hours=24)
+
+        log.info(f"[backfill-api] CV since {since_cv}, Tradium since {since_tr}")
+
+        cv_added = tr_added = 0
+        if only != "tradium":
+            try:
+                cv_added = await backfill_cryptovizor(client, since_cv, hard_limit=2000)
+            except Exception:
+                log.exception("[backfill-api] CV failed")
+        if only != "cv":
+            try:
+                tr_added = await backfill_tradium(client, since_tr, hard_limit=500)
+            except Exception:
+                log.exception("[backfill-api] Tradium failed")
+
+        log.info(f"[backfill-api] DONE: CV +{cv_added}, Tradium +{tr_added}")
+        # Уведомление в админ-бот если есть
+        try:
+            from watcher import _bot, _admin_chat_id
+            if _bot and _admin_chat_id:
+                await _bot.send_message(
+                    _admin_chat_id,
+                    f"📥 <b>Backfill завершён</b>\n\n"
+                    f"🚀 Cryptovizor: +{cv_added}\n"
+                    f"📡 Tradium: +{tr_added}",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+    except Exception:
+        log.exception("[backfill-api] crashed")
 
 
 @app.get("/api/userbot-status")
