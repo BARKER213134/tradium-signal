@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -519,6 +519,111 @@ async def api_peek_tradium(limit: int = 10):
         return {"ok": True, "source_group_id": SOURCE_GROUP_ID, "count": len(out), "messages": out}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/debug-fetch-chart")
+async def api_debug_fetch_chart(payload: dict):
+    """Синхронно обрабатывает ОДИН signal: ищет чарт, скачивает, прогоняет AI, возвращает детальный лог."""
+    import os
+    from datetime import datetime, timezone
+    from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+    log = []
+    def L(msg): log.append(str(msg))
+    try:
+        sig_id = int(payload.get("sig_id") or 0)
+        if not sig_id:
+            return {"ok": False, "error": "sig_id required"}
+        from database import _signals, save_chart
+        from ai_analyzer import analyze_chart
+        from config import SOURCE_GROUP_ID, TRADIUM_SETUP_TOPIC_ID, CHARTS_DIR
+        from userbot import _tg_client
+        if not _tg_client or not _tg_client.is_connected():
+            return {"ok": False, "error": "Telethon not connected"}
+        s = _signals().find_one({"id": sig_id})
+        if not s:
+            return {"ok": False, "error": f"signal id={sig_id} not found"}
+        msg_id = s.get("message_id")
+        pair = s.get("pair")
+        L(f"signal: id={sig_id} pair={pair} msg_id={msg_id}")
+        if not msg_id:
+            return {"ok": False, "error": "no message_id", "log": log}
+
+        chart_msg = None
+        for cand in range(msg_id + 1, msg_id + 11):
+            try:
+                m = await _tg_client.get_messages(SOURCE_GROUP_ID, ids=cand)
+            except Exception as e:
+                L(f"cand={cand} get_messages ERROR: {e}")
+                continue
+            if m is None:
+                L(f"cand={cand} None")
+                continue
+            top = None
+            if m.reply_to:
+                top = getattr(m.reply_to, "reply_to_top_id", None) or m.reply_to.reply_to_msg_id
+            is_photo = isinstance(m.media, MessageMediaPhoto)
+            is_doc_image = (
+                isinstance(m.media, MessageMediaDocument)
+                and m.media.document.mime_type
+                and m.media.document.mime_type.startswith("image/")
+            ) if m.media else False
+            L(f"cand={cand} topic={top} media={'photo' if is_photo else ('doc' if is_doc_image else 'none')}")
+            if top != TRADIUM_SETUP_TOPIC_ID:
+                continue
+            if is_photo or is_doc_image:
+                chart_msg = m
+                L(f"  → SELECTED")
+                break
+        if not chart_msg:
+            return {"ok": False, "error": "no chart found", "log": log}
+
+        os.makedirs(CHARTS_DIR, exist_ok=True)
+        chart_filename = f"{sig_id}_{chart_msg.id}.jpg"
+        chart_path = os.path.join(CHARTS_DIR, chart_filename)
+        try:
+            await _tg_client.download_media(chart_msg, file=chart_path)
+            L(f"downloaded: {chart_path} size={os.path.getsize(chart_path)}")
+        except Exception as e:
+            return {"ok": False, "error": f"download failed: {e}", "log": log}
+
+        try:
+            with open(chart_path, "rb") as f:
+                save_chart(sig_id, f.read(), filename=chart_filename)
+            L("saved to GridFS")
+        except Exception as e:
+            L(f"GridFS warn: {e}")
+
+        try:
+            chart_data = await analyze_chart(chart_path)
+            L(f"AI result: {chart_data}")
+        except Exception as e:
+            return {"ok": False, "error": f"AI failed: {e}", "log": log}
+
+        def _tof(v):
+            try: return float(v) if v is not None else None
+            except: return None
+
+        updates = {
+            "has_chart": True,
+            "chart_message_id": chart_msg.id,
+            "chart_path": chart_path,
+            "chart_received_at": datetime.now(timezone.utc).replace(tzinfo=None),
+        }
+        if not chart_data.get("_error"):
+            updates.update({
+                "chart_analyzed": True,
+                "dca1": _tof(chart_data.get("dca1")),
+                "dca2": _tof(chart_data.get("dca2")),
+                "dca3": _tof(chart_data.get("dca3")),
+                "dca4": _tof(chart_data.get("dca4")),
+                "chart_notes": chart_data.get("notes") or chart_data.get("pattern", ""),
+            })
+        _signals().update_one({"_id": s["_id"]}, {"$set": updates})
+        L(f"DB updated with dca1-4: {updates.get('dca1')}, {updates.get('dca2')}, {updates.get('dca3')}, {updates.get('dca4')}")
+        return {"ok": True, "updates": updates, "log": log}
+    except Exception as e:
+        import traceback
+        return {"ok": False, "error": str(e), "traceback": traceback.format_exc(), "log": log}
 
 
 @app.get("/api/inspect-msg-neighbors")
