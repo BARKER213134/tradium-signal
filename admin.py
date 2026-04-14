@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -519,6 +519,49 @@ async def api_peek_tradium(limit: int = 10):
         return {"ok": True, "source_group_id": SOURCE_GROUP_ID, "count": len(out), "messages": out}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/inspect-msg-neighbors")
+async def api_inspect_msg_neighbors(msg_id: int, count: int = 5):
+    """Показывает msg_id+1..msg_id+count в Tradium группе чтобы понять куда делось фото."""
+    try:
+        from userbot import _tg_client
+        from config import SOURCE_GROUP_ID, TRADIUM_SETUP_TOPIC_ID
+        from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    if _tg_client is None or not _tg_client.is_connected():
+        return {"ok": False, "error": "not connected"}
+    out = []
+    for cand in range(msg_id, msg_id + count + 1):
+        try:
+            m = await _tg_client.get_messages(SOURCE_GROUP_ID, ids=cand)
+        except Exception as e:
+            out.append({"id": cand, "error": str(e)})
+            continue
+        if m is None:
+            out.append({"id": cand, "found": False})
+            continue
+        top = None
+        if m.reply_to:
+            top = getattr(m.reply_to, "reply_to_top_id", None) or m.reply_to.reply_to_msg_id
+        media_type = None
+        if isinstance(m.media, MessageMediaPhoto):
+            media_type = "photo"
+        elif isinstance(m.media, MessageMediaDocument):
+            media_type = f"doc:{getattr(m.media.document, 'mime_type', '?')}"
+        elif m.media:
+            media_type = type(m.media).__name__
+        out.append({
+            "id": m.id,
+            "date": m.date.isoformat() if m.date else None,
+            "topic_id": top,
+            "is_setup_topic": top == TRADIUM_SETUP_TOPIC_ID,
+            "text_preview": (m.raw_text or "")[:100],
+            "media_type": media_type,
+            "grouped_id": m.grouped_id,
+        })
+    return {"ok": True, "messages": out}
 
 
 @app.post("/api/backfill-tradium-charts")
