@@ -1482,6 +1482,30 @@ async def api_journal():
             "at_ts": int(c["detected_at"].timestamp()) if hasattr(c.get("detected_at"), "timestamp") else 0,
         })
 
+    # Paper Trades (BOT6)
+    from database import _get_db
+    pt_col = _get_db().paper_trades
+    for t in pt_col.find({"trade_id": {"$exists": True}}).sort("opened_at", -1):
+        at_dt = t.get("opened_at")
+        pnl = t.get("pnl_pct") or t.get("live_pnl") or 0
+        status = t.get("status", "OPEN")
+        status_icon = "✅ TP" if status == "TP" else "❌ SL" if status == "SL" else "⏳ OPEN"
+        items.append({
+            "source": "paper",
+            "symbol": t.get("symbol", ""),
+            "pair": t.get("pair", t.get("symbol", "").replace("USDT", "/USDT")),
+            "direction": t.get("direction", ""),
+            "entry": t.get("entry"),
+            "tp1": t.get("tp1"),
+            "sl": t.get("sl"),
+            "pattern": f"×{t.get('leverage',1)} {status_icon}",
+            "score": t.get("size_usdt"),
+            "st_passed": None,
+            "pump_score": 0,
+            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
+            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+        })
+
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
     return {"items": items}

@@ -1401,7 +1401,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <button class="tf-btn" onclick="_setCoinTF('1d')">1D</button>
   </div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px;font-size:10px;color:var(--muted);font-family:var(--font-mono);">
-    <span>📡 Tradium</span><span>🚀 CV</span><span>⚠ Аном</span><span>🎯 Conf</span>
+    <span>📡 Tradium</span><span>🚀 CV</span><span>⚠ Аном</span><span>🎯 Conf</span><span>🤖 Paper</span>
     <span style="color:var(--buy);">▲ LONG</span><span style="color:var(--sell);">▼ SHORT</span>
   </div>
 </div>
@@ -1415,6 +1415,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="cryptovizor">🚀 CV</option>
     <option value="anomaly">⚠ Аномалии</option>
     <option value="confluence">🎯 Confluence</option>
+    <option value="paper">🤖 Paper Trade</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все</option>
@@ -1529,7 +1530,7 @@ function _setModalTF(tf) {
 }
 
 function _srcLabel(src) {
-  return src === 'tradium' ? '📡 Tradium' : src === 'anomaly' ? '⚠️ Аномалия' : src === 'confluence' ? '🎯 Confluence' : '🚀 Cryptovizor';
+  return src === 'tradium' ? '📡 Tradium' : src === 'anomaly' ? '⚠️ Аномалия' : src === 'confluence' ? '🎯 Confluence' : src === 'paper' ? '🤖 Paper Trade' : '🚀 Cryptovizor';
 }
 function _fmtPrice(v) { return v != null ? String(v) : '—'; }
 
@@ -1671,7 +1672,7 @@ async function loadCoinChart(coin) {
         if (diff < minD) { minD = diff; mc = c; }
       }
       const isLong = s.direction === 'LONG';
-      const srcIcon = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠' : s.source === 'confluence' ? '🎯' : '🚀';
+      const srcIcon = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠' : s.source === 'confluence' ? '🎯' : s.source === 'paper' ? '🤖' : '🚀';
       markers.push({
         time: mc.time,
         position: isLong ? 'belowBar' : 'aboveBar',
@@ -1840,7 +1841,7 @@ function filterJournal() {
     if (s.direction === 'LONG') stats[k].long++;
     else stats[k].short++;
   }
-  const names = {tradium: '📡 Tradium', cryptovizor: '🚀 CV', anomaly: '⚠ Аном', confluence: '🎯 Conf'};
+  const names = {tradium: '📡 Tradium', cryptovizor: '🚀 CV', anomaly: '⚠ Аном', confluence: '🎯 Conf', paper: '🤖 Paper'};
   const statsEl = document.getElementById('jSourceStats');
   if (statsEl) {
     statsEl.innerHTML = Object.entries(stats).map(([k, v]) =>
@@ -1899,8 +1900,8 @@ function renderJournal(items, startIdx) {
     const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
     const pair = (s.pair || s.symbol || '').replace('/USDT', '');
     const time = s.at ? new Date(s.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
-    const srcBadge = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : '🚀';
-    const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? 'Confluence' : 'CV';
+    const srcBadge = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : s.source === 'paper' ? '🤖' : '🚀';
+    const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? 'Confluence' : s.source === 'paper' ? 'Paper' : 'CV';
     const stFail = s.st_passed === false;
     const pumpHigh = (s.pump_score || 0) >= 2;
     const rowCls = pumpHigh ? 'pump-high' : (stFail ? 'st-failed' : '');
