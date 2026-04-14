@@ -1295,6 +1295,34 @@ setInterval(loadPaperStatus, 15000);
 .signal-tooltip .tt-label { color:var(--muted); }
 .signal-tooltip .tt-val { font-weight:600; text-align:right; }
 .signal-tooltip .tt-divider { border-top:1px solid rgba(255,255,255,0.06); margin:4px 0; }
+/* Journal notifications */
+.j-toast {
+  position:fixed; top:20px; right:20px; z-index:9999;
+  background:linear-gradient(135deg, rgba(0,229,160,0.15), rgba(0,102,255,0.10));
+  border:1px solid rgba(0,229,160,0.4); border-radius:12px;
+  padding:14px 20px; min-width:280px; max-width:400px;
+  font-family:var(--font-mono); color:var(--text);
+  backdrop-filter:blur(12px); box-shadow:0 8px 40px rgba(0,0,0,0.5);
+  animation: jToastIn 0.4s ease-out;
+  cursor:pointer; transition:opacity 0.3s;
+}
+.j-toast:hover { opacity:0.85; }
+.j-toast-title { font-size:13px; font-weight:800; margin-bottom:4px; }
+.j-toast-body { font-size:11px; color:var(--muted); line-height:1.5; }
+.j-toast-close { position:absolute; top:8px; right:12px; color:var(--muted); font-size:16px; cursor:pointer; }
+@keyframes jToastIn {
+  from { transform:translateX(120%); opacity:0; }
+  to { transform:translateX(0); opacity:1; }
+}
+@keyframes jToastOut {
+  from { transform:translateX(0); opacity:1; }
+  to { transform:translateX(120%); opacity:0; }
+}
+tr.j-new-row { animation: jNewGlow 3s ease-out; }
+@keyframes jNewGlow {
+  0% { background:rgba(0,229,160,0.25); }
+  100% { background:transparent; }
+}
 .tf-bar { display:flex; gap:4px; }
 .tf-btn {
   background:var(--dark); color:var(--muted); border:1px solid var(--border);
@@ -1355,6 +1383,7 @@ setInterval(loadPaperStatus, 15000);
     <option value="high">🔥 HIGH</option>
   </select>
   <span id="jStats" class="an-filter-count"></span>
+  <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:14px;cursor:pointer;margin-left:4px;">🔔</button>
 </div>
 <div id="jSourceStats" style="display:flex;gap:10px;padding:8px 18px;font-family:var(--font-mono);font-size:10px;color:var(--muted);"></div>
 
@@ -1612,11 +1641,89 @@ async function loadCoinChart(coin) {
   }
 }
 
+let _journalPrevIds = new Set();
+let _journalFirstLoad = true;
+let _journalSoundEnabled = true;
+
+// Web Audio beep
+function _playSignalSound() {
+  if (!_journalSoundEnabled) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    // Double beep
+    [0, 0.18].forEach(delay => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+      gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + delay + 0.03);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + delay + 0.15);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.15);
+    });
+    setTimeout(() => ctx.close(), 500);
+  } catch {}
+}
+
+function _showJournalToast(newSignals) {
+  // Remove old toasts
+  document.querySelectorAll('.j-toast').forEach(t => t.remove());
+
+  const count = newSignals.length;
+  const previews = newSignals.slice(0, 3).map(s => {
+    const src = s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : '🚀';
+    const pair = (s.symbol || s.pair || '').replace('USDT','').replace('/','');
+    const dir = s.direction === 'LONG' ? '🟢' : '🔴';
+    const score = s.score ? ` · ${s.score}` : '';
+    return `${src} ${pair} ${dir} ${s.direction}${score}`;
+  });
+  const more = count > 3 ? `<br>...и ещё ${count - 3}` : '';
+
+  const toast = document.createElement('div');
+  toast.className = 'j-toast';
+  toast.innerHTML = `
+    <span class="j-toast-close" onclick="this.parentElement.remove()">×</span>
+    <div class="j-toast-title">🔔 ${count === 1 ? 'Новый сигнал!' : `Новые сигналы (${count})`}</div>
+    <div class="j-toast-body">${previews.join('<br>')}${more}</div>
+  `;
+  document.body.appendChild(toast);
+  toast.onclick = () => toast.remove();
+  setTimeout(() => {
+    toast.style.animation = 'jToastOut 0.4s ease-in forwards';
+    setTimeout(() => toast.remove(), 400);
+  }, 8000);
+}
+
+function _signalKey(s) {
+  return `${s.source}|${s.symbol||s.pair}|${s.at_ts}`;
+}
+
 async function loadJournal() {
   try {
     const r = await fetch('/api/journal');
     const d = await r.json();
-    _journalData = d.items || [];
+    const items = d.items || [];
+
+    // Detect new signals
+    if (!_journalFirstLoad && items.length) {
+      const currentIds = new Set(items.map(_signalKey));
+      const newSignals = items.filter(s => !_journalPrevIds.has(_signalKey(s)));
+      if (newSignals.length > 0 && newSignals.length < 50) {
+        _playSignalSound();
+        _showJournalToast(newSignals);
+        // Mark new signal keys for row highlighting
+        window._newSignalKeys = new Set(newSignals.map(_signalKey));
+        setTimeout(() => { window._newSignalKeys = null; }, 4000);
+      }
+    }
+
+    // Update prev IDs
+    _journalPrevIds = new Set(items.map(_signalKey));
+    _journalFirstLoad = false;
+    _journalData = items;
     filterJournal();
   } catch {}
 }
@@ -1679,7 +1786,10 @@ function renderJournal(items) {
     const pumpMark = pumpHigh ? '🔥' : '—';
     const sym = s.symbol || (s.pair || '').replace('/','');
 
-    return `<tr class="${rowCls}" style="cursor:pointer;" onclick="openJournalChart(${i})">
+    const isNew = window._newSignalKeys && window._newSignalKeys.has(_signalKey(s));
+    const newCls = isNew ? ' j-new-row' : '';
+
+    return `<tr class="${rowCls}${newCls}" style="cursor:pointer;" onclick="openJournalChart(${i})">
       <td class="mono text-muted" style="font-size:11px;">${time}</td>
       <td style="font-size:11px;">${srcBadge} ${srcName}</td>
       <td class="mono text-accent fw-700">${pair}</td>
