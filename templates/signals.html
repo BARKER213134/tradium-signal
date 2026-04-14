@@ -971,6 +971,27 @@ setInterval(pollConfluenceStatus, 5000);
 .at-card-value { font-family:var(--font-mono); font-size:22px; font-weight:800; margin-top:4px; }
 .at-pos { padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; font-size:12px; }
 .at-pos:last-child { border-bottom:none; }
+.at-tf-bar { display:flex; gap:4px; padding:8px 12px; background:rgba(0,0,0,0.3); border-bottom:1px solid var(--border); }
+.at-tf-btn {
+  background:var(--dark); color:var(--muted); border:1px solid var(--border);
+  border-radius:6px; padding:3px 10px; font-size:10px; font-family:var(--font-mono);
+  cursor:pointer; transition:all 0.15s;
+}
+.at-tf-btn:hover { border-color:var(--accent); color:var(--text); }
+.at-tf-btn.active { background:var(--accent); color:#000; border-color:var(--accent); font-weight:700; }
+.at-tooltip {
+  position:absolute; z-index:300; pointer-events:none;
+  background:rgba(10,14,20,0.96); border:1px solid rgba(0,229,160,0.3);
+  border-radius:10px; padding:10px 14px; font-family:var(--font-mono);
+  font-size:11px; color:var(--text); min-width:200px; max-width:320px;
+  backdrop-filter:blur(8px); box-shadow:0 8px 32px rgba(0,0,0,0.6);
+  transition:opacity 0.15s;
+}
+.at-tooltip .att-header { font-weight:800; font-size:13px; margin-bottom:6px; }
+.at-tooltip .att-row { display:flex; justify-content:space-between; padding:2px 0; gap:12px; }
+.at-tooltip .att-label { color:var(--muted); }
+.at-tooltip .att-val { font-weight:600; text-align:right; }
+.at-tooltip .att-divider { border-top:1px solid rgba(255,255,255,0.06); margin:4px 0; }
 </style>
 
 <div id="atDashboard">
@@ -1042,7 +1063,7 @@ async function loadPaperStatus() {
           <span class="mono text-buy" style="font-size:9px;">${tp}</span>
           <span class="mono text-sell" style="font-size:9px;">${sl}</span>
         </div>
-        <div id="paperChart${idx}" style="display:none;height:300px;background:#0a0e14;border-bottom:1px solid var(--border);" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();"></div>`;
+        <div id="paperChart${idx}" style="display:none;min-height:300px;background:#0a0e14;border-bottom:1px solid var(--border);" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();"></div>`;
       }).join('');
     } else {
       posDiv.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">AI ждёт сигналы…</div>';
@@ -1075,6 +1096,61 @@ async function loadPaperStatus() {
 
 let _lwcPaperLoaded = false;
 let _lastPaperToggle = 0;
+let _paperTF = {};  // idx → tf
+
+function _buildPaperTooltip(p) {
+  const dirC = p.direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
+  const dirE = p.direction === 'LONG' ? '🟢' : '🔴';
+  const pnl = p.live_pnl || 0;
+  const pnlSign = pnl >= 0 ? '+' : '';
+  const pnlColor = pnl >= 0 ? 'var(--buy)' : 'var(--sell)';
+  const pair = (p.symbol || '').replace('USDT', '');
+  const time = p.opened_at ? new Date(p.opened_at).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+  let html = `<div class="att-header" style="color:${dirC}">${dirE} ${pair} · Paper Trade</div>`;
+  html += `<div class="att-row"><span class="att-label">Направление</span><span class="att-val" style="color:${dirC}">${p.direction}</span></div>`;
+  html += `<div class="att-row"><span class="att-label">Entry</span><span class="att-val">${p.entry || '—'}</span></div>`;
+  if (p.tp1) html += `<div class="att-row"><span class="att-label">TP1</span><span class="att-val" style="color:var(--buy)">${p.tp1}</span></div>`;
+  if (p.sl) html += `<div class="att-row"><span class="att-label">SL</span><span class="att-val" style="color:var(--sell)">${p.sl}</span></div>`;
+  html += `<div class="att-divider"></div>`;
+  html += `<div class="att-row"><span class="att-label">Leverage</span><span class="att-val">×${p.leverage || 1}</span></div>`;
+  html += `<div class="att-row"><span class="att-label">Size</span><span class="att-val">$${p.size_usdt || '—'}</span></div>`;
+  if (p.live_price) html += `<div class="att-row"><span class="att-label">Цена сейчас</span><span class="att-val">${p.live_price}</span></div>`;
+  html += `<div class="att-row"><span class="att-label">PnL</span><span class="att-val" style="color:${pnlColor}">${pnlSign}${pnl.toFixed(2)}%</span></div>`;
+  if (p.source) html += `<div class="att-row"><span class="att-label">Источник</span><span class="att-val">${p.source}</span></div>`;
+  if (p.ai_reasoning) html += `<div class="att-row"><span class="att-label">AI</span><span class="att-val" style="max-width:180px;white-space:normal;font-size:10px;">${p.ai_reasoning}</span></div>`;
+  html += `<div class="att-row"><span class="att-label">Открыто</span><span class="att-val">${time}</span></div>`;
+  return html;
+}
+
+function _attachPaperTooltip(chart, container, p) {
+  let tip = container.querySelector('.at-tooltip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.className = 'at-tooltip';
+    tip.style.display = 'none';
+    container.style.position = 'relative';
+    container.appendChild(tip);
+  }
+  chart.subscribeCrosshairMove(param => {
+    if (!param.time || !container._markerTime || param.time !== container._markerTime) {
+      tip.style.display = 'none';
+      return;
+    }
+    tip.innerHTML = _buildPaperTooltip(p);
+    tip.style.display = 'block';
+    const pt = param.point;
+    if (pt) {
+      const cw = container.clientWidth;
+      let left = pt.x + 16;
+      if (left + 240 > cw) left = pt.x - 256;
+      if (left < 0) left = 8;
+      let top = pt.y - 20;
+      if (top < 0) top = 8;
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+    }
+  });
+}
 
 async function togglePaperChart(idx) {
   const now = Date.now();
@@ -1088,10 +1164,24 @@ async function togglePaperChart(idx) {
     return;
   }
   div.style.display = 'block';
-  if (div.dataset.loaded) return;
+  _paperTF[idx] = _paperTF[idx] || '1h';
+  await _renderPaperChart(idx, _paperTF[idx]);
+}
 
+function _setPaperTF(idx, tf) {
+  _paperTF[idx] = tf;
+  // update active button
+  const bar = document.getElementById('paperTFBar'+idx);
+  if (bar) bar.querySelectorAll('.at-tf-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tf === tf);
+  });
+  _renderPaperChart(idx, tf);
+}
+
+async function _renderPaperChart(idx, tf) {
+  const div = document.getElementById('paperChart'+idx);
   const p = window._paperPositions[idx];
-  if (!p) return;
+  if (!div || !p) return;
   const sym = p.symbol || '';
 
   // Load LWC
@@ -1106,17 +1196,31 @@ async function togglePaperChart(idx) {
   }
 
   try {
-    const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=1h&limit=60`);
+    const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=${tf}&limit=200`);
     const d = await r.json();
     if (!d.ok) return;
 
-    div.innerHTML = '';
-    const chart = LightweightCharts.createChart(div, {
+    // Keep TF bar, clear chart area
+    const chartArea = document.getElementById('paperChartArea'+idx);
+    if (chartArea) {
+      chartArea.innerHTML = '';
+    } else {
+      div.innerHTML = `<div class="at-tf-bar" id="paperTFBar${idx}" onclick="event.stopPropagation();">
+        ${['15m','30m','1h','4h','1d'].map(t =>
+          `<button class="at-tf-btn${t===tf?' active':''}" data-tf="${t}" onclick="event.stopPropagation();_setPaperTF(${idx},'${t}')">${t==='1d'?'1D':t}</button>`
+        ).join('')}
+      </div>
+      <div id="paperChartArea${idx}" style="height:260px;" onmousedown="event.stopPropagation();"></div>`;
+    }
+
+    const area = document.getElementById('paperChartArea'+idx);
+    area.innerHTML = '';
+    const chart = LightweightCharts.createChart(area, {
       layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
       grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
       rightPriceScale: { borderColor: '#1a1e2a' },
       timeScale: { borderColor: '#1a1e2a', timeVisible: true },
-      width: div.clientWidth, height: 300,
+      width: area.clientWidth, height: 260,
     });
     const series = chart.addCandlestickSeries({
       upColor: '#00e5a0', downColor: '#ff4d6d',
@@ -1140,11 +1244,15 @@ async function togglePaperChart(idx) {
       shape: isLong ? 'arrowUp' : 'arrowDown',
       text: `${p.direction} ${p.entry}`,
     }]);
+
+    // Save marker time for tooltip
+    area._markerTime = mc.time;
+    _attachPaperTooltip(chart, area, p);
+
     if (p.entry) series.createPriceLine({ price: p.entry, color: '#ffd23e', lineWidth: 2, lineStyle: 0, title: 'Entry' });
     if (p.tp1) series.createPriceLine({ price: p.tp1, color: '#00e5a0', lineWidth: 1, lineStyle: 2, title: 'TP1' });
     if (p.sl) series.createPriceLine({ price: p.sl, color: '#ff4d6d', lineWidth: 1, lineStyle: 2, title: 'SL' });
     chart.timeScale().fitContent();
-    div.dataset.loaded = '1';
   } catch {}
 }
 
