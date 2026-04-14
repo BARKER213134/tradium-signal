@@ -1333,13 +1333,14 @@ async def _check_anomalies():
         if r.get("raw_count", 0) < 3:
             continue
 
-        # Дедупликация — та же пара за последние 4 часа
+        # Дедупликация — та же пара за последние 4 часа (обновляем время если повторно)
         import datetime
         existing = _anomalies().find_one({
             "symbol": r["symbol"],
             "detected_at": {"$gte": datetime.datetime.utcnow() - datetime.timedelta(hours=4)},
         })
         if existing:
+            _anomalies().update_one({"_id": existing["_id"]}, {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}})
             continue
 
         # SuperTrend фильтр
@@ -1544,13 +1545,15 @@ async def _check_confluence():
         if not r:
             continue
 
-        # Дедупликация — та же пара + направление за 4 часа
+        # Дедупликация — та же пара + направление за 4 часа (обновляем время если повторно)
         existing = _confluence().find_one({
             "symbol": r["symbol"],
             "direction": r["direction"],
             "detected_at": {"$gte": datetime.datetime.utcnow() - datetime.timedelta(hours=4)},
         })
         if existing:
+            # Обновляем время последнего обнаружения
+            _confluence().update_one({"_id": existing["_id"]}, {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}})
             continue
 
         st_passed, st_data = _check_keltner_filter(r["direction"])
