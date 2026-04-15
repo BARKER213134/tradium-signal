@@ -22,7 +22,7 @@ FAPI = "https://fapi.binance.com"
 
 
 def scan_confluence(symbol: str) -> Optional[dict]:
-    """Полный confluence-анализ одной пары. Возвращает None если score < 4."""
+    """Полный confluence-анализ одной пары. Возвращает None если score < 5."""
     from exchange import get_klines_any, get_eth_market_context
     from patterns import detect_patterns, BULLISH, BEARISH
     from continuation_patterns import detect_continuation
@@ -205,7 +205,7 @@ def scan_confluence(symbol: str) -> Optional[dict]:
 
     # ── Итог ──────────────────────────────────────────────────────
     score = len(factors)
-    if score < 4:
+    if score < 5:
         return None
 
     # Финальное направление
@@ -231,7 +231,7 @@ def scan_confluence(symbol: str) -> Optional[dict]:
     }
 
 
-def scan_confluence_batch(symbols: list[str], min_score: int = 4) -> list[dict]:
+def scan_confluence_batch(symbols: list[str], min_score: int = 5) -> list[dict]:
     """Сканирует батч пар. Возвращает только score >= min_score."""
     results = []
     for s in symbols:

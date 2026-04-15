@@ -1697,8 +1697,8 @@ async def _check_confluence():
         results.append(r)
         logger.info(f"Confluence: {r['symbol']} score={r['score']} {r['strength']} {r['direction']} ST={'✅' if st_passed else '❌'}")
 
-        # Алерт только если ST подтверждён
-        if r["score"] >= 4 and st_passed:
+        # Алерт только если ST подтверждён и score >= 5 (минимум STRONG)
+        if r["score"] >= 5 and st_passed:
             r["_st"] = st_data
             await _send_confluence_alert(r)
             await asyncio.sleep(1.5)  # Telegram rate limit protection
