@@ -1015,6 +1015,283 @@ pollConfluenceStatus();
 setInterval(pollConfluenceStatus, 5000);
 </script>
 
+{% elif bot == 'clusters' %}
+<!-- ── Кластеры ───────────────────────────────────────────────────── -->
+<style>
+.cl-hero { padding:16px 20px; margin-bottom:14px; background:linear-gradient(135deg, rgba(255,210,62,0.08), rgba(0,229,160,0.05)); border:1px solid rgba(255,210,62,0.25); border-radius:12px; }
+.cl-hero h3 { font-size:15px; font-weight:800; color:var(--text); margin:0; }
+.cl-hero p { font-size:11px; color:var(--muted); margin:4px 0 0; }
+.cl-stats { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:16px; }
+.cl-stat { background:var(--dark-2); border:1px solid var(--border); border-radius:10px; padding:14px 18px; text-align:center; }
+.cl-stat-lbl { font-family:var(--font-mono); font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
+.cl-stat-val { font-family:var(--font-mono); font-size:22px; font-weight:800; margin-top:4px; }
+.cl-pending { background:rgba(255,210,62,0.06); border:1px dashed rgba(255,210,62,0.3); border-radius:10px; padding:10px 14px; margin-bottom:14px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.cl-pending-lbl { font-family:var(--font-mono); font-size:11px; color:var(--muted); margin-right:8px; }
+.cl-pending-chip { display:inline-flex; align-items:center; gap:4px; background:var(--dark); border:1px solid var(--border); border-radius:16px; padding:3px 10px; font-family:var(--font-mono); font-size:11px; }
+.cl-strength-MEGA { color:#ff9d00; font-weight:800; }
+.cl-strength-STRONG { color:var(--accent); font-weight:700; }
+.cl-strength-NORMAL { color:var(--muted); }
+.cl-strength-RISKY { color:var(--sell); font-weight:700; }
+.cl-row-open { background:rgba(0,229,160,0.04); }
+.cl-row-tp { background:rgba(0,229,160,0.10); }
+.cl-row-sl { background:rgba(255,77,109,0.08); }
+</style>
+
+<div class="cl-hero">
+  <h3>⚡ Кластеры сигналов</h3>
+  <p>N+ сигналов одного направления на одной монете за окно времени — самый надёжный предиктор движения. Backtest WR 78.6%.</p>
+</div>
+
+<!-- Stats cards -->
+<div class="cl-stats">
+  <div class="cl-stat"><div class="cl-stat-lbl">Всего</div><div class="cl-stat-val" id="clStatTotal">—</div></div>
+  <div class="cl-stat"><div class="cl-stat-lbl">Win Rate</div><div class="cl-stat-val" id="clStatWR">—</div></div>
+  <div class="cl-stat"><div class="cl-stat-lbl">Sum PnL</div><div class="cl-stat-val" id="clStatPnl">—</div></div>
+  <div class="cl-stat"><div class="cl-stat-lbl">🔥 MEGA / ⚡ STRONG</div><div class="cl-stat-val" id="clStatStrong">—</div></div>
+  <div class="cl-stat"><div class="cl-stat-lbl">OPEN</div><div class="cl-stat-val" id="clStatOpen">—</div></div>
+</div>
+
+<!-- Pending panel -->
+<div class="cl-pending" id="clPendingPanel">
+  <span class="cl-pending-lbl">⚡ Созревают до кластера:</span>
+  <span id="clPendingList" style="color:var(--muted);">загрузка…</span>
+</div>
+
+<!-- Toolbar + settings -->
+<div class="an-toolbar" style="padding:10px 18px;gap:8px;">
+  <select id="clFilterStatus" onchange="loadClusters()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="all">Все статусы</option>
+    <option value="OPEN">OPEN</option>
+    <option value="TP">TP</option>
+    <option value="SL">SL</option>
+  </select>
+  <select id="clFilterStr" onchange="filterClusters()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">Все силы</option>
+    <option value="MEGA">🔥 MEGA</option>
+    <option value="STRONG">⚡ STRONG</option>
+    <option value="NORMAL">⚡ NORMAL</option>
+    <option value="RISKY">⚠️ RISKY</option>
+  </select>
+  <select id="clFilterDir" onchange="filterClusters()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">Все</option>
+    <option value="LONG">🟢 LONG</option>
+    <option value="SHORT">🔴 SHORT</option>
+  </select>
+  <span id="clCount" class="an-filter-count"></span>
+  <button onclick="showClusterSettings()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer;color:var(--text);margin-left:auto;">⚙ Настройки</button>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th class="sortable">Время ▼</th>
+        <th class="sortable">Монета</th>
+        <th>Напр.</th>
+        <th>Сила</th>
+        <th>Источники</th>
+        <th>N</th>
+        <th>Entry</th>
+        <th>TP / SL</th>
+        <th>PnL %</th>
+        <th>Reversal</th>
+        <th>Статус</th>
+      </tr>
+    </thead>
+    <tbody id="clBody">
+      <tr><td colspan="11" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Settings modal -->
+<div id="clSettingsModal" style="display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);">
+  <div onclick="event.stopPropagation();" style="width:440px;max-width:92vw;background:var(--dark);border:1px solid var(--accent);border-radius:14px;padding:24px;font-family:var(--font-mono);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h3 style="margin:0;font-size:14px;color:var(--accent);">⚙ Настройки кластеров</h3>
+      <button onclick="document.getElementById('clSettingsModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">×</button>
+    </div>
+    <div id="clCfgFields" style="display:grid;gap:10px;"></div>
+    <div style="display:flex;gap:8px;margin-top:20px;">
+      <button onclick="saveClusterCfg()" style="background:var(--accent);color:#000;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer;flex:1;">Сохранить</button>
+      <button onclick="backfillClusters()" style="background:var(--dark-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 16px;cursor:pointer;">Backfill 96ч</button>
+    </div>
+    <div id="clCfgMsg" style="margin-top:10px;font-size:10px;color:var(--muted);text-align:center;"></div>
+  </div>
+</div>
+
+<script>
+let _clusters = [];
+let _clustersFiltered = [];
+
+async function loadClusters() {
+  const status = document.getElementById('clFilterStatus').value;
+  try {
+    const r = await fetch(`/api/clusters?status=${status}&limit=300`);
+    const d = await r.json();
+    _clusters = d.items || [];
+    // Stats
+    const s = d.stats || {};
+    document.getElementById('clStatTotal').textContent = s.total || 0;
+    document.getElementById('clStatWR').textContent = (s.wr || 0) + '%';
+    document.getElementById('clStatWR').className = 'cl-stat-val ' + ((s.wr || 0) >= 70 ? 'text-buy' : 'text-muted');
+    const pnl = s.sum_pnl || 0;
+    document.getElementById('clStatPnl').textContent = (pnl >= 0 ? '+' : '') + pnl + '%';
+    document.getElementById('clStatPnl').className = 'cl-stat-val ' + (pnl >= 0 ? 'text-buy' : 'text-sell');
+    document.getElementById('clStatStrong').textContent = `${s.mega || 0} / ${s.strong || 0}`;
+    document.getElementById('clStatOpen').textContent = s.open || 0;
+    filterClusters();
+  } catch(e) {}
+}
+
+function filterClusters() {
+  const str = document.getElementById('clFilterStr').value;
+  const dir = document.getElementById('clFilterDir').value;
+  let filtered = _clusters.filter(c => {
+    if (str && c.strength !== str) return false;
+    if (dir && c.direction !== dir) return false;
+    return true;
+  });
+  _clustersFiltered = filtered;
+  document.getElementById('clCount').textContent = `${filtered.length} из ${_clusters.length}`;
+  renderClusters(filtered);
+}
+
+function renderClusters(items) {
+  const tb = document.getElementById('clBody');
+  if (!items.length) {
+    tb.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Нет кластеров</td></tr>';
+    return;
+  }
+  const srcIcons = {cryptovizor:'🚀',tradium:'📡',anomaly:'⚠️',confluence:'🎯'};
+  tb.innerHTML = items.map((c, i) => {
+    const t = c.trigger_at ? new Date(c.trigger_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+    const pair = (c.pair || '').replace('/USDT','');
+    const dirBadge = c.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
+    const strEmoji = {MEGA:'🔥🔥🔥',STRONG:'⚡⚡',NORMAL:'⚡',RISKY:'⚠️'}[c.strength] || '';
+    const srcs = [...new Set((c.signals_in_cluster||[]).map(s => srcIcons[s.source]||'•'))].join('');
+    const rowCls = c.status === 'TP' ? 'cl-row-tp' : c.status === 'SL' ? 'cl-row-sl' : 'cl-row-open';
+    const pnl = c.pnl_percent;
+    const pnlStr = pnl != null ? ((pnl>=0?'+':'') + pnl.toFixed(2) + '%') : '—';
+    const pnlCls = pnl != null ? (pnl >= 0 ? 'text-buy fw-700' : 'text-sell fw-700') : 'text-muted';
+    const revScore = c.reversal_score || 0;
+    const revIcon = Math.abs(revScore) >= 50 ? '🔥' : Math.abs(revScore) >= 30 ? '⚡' : '⚪';
+    const statusBadge = c.status === 'TP' ? '<span class="badge badge-buy">TP</span>' : c.status === 'SL' ? '<span class="badge badge-sell">SL</span>' : '<span class="badge badge-status">OPEN</span>';
+    return `<tr class="${rowCls}" style="cursor:pointer;" onclick="toggleClusterChart(${i},'${c.symbol}')">
+      <td class="mono text-muted" style="font-size:11px;">${t}</td>
+      <td class="mono text-accent fw-700">${pair}</td>
+      <td>${dirBadge}</td>
+      <td class="mono cl-strength-${c.strength}">${strEmoji} ${c.strength||''}</td>
+      <td style="font-size:14px;">${srcs}</td>
+      <td class="mono fw-700">${c.signals_count || 0}</td>
+      <td class="mono">${c.trigger_price}</td>
+      <td class="mono" style="font-size:10px;"><span class="text-buy">${(c.tp_price||0).toFixed(6)}</span> / <span class="text-sell">${(c.sl_price||0).toFixed(6)}</span></td>
+      <td class="mono ${pnlCls}">${pnlStr}</td>
+      <td class="mono" style="font-size:11px;">${revIcon} ${revScore>0?'+':''}${revScore}</td>
+      <td>${statusBadge}</td>
+    </tr>
+    <tr id="clch${i}" style="display:none;"><td colspan="11" style="padding:0;background:var(--dark-2);"><div id="clchA${i}" style="height:400px;"></div></td></tr>`;
+  }).join('');
+}
+
+let _lastClTg = 0;
+async function toggleClusterChart(idx, symbol) {
+  const now = Date.now();
+  if (now - _lastClTg < 500) return;
+  _lastClTg = now;
+  const tr = document.getElementById('clch'+idx);
+  const area = document.getElementById('clchA'+idx);
+  if (tr.style.display !== 'none') { tr.style.display='none'; return; }
+  tr.style.display='table-row';
+  if (area.dataset.loaded) return;
+  area.dataset.loaded = '1';
+  const c = _clustersFiltered[idx];
+  if (!c) return;
+  _renderLwcSignalChart('clchA'+idx, {
+    symbol: c.symbol, direction: c.direction,
+    entry: c.trigger_price, tp1: c.tp_price, sl: c.sl_price,
+    at: c.trigger_at, title: symbol.replace('USDT','') + ' · Cluster ' + (c.strength||''),
+    pattern: `${c.signals_count} сигналов · ${c.sources_count} источников`,
+    source: 'cluster',
+  });
+}
+
+async function loadPendingClusters() {
+  try {
+    const r = await fetch('/api/pending-clusters');
+    const d = await r.json();
+    const items = d.items || [];
+    const el = document.getElementById('clPendingList');
+    if (!items.length) { el.innerHTML = '<span style="color:var(--muted);">нет созревающих</span>'; return; }
+    el.innerHTML = items.slice(0, 20).map(p => {
+      const dirC = p.direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
+      const dirE = p.direction === 'LONG' ? '🟢' : '🔴';
+      return `<span class="cl-pending-chip"><span style="color:${dirC}">${dirE}</span> ${(p.pair||'').replace('/USDT','')} <b style="color:${dirC}">${p.count}/${p.min}</b> <span style="color:var(--muted);font-size:10px;">${p.time_left_h}ч</span></span>`;
+    }).join('');
+  } catch(e) {}
+}
+
+async function showClusterSettings() {
+  try {
+    const r = await fetch('/api/cluster-config');
+    const c = await r.json();
+    const fields = [
+      ['window_h', 'Окно сбора (ч)', 1, 24],
+      ['min_count', 'Минимум сигналов', 2, 5],
+      ['dedup_h', 'Dedup окно (ч)', 1, 8],
+      ['tp_pct', 'TP %', 0.5, 5.0],
+      ['sl_pct', 'SL %', 0.5, 5.0],
+      ['leverage_boost', 'Leverage boost', 1.0, 5.0],
+      ['strong_boost', 'STRONG boost', 1.0, 5.0],
+    ];
+    document.getElementById('clCfgFields').innerHTML = fields.map(([k,l,min,max]) =>
+      `<label style="display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:11px;color:var(--muted);">
+         <span>${l}</span>
+         <input type="number" step="0.1" min="${min}" max="${max}" value="${c[k]}" id="clCfg_${k}" style="width:100px;background:var(--dark-2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-family:var(--font-mono);text-align:right;">
+       </label>`
+    ).join('');
+    document.getElementById('clSettingsModal').style.display='flex';
+  } catch(e) {
+    alert('Ошибка загрузки: ' + e.message);
+  }
+}
+
+async function saveClusterCfg() {
+  const body = {};
+  for (const k of ['window_h','min_count','dedup_h','tp_pct','sl_pct','leverage_boost','strong_boost']) {
+    const v = document.getElementById('clCfg_'+k).value;
+    if (v !== '') body[k] = parseFloat(v);
+  }
+  try {
+    const r = await fetch('/api/cluster-config', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await r.json();
+    document.getElementById('clCfgMsg').textContent = '✅ Сохранено';
+    setTimeout(()=>{document.getElementById('clSettingsModal').style.display='none';}, 700);
+  } catch(e) {
+    document.getElementById('clCfgMsg').textContent = 'Ошибка: ' + e.message;
+  }
+}
+
+async function backfillClusters() {
+  if (!confirm('Запустить backfill за 96 часов? Это создаст исторические кластеры.')) return;
+  try {
+    await fetch('/api/backfill-clusters', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hours: 96})});
+    document.getElementById('clCfgMsg').textContent = '🚀 Backfill запущен (следите в Telegram)';
+  } catch(e) {}
+}
+
+// ESC closes modal
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { const m = document.getElementById('clSettingsModal'); if (m) m.style.display='none'; }
+});
+document.getElementById('clSettingsModal').onclick = (e) => { if (e.target.id === 'clSettingsModal') e.target.style.display='none'; };
+
+loadClusters();
+loadPendingClusters();
+setInterval(loadClusters, 30000);
+setInterval(loadPendingClusters, 30000);
+</script>
+
 {% elif bot == 'autotrading' %}
 <!-- ── Авто-торговля ──────────────────────────────────────────────── -->
 <style>
