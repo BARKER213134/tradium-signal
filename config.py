@@ -57,14 +57,15 @@ BOT6_BOT_TOKEN = os.getenv("BOT6_BOT_TOKEN", "")
 BOT7_BOT_TOKEN = os.getenv("BOT7_BOT_TOKEN", "")
 
 # Список ботов для UI (Кластеры — после Confluence)
+# category: 'crypto' (сейчас) | 'stocks' (в будущем)
 BOTS = [
-    {"id": "tradium", "label": "Tradium"},
-    {"id": BOT2_NAME, "label": BOT2_LABEL},
-    {"id": "anomaly", "label": "Аномалии"},
-    {"id": "confluence", "label": "Confluence"},
-    {"id": "clusters", "label": "Кластеры"},
-    {"id": "journal", "label": "Журнал"},
-    {"id": "autotrading", "label": "Авто-торговля"},
+    {"id": "tradium", "label": "Tradium", "category": "crypto"},
+    {"id": BOT2_NAME, "label": BOT2_LABEL, "category": "crypto"},
+    {"id": "anomaly", "label": "Аномалии", "category": "crypto"},
+    {"id": "confluence", "label": "Confluence", "category": "crypto"},
+    {"id": "clusters", "label": "Кластеры", "category": "crypto"},
+    {"id": "journal", "label": "Журнал", "category": "crypto"},
+    {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
 ]
 
 # Админка
