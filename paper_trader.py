@@ -191,23 +191,6 @@ async def ai_decide(signal_data: dict) -> dict:
         r = "✅" if (h.get("pnl_usdt") or 0) > 0 else "❌"
         hist_str += f"  {r} {h['symbol']} {h['direction']} PnL={h.get('pnl_pct',0):+.1f}% src={h.get('source','')}\n"
 
-    # Cluster context — если сигнал из кластера, добавляем спец-блок
-    cluster_block = ""
-    is_cluster = signal_data.get("is_cluster") or signal_data.get("source") == "cluster"
-    if is_cluster:
-        strength = signal_data.get("cluster_strength", "NORMAL")
-        srcs = signal_data.get("sources_count", 1)
-        rev = signal_data.get("reversal_score", 0)
-        cluster_block = (
-            f"\n🔥 КЛАСТЕРНЫЙ СИГНАЛ ({strength}):\n"
-            f"  {srcs} независимых источников согласны\n"
-            f"  Reversal Meter: {rev:+d}\n"
-            f"  Backtest WR на кластерах: 78.6%\n"
-            f"  РЕКОМЕНДАЦИЯ: можно увеличить размер/плечо (×2-3 от обычного)\n"
-        )
-        if strength == "RISKY":
-            cluster_block += "  ⚠️ НО кластер ПРОТИВ Reversal — опасно, снизь размер!\n"
-
     prompt = (
         f"Ты — AI трейдер на Paper Trading. Твоя задача — максимизировать прибыль.\n\n"
         f"ДЕПОЗИТ: ${balance:.2f}\n"
@@ -219,7 +202,6 @@ async def ai_decide(signal_data: dict) -> dict:
         f"\nРЫНОК:\n"
         f"  Keltner ETH: {kc.get('direction','?')} ({'подтверждён' if kc.get('confirmed') else 'neutral'})\n"
         f"  ETH 1h: {eth.get('eth_1h',0):+.2f}% | BTC 1h: {eth.get('btc_1h',0):+.2f}%\n"
-        f"{cluster_block}"
         f"\nНОВЫЙ СИГНАЛ:\n"
         f"  Пара: {signal_data.get('symbol','')}\n"
         f"  Направление: {signal_data.get('direction','')}\n"
@@ -235,7 +217,6 @@ async def ai_decide(signal_data: dict) -> dict:
         f"  - Плечо: 1-10x\n"
         f"  - Ставь TP и SL на основе уровней\n"
         f"  - Не входи если сигнал против Keltner (когда Keltner подтверждён)\n"
-        f"  - При кластерном сигнале (78.6% WR) — бери увеличенный размер\n"
         f"  - Учись на прошлых ошибках\n\n"
         f"Ответь ТОЛЬКО JSON без markdown:\n"
         f'{{"enter": true/false, "leverage": 1-10, "size_pct": 1-5, "tp1": цена, "sl": цена, "reasoning": "почему"}}'
@@ -289,9 +270,7 @@ async def ai_review_trade(trade: dict) -> str:
 
 
 async def on_signal(signal_data: dict):
-    """Вызывается при новом сигнале. AI решает и открывает позицию.
-    Для is_cluster=True применяется boost на leverage и size в зависимости
-    от cluster_strength (MEGA → ×strong_boost, STRONG → ×leverage_boost)."""
+    """Вызывается при новом сигнале. AI решает и открывает позицию."""
     decision = await ai_decide(signal_data)
     if not decision.get("enter"):
         logger.info(f"Paper SKIP: {signal_data.get('symbol','')} — {decision.get('reasoning','')}")
@@ -301,36 +280,10 @@ async def on_signal(signal_data: dict):
     if not entry:
         return None
 
-    tp1 = decision.get("tp1") or signal_data.get("tp1") or (entry * 1.015 if signal_data.get("direction") == "LONG" else entry * 0.985)
-    sl = decision.get("sl") or signal_data.get("sl") or (entry * 0.985 if signal_data.get("direction") == "LONG" else entry * 1.015)
+    tp1 = decision.get("tp1") or (entry * 1.03 if signal_data.get("direction") == "LONG" else entry * 0.97)
+    sl = decision.get("sl") or (entry * 0.98 if signal_data.get("direction") == "LONG" else entry * 1.02)
     leverage = max(1, min(10, decision.get("leverage", 3)))
     size_pct = max(1, min(5, decision.get("size_pct", 2)))
-
-    # Cluster boost — повышаем leverage и size для кластерных сигналов
-    is_cluster = signal_data.get("is_cluster") or signal_data.get("source") == "cluster"
-    strength = signal_data.get("cluster_strength", "NORMAL")
-    boost_note = ""
-    if is_cluster:
-        try:
-            from cluster_detector import get_config as _cluster_cfg
-            cfg = _cluster_cfg()
-            if strength == "MEGA":
-                mult = cfg["strong_boost"]
-                leverage = max(1, min(10, int(round(leverage * mult))))
-                size_pct = max(1, min(5, size_pct + 2))
-                boost_note = f" [MEGA cluster boost ×{mult:.0f}]"
-            elif strength == "STRONG":
-                mult = cfg["leverage_boost"]
-                leverage = max(1, min(10, int(round(leverage * mult))))
-                size_pct = max(1, min(5, size_pct + 1))
-                boost_note = f" [STRONG cluster boost ×{mult:.0f}]"
-            elif strength == "NORMAL":
-                mult = cfg["leverage_boost"] * 0.7
-                leverage = max(1, min(10, int(round(leverage * mult))))
-                boost_note = f" [cluster boost ×{mult:.1f}]"
-            # RISKY — не повышаем, наоборот AI должен был снизить
-        except Exception as e:
-            logger.debug(f"cluster boost fail: {e}")
 
     pos = open_position(
         symbol=signal_data.get("symbol", ""),
@@ -341,7 +294,7 @@ async def on_signal(signal_data: dict):
         leverage=leverage,
         size_pct=size_pct,
         source=signal_data.get("source", ""),
-        reasoning=decision.get("reasoning", "") + boost_note,
+        reasoning=decision.get("reasoning", ""),
     )
     # Алерт в Telegram
     await _send_open_alert(pos, decision)

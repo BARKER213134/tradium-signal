@@ -53,16 +53,12 @@ BOT5_BOT_TOKEN = os.getenv("BOT5_BOT_TOKEN", "")
 # Шестой бот — Paper Trading
 BOT6_BOT_TOKEN = os.getenv("BOT6_BOT_TOKEN", "")
 
-# Седьмой бот — Cluster Alerts
-BOT7_BOT_TOKEN = os.getenv("BOT7_BOT_TOKEN", "")
-
-# Список ботов для UI (Кластеры — после Confluence)
+# Список ботов для UI
 BOTS = [
     {"id": "tradium", "label": "Tradium"},
     {"id": BOT2_NAME, "label": BOT2_LABEL},
     {"id": "anomaly", "label": "Аномалии"},
     {"id": "confluence", "label": "Confluence"},
-    {"id": "clusters", "label": "Кластеры"},
     {"id": "journal", "label": "Журнал"},
     {"id": "autotrading", "label": "Авто-торговля"},
 ]

@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1029,128 +1029,6 @@ async def _run_backfill_patterns(limit: int, status: str):
             pass
     except Exception:
         log.exception("[backfill-patterns] crashed")
-
-
-@app.get("/api/clusters")
-async def api_clusters(status: str = "all", limit: int = 200):
-    """Список кластеров для UI вкладки "Кластеры"."""
-    from database import _clusters
-    from pymongo import DESCENDING
-    q = {}
-    if status and status != "all":
-        q["status"] = status.upper()
-    docs = list(_clusters().find(q).sort("trigger_at", DESCENDING).limit(limit))
-    out = []
-    for d in docs:
-        d.pop("_id", None)
-        ta = d.get("trigger_at")
-        if hasattr(ta, "isoformat"): d["trigger_at"] = ta.isoformat()
-        ca = d.get("closed_at")
-        if hasattr(ca, "isoformat"): d["closed_at"] = ca.isoformat()
-        created = d.get("created_at")
-        if hasattr(created, "isoformat"): d["created_at"] = created.isoformat()
-        # Нормализуем at в signals_in_cluster
-        for s in d.get("signals_in_cluster", []):
-            if hasattr(s.get("at"), "isoformat"):
-                s["at"] = s["at"].isoformat()
-        out.append(d)
-    # Статистика
-    all_docs = list(_clusters().find({}))
-    wins = sum(1 for x in all_docs if x.get("status") == "TP")
-    losses = sum(1 for x in all_docs if x.get("status") == "SL")
-    open_n = sum(1 for x in all_docs if x.get("status") == "OPEN")
-    mega = sum(1 for x in all_docs if x.get("strength") == "MEGA")
-    strong = sum(1 for x in all_docs if x.get("strength") == "STRONG")
-    total_pnl = sum((x.get("pnl_percent") or 0) for x in all_docs if x.get("status") in ("TP", "SL"))
-    return {
-        "items": out,
-        "stats": {
-            "total": len(all_docs), "wins": wins, "losses": losses, "open": open_n,
-            "mega": mega, "strong": strong,
-            "wr": round(wins / max(wins + losses, 1) * 100, 1),
-            "sum_pnl": round(total_pnl, 1),
-        },
-    }
-
-
-@app.get("/api/cluster-config")
-async def api_cluster_config_get():
-    from cluster_detector import get_config
-    return await asyncio.to_thread(get_config)
-
-
-@app.post("/api/cluster-config")
-async def api_cluster_config_post(payload: dict):
-    from cluster_detector import save_config
-    return await asyncio.to_thread(save_config, payload or {})
-
-
-@app.get("/api/pending-clusters")
-async def api_pending_clusters():
-    """Монеты которые сейчас 1/N — ждут второго сигнала."""
-    from cluster_detector import get_pending_clusters, get_config
-    pending = await asyncio.to_thread(get_pending_clusters, 50)
-    cfg = await asyncio.to_thread(get_config)
-    return {"items": pending, "config": cfg}
-
-
-@app.post("/api/backfill-clusters")
-async def api_backfill_clusters(payload: dict | None = None):
-    """Пробежать по истории сигналов за N часов и создать кластеры."""
-    payload = payload or {}
-    hours = int(payload.get("hours") or 96)
-    asyncio.create_task(_run_backfill_clusters(hours))
-    return {"ok": True, "started": True, "hours": hours}
-
-
-async def _run_backfill_clusters(hours: int):
-    import logging as _log
-    from datetime import datetime, timezone, timedelta
-    from cluster_detector import should_trigger_cluster, create_cluster
-    log = _log.getLogger("backfill-clusters")
-    try:
-        # Собираем все сигналы за окно
-        from database import _signals, _anomalies, _confluence
-        since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
-        all_sigs = []
-        for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True,
-                                   "pattern_triggered_at": {"$gte": since},
-                                   "direction": {"$ne": None}, "pair": {"$ne": None}}):
-            all_sigs.append({"pair": s["pair"], "direction": s["direction"], "at": s["pattern_triggered_at"]})
-        for s in _signals().find({"source": "tradium",
-                                   "received_at": {"$gte": since},
-                                   "direction": {"$ne": None}, "pair": {"$ne": None}}):
-            all_sigs.append({"pair": s["pair"], "direction": s["direction"], "at": s["received_at"]})
-        for a in _anomalies().find({"detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]}}):
-            pair = a.get("pair") or a.get("symbol", "").replace("USDT", "/USDT")
-            all_sigs.append({"pair": pair, "direction": a["direction"], "at": a["detected_at"]})
-        for c in _confluence().find({"detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]}}):
-            pair = c.get("pair") or c.get("symbol", "").replace("USDT", "/USDT")
-            all_sigs.append({"pair": pair, "direction": c["direction"], "at": c["detected_at"]})
-        all_sigs.sort(key=lambda x: x["at"])
-        log.info(f"[backfill-clusters] {len(all_sigs)} signals to process")
-
-        created = 0
-        for sig in all_sigs:
-            trigger, in_cluster, cnt = await asyncio.to_thread(
-                should_trigger_cluster, sig["pair"], sig["direction"], sig["at"]
-            )
-            if not trigger:
-                continue
-            cl = await asyncio.to_thread(create_cluster, sig["pair"], sig["direction"], in_cluster, sig["at"])
-            if cl:
-                created += 1
-        log.info(f"[backfill-clusters] Created {created} clusters")
-        try:
-            from watcher import _bot, _admin_chat_id
-            if _bot and _admin_chat_id:
-                await _bot.send_message(_admin_chat_id,
-                    f"⚡ <b>Backfill кластеров завершён</b>\n\nПериод: {hours}ч\nСоздано: {created}",
-                    parse_mode="HTML")
-        except Exception:
-            pass
-    except Exception:
-        log.exception("[backfill-clusters] crashed")
 
 
 @app.get("/api/reversal-meter")

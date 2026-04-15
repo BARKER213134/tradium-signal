@@ -59,14 +59,6 @@ def _confluence() -> Collection:
     return _get_db().confluence
 
 
-def _clusters() -> Collection:
-    return _get_db().clusters
-
-
-def _cluster_config() -> Collection:
-    return _get_db().system  # храним в system._id='cluster_config'
-
-
 
 
 def _counters() -> Collection:
@@ -549,11 +541,4 @@ def init_db():
     an.create_index("symbol")
     an.create_index("score")
     an.create_index("detected_at")
-
-    cl = _clusters()
-    cl.create_index("symbol")
-    cl.create_index("direction")
-    cl.create_index("trigger_at")
-    cl.create_index("status")
-    cl.create_index([("symbol", ASCENDING), ("direction", ASCENDING), ("trigger_at", DESCENDING)])
 

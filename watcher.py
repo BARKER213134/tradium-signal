@@ -817,7 +817,6 @@ async def _check_once():
             # ai_signals убран — AI filter теперь внутри _check_cryptovizor
             ("ai_analysis", lambda: _fill_missing_ai_analysis(db)),
             ("paper_positions", lambda: _check_paper_positions()),
-            ("cluster_outcomes", lambda: _check_cluster_outcomes()),
         ]:
             try:
                 print(f"[WATCHER] step: {step_name}", flush=True)
@@ -896,7 +895,6 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"{_market_block(_pump, _stp, _std)}"
     )
     text += await _reversal_block(signal.direction)
-    text += await _pending_cluster_block(pair, signal.direction)
     # Сохраняем pump в БД
     from database import _signals as _sc
     _sc().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
@@ -910,7 +908,6 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
             await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Cryptovizor alert sent #{signal.id} {pair} {pattern}")
         await _paper_on_signal({"symbol": sym, "direction": signal.direction, "entry": current_price, "source": "cryptovizor", "pattern": pattern, "score": getattr(signal, "ai_score", None), "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
-        await _cluster_check_on_signal(pair, signal.direction)
     except Exception as e:
         logger.error(f"Cryptovizor alert fail #{signal.id}: {e}")
 
@@ -1379,7 +1376,6 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
         text += f"\n📝 {tg_summary}\n"
     text += f"\n{_market_block(_pump, _stp, _st or {})}"
     text += await _reversal_block(signal.direction)
-    text += await _pending_cluster_block(signal.pair, signal.direction)
 
     from database import _signals as _sc2
     _sc2().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
@@ -1388,7 +1384,6 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
         await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"AI signal alert sent #{signal.id}")
         await _paper_on_signal({"symbol": sym, "direction": signal.direction, "entry": current_price, "source": "ai_signal", "pattern": signal.pattern_name, "score": score, "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
-        await _cluster_check_on_signal(signal.pair, signal.direction)
     except Exception as e:
         logger.error(f"AI signal alert fail: {e}")
 
@@ -1605,7 +1600,6 @@ async def _send_anomaly_alert(r: dict):
     text += f"\n\n💡 <i>{conclusion}</i>"
     text += f"\n\n{_market_block(_pump, _stp, _st or {})}"
     text += await _reversal_block(r.get("direction"))
-    text += await _pending_cluster_block(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
 
     from database import _anomalies as _anc
     _anc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
@@ -1614,7 +1608,6 @@ async def _send_anomaly_alert(r: dict):
         await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Anomaly alert sent: {r.get('symbol')}")
         await _paper_on_signal({"symbol": r["symbol"], "direction": r["direction"], "entry": r.get("price",0), "source": "anomaly", "score": r.get("score",0), "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
-        await _cluster_check_on_signal(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
     except Exception as e:
         logger.error(f"Anomaly alert fail: {e}")
 
@@ -1721,8 +1714,6 @@ async def _check_confluence():
 
 
 _bot5 = None
-_bot7 = None
-
 
 def _setup_bot5():
     global _bot5
@@ -1737,214 +1728,6 @@ def _setup_bot5():
         logger.info("BOT5 (Confluence) initialized")
     except Exception as e:
         logger.error(f"BOT5 init fail: {e}")
-
-
-def _setup_bot7():
-    global _bot7
-    from config import BOT7_BOT_TOKEN
-    if not BOT7_BOT_TOKEN:
-        return
-    try:
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-        _bot7 = Bot(token=BOT7_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        logger.info("BOT7 (Cluster Alerts) initialized")
-    except Exception as e:
-        logger.error(f"BOT7 init fail: {e}")
-
-
-async def _pending_cluster_block(pair: str, direction: str, triggered: bool = False) -> str:
-    """Блок 'Cluster Status' для обычных алертов.
-    triggered=True если этот сигнал только что триггернул кластер."""
-    try:
-        from cluster_detector import compute_pending_state
-        st = compute_pending_state(pair, direction)
-        if triggered or st["state"] == "ready":
-            return (
-                "\n─── ⚡⚡⚡ CLUSTER TRIGGERED ⚡⚡⚡ ───\n"
-                f"🚀 {st['count']}/{st['min']} сигналов по {pair} {direction}\n"
-                "→ Отправлено в BOT7 Cluster Alerts"
-            )
-        if st["state"] == "pending" and st["count"] >= 1:
-            return (
-                "\n─── ⚡ Cluster Status ───\n"
-                f"🔔 {st['count']}/{st['min']} · ждём ещё {st['min'] - st['count']} {direction} "
-                f"(окно {st['time_left_h']}ч)"
-            )
-    except Exception as e:
-        logger.debug(f"pending block fail: {e}")
-    return ""
-
-
-async def _send_cluster_alert(cl: dict):
-    """Отправляет cluster алерт в BOT7."""
-    if not _bot7:
-        _setup_bot7()
-    if not _bot7 or not _admin_chat_id:
-        return
-    direction = cl["direction"]
-    dir_emoji = "🟢" if direction == "LONG" else "🔴"
-    strength = cl.get("strength", "NORMAL")
-    strength_emoji = {"MEGA": "🔥🔥🔥", "STRONG": "⚡⚡", "NORMAL": "⚡", "RISKY": "⚠️"}.get(strength, "⚡")
-    pair = cl["pair"].replace("/USDT", "")
-    tp_pct = abs((cl["tp_price"] - cl["trigger_price"]) / cl["trigger_price"] * 100)
-    sl_pct = abs((cl["sl_price"] - cl["trigger_price"]) / cl["trigger_price"] * 100)
-
-    # Участники
-    src_icons = {"cryptovizor": "🚀", "tradium": "📡", "anomaly": "⚠️", "confluence": "🎯"}
-    src_names = {"cryptovizor": "Молот/Паттерн", "tradium": "Tradium Setup",
-                 "anomaly": "Anomaly", "confluence": "Confluence"}
-    participants = []
-    for s in cl["signals_in_cluster"]:
-        icon = src_icons.get(s["source"], "•")
-        t = s["at"].strftime("%H:%M") if hasattr(s["at"], "strftime") else str(s["at"])[11:16]
-        price = s.get("price", "?")
-        meta = s.get("meta", {}) or {}
-        extra = ""
-        if s["source"] == "confluence":
-            extra = f" (score {meta.get('score','?')})"
-        elif s["source"] == "cryptovizor" and meta.get("pattern_name"):
-            extra = f" {meta['pattern_name']}"
-        elif s["source"] == "anomaly" and meta.get("types"):
-            extra = f" {','.join(meta['types'][:2])}"
-        participants.append(f"{icon} {t} @ {price}{extra}")
-
-    # Reversal combo
-    rev_score = cl.get("reversal_score", 0)
-    rev_dir = cl.get("reversal_direction", "NEUTRAL")
-    if strength == "MEGA":
-        combo_line = f"🔥 <b>MEGA</b> — Cluster + Strong Reversal ({rev_score:+d})"
-    elif strength == "STRONG":
-        combo_line = f"⚡ <b>STRONG</b> — Cluster + Reversal aligned ({rev_score:+d})"
-    elif strength == "RISKY":
-        combo_line = f"⚠️ <b>RISKY</b> — Cluster ПРОТИВ Reversal ({rev_score:+d}) — снизить размер"
-    else:
-        combo_line = f"⚡ NORMAL · Reversal {rev_score:+d} {rev_dir.lower()}"
-
-    # Рекомендация leverage
-    from cluster_detector import get_config
-    cfg = get_config()
-    if strength == "MEGA":
-        lev_rec = f"Leverage ×{cfg['strong_boost']:.0f} recommended"
-    elif strength == "STRONG":
-        lev_rec = f"Leverage ×{cfg['leverage_boost']:.0f} recommended"
-    else:
-        lev_rec = "Leverage ×1-2 (обычный)"
-
-    text = (
-        f"{strength_emoji} <b>CLUSTER SIGNAL · {strength}</b> {strength_emoji}\n"
-        f"\n"
-        f"<b>{pair}/USDT</b> · {dir_emoji} <b>{direction}</b>\n"
-        f"<code>{cl['symbol']}</code>\n"
-        f"\n"
-        f"📊 <b>{cl['signals_count']} сигналов</b> из <b>{cl['sources_count']} источников</b>\n"
-        f"\n"
-        f"─── Участники ───\n"
-        + "\n".join(participants) + "\n"
-        f"\n"
-        f"─── Entry ───\n"
-        f"📍 Trigger: <code>{cl['trigger_price']}</code>\n"
-        f"🎯 TP: <code>{cl['tp_price']:.6f}</code> (+{tp_pct:.1f}%)\n"
-        f"🛑 SL: <code>{cl['sl_price']:.6f}</code> (-{sl_pct:.1f}%)\n"
-        f"\n"
-        f"─── Cluster + Reversal ───\n"
-        f"{combo_line}\n"
-        f"\n"
-        f"💡 <i>Backtest WR: 78.6% · {lev_rec}</i>"
-    )
-
-    try:
-        await _bot7.send_message(_admin_chat_id, text, parse_mode="HTML")
-        logger.info(f"Cluster alert sent: {pair} {direction} strength={strength}")
-        # Paper Trading pickup
-        try:
-            await _paper_on_signal({
-                "symbol": cl["symbol"], "pair": cl["pair"],
-                "direction": direction, "entry": cl["trigger_price"],
-                "tp1": cl["tp_price"], "sl": cl["sl_price"],
-                "source": "cluster",
-                "is_cluster": True,
-                "cluster_strength": strength,
-                "sources_count": cl["sources_count"],
-                "reversal_score": rev_score,
-            })
-        except Exception as e:
-            logger.debug(f"paper_on_signal cluster: {e}")
-    except Exception as e:
-        logger.error(f"Cluster alert fail: {e}")
-
-
-async def _send_cluster_close_alert(cl: dict):
-    """Отправляет уведомление о закрытии кластера (TP/SL)."""
-    if not _bot7:
-        _setup_bot7()
-    if not _bot7 or not _admin_chat_id:
-        return
-    status = cl.get("status", "?")
-    pnl = cl.get("pnl_percent", 0)
-    is_tp = status == "TP"
-    emoji = "🎯" if is_tp else "🛑"
-    outcome = "✅ ПРИБЫЛЬ" if is_tp else "❌ УБЫТОК"
-    pair = cl["pair"].replace("/USDT", "")
-    text = (
-        f"{emoji} <b>CLUSTER {status}</b> · {pair}/USDT\n"
-        f"\n"
-        f"Entry: <code>{cl['trigger_price']}</code>\n"
-        f"Exit:  <code>{cl.get('exit_price')}</code>\n"
-        f"PnL: <b>{pnl:+.2f}%</b>\n"
-        f"\n"
-        f"{outcome} · {cl.get('strength', '')}"
-    )
-    try:
-        await _bot7.send_message(_admin_chat_id, text, parse_mode="HTML")
-    except Exception:
-        pass
-
-
-async def _cluster_check_on_signal(pair: str, direction: str, at: datetime | None = None):
-    """Вызывается после save каждого сигнала (CV/Anom/Conf/Tradium).
-    Если сработал триггер — создаёт кластер и шлёт в BOT7."""
-    try:
-        from cluster_detector import should_trigger_cluster, create_cluster
-        import datetime as _dt
-        at = at or _dt.datetime.utcnow()
-        trigger, sigs, count = should_trigger_cluster(pair, direction, at)
-        if not trigger:
-            return None
-        cl = create_cluster(pair, direction, sigs, at)
-        if cl:
-            await _send_cluster_alert(cl)
-            # WebSocket broadcast
-            try:
-                _broadcast("cluster_new", {"id": cl["id"], "pair": cl["pair"], "direction": direction})
-            except Exception:
-                pass
-        return cl
-    except Exception as e:
-        logger.debug(f"cluster check fail: {e}")
-        return None
-
-
-async def _check_cluster_outcomes():
-    """Периодическая проверка открытых кластеров на TP/SL."""
-    try:
-        from cluster_detector import check_cluster_outcomes
-        from database import _clusters
-        open_clusters = list(_clusters().find({"status": "OPEN"}))
-        if not open_clusters:
-            return
-        pairs = list({c.get("pair") for c in open_clusters if c.get("pair")})
-        prices = await get_prices_any(pairs)
-        closed = check_cluster_outcomes(prices)
-        for cl in closed:
-            await _send_cluster_close_alert(cl)
-            try:
-                _broadcast("cluster_close", {"id": cl["id"], "status": cl["status"]})
-            except Exception:
-                pass
-    except Exception as e:
-        logger.debug(f"cluster outcomes: {e}")
 
 
 async def _send_confluence_alert(r: dict):
@@ -2049,7 +1832,6 @@ async def _send_confluence_alert(r: dict):
     text += f"\n\n💡 <i>{conclusion}</i>"
     text += f"\n\n{_market_block(_pump, _stp, _st or {})}"
     text += await _reversal_block(r.get("direction"))
-    text += await _pending_cluster_block(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
 
     from database import _confluence as _cfc
     _cfc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
@@ -2058,7 +1840,6 @@ async def _send_confluence_alert(r: dict):
         await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Confluence alert: {r['symbol']}")
         await _paper_on_signal({"symbol": r["symbol"], "direction": r["direction"], "entry": r.get("price",0), "source": "confluence", "pattern": r.get("pattern",""), "score": r.get("score",0), "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
-        await _cluster_check_on_signal(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
     except Exception as e:
         logger.error(f"Confluence alert fail: {e}")
 
