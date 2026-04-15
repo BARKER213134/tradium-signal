@@ -204,8 +204,12 @@ def scan_confluence(symbol: str) -> Optional[dict]:
         pass
 
     # ── Итог ──────────────────────────────────────────────────────
+    # Трёхуровневая схема:
+    #   score < 4  — отбрасываем (шум)
+    #   score = 4  — MEDIUM, уходит в БД (если st_passed на уровне watcher) и в кластеры, но без алерта в BOT4
+    #   score ≥ 5  — STRONG, алерт в BOT4 + БД + кластеры
     score = len(factors)
-    if score < 5:
+    if score < 4:
         return None
 
     # Финальное направление
@@ -231,7 +235,7 @@ def scan_confluence(symbol: str) -> Optional[dict]:
     }
 
 
-def scan_confluence_batch(symbols: list[str], min_score: int = 5) -> list[dict]:
+def scan_confluence_batch(symbols: list[str], min_score: int = 4) -> list[dict]:
     """Сканирует батч пар. Возвращает только score >= min_score."""
     results = []
     for s in symbols:

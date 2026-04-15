@@ -1677,6 +1677,12 @@ async def _check_confluence():
 
         st_passed, st_data = _check_keltner_filter(r["direction"])
 
+        # Гейт для score=4: пропускаем только если st_passed=True (KC-подтверждение)
+        # Score ≥ 5 записываем всегда (STRONG и выше).
+        if r["score"] == 4 and not st_passed:
+            logger.debug(f"Confluence {r['symbol']} score=4 skip: ST=❌")
+            continue
+
         doc = {
             "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
             "score": r["score"], "strength": r["strength"],
@@ -1691,7 +1697,8 @@ async def _check_confluence():
         results.append(r)
         logger.info(f"Confluence: {r['symbol']} score={r['score']} {r['strength']} {r['direction']} ST={'✅' if st_passed else '❌'}")
 
-        # Алерт только если ST подтверждён и score >= 5 (минимум STRONG)
+        # Алерт в BOT4 только если ST подтверждён и score >= 5 (минимум STRONG).
+        # Score=4 живёт в БД и кормит кластеры, но не спамит бот.
         if r["score"] >= 5 and st_passed:
             r["_st"] = st_data
             await _send_confluence_alert(r)
