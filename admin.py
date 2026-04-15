@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1078,6 +1078,31 @@ async def api_cluster_config_get():
 async def api_cluster_config_post(payload: dict):
     from cluster_detector import save_config
     return await asyncio.to_thread(save_config, payload or {})
+
+
+@app.get("/api/pair-signals")
+async def api_pair_signals(pair: str, direction: str = "", window_h: int = 8):
+    """Все сигналы по паре + (опциональное) направление за окно.
+    Для модалки pending cluster → показать график с маркерами всех сигналов."""
+    from cluster_detector import collect_signals_for, _norm_pair
+    from database import utcnow
+    norm = _norm_pair(pair)
+    now = utcnow()
+    out = {"pair": norm, "direction": direction, "window_h": window_h, "items": {}}
+    dirs = [direction] if direction else ["LONG", "SHORT"]
+    for d in dirs:
+        sigs = collect_signals_for(norm, d, now, window_h)
+        out["items"][d] = [
+            {
+                "source": s["source"],
+                "at": s["at"].isoformat() if hasattr(s["at"], "isoformat") else str(s["at"]),
+                "at_ts": int(s["at"].timestamp()) if hasattr(s["at"], "timestamp") else 0,
+                "price": s.get("price"),
+                "meta": s.get("meta", {}),
+            }
+            for s in sigs
+        ]
+    return out
 
 
 @app.get("/api/pending-clusters")

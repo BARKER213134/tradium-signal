@@ -1207,12 +1207,18 @@ async function toggleClusterChart(idx, symbol) {
   area.dataset.loaded = '1';
   const c = _clustersFiltered[idx];
   if (!c) return;
+  // Маркеры: каждый сигнал кластера своим маркером
+  const markers = (c.signals_in_cluster || []).map(s => ({
+    at: s.at, direction: c.direction, source: s.source,
+    price: s.price, meta: s.meta || {},
+  }));
   _renderLwcSignalChart('clchA'+idx, {
     symbol: c.symbol, direction: c.direction,
     entry: c.trigger_price, tp1: c.tp_price, sl: c.sl_price,
     at: c.trigger_at, title: symbol.replace('USDT','') + ' · Cluster ' + (c.strength||''),
     pattern: `${c.signals_count} сигналов · ${c.sources_count} источников`,
     source: 'cluster',
+    markers,
   });
 }
 
@@ -1226,7 +1232,7 @@ async function loadPendingClusters() {
     el.innerHTML = items.slice(0, 20).map(p => {
       const dirC = p.direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
       const dirE = p.direction === 'LONG' ? '🟢' : '🔴';
-      return `<span class="cl-pending-chip"><span style="color:${dirC}">${dirE}</span> ${(p.pair||'').replace('/USDT','')} <b style="color:${dirC}">${p.count}/${p.min}</b> <span style="color:var(--muted);font-size:10px;">${p.time_left_h}ч</span></span>`;
+      return `<span class="cl-pending-chip" onclick="openPendingChart('${p.pair}','${p.direction}')" style="cursor:pointer;"><span style="color:${dirC}">${dirE}</span> ${(p.pair||'').replace('/USDT','')} <b style="color:${dirC}">${p.count}/${p.min}</b> <span style="color:var(--muted);font-size:10px;">${p.time_left_h}ч</span></span>`;
     }).join('');
   } catch(e) {}
 }

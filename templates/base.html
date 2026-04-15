@@ -850,10 +850,71 @@ async function _refreshClusterReady() {
       const col = p.direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
       const e = p.direction === 'LONG' ? '🟢' : '🔴';
       const pair = (p.pair||'').replace('/USDT','');
-      return `<span class="crb-chip"><span style="color:${col}">${e}</span> ${pair} <b style="color:${col}">${p.count}/${p.min}</b> <span style="color:var(--muted);font-size:9px;">${p.time_left_h}ч</span></span>`;
+      return `<span class="crb-chip" onclick="openPendingChart('${p.pair}','${p.direction}')" style="cursor:pointer;"><span style="color:${col}">${e}</span> ${pair} <b style="color:${col}">${p.count}/${p.min}</b> <span style="color:var(--muted);font-size:9px;">${p.time_left_h}ч</span></span>`;
     }).join('');
   } catch(e) {}
 }
+
+// ── Модалка с графиком pair за окно + все маркеры сигналов ──
+async function openPendingChart(pair, direction) {
+  let modal = document.getElementById('pendingChartModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'pendingChartModal';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:250;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);';
+    modal.onclick = (e) => { if (e.target === modal) modal.style.display='none'; };
+    document.body.appendChild(modal);
+  }
+  const dirEmoji = direction === 'LONG' ? '🟢' : '🔴';
+  const dirColor = direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
+  const pairClean = (pair||'').replace('/USDT','');
+  modal.innerHTML = `
+    <div onclick="event.stopPropagation();" style="width:1000px;max-width:94vw;height:75vh;background:var(--dark);border:1px solid ${dirColor};border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);">
+        <div style="font-family:var(--font-mono);font-size:13px;font-weight:800;color:${dirColor};">
+          ${dirEmoji} ${pairClean}/USDT · ${direction} · Pending Cluster
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <span id="pcmInfo" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);">загрузка…</span>
+          <button onclick="document.getElementById('pendingChartModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">×</button>
+        </div>
+      </div>
+      <div id="pcmChart" style="height:calc(100% - 50px);"></div>
+    </div>`;
+  modal.style.display='flex';
+
+  // Запрашиваем все сигналы по паре+направлению за 8 часов
+  try {
+    const r = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pair)}&direction=${direction}&window_h=8`);
+    const d = await r.json();
+    const sigs = (d.items || {})[direction] || [];
+    document.getElementById('pcmInfo').textContent =
+      `${sigs.length} сигналов за 8ч · источники: ${[...new Set(sigs.map(s => s.source))].join(', ') || '—'}`;
+    const markers = sigs.map(s => ({
+      at: s.at, direction, source: s.source, price: s.price, meta: s.meta || {},
+    }));
+    // Последний entry — текущая цена
+    const lastPrice = sigs.length ? sigs[sigs.length - 1].price : null;
+    _renderLwcSignalChart('pcmChart', {
+      symbol: pair.replace('/', ''),
+      direction,
+      entry: lastPrice,
+      at: markers.length ? markers[markers.length-1].at : null,
+      title: pairClean + '/USDT · ' + direction + ' (pending)',
+      markers,
+    });
+  } catch (e) {
+    document.getElementById('pcmInfo').textContent = 'Ошибка: ' + e.message;
+  }
+}
+
+// ESC для pendingChartModal
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const m = document.getElementById('pendingChartModal');
+    if (m) m.style.display='none';
+  }
+});
 setTimeout(_refreshClusterReady, 1500);
 setInterval(_refreshClusterReady, 30000);
 
@@ -1149,25 +1210,65 @@ async function _renderLwcSignalChart(containerId, opts) {
   });
   series.setData(d.candles);
 
-  // Marker — ближайшая к моменту сигнала свеча
-  const ts = opts.at ? (typeof opts.at === 'number' ? opts.at : Math.floor(new Date(opts.at).getTime()/1000)) : null;
-  let mc = d.candles[d.candles.length-1];
-  if (ts) {
-    let minD = Infinity;
+  // Markers:
+  //   opts.markers = [{at, direction, source, price, meta}] — для cluster, где много сигналов
+  //   иначе один маркер по opts.at/opts.direction/opts.source (старая логика)
+  const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀'};
+  const nearest = (ts) => {
+    if (!ts) return d.candles[d.candles.length-1];
+    let mc = d.candles[d.candles.length-1], minD = Infinity;
     for (const c of d.candles) {
       const diff = Math.abs(c.time - ts);
       if (diff < minD) { minD = diff; mc = c; }
     }
+    return mc;
+  };
+  let markers = [];
+  const markerMap = new Map(); // time → signal data for tooltip
+  if (Array.isArray(opts.markers) && opts.markers.length > 0) {
+    // Cluster mode — каждый сигнал своим маркером
+    const byTime = new Map();
+    for (const m of opts.markers) {
+      const ts = typeof m.at === 'number' ? m.at : Math.floor(new Date(m.at).getTime()/1000);
+      const mc = nearest(ts);
+      const isL = m.direction === 'LONG';
+      const key = mc.time + '_' + m.direction;
+      if (!byTime.has(key)) {
+        byTime.set(key, {time: mc.time, isLong: isL, icons: new Set(), items: []});
+      }
+      const g = byTime.get(key);
+      g.icons.add(srcIconMap[m.source] || '•');
+      g.items.push(m);
+      markerMap.set(mc.time, m);
+    }
+    for (const g of byTime.values()) {
+      const icons = [...g.icons].join('');
+      const price = g.items[0]?.price ? ` @${g.items[0].price}` : '';
+      markers.push({
+        time: g.time,
+        position: g.isLong ? 'belowBar' : 'aboveBar',
+        color: g.isLong ? '#00e5a0' : '#ff4d6d',
+        shape: g.isLong ? 'arrowUp' : 'arrowDown',
+        text: icons + (g.items.length > 1 ? ` ×${g.items.length}` : price),
+      });
+    }
+    markers.sort((a, b) => a.time - b.time);
+  } else {
+    // Single marker (old behavior)
+    const ts = opts.at ? (typeof opts.at === 'number' ? opts.at : Math.floor(new Date(opts.at).getTime()/1000)) : null;
+    const mc = nearest(ts);
+    const isLong = opts.direction === 'LONG';
+    const srcIcon = srcIconMap[opts.source] || '🚀';
+    markers = [{
+      time: mc.time,
+      position: isLong ? 'belowBar' : 'aboveBar',
+      color: isLong ? '#00e5a0' : '#ff4d6d',
+      shape: isLong ? 'arrowUp' : 'arrowDown',
+      text: `${srcIcon} ${opts.entry || ''}`,
+    }];
+    markerMap.set(mc.time, {source: opts.source, direction: opts.direction, price: opts.entry, at: opts.at, pattern: opts.pattern, score: opts.score});
   }
-  const isLong = opts.direction === 'LONG';
-  const srcIcon = opts.source === 'tradium' ? '📡' : opts.source === 'anomaly' ? '⚠' : opts.source === 'confluence' ? '🎯' : '🚀';
-  series.setMarkers([{
-    time: mc.time,
-    position: isLong ? 'belowBar' : 'aboveBar',
-    color: isLong ? '#00e5a0' : '#ff4d6d',
-    shape: isLong ? 'arrowUp' : 'arrowDown',
-    text: `${srcIcon} ${opts.entry || ''}`,
-  }]);
+  series.setMarkers(markers);
 
   if (opts.entry) series.createPriceLine({ price: +opts.entry, color:'#ffd23e', lineWidth:2, lineStyle:0, axisLabelVisible:true, title:'Entry' });
   if (opts.tp1) series.createPriceLine({ price: +opts.tp1, color:'#00e5a0', lineWidth:1, lineStyle:2, axisLabelVisible:true, title:'TP1' });
@@ -1182,8 +1283,9 @@ async function _renderLwcSignalChart(containerId, opts) {
     chartDiv.appendChild(tip);
   }
   chart.subscribeCrosshairMove(p => {
-    if (!p.time || p.time !== mc.time) { tip.style.display = 'none'; return; }
-    tip.innerHTML = _sigTooltipHTML(opts);
+    if (!p.time || !markerMap.has(p.time)) { tip.style.display = 'none'; return; }
+    const sig = markerMap.get(p.time);
+    tip.innerHTML = _sigTooltipHTML({...opts, ...sig, title: opts.title || (opts.symbol || '')});
     tip.style.display = 'block';
     if (p.point) {
       const cw = chartDiv.clientWidth;
