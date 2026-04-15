@@ -197,14 +197,7 @@ async def _check_reversal_flip():
                 await asyncio.sleep(0.3)
             except Exception:
                 pass
-        try:
-            from paper_trader import _bot6, _setup_bot6
-            if not _bot6:
-                _setup_bot6()
-            if _bot6:
-                await _bot6.send_message(_admin_chat_id, text, parse_mode="HTML")
-        except Exception:
-            pass
+        # BOT6 (Paper Trading) намеренно исключён — туда шлём только трейды
     except Exception as e:
         print(f"[REVERSAL] ERROR: {e}", flush=True)
 
@@ -293,15 +286,7 @@ async def _check_kc_change():
                     await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
                 except Exception:
                     pass
-            # BOT6
-            try:
-                from paper_trader import _bot6, _setup_bot6
-                if not _bot6:
-                    _setup_bot6()
-                if _bot6:
-                    await _bot6.send_message(_admin_chat_id, text, parse_mode="HTML")
-            except Exception:
-                pass
+            # BOT6 (Paper Trading) намеренно исключён — туда шлём только трейды
     except Exception as e:
         print(f"[KC] ERROR: {e}", flush=True)
 
