@@ -1890,26 +1890,10 @@ async def _check_forex_fvg_scan():
         stats = await asyncio.to_thread(scan_all)
         # Ставим timestamp ПОСЛЕ успешного скана — защита от timeout-loop
         _fvg_last_scan_ts = _t.time()
-        after_docs = list(_fvg_signals().find(
-            {"status": "WAITING_RETEST"}, {"instrument": 1, "formed_ts": 1, "direction": 1, "fvg_top": 1, "fvg_bottom": 1, "fvg_size_rel": 1, "impulse_body_ratio": 1, "entry_price": 1, "sl_price": 1, "formed_price": 1, "timeframe": 1, "asset_class": 1, "formed_at": 1}
-        ))
-        # Новые FVG — алерты (только те что сформировались за последние 2ч, иначе анти-спам)
-        from datetime import datetime, timedelta
-        alert_cutoff = datetime.utcnow() - timedelta(hours=2)
-        new_count = 0
-        skipped_old = 0
-        for s in after_docs:
-            key = (s["instrument"], s.get("formed_ts"))
-            if key in before:
-                continue
-            formed_at = s.get("formed_at")
-            if formed_at and hasattr(formed_at, "timestamp"):
-                if formed_at.replace(tzinfo=None) if formed_at.tzinfo else formed_at < alert_cutoff:
-                    skipped_old += 1
-                    continue
-            await _send_fvg_formed_alert(s)
-            new_count += 1
-        print(f"[FVG-SCAN] done: {stats['total_instruments']} instruments, {stats['new_fvgs']} new in DB, {new_count} alerts, {skipped_old} old skipped", flush=True)
+        # FORMED alerts отключены — формирование FVG не значит торговать,
+        # реальные сигналы = ENTRY / TP / SL (в _check_forex_fvg_monitor).
+        # Состояние FORMED видно в UI вкладки Forex FVG (таблица WAITING).
+        print(f"[FVG-SCAN] done: {stats['total_instruments']} instruments, {stats['new_fvgs']} new in DB", flush=True)
     except Exception as e:
         import traceback
         print(f"[FVG-SCAN] ERROR: {e}\n{traceback.format_exc()[-500:]}", flush=True)
