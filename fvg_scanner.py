@@ -655,23 +655,60 @@ def monitor_signals() -> dict:
     now = utcnow()
     events = {"entered": [], "closed_tp": [], "closed_sl": [], "expired": []}
 
-    # Все активные (не закрытые)
+    # ── FIRST: Expiry check — не требует цен, только времени ──
+    # Отдельный проход по всем WAITING_RETEST/ENTERED чтобы expire по времени
+    # работал даже если yfinance/TD падают.
+    exp_res = col.update_many(
+        {"status": "WAITING_RETEST", "expire_at": {"$lt": now}},
+        {"$set": {"status": "EXPIRED", "updated_at": now}},
+    )
+    if exp_res.modified_count:
+        logger.info(f"[FVG] expired {exp_res.modified_count} stale WAITING")
+    # Hold timeout для ENTERED — если не TP/SL за max_hold_bars часов от entered_at
+    hold_cutoff = now - timedelta(hours=cfg.get("max_hold_bars", 50))
+    th_res = col.update_many(
+        {"status": "ENTERED", "entered_at": {"$lt": hold_cutoff}},
+        {"$set": {"status": "TIMEOUT", "closed_at": now, "updated_at": now}},
+    )
+    if th_res.modified_count:
+        logger.info(f"[FVG] timeout {th_res.modified_count} stale ENTERED")
+
+    # Все активные (не закрытые) — уже после expiry чистки
     active = list(col.find({"status": {"$in": ["WAITING_RETEST", "ENTERED"]}}))
     if not active:
         return events
 
-    # Группируем по ticker чтобы минимизировать yfinance запросы
+    # Группируем по ticker
     by_ticker: dict[str, list] = {}
     for s in active:
         by_ticker.setdefault(s["ticker"], []).append(s)
 
-    import yfinance as yf
-
     for ticker, sigs in by_ticker.items():
-        try:
-            candles = fetch_candles(ticker, period="2d", interval="1h")
-        except Exception:
-            continue
+        # Для форекса пробуем TD (брокер-качество), для прочих — yfinance
+        # Находим td_symbol по первому сигналу в группе
+        first = sigs[0]
+        td_sym = None
+        # Если asset_class == 'forex' и наш INSTRUMENTS содержит TD symbol
+        instrument_name = first.get("instrument")
+        if instrument_name and instrument_name in INSTRUMENTS:
+            entry = INSTRUMENTS[instrument_name]
+            if len(entry) >= 3:
+                td_sym = entry[2]
+
+        candles = []
+        if td_sym:
+            try:
+                candles = fetch_candles_twelvedata(td_sym, "1h", 50)
+            except Exception:
+                candles = []
+        if not candles:
+            try:
+                candles = fetch_candles(ticker, period="2d", interval="1h")
+            except Exception:
+                continue
+        if not candles:
+            # Последний шанс — кеш в БД
+            candles = get_cached_candles(instrument_name, "1h", max_age_min=120) if instrument_name else []
         if not candles:
             continue
         last_candle = candles[-1]
