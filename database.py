@@ -67,6 +67,16 @@ def _cluster_config() -> Collection:
     return _get_db().system
 
 
+def _fvg_signals() -> Collection:
+    """Forex FVG сигналы (все статусы: FORMED/WAITING/ENTERED/TP/SL/EXPIRED)."""
+    return _get_db().fvg_signals
+
+
+def _fvg_config() -> Collection:
+    """Настройки Hybrid v2 Forex FVG (хранится в system._id='fvg_config')."""
+    return _get_db().system
+
+
 
 
 def _counters() -> Collection:
@@ -555,4 +565,11 @@ def init_db():
     cl.create_index("direction")
     cl.create_index("trigger_at")
     cl.create_index("status")
+
+    fv = _fvg_signals()
+    fv.create_index("instrument")
+    fv.create_index("status")
+    fv.create_index("formed_at")
+    fv.create_index("entered_at")
+    fv.create_index([("status", ASCENDING), ("formed_at", DESCENDING)])
 

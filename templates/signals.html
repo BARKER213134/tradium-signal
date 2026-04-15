@@ -1601,6 +1601,377 @@ loadPaperStatus();
 setInterval(loadPaperStatus, 15000);
 </script>
 
+{% elif bot == 'forex_fvg' %}
+<!-- ── Forex FVG (Active + Pending) ────────────────────────────────── -->
+<style>
+.fvg-hero { padding:16px 20px; margin-bottom:14px; background:linear-gradient(135deg,rgba(0,212,255,0.08),rgba(123,92,255,0.05)); border:1px solid rgba(0,212,255,0.25); border-radius:12px; }
+.fvg-hero h3 { font-size:15px; font-weight:800; color:var(--text); margin:0; }
+.fvg-hero p { font-size:11px; color:var(--muted); margin:4px 0 0; }
+.fvg-stats { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:16px; }
+.fvg-stat { background:var(--dark-2); border:1px solid var(--border); border-radius:10px; padding:14px 16px; text-align:center; }
+.fvg-stat-lbl { font-family:var(--font-mono); font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
+.fvg-stat-val { font-family:var(--font-mono); font-size:22px; font-weight:800; margin-top:4px; }
+.fvg-row-waiting { background:rgba(255,210,62,0.04); }
+.fvg-row-entered { background:rgba(0,229,160,0.05); }
+.fvg-row-tp { background:rgba(0,229,160,0.10); }
+.fvg-row-sl { background:rgba(255,77,109,0.08); }
+.fvg-row-expired { opacity:0.5; }
+</style>
+
+<div class="fvg-hero">
+  <h3>📈 Forex FVG — Hybrid v2 Live Signals</h3>
+  <p>32 инструмента · 1H · Conservative entry на ретесте FVG + Trailing stop · Backtest WR 43%, Avg R +0.14</p>
+</div>
+
+<div class="fvg-stats">
+  <div class="fvg-stat"><div class="fvg-stat-lbl">Всего</div><div class="fvg-stat-val" id="fvgStatTotal">—</div></div>
+  <div class="fvg-stat"><div class="fvg-stat-lbl">⏳ Waiting</div><div class="fvg-stat-val" id="fvgStatWaiting">—</div></div>
+  <div class="fvg-stat"><div class="fvg-stat-lbl">🎯 Open</div><div class="fvg-stat-val" id="fvgStatOpen">—</div></div>
+  <div class="fvg-stat"><div class="fvg-stat-lbl">Win Rate</div><div class="fvg-stat-val" id="fvgStatWR">—</div></div>
+  <div class="fvg-stat"><div class="fvg-stat-lbl">Sum R</div><div class="fvg-stat-val" id="fvgStatSumR">—</div></div>
+  <div class="fvg-stat"><div class="fvg-stat-lbl">Avg R</div><div class="fvg-stat-val" id="fvgStatAvgR">—</div></div>
+</div>
+
+<div class="an-toolbar" style="padding:10px 18px;gap:8px;">
+  <button onclick="fvgScanNow()" style="background:var(--accent);color:#000;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:var(--font-mono);">🔄 Scan now</button>
+  <button onclick="showFvgSettings()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer;color:var(--text);">⚙ Настройки</button>
+  <span id="fvgMsg" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
+</div>
+
+<h3 style="font-family:var(--font-mono);font-size:12px;color:var(--buy);margin:16px 18px 8px;letter-spacing:0.1em;">🎯 ENTERED (открытые сделки)</h3>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Entered</th><th>Инстр</th><th>TF</th><th>Напр</th>
+        <th>Entry</th><th>SL</th><th>Peak R</th><th>Trail</th><th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="fvgEnteredBody">
+      <tr><td colspan="9" style="text-align:center;padding:30px;" class="text-muted">Нет открытых сделок</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 style="font-family:var(--font-mono);font-size:12px;color:#ffd23e;margin:20px 18px 8px;letter-spacing:0.1em;">⏳ WAITING RETEST (ожидают входа)</h3>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Formed</th><th>Инстр</th><th>Класс</th><th>Напр</th>
+        <th>Zone (bot-top)</th><th>Size %</th><th>Entry</th><th>Expire in</th>
+      </tr>
+    </thead>
+    <tbody id="fvgWaitingBody">
+      <tr><td colspan="8" style="text-align:center;padding:30px;" class="text-muted">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Settings modal -->
+<div id="fvgSettingsModal" style="display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);">
+  <div onclick="event.stopPropagation();" style="width:520px;max-width:94vw;max-height:85vh;overflow-y:auto;background:var(--dark);border:1px solid var(--accent);border-radius:14px;padding:24px;font-family:var(--font-mono);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h3 style="margin:0;font-size:14px;color:var(--accent);">⚙ Forex FVG Настройки</h3>
+      <button onclick="document.getElementById('fvgSettingsModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">×</button>
+    </div>
+    <div id="fvgCfgFields" style="display:grid;gap:10px;"></div>
+    <div style="display:flex;gap:8px;margin-top:20px;">
+      <button onclick="saveFvgCfg()" style="background:var(--accent);color:#000;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer;flex:1;">Сохранить</button>
+    </div>
+    <div id="fvgCfgMsg" style="margin-top:10px;font-size:10px;color:var(--muted);text-align:center;"></div>
+  </div>
+</div>
+
+<script>
+async function loadFvgSignals() {
+  try {
+    const r = await fetch('/api/fvg-signals');
+    const d = await r.json();
+    const s = d.stats || {};
+    document.getElementById('fvgStatTotal').textContent = s.total || 0;
+    document.getElementById('fvgStatWaiting').textContent = s.waiting || 0;
+    document.getElementById('fvgStatOpen').textContent = s.entered || 0;
+    document.getElementById('fvgStatWR').textContent = (s.wr ?? 0) + '%';
+    document.getElementById('fvgStatWR').className = 'fvg-stat-val ' + ((s.wr ?? 0) >= 40 ? 'text-buy' : 'text-muted');
+    const sr = s.sum_r ?? 0;
+    document.getElementById('fvgStatSumR').textContent = (sr >= 0 ? '+' : '') + sr + 'R';
+    document.getElementById('fvgStatSumR').className = 'fvg-stat-val ' + (sr >= 0 ? 'text-buy' : 'text-sell');
+    document.getElementById('fvgStatAvgR').textContent = (s.avg_r >= 0 ? '+' : '') + (s.avg_r || 0).toFixed(3) + 'R';
+    renderEntered(d.entered || []);
+    renderWaiting(d.waiting || []);
+  } catch (e) { }
+}
+
+function renderEntered(items) {
+  const tb = document.getElementById('fvgEnteredBody');
+  if (!items.length) { tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;" class="text-muted">Нет открытых сделок</td></tr>'; return; }
+  tb.innerHTML = items.map((s, i) => {
+    const dir = s.direction === 'bullish' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
+    const t = s.entered_at ? new Date(s.entered_at).toLocaleString('ru', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
+    const peak = (s.peak_R || 0).toFixed(2);
+    const peakCls = (s.peak_R || 0) > 0 ? 'text-buy' : 'text-muted';
+    const trail = s.trailing_active ? '🟢 armed' : '⚪ waiting +1R';
+    return `<tr class="fvg-row-entered" style="cursor:pointer;" onclick="toggleFvgChart(${i}, ${JSON.stringify(s).replace(/\"/g,'&quot;')})">
+      <td class="mono text-muted" style="font-size:11px;">${t}</td>
+      <td class="mono fw-700 text-accent">${s.instrument}</td>
+      <td class="mono text-muted">${s.timeframe}</td>
+      <td>${dir}</td>
+      <td class="mono">${s.entered_price || s.entry_price}</td>
+      <td class="mono text-sell">${s.sl_price}</td>
+      <td class="mono ${peakCls} fw-700">+${peak}R</td>
+      <td class="mono" style="font-size:10px;">${trail}</td>
+      <td><span class="badge badge-buy">ENTERED</span></td>
+    </tr>
+    <tr id="fvgChRow${i}" style="display:none;"><td colspan="9" style="padding:0;background:var(--dark-2);"><div id="fvgCh${i}" style="height:400px;"></div></td></tr>`;
+  }).join('');
+}
+
+function renderWaiting(items) {
+  const tb = document.getElementById('fvgWaitingBody');
+  if (!items.length) { tb.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;" class="text-muted">Нет pending FVG</td></tr>'; return; }
+  tb.innerHTML = items.map((s, i) => {
+    const dir = s.direction === 'bullish' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
+    const t = s.formed_at ? new Date(s.formed_at).toLocaleString('ru', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
+    const sz = (s.fvg_size_rel * 100).toFixed(3);
+    const exp = (s.time_left_h || 0).toFixed(1) + 'ч';
+    return `<tr class="fvg-row-waiting" style="cursor:pointer;" onclick="toggleFvgChart(${i+100}, ${JSON.stringify(s).replace(/\"/g,'&quot;')})">
+      <td class="mono text-muted" style="font-size:11px;">${t}</td>
+      <td class="mono fw-700 text-accent">${s.instrument}</td>
+      <td class="mono text-muted">${s.asset_class}</td>
+      <td>${dir}</td>
+      <td class="mono" style="font-size:11px;">${s.fvg_bottom} — ${s.fvg_top}</td>
+      <td class="mono">${sz}%</td>
+      <td class="mono">${s.entry_price}</td>
+      <td class="mono text-muted">${exp}</td>
+    </tr>
+    <tr id="fvgChRow${i+100}" style="display:none;"><td colspan="8" style="padding:0;background:var(--dark-2);"><div id="fvgCh${i+100}" style="height:400px;"></div></td></tr>`;
+  }).join('');
+}
+
+async function toggleFvgChart(idx, sig) {
+  const row = document.getElementById('fvgChRow'+idx);
+  if (!row) return;
+  if (row.style.display !== 'none') { row.style.display='none'; return; }
+  row.style.display='table-row';
+  const area = document.getElementById('fvgCh'+idx);
+  if (area.dataset.loaded) return;
+  area.dataset.loaded = '1';
+  // Mapping yfinance ticker → our journal-candles API (not supported for forex)
+  // Placeholder: показываем info block
+  area.innerHTML = `<div style="padding:30px;text-align:center;color:var(--muted);">
+    <div style="font-size:14px;color:var(--text);margin-bottom:12px;">${sig.instrument} · ${sig.direction.toUpperCase()}</div>
+    <div style="font-family:var(--font-mono);font-size:11px;line-height:1.7;">
+      FVG zone: ${sig.fvg_bottom} — ${sig.fvg_top} (${(sig.fvg_size_rel*100).toFixed(3)}%)<br>
+      Entry: ${sig.entry_price} | SL: ${sig.sl_price}<br>
+      ${sig.entered_price ? 'Entered: '+sig.entered_price : 'Waiting retest'}<br>
+      ${sig.trailing_active ? 'Trailing armed, SL: '+sig.trailing_sl : ''}
+    </div>
+    <div style="margin-top:16px;font-size:10px;color:var(--muted);">График Forex через yfinance — загрузим отдельный viewer</div>
+  </div>`;
+}
+
+async function fvgScanNow() {
+  const msg = document.getElementById('fvgMsg');
+  msg.textContent = '🔄 Сканирую...';
+  try {
+    const r = await fetch('/api/fvg-scan-now', {method:'POST'});
+    const d = await r.json();
+    msg.textContent = `✅ Сканировано ${d.scan.total_instruments} инстр. · новых FVG: ${d.scan.new_fvgs} · events: entered=${d.monitor.entered}, tp=${d.monitor.closed_tp}, sl=${d.monitor.closed_sl}`;
+    loadFvgSignals();
+  } catch (e) { msg.textContent = '❌ ' + e.message; }
+}
+
+async function showFvgSettings() {
+  try {
+    const r = await fetch('/api/fvg-config');
+    const d = await r.json();
+    const c = d.config;
+    const all = Object.keys(d.all_instruments || {});
+    const fields = [
+      ['min_body_ratio', 'Min body ratio', 0.1, 1.0],
+      ['min_size_rel_forex', 'Min size Forex %', 0.0001, 0.01],
+      ['min_size_rel_metal', 'Min size Metal %', 0.0001, 0.01],
+      ['min_size_rel_energy', 'Min size Energy %', 0.0001, 0.01],
+      ['min_size_rel_index', 'Min size Index %', 0.0001, 0.01],
+      ['max_wait_bars', 'Max wait (bars)', 5, 100],
+      ['max_hold_bars', 'Max hold (bars)', 5, 100],
+      ['sl_buffer_rel', 'SL buffer', 0.0, 0.5],
+      ['trailing_activate_at', 'Trail activate @ R', 0.5, 3.0],
+      ['trailing_distance_R', 'Trail distance R', 0.5, 3.0],
+    ];
+    let html = '';
+    for (const [k, l, mn, mx] of fields) {
+      html += `<label style="display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:11px;color:var(--muted);">
+        <span>${l}</span>
+        <input type="number" step="0.0001" min="${mn}" max="${mx}" value="${c[k]}" id="fvgCfg_${k}" style="width:110px;background:var(--dark-2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-family:var(--font-mono);text-align:right;">
+      </label>`;
+    }
+    html += `<label style="display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:11px;color:var(--muted);">
+      <span>Session filter</span>
+      <select id="fvgCfg_session_filter" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-family:var(--font-mono);">
+        <option value="london_ny" ${c.session_filter==='london_ny'?'selected':''}>London + NY</option>
+        <option value="london" ${c.session_filter==='london'?'selected':''}>London only</option>
+        <option value="ny" ${c.session_filter==='ny'?'selected':''}>NY only</option>
+        <option value="any" ${c.session_filter==='any'?'selected':''}>Any</option>
+      </select>
+    </label>`;
+    document.getElementById('fvgCfgFields').innerHTML = html;
+    document.getElementById('fvgSettingsModal').style.display='flex';
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+async function saveFvgCfg() {
+  const body = {};
+  const keys = ['min_body_ratio','min_size_rel_forex','min_size_rel_metal','min_size_rel_energy','min_size_rel_index','max_wait_bars','max_hold_bars','sl_buffer_rel','trailing_activate_at','trailing_distance_R'];
+  for (const k of keys) {
+    const v = document.getElementById('fvgCfg_'+k).value;
+    if (v !== '') body[k] = parseFloat(v);
+  }
+  body.session_filter = document.getElementById('fvgCfg_session_filter').value;
+  try {
+    await fetch('/api/fvg-config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    document.getElementById('fvgCfgMsg').textContent = '✅ Сохранено';
+    setTimeout(() => { document.getElementById('fvgSettingsModal').style.display='none'; }, 700);
+  } catch (e) { document.getElementById('fvgCfgMsg').textContent = '❌ ' + e.message; }
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { const m = document.getElementById('fvgSettingsModal'); if (m) m.style.display='none'; }
+});
+document.getElementById('fvgSettingsModal').onclick = (e) => { if (e.target.id === 'fvgSettingsModal') e.target.style.display='none'; };
+
+loadFvgSignals();
+setInterval(loadFvgSignals, 30000);
+</script>
+
+{% elif bot == 'forex_journal' %}
+<!-- ── Forex Журнал (история FVG) ──────────────────────────────────── -->
+<div class="fvg-hero" style="background:linear-gradient(135deg,rgba(0,212,255,0.06),rgba(123,92,255,0.03));border-color:rgba(0,212,255,0.2);">
+  <h3>📖 Forex Журнал — история FVG сигналов</h3>
+  <p>Все сигналы с фильтрами, сортировкой и графиком. Звук 🔔 на новые.</p>
+</div>
+
+<div class="an-toolbar" style="padding:10px 18px;gap:8px;flex-wrap:wrap;">
+  <select id="fjStatus" onchange="loadForexJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">Все статусы</option>
+    <option value="WAITING_RETEST">⏳ Waiting</option>
+    <option value="ENTERED">🎯 Entered</option>
+    <option value="TP">✅ TP</option>
+    <option value="SL">❌ SL</option>
+    <option value="EXPIRED">⏱ Expired</option>
+  </select>
+  <select id="fjDir" onchange="loadForexJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">Все направления</option>
+    <option value="bullish">🟢 Bullish</option>
+    <option value="bearish">🔴 Bearish</option>
+  </select>
+  <select id="fjHours" onchange="loadForexJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="24">24 часа</option>
+    <option value="168" selected>7 дней</option>
+    <option value="720">30 дней</option>
+    <option value="0">Все</option>
+  </select>
+  <input id="fjInstr" type="text" placeholder="Фильтр инстр (EURUSD, XAU...)" oninput="loadForexJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);width:220px;">
+  <span id="fjCount" class="an-filter-count"></span>
+  <button id="fjSoundBtn" onclick="_fjSound=!_fjSound;this.textContent=_fjSound?'🔔':'🔕'" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Время</th><th>Инстр</th><th>Класс</th><th>TF</th><th>Напр</th>
+        <th>Zone</th><th>Entry</th><th>Статус</th><th>R</th><th>Peak R</th>
+      </tr>
+    </thead>
+    <tbody id="fjBody">
+      <tr><td colspan="10" style="text-align:center;padding:30px;" class="text-muted">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+let _fjSound = true;
+let _fjLastIds = new Set();
+
+async function loadForexJournal() {
+  const status = document.getElementById('fjStatus').value;
+  const dir = document.getElementById('fjDir').value;
+  const hours = document.getElementById('fjHours').value;
+  const instr = document.getElementById('fjInstr').value.trim().toUpperCase();
+  const qs = new URLSearchParams({status, direction: dir, hours, instrument: instr}).toString();
+  try {
+    const r = await fetch('/api/fvg-journal?' + qs);
+    const d = await r.json();
+    const items = d.items || [];
+    document.getElementById('fjCount').textContent = `${items.length} · WR ${d.stats.wr || 0}% · Sum ${d.stats.sum_r >= 0 ? '+' : ''}${d.stats.sum_r || 0}R`;
+    renderJournalRows(items);
+
+    // Звук на новые
+    const curIds = new Set(items.map(i => (i.instrument || '') + '|' + (i.formed_ts || '')));
+    if (_fjSound && _fjLastIds.size > 0) {
+      for (const id of curIds) {
+        if (!_fjLastIds.has(id)) {
+          _playBeep();
+          break;
+        }
+      }
+    }
+    _fjLastIds = curIds;
+  } catch (e) { }
+}
+
+function _playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.15].forEach(delay => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.type = 'sine'; osc.frequency.value = 780;
+      gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+      gain.gain.linearRampToValueAtTime(0.25, ctx.currentTime + delay + 0.02);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + delay + 0.12);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.15);
+    });
+    setTimeout(() => ctx.close(), 400);
+  } catch (e) { }
+}
+
+function renderJournalRows(items) {
+  const tb = document.getElementById('fjBody');
+  if (!items.length) { tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;" class="text-muted">Нет сигналов</td></tr>'; return; }
+  tb.innerHTML = items.map(s => {
+    const dir = s.direction === 'bullish' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
+    const t = s.formed_at ? new Date(s.formed_at).toLocaleString('ru', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
+    const stMap = {WAITING_RETEST:['⏳ WAIT','badge-status'], ENTERED:['🎯 OPEN','badge-buy'], TP:['✅ TP','badge-buy'], SL:['❌ SL','badge-sell'], EXPIRED:['⏱ EXP','badge-status'], TIMEOUT:['⏱ TO','badge-status']};
+    const st = stMap[s.status] || [s.status, 'badge-status'];
+    const R = s.outcome_R;
+    const rStr = R != null ? ((R>=0?'+':'') + R.toFixed(2) + 'R') : '—';
+    const rCls = R != null ? (R > 0 ? 'text-buy fw-700' : 'text-sell fw-700') : 'text-muted';
+    const peak = (s.peak_R || 0).toFixed(2);
+    const rowCls = s.status === 'TP' ? 'fvg-row-tp' : s.status === 'SL' ? 'fvg-row-sl' : s.status === 'ENTERED' ? 'fvg-row-entered' : s.status === 'WAITING_RETEST' ? 'fvg-row-waiting' : s.status === 'EXPIRED' ? 'fvg-row-expired' : '';
+    return `<tr class="${rowCls}">
+      <td class="mono text-muted" style="font-size:11px;">${t}</td>
+      <td class="mono fw-700 text-accent">${s.instrument}</td>
+      <td class="mono text-muted">${s.asset_class}</td>
+      <td class="mono text-muted">${s.timeframe}</td>
+      <td>${dir}</td>
+      <td class="mono" style="font-size:10px;">${s.fvg_bottom} → ${s.fvg_top}</td>
+      <td class="mono">${s.entry_price}</td>
+      <td><span class="badge ${st[1]}">${st[0]}</span></td>
+      <td class="mono ${rCls}">${rStr}</td>
+      <td class="mono text-muted">+${peak}R</td>
+    </tr>`;
+  }).join('');
+}
+
+loadForexJournal();
+setInterval(loadForexJournal, 30000);
+</script>
+
 {% elif bot == 'journal' %}
 <!-- ── Журнал ─────────────────────────────────────────────────────── -->
 <style>

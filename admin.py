@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1159,6 +1159,50 @@ async def _run_backfill_clusters(hours: int):
         log.info(f"[backfill-clusters] Created {created}")
     except Exception:
         log.exception("[backfill-clusters] crashed")
+
+
+@app.get("/api/fvg-signals")
+async def api_fvg_signals(status: str = "all", limit: int = 200):
+    """Forex FVG сигналы (active + history)."""
+    from fvg_scanner import get_pending_fvgs, get_active_trades, get_journal, get_stats
+    waiting = await asyncio.to_thread(get_pending_fvgs, 100)
+    entered = await asyncio.to_thread(get_active_trades, 100)
+    stats = await asyncio.to_thread(get_stats)
+    return {"waiting": waiting, "entered": entered, "stats": stats}
+
+
+@app.get("/api/fvg-journal")
+async def api_fvg_journal(hours: int = 168, status: str = "", instrument: str = "",
+                          direction: str = "", limit: int = 300):
+    """Журнал Forex FVG с фильтрами."""
+    from fvg_scanner import get_journal, get_stats
+    items = await asyncio.to_thread(get_journal, hours, status or None,
+                                    instrument or None, direction or None, limit)
+    stats = await asyncio.to_thread(get_stats)
+    return {"items": items, "stats": stats, "total": len(items)}
+
+
+@app.get("/api/fvg-config")
+async def api_fvg_config_get():
+    from fvg_scanner import get_config, INSTRUMENTS
+    cfg = await asyncio.to_thread(get_config)
+    return {"config": cfg, "all_instruments": {k: list(v) for k, v in INSTRUMENTS.items()}}
+
+
+@app.post("/api/fvg-config")
+async def api_fvg_config_post(payload: dict):
+    from fvg_scanner import save_config
+    return await asyncio.to_thread(save_config, payload or {})
+
+
+@app.post("/api/fvg-scan-now")
+async def api_fvg_scan_now():
+    """Ручной триггер скана (для теста)."""
+    from fvg_scanner import scan_all, monitor_signals
+    scan_stats = await asyncio.to_thread(scan_all)
+    mon_events = await asyncio.to_thread(monitor_signals)
+    events_summary = {k: len(v) for k, v in mon_events.items()}
+    return {"scan": scan_stats, "monitor": events_summary}
 
 
 @app.get("/api/reversal-meter")

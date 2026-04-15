@@ -56,8 +56,11 @@ BOT6_BOT_TOKEN = os.getenv("BOT6_BOT_TOKEN", "")
 # Седьмой бот — Cluster Alerts
 BOT7_BOT_TOKEN = os.getenv("BOT7_BOT_TOKEN", "")
 
-# Список ботов для UI (Кластеры — после Confluence)
-# category: 'crypto' (сейчас) | 'stocks' (в будущем)
+# Восьмой бот — Forex FVG Alerts
+BOT8_BOT_TOKEN = os.getenv("BOT8_BOT_TOKEN", "")
+
+# Список ботов для UI
+# category: 'crypto' | 'stocks' (forex/metals/indices/energy через FVG)
 BOTS = [
     {"id": "tradium", "label": "Tradium", "category": "crypto"},
     {"id": BOT2_NAME, "label": BOT2_LABEL, "category": "crypto"},
@@ -66,6 +69,8 @@ BOTS = [
     {"id": "clusters", "label": "Кластеры", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
+    {"id": "forex_fvg", "label": "Forex FVG", "category": "stocks"},
+    {"id": "forex_journal", "label": "Forex Журнал", "category": "stocks"},
 ]
 
 # Админка
