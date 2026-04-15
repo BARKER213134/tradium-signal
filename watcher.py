@@ -803,6 +803,8 @@ async def _check_once():
             ("ai_analysis", lambda: _fill_missing_ai_analysis(db)),
             ("paper_positions", lambda: _check_paper_positions()),
             ("cluster_outcomes", lambda: _check_cluster_outcomes()),
+            ("fvg_scan", lambda: _check_forex_fvg_scan()),
+            ("fvg_monitor", lambda: _check_forex_fvg_monitor()),
         ]:
             try:
                 print(f"[WATCHER] step: {step_name}", flush=True)
@@ -1707,6 +1709,7 @@ async def _check_confluence():
 
 _bot5 = None
 _bot7 = None
+_bot8 = None
 
 
 def _setup_bot5():
@@ -1737,6 +1740,176 @@ def _setup_bot7():
         logger.info("BOT7 (Cluster Alerts) initialized")
     except Exception as e:
         logger.error(f"BOT7 init fail: {e}")
+
+
+def _setup_bot8():
+    global _bot8
+    from config import BOT8_BOT_TOKEN
+    if not BOT8_BOT_TOKEN:
+        return
+    try:
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        _bot8 = Bot(token=BOT8_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        logger.info("BOT8 (Forex FVG) initialized")
+    except Exception as e:
+        logger.error(f"BOT8 init fail: {e}")
+
+
+# ── BOT8: Forex FVG alerts ──────────────────────────────────
+def _fvg_direction_emoji(d):
+    return "🟢" if d == "bullish" else "🔴"
+
+
+async def _send_fvg_formed_alert(sig):
+    """FVG DETECTED — формирование."""
+    if not _bot8:
+        _setup_bot8()
+    if not _bot8 or not _admin_chat_id:
+        return
+    try:
+        dir_e = _fvg_direction_emoji(sig["direction"])
+        from datetime import datetime, timezone as _tz
+        ts = sig.get("formed_ts") or 0
+        hour = datetime.fromtimestamp(ts, tz=_tz.utc).hour if ts else 0
+        session = "🇺🇸 NY" if 13 <= hour < 21 else "🇬🇧 London" if 8 <= hour < 16 else "—"
+        size_pct = sig.get("fvg_size_rel", 0) * 100
+        body_pct = sig.get("impulse_body_ratio", 0) * 100
+        text = (
+            f"⚡⚡⚡ <b>FVG DETECTED</b> ⚡⚡⚡\n"
+            f"\n"
+            f"<b>{sig['instrument']}</b> · {sig.get('timeframe','1H')} · {dir_e} <b>{sig['direction'].upper()}</b>\n"
+            f"\n"
+            f"📍 Formed price: <code>{sig.get('formed_price','?')}</code>\n"
+            f"🎯 Zone: <code>{sig['fvg_bottom']:.5f}</code> — <code>{sig['fvg_top']:.5f}</code>\n"
+            f"\n"
+            f"📊 Quality:\n"
+            f"  • Size: {size_pct:.3f}% ✅\n"
+            f"  • Impulse body: {body_pct:.0f}% ✅\n"
+            f"  • Session: {session} ✅\n"
+            f"\n"
+            f"⏳ <b>Entry limit:</b> <code>{sig['entry_price']:.5f}</code>\n"
+            f"🛑 SL: <code>{sig['sl_price']:.5f}</code>\n"
+            f"\n"
+            f"💡 <i>Hybrid v2 · Backtest WR: 43% · Avg R +0.14</i>"
+        )
+        await _bot8.send_message(_admin_chat_id, text, parse_mode="HTML")
+        await asyncio.sleep(0.5)
+    except Exception as e:
+        logger.debug(f"fvg formed alert: {e}")
+
+
+async def _send_fvg_entry_alert(sig):
+    """RETEST ENTRY — ретест случился, сделка открыта."""
+    if not _bot8:
+        _setup_bot8()
+    if not _bot8 or not _admin_chat_id:
+        return
+    try:
+        dir_e = _fvg_direction_emoji(sig["direction"])
+        text = (
+            f"🎯🎯🎯 <b>RETEST ENTRY</b> 🎯🎯🎯\n"
+            f"\n"
+            f"<b>{sig['instrument']}</b> · {dir_e} <b>{'LONG' if sig['direction']=='bullish' else 'SHORT'}</b>\n"
+            f"\n"
+            f"📍 Entry: <code>{sig.get('entered_price', sig['entry_price']):.5f}</code>\n"
+            f"🛑 SL:    <code>{sig['sl_price']:.5f}</code>\n"
+            f"📈 Trail: активируется после +1R\n"
+            f"\n"
+            f"🎯 Hybrid v2 · следим за trailing"
+        )
+        await _bot8.send_message(_admin_chat_id, text, parse_mode="HTML")
+        await asyncio.sleep(0.5)
+    except Exception as e:
+        logger.debug(f"fvg entry alert: {e}")
+
+
+async def _send_fvg_close_alert(sig, status):
+    """TP or SL — сделка закрыта."""
+    if not _bot8:
+        _setup_bot8()
+    if not _bot8 or not _admin_chat_id:
+        return
+    try:
+        R = sig.get("outcome_R") or 0
+        peak = sig.get("peak_R") or 0
+        dir_e = _fvg_direction_emoji(sig["direction"])
+        is_tp = status == "TP"
+        header = "✅✅✅" if is_tp else "❌❌❌"
+        emoji = "✅ TP" if is_tp else "❌ SL"
+        outcome = "🚀 ПРИБЫЛЬ" if is_tp else "📉 УБЫТОК"
+        text = (
+            f"{header} <b>{emoji} · {R:+.2f}R</b> {header}\n"
+            f"\n"
+            f"<b>{sig['instrument']}</b> · {dir_e} {'LONG' if sig['direction']=='bullish' else 'SHORT'} closed\n"
+            f"\n"
+            f"Entry: <code>{sig.get('entered_price', sig['entry_price']):.5f}</code>\n"
+            f"Exit:  <code>{sig.get('exit_price', 0):.5f}</code>\n"
+            f"PnL:   <b>{R:+.2f}R</b>\n"
+            f"Peak:  +{peak:.2f}R\n"
+            f"\n"
+            f"{outcome}"
+        )
+        await _bot8.send_message(_admin_chat_id, text, parse_mode="HTML")
+        await asyncio.sleep(0.5)
+    except Exception as e:
+        logger.debug(f"fvg close alert: {e}")
+
+
+# ── Scan/monitor для watcher loop ──────────────────────────
+_fvg_last_scan_ts = 0
+
+async def _check_forex_fvg_scan():
+    """Периодический скан (раз в scan_interval_min минут)."""
+    global _fvg_last_scan_ts
+    try:
+        from fvg_scanner import scan_all, get_config
+        cfg = get_config()
+        interval = cfg.get("scan_interval_min", 10) * 60
+        import time as _t
+        now = _t.time()
+        if now - _fvg_last_scan_ts < interval:
+            return
+        _fvg_last_scan_ts = now
+        # Получаем snapshot waiting до скана, потом — после
+        from database import _fvg_signals
+        before = {(s["instrument"], s.get("formed_ts")) for s in _fvg_signals().find(
+            {"status": "WAITING_RETEST"}, {"instrument": 1, "formed_ts": 1}
+        )}
+        stats = await asyncio.to_thread(scan_all)
+        after_docs = list(_fvg_signals().find(
+            {"status": "WAITING_RETEST"}, {"instrument": 1, "formed_ts": 1, "direction": 1, "fvg_top": 1, "fvg_bottom": 1, "fvg_size_rel": 1, "impulse_body_ratio": 1, "entry_price": 1, "sl_price": 1, "formed_price": 1, "timeframe": 1, "asset_class": 1}
+        ))
+        # Новые FVG — алерты
+        new_count = 0
+        for s in after_docs:
+            key = (s["instrument"], s.get("formed_ts"))
+            if key not in before:
+                await _send_fvg_formed_alert(s)
+                new_count += 1
+        if new_count or stats["new_fvgs"]:
+            logger.info(f"[FVG-SCAN] scanned {stats['total_instruments']} instruments, {new_count} new alerts")
+    except Exception as e:
+        logger.debug(f"fvg scan: {e}")
+
+
+async def _check_forex_fvg_monitor():
+    """Monitor retest + TP/SL (каждый тик)."""
+    try:
+        from fvg_scanner import monitor_signals
+        events = await asyncio.to_thread(monitor_signals)
+        for sig in events.get("entered", []):
+            await _send_fvg_entry_alert(sig)
+        for sig in events.get("closed_tp", []):
+            await _send_fvg_close_alert(sig, "TP")
+        for sig in events.get("closed_sl", []):
+            await _send_fvg_close_alert(sig, "SL")
+        # EXPIRED — не шлём (спам)
+        if events.get("entered") or events.get("closed_tp") or events.get("closed_sl"):
+            logger.info(f"[FVG-MON] entered={len(events['entered'])} tp={len(events['closed_tp'])} sl={len(events['closed_sl'])}")
+    except Exception as e:
+        logger.debug(f"fvg monitor: {e}")
 
 
 async def _pending_cluster_block(pair: str, direction: str, triggered: bool = False) -> str:
