@@ -1287,7 +1287,7 @@ async function _renderLwcSignalChart(containerId, opts) {
   // Markers:
   //   opts.markers = [{at, direction, source, price, meta}] — для cluster, где много сигналов
   //   иначе один маркер по opts.at/opts.direction/opts.source (старая логика)
-  const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀'};
+  const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠'};
   const nearest = (ts) => {
     if (!ts) return d.candles[d.candles.length-1];
     let mc = d.candles[d.candles.length-1], minD = Infinity;

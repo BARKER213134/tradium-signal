@@ -1165,7 +1165,7 @@ function renderClusters(items) {
     tb.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Нет кластеров</td></tr>';
     return;
   }
-  const srcIcons = {cryptovizor:'🚀',tradium:'📡',anomaly:'⚠️',confluence:'🎯'};
+  const srcIcons = {cryptovizor:'🚀',tradium:'📡',anomaly:'⚠️',confluence:'🎯',cluster:'💠'};
   tb.innerHTML = items.map((c, i) => {
     const t = c.trigger_at ? new Date(c.trigger_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
     const pair = (c.pair || '').replace('/USDT','');
@@ -1530,7 +1530,7 @@ setInterval(loadPendingClusters, 30000);
 
 <script>
 let _cflData = [];
-const _cflSrcIcon = {tradium:'📡', cryptovizor:'🚀', anomaly:'⚠', confluence:'🎯', paper:'🤖'};
+const _cflSrcIcon = {tradium:'📡', cryptovizor:'🚀', anomaly:'⚠', confluence:'🎯', paper:'🤖', cluster:'💠'};
 
 async function loadConflicts() {
   const hours = document.getElementById('cflHours').value;
@@ -1889,7 +1889,7 @@ async function _renderPaperChart(idx, tf) {
       for (const c of d.candles) { const diff = Math.abs(c.time - ts); if (diff < minD) { minD = diff; mc = c; } }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀'};
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠'};
     const entryTs = p.opened_at ? Math.floor(new Date(p.opened_at).getTime()/1000) : 0;
     const mainMc = nearestP(entryTs);
     const isLong = p.direction === 'LONG';
@@ -2585,6 +2585,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="cryptovizor">🚀 CV</option>
     <option value="anomaly">⚠ Аномалии</option>
     <option value="confluence">🎯 Confluence</option>
+    <option value="cluster">💠 Cluster</option>
     <option value="paper">🤖 Paper Trade</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
@@ -2701,7 +2702,7 @@ function _setModalTF(tf) {
 }
 
 function _srcLabel(src) {
-  return src === 'tradium' ? '📡 Tradium' : src === 'anomaly' ? '⚠️ Аномалия' : src === 'confluence' ? '🎯 Confluence' : src === 'paper' ? '🤖 Paper Trade' : '🚀 Cryptovizor';
+  return src === 'tradium' ? '📡 Tradium' : src === 'anomaly' ? '⚠️ Аномалия' : src === 'confluence' ? '🎯 Confluence' : src === 'paper' ? '🤖 Paper Trade' : src === 'cluster' ? '💠 Cluster' : '🚀 Cryptovizor';
 }
 function _fmtPrice(v) { return v != null ? String(v) : '—'; }
 
@@ -2843,7 +2844,7 @@ async function loadCoinChart(coin) {
         if (diff < minD) { minD = diff; mc = c; }
       }
       const isLong = s.direction === 'LONG';
-      const srcIcon = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠' : s.source === 'confluence' ? '🎯' : s.source === 'paper' ? '🤖' : '🚀';
+      const srcIcon = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠' : s.source === 'confluence' ? '🎯' : s.source === 'paper' ? '🤖' : s.source === 'cluster' ? '💠' : '🚀';
       markers.push({
         time: mc.time,
         direction: s.direction,
@@ -3007,9 +3008,9 @@ function filterJournal() {
   const minTs = timeH > 0 ? nowTs - timeH * 3600 : 0;
 
   let filtered = _journalData.filter(s => {
-    // Tradium сигналы показываем всегда независимо от временного окна
+    // Tradium и Cluster сигналы показываем всегда независимо от временного окна
     // (их мало, они ценные — не прячем за фильтром "24ч")
-    if (minTs && s.source !== 'tradium' && (s.at_ts || 0) < minTs) return false;
+    if (minTs && !['tradium','cluster'].includes(s.source) && (s.at_ts || 0) < minTs) return false;
     if (src && s.source !== src) return false;
     if (dir && s.direction !== dir) return false;
     if (kc === 'pass' && s.st_passed !== true) return false;
@@ -3017,11 +3018,11 @@ function filterJournal() {
     if (minScore && (s.score || 0) < minScore) return false;
     if (pump === 'high' && (s.pump_score || 0) < 2) return false;
     if (window._journalStrongOnly) {
-      // Strong only: Confluence ≥5, Anomaly ≥70, CV с паттерном, Tradium всегда
+      // Strong only: Confluence ≥5, Anomaly ≥70, CV с паттерном
+      // Tradium, Paper, Cluster — всегда показываем (кластер сам по себе композит)
       if (s.source === 'confluence' && (s.score || 0) < 5) return false;
       if (s.source === 'anomaly' && (s.score || 0) < 70) return false;
       if (s.source === 'cryptovizor' && !s.pattern) return false;
-      // paper, tradium — оставляем
     }
     return true;
   });
@@ -3050,7 +3051,7 @@ function filterJournal() {
     if (s.direction === 'LONG') stats[k].long++;
     else stats[k].short++;
   }
-  const names = {tradium: '📡 Tradium', cryptovizor: '🚀 CV', anomaly: '⚠ Аном', confluence: '🎯 Conf', paper: '🤖 Paper'};
+  const names = {tradium: '📡 Tradium', cryptovizor: '🚀 CV', anomaly: '⚠ Аном', confluence: '🎯 Conf', paper: '🤖 Paper', cluster: '💠 Cluster'};
   const statsEl = document.getElementById('jSourceStats');
   if (statsEl) {
     statsEl.innerHTML = Object.entries(stats).map(([k, v]) =>
@@ -3132,8 +3133,8 @@ function renderJournal(items, startIdx) {
     const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
     const pair = (s.pair || s.symbol || '').replace('/USDT', '');
     const time = s.at ? new Date(s.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
-    const srcBadge = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : s.source === 'paper' ? '🤖' : '🚀';
-    const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? 'Confluence' : s.source === 'paper' ? 'Paper' : 'CV';
+    const srcBadge = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : s.source === 'paper' ? '🤖' : s.source === 'cluster' ? '💠' : '🚀';
+    const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? 'Confluence' : s.source === 'paper' ? 'Paper' : s.source === 'cluster' ? 'Cluster' : 'CV';
     const stFail = s.st_passed === false;
     const pumpHigh = (s.pump_score || 0) >= 2;
     const rowCls = pumpHigh ? 'pump-high' : (stFail ? 'st-failed' : '');
@@ -3267,7 +3268,7 @@ async function openJournalChart(idx, forceTF) {
       }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀'};
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠'};
     const modalMarkerMap = new Map();
     const allSigs = [{at_ts: s.at_ts, direction: s.direction, source: s.source, price: s.entry, pair: s.pair, tp1: s.tp1, sl: s.sl, entry: s.entry, pattern: s.pattern, score: s.score, status: s.status}];
     try {

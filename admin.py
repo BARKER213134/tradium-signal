@@ -2521,7 +2521,7 @@ async def api_journal():
         })
 
     # Paper Trades (BOT6)
-    from database import _get_db
+    from database import _get_db, _clusters
     pt_col = _get_db().paper_trades
     for t in pt_col.find({"trade_id": {"$exists": True}}).sort("opened_at", -1):
         at_dt = t.get("opened_at")
@@ -2540,6 +2540,42 @@ async def api_journal():
             "score": t.get("size_usdt"),
             "st_passed": None,
             "pump_score": 0,
+            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
+            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+        })
+
+    # Clusters (композитные сигналы) — полноценные записи с TP/SL
+    for c in _clusters().find({}).sort("trigger_at", -1).limit(200):
+        at_dt = c.get("trigger_at")
+        strength = c.get("strength", "NORMAL")
+        status = c.get("status", "OPEN")
+        signals_count = c.get("signals_count", 0)
+        sources_count = c.get("sources_count", 0)
+        pnl = c.get("pnl_percent")
+        # Строковый pattern: "MEGA · 4×3 · +1.5R" (если закрыт — добавляем PnL)
+        pattern_parts = [strength, f"{signals_count}×{sources_count}"]
+        if status == "TP":
+            pattern_parts.append("✅")
+        elif status == "SL":
+            pattern_parts.append("❌")
+        items.append({
+            "source": "cluster",
+            "symbol": (c.get("pair") or c.get("symbol") or "").replace("/", "").upper(),
+            "pair": c.get("pair", ""),
+            "direction": c.get("direction", ""),
+            "entry": c.get("trigger_price"),
+            "tp1": c.get("tp_price"),
+            "sl": c.get("sl_price"),
+            "pattern": " · ".join(pattern_parts),
+            "score": abs(c.get("reversal_score") or 0),  # reversal confirmation
+            "st_passed": None,
+            "pump_score": 0,
+            "cluster_strength": strength,
+            "cluster_status": status,
+            "cluster_pnl": round(pnl, 2) if pnl is not None else None,
+            "cluster_id": c.get("id"),
+            "sources_count": sources_count,
+            "signals_count": signals_count,
             "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
             "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
