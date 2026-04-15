@@ -2239,42 +2239,162 @@ setInterval(loadFvgSignals, 30000);
 
 {% elif bot == 'forex_journal' %}
 <!-- ── Forex Журнал (история FVG) ──────────────────────────────────── -->
-<div class="an-toolbar" style="padding:10px 18px;gap:8px;flex-wrap:wrap;">
-  <select id="fjStatus" onchange="loadForexJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
-    <option value="">Все статусы</option>
+<style>
+/* Stat grid forced 6-col with fallback */
+.fj-stats {
+  display: grid !important;
+  grid-template-columns: repeat(6, 1fr) !important;
+  gap: 12px; margin-bottom: 16px;
+}
+@media (max-width: 1100px) { .fj-stats { grid-template-columns: repeat(3, 1fr) !important; } }
+@media (max-width: 640px)  { .fj-stats { grid-template-columns: repeat(2, 1fr) !important; } }
+.fj-stat {
+  background: linear-gradient(135deg, var(--dark-2), rgba(255,255,255,0.02));
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; text-align: center;
+  transition: transform 0.15s, border-color 0.15s;
+}
+.fj-stat:hover { transform: translateY(-2px); border-color: rgba(0,212,255,0.3); }
+.fj-stat-lbl { font-family: var(--font-mono); font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em; }
+.fj-stat-val { font-family: var(--font-mono); font-size: 24px; font-weight: 800; margin-top: 6px; line-height: 1.1; color: var(--text); }
+.fj-stat-wait  { border-color: rgba(255,210,62,0.3); }
+.fj-stat-wait  .fj-stat-val { color: #ffd23e; }
+.fj-stat-open  { border-color: rgba(0,229,160,0.3); }
+.fj-stat-open  .fj-stat-val { color: #00e5a0; }
+.fj-stat-buy   .fj-stat-val { color: var(--buy); }
+.fj-stat-sell  .fj-stat-val { color: var(--sell); }
+
+/* Toolbar */
+.fj-toolbar {
+  display: flex; gap: 10px; align-items: center; padding: 12px 16px;
+  background: var(--dark-2); border: 1px solid var(--border); border-radius: 10px;
+  margin-bottom: 14px; flex-wrap: wrap;
+}
+.fj-select, .fj-input {
+  background: var(--dark); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 12px; font-size: 11px;
+  font-family: var(--font-mono); cursor: pointer; outline: none;
+}
+.fj-select:hover, .fj-input:hover, .fj-input:focus { border-color: var(--cyan); }
+.fj-input { width: 180px; cursor: text; }
+.fj-count {
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  margin-left: auto; padding-right: 4px;
+}
+.fj-sound-btn {
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  padding: 5px 10px; font-size: 14px; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.fj-sound-btn:hover { border-color: var(--cyan); }
+
+/* Table */
+.fj-table-wrap { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--dark-2); }
+.fj-table-wrap table { margin: 0; }
+
+/* Status badges with gradients */
+.fj-st {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 14px;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 800;
+  letter-spacing: 0.06em; white-space: nowrap;
+}
+.fj-st-waiting {
+  background: linear-gradient(135deg, rgba(255,210,62,0.22), rgba(255,210,62,0.08));
+  color: #ffd23e; border: 1px solid rgba(255,210,62,0.4);
+}
+.fj-st-entered {
+  background: linear-gradient(135deg, rgba(0,229,160,0.22), rgba(0,229,160,0.08));
+  color: #00e5a0; border: 1px solid rgba(0,229,160,0.4);
+}
+.fj-st-tp {
+  background: linear-gradient(135deg, rgba(0,229,160,0.35), rgba(0,229,160,0.15));
+  color: #00ffb0; border: 1px solid rgba(0,229,160,0.5);
+  box-shadow: 0 0 8px rgba(0,229,160,0.2);
+}
+.fj-st-sl {
+  background: linear-gradient(135deg, rgba(255,77,109,0.25), rgba(255,77,109,0.10));
+  color: #ff4d6d; border: 1px solid rgba(255,77,109,0.4);
+}
+.fj-st-expired {
+  background: rgba(100,100,100,0.15);
+  color: #888; border: 1px solid rgba(100,100,100,0.3);
+}
+
+/* Row highlights by status */
+.fj-row-waiting { background: rgba(255,210,62,0.025) !important; }
+.fj-row-waiting:hover { background: rgba(255,210,62,0.06) !important; }
+.fj-row-entered { background: rgba(0,229,160,0.04) !important; }
+.fj-row-entered:hover { background: rgba(0,229,160,0.10) !important; }
+.fj-row-tp { background: rgba(0,229,160,0.08) !important; }
+.fj-row-tp:hover { background: rgba(0,229,160,0.14) !important; }
+.fj-row-sl { background: rgba(255,77,109,0.05) !important; }
+.fj-row-sl:hover { background: rgba(255,77,109,0.10) !important; }
+.fj-row-expired { opacity: 0.55; }
+.fj-row-expired:hover { opacity: 0.85; background: rgba(100,100,100,0.06) !important; }
+
+/* Direction badges */
+.fj-dir-long  { color: var(--buy); font-weight: 700; font-family: var(--font-mono); }
+.fj-dir-short { color: var(--sell); font-weight: 700; font-family: var(--font-mono); }
+</style>
+
+<div class="fj-toolbar">
+  <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Статус</span>
+  <select id="fjStatus" onchange="loadForexJournal()" class="fj-select">
+    <option value="">Все</option>
     <option value="WAITING_RETEST">⏳ Waiting</option>
     <option value="ENTERED">🎯 Entered</option>
     <option value="TP">✅ TP</option>
     <option value="SL">❌ SL</option>
     <option value="EXPIRED">⏱ Expired</option>
   </select>
-  <select id="fjDir" onchange="loadForexJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
-    <option value="">Все направления</option>
+  <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-left:6px;">Напр</span>
+  <select id="fjDir" onchange="loadForexJournal()" class="fj-select">
+    <option value="">Все</option>
     <option value="bullish">🟢 Bullish</option>
     <option value="bearish">🔴 Bearish</option>
   </select>
-  <select id="fjHours" onchange="loadForexJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+  <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-left:6px;">Окно</span>
+  <select id="fjHours" onchange="loadForexJournal()" class="fj-select">
     <option value="24">24 часа</option>
     <option value="168" selected>7 дней</option>
     <option value="720">30 дней</option>
     <option value="0">Все</option>
   </select>
-  <input id="fjInstr" type="text" placeholder="Фильтр инстр (EURUSD, XAU...)" oninput="loadForexJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);width:220px;">
-  <span id="fjCount" class="an-filter-count"></span>
-  <button id="fjSoundBtn" onclick="_fjSound=!_fjSound;this.textContent=_fjSound?'🔔':'🔕'" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
+  <input id="fjInstr" type="text" placeholder="Инстр (EURUSD, XAU...)" oninput="loadForexJournal()" class="fj-input">
+  <span id="fjCount" class="fj-count"></span>
+  <button id="fjSoundBtn" onclick="_fjSound=!_fjSound;this.textContent=_fjSound?'🔔':'🔕'" class="fj-sound-btn" title="Звук на новые FVG">🔔</button>
 </div>
 
 <!-- Статистика -->
-<div class="fvg-stats" style="margin-bottom:14px;">
-  <div class="fvg-stat"><div class="fvg-stat-lbl">Всего</div><div class="fvg-stat-val" id="fjStatTotal">—</div></div>
-  <div class="fvg-stat"><div class="fvg-stat-lbl">⏳ Waiting</div><div class="fvg-stat-val" id="fjStatWait">—</div></div>
-  <div class="fvg-stat"><div class="fvg-stat-lbl">🎯 Open</div><div class="fvg-stat-val" id="fjStatOpen">—</div></div>
-  <div class="fvg-stat"><div class="fvg-stat-lbl">Win Rate</div><div class="fvg-stat-val" id="fjStatWR">—</div></div>
-  <div class="fvg-stat"><div class="fvg-stat-lbl">Sum R</div><div class="fvg-stat-val" id="fjStatSumR">—</div></div>
-  <div class="fvg-stat"><div class="fvg-stat-lbl">Avg R</div><div class="fvg-stat-val" id="fjStatAvgR">—</div></div>
+<div class="fj-stats">
+  <div class="fj-stat">
+    <div class="fj-stat-lbl">Всего</div>
+    <div class="fj-stat-val" id="fjStatTotal">—</div>
+  </div>
+  <div class="fj-stat fj-stat-wait">
+    <div class="fj-stat-lbl">⏳ Waiting</div>
+    <div class="fj-stat-val" id="fjStatWait">—</div>
+  </div>
+  <div class="fj-stat fj-stat-open">
+    <div class="fj-stat-lbl">🎯 Open</div>
+    <div class="fj-stat-val" id="fjStatOpen">—</div>
+  </div>
+  <div class="fj-stat">
+    <div class="fj-stat-lbl">Win Rate</div>
+    <div class="fj-stat-val" id="fjStatWR">—</div>
+  </div>
+  <div class="fj-stat">
+    <div class="fj-stat-lbl">Sum R</div>
+    <div class="fj-stat-val" id="fjStatSumR">—</div>
+  </div>
+  <div class="fj-stat">
+    <div class="fj-stat-lbl">Avg R</div>
+    <div class="fj-stat-val" id="fjStatAvgR">—</div>
+  </div>
 </div>
 
-<div class="table-wrap">
+<div class="fj-table-wrap">
   <table>
     <thead>
       <tr>
@@ -2291,7 +2411,10 @@ setInterval(loadFvgSignals, 30000);
       </tr>
     </thead>
     <tbody id="fjBody">
-      <tr><td colspan="10" style="text-align:center;padding:30px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="10" style="text-align:center;padding:60px;color:var(--muted);">
+        <div style="font-size:36px;margin-bottom:8px;opacity:0.5;">⏳</div>
+        <div style="font-family:var(--font-mono);">Загрузка…</div>
+      </td></tr>
     </tbody>
   </table>
 </div>
@@ -2332,13 +2455,15 @@ async function loadForexJournal() {
     const wr = s.wr || 0;
     const wrEl = document.getElementById('fjStatWR');
     wrEl.textContent = wr + '%';
-    wrEl.className = 'fvg-stat-val ' + (wr >= 40 ? 'text-buy' : wr >= 25 ? '' : 'text-sell');
+    wrEl.style.color = wr >= 40 ? 'var(--buy)' : wr >= 25 ? 'var(--text)' : 'var(--sell)';
     const sr = s.sum_r || 0;
     const srEl = document.getElementById('fjStatSumR');
     srEl.textContent = (sr >= 0 ? '+' : '') + sr + 'R';
-    srEl.className = 'fvg-stat-val ' + (sr >= 0 ? 'text-buy' : 'text-sell');
+    srEl.style.color = sr >= 0 ? 'var(--buy)' : 'var(--sell)';
     const ar = s.avg_r || 0;
-    document.getElementById('fjStatAvgR').textContent = (ar >= 0 ? '+' : '') + ar.toFixed(3) + 'R';
+    const arEl = document.getElementById('fjStatAvgR');
+    arEl.textContent = (ar >= 0 ? '+' : '') + ar.toFixed(3) + 'R';
+    arEl.style.color = ar >= 0 ? 'var(--buy)' : 'var(--sell)';
     document.getElementById('fjCount').textContent = `${items.length} в окне`;
     _fjRenderSorted();
 
@@ -2440,29 +2565,45 @@ function _playBeep() {
 
 function renderJournalRows(items) {
   const tb = document.getElementById('fjBody');
-  if (!items.length) { tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;" class="text-muted">Нет сигналов</td></tr>'; return; }
-  tb.innerHTML = items.map((s, i) => {
+  if (!items.length) {
+    tb.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:60px;">
+      <div style="font-size:44px;margin-bottom:10px;">📭</div>
+      <div style="font-family:var(--font-mono);font-size:13px;color:var(--text);font-weight:700;margin-bottom:4px;">Нет сигналов</div>
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);">Попробуй расширить окно времени или сменить фильтры</div>
+    </td></tr>`;
+    return;
+  }
+  const stMap = {
+    WAITING_RETEST:['⏳ WAIT', 'fj-st-waiting', 'fj-row-waiting'],
+    ENTERED:       ['🎯 OPEN', 'fj-st-entered', 'fj-row-entered'],
+    TP:            ['✅ TP',   'fj-st-tp',      'fj-row-tp'],
+    SL:            ['❌ SL',   'fj-st-sl',      'fj-row-sl'],
+    EXPIRED:       ['⏱ EXP',  'fj-st-expired', 'fj-row-expired'],
+    TIMEOUT:       ['⏱ TO',   'fj-st-expired', 'fj-row-expired'],
+  };
+  tb.innerHTML = items.map((s) => {
     const origIdx = _fjData.indexOf(s);
-    const dir = s.direction === 'bullish' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
+    const isL = s.direction === 'bullish';
+    const dirHtml = isL
+      ? `<span class="fj-dir-long">🟢 LONG</span>`
+      : `<span class="fj-dir-short">🔴 SHORT</span>`;
     const t = s.formed_at ? new Date(s.formed_at).toLocaleString('ru', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
-    const stMap = {WAITING_RETEST:['⏳ WAIT','badge-status'], ENTERED:['🎯 OPEN','badge-buy'], TP:['✅ TP','badge-buy'], SL:['❌ SL','badge-sell'], EXPIRED:['⏱ EXP','badge-status'], TIMEOUT:['⏱ TO','badge-status']};
-    const st = stMap[s.status] || [s.status, 'badge-status'];
+    const st = stMap[s.status] || [s.status, 'fj-st-expired', ''];
     const R = s.outcome_R;
     const rStr = R != null ? ((R>=0?'+':'') + R.toFixed(2) + 'R') : '—';
-    const rCls = R != null ? (R > 0 ? 'text-buy fw-700' : 'text-sell fw-700') : 'text-muted';
+    const rColor = R != null ? (R > 0 ? 'var(--buy)' : 'var(--sell)') : 'var(--muted)';
     const peak = (s.peak_R || 0).toFixed(2);
-    const rowCls = s.status === 'TP' ? 'fvg-row-tp' : s.status === 'SL' ? 'fvg-row-sl' : s.status === 'ENTERED' ? 'fvg-row-entered' : s.status === 'WAITING_RETEST' ? 'fvg-row-waiting' : s.status === 'EXPIRED' ? 'fvg-row-expired' : '';
-    return `<tr class="${rowCls}" style="cursor:pointer;" onclick="openFjChart(${origIdx})">
-      <td class="mono text-muted" style="font-size:11px;">${t}</td>
-      <td class="mono fw-700 text-accent">${s.instrument}</td>
-      <td class="mono text-muted">${s.asset_class}</td>
-      <td class="mono text-muted">${s.timeframe}</td>
-      <td>${dir}</td>
-      <td class="mono" style="font-size:10px;">${s.fvg_bottom} → ${s.fvg_top}</td>
-      <td class="mono">${s.entry_price}</td>
-      <td><span class="badge ${st[1]}">${st[0]}</span></td>
-      <td class="mono ${rCls}">${rStr}</td>
-      <td class="mono text-muted">+${peak}R</td>
+    return `<tr class="${st[2]}" style="cursor:pointer;" onclick="openFjChart(${origIdx})">
+      <td class="mono" style="font-size:11px;color:var(--muted);white-space:nowrap;">${t}</td>
+      <td class="mono" style="font-weight:800;color:var(--cyan);font-size:13px;">${s.instrument}</td>
+      <td class="mono" style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:0.05em;">${s.asset_class}</td>
+      <td class="mono" style="color:var(--muted);font-size:11px;">${s.timeframe}</td>
+      <td>${dirHtml}</td>
+      <td class="mono" style="font-size:10px;color:var(--muted);">${s.fvg_bottom} → ${s.fvg_top}</td>
+      <td class="mono" style="font-weight:700;">${s.entry_price}</td>
+      <td><span class="fj-st ${st[1]}">${st[0]}</span></td>
+      <td class="mono" style="color:${rColor};font-weight:700;">${rStr}</td>
+      <td class="mono" style="color:var(--muted);">+${peak}R</td>
     </tr>`;
   }).join('');
 }
