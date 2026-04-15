@@ -641,7 +641,7 @@ async function toggleCluster(rowId, symbol) {
       title: symbol.replace('USDT','') + ' · Аномалия',
       score: anom.score,
       source: 'anomaly',
-      fetchPairSignals: true, windowH: 24,
+      fetchPairSignals: true, windowH: 72,
     });
   }
 }
@@ -904,7 +904,7 @@ function toggleConfluenceRow(rowId, symbol) {
       score: conf.score,
       pattern: conf.pattern,
       source: 'confluence',
-      fetchPairSignals: true, windowH: 24,
+      fetchPairSignals: true, windowH: 72,
     });
   }
 }
@@ -1221,6 +1221,8 @@ async function toggleClusterChart(idx, symbol) {
     pattern: `${c.signals_count} сигналов · ${c.sources_count} источников`,
     source: 'cluster',
     markers,
+    // Плюс добираем ВСЕ остальные сигналы по паре из истории (72ч)
+    fetchPairSignals: true, windowH: 72,
   });
 }
 
@@ -1899,7 +1901,7 @@ async function _renderPaperChart(idx, tf) {
     const paperAllSigs = [];
     try {
       const pairForApi = (p.pair || p.symbol || '').includes('/') ? (p.pair || p.symbol) : (p.symbol || '').replace(/USDT$/i,'/USDT');
-      const rr = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pairForApi)}&window_h=48`);
+      const rr = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pairForApi)}&window_h=72`);
       const dd = await rr.json();
       for (const dir of ['LONG','SHORT']) {
         for (const ss of ((dd.items || {})[dir] || [])) {
@@ -4091,7 +4093,7 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
       title: pair.replace('/USDT','') + ' · CV',
       pattern,
       source: 'cryptovizor',
-      fetchPairSignals: true, windowH: 48,
+      fetchPairSignals: true, windowH: 72,
     });
   }
 
@@ -5045,7 +5047,7 @@ function renderSignal(s) {
         pattern: s.chart_notes || '',
         score: s.ai_score,
         source: src,
-        fetchPairSignals: true, windowH: 48,
+        fetchPairSignals: true, windowH: 72,
       });
     } else {
       const c = document.getElementById('modalLwcChart_' + s.id);
@@ -5126,7 +5128,7 @@ async function toggleTradiumChart(idx, pair, direction, entry, tp1, sl, ts, patt
     title: (pair||'').replace('/USDT','') + ' · Tradium',
     pattern: pattern || '',
     source: 'tradium',
-    fetchPairSignals: true, windowH: 48,
+    fetchPairSignals: true, windowH: 72,
   });
 }
 

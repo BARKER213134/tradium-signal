@@ -917,25 +917,29 @@ async function openPendingChart(pair, direction) {
     </div>`;
   modal.style.display='flex';
 
-  // Запрашиваем все сигналы по паре+направлению за 8 часов
+  // Запрашиваем все сигналы по паре+направлению за 72 часа (ОБА направления
+  // чтобы видеть и противоположные — критично для конфликтов и anti-cluster)
   try {
-    const r = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pair)}&direction=${direction}&window_h=8`);
+    const r = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pair)}&window_h=72`);
     const d = await r.json();
-    const sigs = (d.items || {})[direction] || [];
+    const longs = (d.items || {}).LONG || [];
+    const shorts = (d.items || {}).SHORT || [];
+    const sigs = direction === 'LONG' ? longs : shorts;
     document.getElementById('pcmInfo').textContent =
-      `${sigs.length} сигналов за 8ч · источники: ${[...new Set(sigs.map(s => s.source))].join(', ') || '—'}`;
-    const markers = sigs.map(s => ({
-      at: s.at, direction, source: s.source, price: s.price, meta: s.meta || {},
-    }));
-    // Последний entry — текущая цена
+      `${sigs.length} сигналов в направлении · все: ${longs.length}L + ${shorts.length}S за 72ч`;
+    // На графике показываем ВСЕ сигналы обеих сторон — для контекста
+    const markersAll = [];
+    for (const s of longs)  markersAll.push({at: s.at, direction: 'LONG',  source: s.source, price: s.price, meta: s.meta || {}});
+    for (const s of shorts) markersAll.push({at: s.at, direction: 'SHORT', source: s.source, price: s.price, meta: s.meta || {}});
+    // Последний entry — последняя цена в нашем направлении
     const lastPrice = sigs.length ? sigs[sigs.length - 1].price : null;
     _renderLwcSignalChart('pcmChart', {
       symbol: pair.replace('/', ''),
       direction,
       entry: lastPrice,
-      at: markers.length ? markers[markers.length-1].at : null,
+      at: markersAll.length ? markersAll[markersAll.length-1].at : null,
       title: pairClean + '/USDT · ' + direction + ' (pending)',
-      markers,
+      markers: markersAll,
     });
   } catch (e) {
     document.getElementById('pcmInfo').textContent = 'Ошибка: ' + e.message;
@@ -1212,7 +1216,7 @@ async function _renderLwcSignalChart(containerId, opts) {
   if (opts.fetchPairSignals && !opts._markersFetched && opts.symbol) {
     try {
       const pairForApi = opts.symbol.includes('/') ? opts.symbol : opts.symbol.replace(/USDT$/i, '/USDT');
-      const wh = opts.windowH || 24;
+      const wh = opts.windowH || 72;  // дефолт 72ч (~8 дней на 1h чарте)
       const r = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pairForApi)}&window_h=${wh}`);
       const d = await r.json();
       const combined = [...(opts.markers || [])];
