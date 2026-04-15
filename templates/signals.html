@@ -4506,7 +4506,8 @@ function renderSignal(s) {
   try {
     const sym = (s.pair || '').replace('/', '').toUpperCase();
     const atTs = s.pattern_triggered_at || s.received_at;
-    if (sym && (s.source === 'cryptovizor' || s.source === 'tradium') && window._renderLwcSignalChart !== false) {
+    const src = s.source || 'tradium';
+    if (sym && typeof _renderLwcSignalChart === 'function') {
       _renderLwcSignalChart('modalLwcChart_' + s.id, {
         symbol: sym,
         direction: s.direction,
@@ -4514,14 +4515,21 @@ function renderSignal(s) {
         tp1: s.tp1,
         sl: s.sl,
         at: atTs,
-        title: (s.pair || '') + ' · ' + (s.source || ''),
+        title: (s.pair || '') + ' · ' + src,
         pattern: s.chart_notes || '',
         score: s.ai_score,
-        source: s.source || 'cryptovizor',
+        source: src,
         fetchPairSignals: true, windowH: 48,
       });
+    } else {
+      const c = document.getElementById('modalLwcChart_' + s.id);
+      if (c) c.innerHTML = '<div style="padding:20px;color:var(--muted);text-align:center;">График недоступен (pair=' + (s.pair||'—') + ')</div>';
     }
-  } catch(e) { console.warn('[modal lwc]', e); }
+  } catch(e) {
+    console.warn('[modal lwc]', e);
+    const c = document.getElementById('modalLwcChart_' + s.id);
+    if (c) c.innerHTML = '<div style="padding:20px;color:var(--sell);text-align:center;">Ошибка: ' + e.message + '</div>';
+  }
 }
 
 async function loadEvents(id) {

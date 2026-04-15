@@ -2900,7 +2900,7 @@ def _signal_one_sync(signal_id, db):
     if not s:
         raise HTTPException(status_code=404)
     return {
-        "id": s.id, "pair": s.pair, "direction": s.direction,
+        "id": s.id, "source": s.source, "pair": s.pair, "direction": s.direction,
         "entry": s.entry, "sl": s.sl, "tp1": s.tp1,
         "timeframe": s.timeframe, "risk_reward": s.risk_reward,
         "risk_percent": s.risk_percent, "amount": s.amount,
@@ -2912,6 +2912,7 @@ def _signal_one_sync(signal_id, db):
         "dca1": s.dca1, "dca2": s.dca2, "dca3": s.dca3, "dca4": s.dca4,
         "dca4_triggered": s.dca4_triggered,
         "pattern_triggered": s.pattern_triggered,
+        "pattern_triggered_at": s.pattern_triggered_at.isoformat() if s.pattern_triggered_at and hasattr(s.pattern_triggered_at, 'isoformat') else s.pattern_triggered_at,
         "pattern_name": s.pattern_name,
         "pattern_price": s.pattern_price,
         "ai_score": s.ai_score,
