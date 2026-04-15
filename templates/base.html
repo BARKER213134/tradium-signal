@@ -920,7 +920,7 @@ async function openPendingChart(pair, direction) {
   // Запрашиваем все сигналы по паре+направлению за 72 часа (ОБА направления
   // чтобы видеть и противоположные — критично для конфликтов и anti-cluster)
   try {
-    const r = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pair)}&window_h=72`);
+    const r = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pair)}&window_h=96`);
     const d = await r.json();
     const longs = (d.items || {}).LONG || [];
     const shorts = (d.items || {}).SHORT || [];
@@ -1216,7 +1216,7 @@ async function _renderLwcSignalChart(containerId, opts) {
   if (opts.fetchPairSignals && !opts._markersFetched && opts.symbol) {
     try {
       const pairForApi = opts.symbol.includes('/') ? opts.symbol : opts.symbol.replace(/USDT$/i, '/USDT');
-      const wh = opts.windowH || 72;  // дефолт 72ч (~8 дней на 1h чарте)
+      const wh = opts.windowH || 96;  // дефолт 96ч (4 дня)
       const r = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pairForApi)}&window_h=${wh}`);
       const d = await r.json();
       const combined = [...(opts.markers || [])];
