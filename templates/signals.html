@@ -729,10 +729,10 @@ setInterval(loadAnomalies, 60000);
       <option value="LONG">🟢 LONG</option>
       <option value="SHORT">🔴 SHORT</option>
     </select>
-    <select id="cfFilterScore" onchange="filterConfluence()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
-      <option value="">Score</option>
-      <option value="4">4+</option>
-      <option value="5">5+ ⭐</option>
+    <select id="cfFilterScore" onchange="filterConfluence()" title="По умолчанию скрыты MEDIUM (4) — feed для кластеров" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:11px;font-family:var(--font-mono);">
+      <option value="">Score: все</option>
+      <option value="4">4+ (с MEDIUM)</option>
+      <option value="5" selected>5+ ⭐ Strong</option>
       <option value="6">6 🔥</option>
     </select>
     <span id="cfFilterCount" class="an-filter-count"></span>
@@ -2143,6 +2143,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="168">Неделя</option>
     <option value="0">Всё время</option>
   </select>
+  <button id="jStrongOnlyBtn" onclick="_toggleStrongOnly()" title="Только STRONG: Confluence≥5, Anomaly≥70, CV с паттерном" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;">⭐ Strong only</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
 </div>
 
@@ -2545,6 +2546,13 @@ function filterJournal() {
     if (kc === 'fail' && s.st_passed !== false) return false;
     if (minScore && (s.score || 0) < minScore) return false;
     if (pump === 'high' && (s.pump_score || 0) < 2) return false;
+    if (window._journalStrongOnly) {
+      // Strong only: Confluence ≥5, Anomaly ≥70, CV с паттерном, Tradium всегда
+      if (s.source === 'confluence' && (s.score || 0) < 5) return false;
+      if (s.source === 'anomaly' && (s.score || 0) < 70) return false;
+      if (s.source === 'cryptovizor' && !s.pattern) return false;
+      // paper, tradium — оставляем
+    }
     return true;
   });
   // Apply current sort
@@ -2587,6 +2595,25 @@ function jGoPage(p) {
   const totalPages = Math.ceil(_journalFiltered.length / _jPerPage);
   _jPage = Math.max(1, Math.min(p, totalPages));
   renderJournalPage();
+}
+
+function _toggleStrongOnly() {
+  window._journalStrongOnly = !window._journalStrongOnly;
+  const btn = document.getElementById('jStrongOnlyBtn');
+  if (btn) {
+    if (window._journalStrongOnly) {
+      btn.style.background = 'linear-gradient(135deg, rgba(0,212,255,0.15), rgba(123,92,255,0.10))';
+      btn.style.borderColor = 'var(--cyan)';
+      btn.style.color = 'var(--cyan)';
+      btn.textContent = '⭐ Strong only: ON';
+    } else {
+      btn.style.background = 'none';
+      btn.style.borderColor = 'var(--border)';
+      btn.style.color = 'var(--muted)';
+      btn.textContent = '⭐ Strong only';
+    }
+  }
+  filterJournal();
 }
 
 function renderJournalPage() {
