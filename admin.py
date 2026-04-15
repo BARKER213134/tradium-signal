@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1203,6 +1203,33 @@ async def api_fvg_scan_now():
     mon_events = await asyncio.to_thread(monitor_signals)
     events_summary = {k: len(v) for k, v in mon_events.items()}
     return {"scan": scan_stats, "monitor": events_summary}
+
+
+@app.get("/api/conflicts")
+async def api_conflicts(hours: int = 4, limit: int = 50):
+    """Активные конфликты между сигналами."""
+    from anti_cluster_detector import get_active_conflicts, get_conflict_stats
+    items = await asyncio.to_thread(get_active_conflicts, hours, limit)
+    stats = await asyncio.to_thread(get_conflict_stats, 168)
+    return {"items": items, "stats": stats}
+
+
+@app.post("/api/conflicts/check")
+async def api_conflicts_check(payload: dict):
+    """Проверить конкретную пару+время на конфликт (для тестов/debug)."""
+    from anti_cluster_detector import detect_conflict
+    pair = (payload or {}).get("pair", "")
+    window_h = int((payload or {}).get("window_h", 4))
+    if not pair:
+        return {"ok": False, "error": "no pair"}
+    res = await asyncio.to_thread(detect_conflict, pair, None, window_h)
+    # Сериализация datetime
+    for key in ("longs", "shorts"):
+        for item in res.get(key, []):
+            at = item.get("at")
+            if hasattr(at, "isoformat"):
+                item["at"] = at.isoformat()
+    return {"ok": True, "conflict": res}
 
 
 @app.get("/api/fvg-candles")

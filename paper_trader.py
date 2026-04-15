@@ -291,7 +291,24 @@ async def ai_review_trade(trade: dict) -> str:
 async def on_signal(signal_data: dict):
     """Вызывается при новом сигнале. AI решает и открывает позицию.
     Для is_cluster=True применяется boost на leverage и size в зависимости
-    от cluster_strength (MEGA → ×strong_boost, STRONG → ×leverage_boost)."""
+    от cluster_strength (MEGA → ×strong_boost, STRONG → ×leverage_boost).
+
+    Anti-cluster block: если источники противоречат (severity strong/nuclear)
+    — позиция НЕ открывается, независимо от решения AI.
+    """
+    # Anti-cluster guard: проверяем конфликт на паре перед AI-решением
+    try:
+        from anti_cluster_detector import detect_conflict
+        pair = signal_data.get("pair") or signal_data.get("symbol", "").replace("USDT", "/USDT")
+        if pair:
+            conflict = detect_conflict(pair, None, window_h=4)
+            if conflict["has_conflict"] and conflict["severity"] in ("strong", "nuclear"):
+                logger.info(f"Paper SKIP: {signal_data.get('symbol','')} — CONFLICT {conflict['severity']} "
+                            f"L={conflict['long_weight']} S={conflict['short_weight']}")
+                return None
+    except Exception as e:
+        logger.debug(f"paper anti-cluster check failed: {e}")
+
     decision = await ai_decide(signal_data)
     if not decision.get("enter"):
         logger.info(f"Paper SKIP: {signal_data.get('symbol','')} — {decision.get('reasoning','')}")

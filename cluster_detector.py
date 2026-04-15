@@ -209,7 +209,13 @@ def get_pending_clusters(limit: int = 50) -> list[dict]:
 # ── Проверка: создать кластер? ─────────────────────────────────
 def should_trigger_cluster(pair: str, direction: str, at: datetime) -> tuple[bool, list, int]:
     """Проверяет создавать ли кластер на момент `at`.
-    Returns: (trigger, signals_in_cluster, count)"""
+    Returns: (trigger, signals_in_cluster, count)
+
+    Блокировки (в порядке проверки):
+      1. count < min_count         → не хватает голосов
+      2. дедуп (тот же кластер был недавно)
+      3. Anti-cluster divergence   → источники противоречат друг другу (strong/nuclear)
+    """
     cfg = get_config()
     sigs = collect_signals_for(pair, direction, at, cfg["window_h"])
     count = len(sigs)
@@ -224,6 +230,19 @@ def should_trigger_cluster(pair: str, direction: str, at: datetime) -> tuple[boo
     })
     if existing:
         return False, sigs, count
+
+    # Anti-cluster: блок если источники противоречат
+    try:
+        from anti_cluster_detector import detect_conflict, log_conflict_block
+        conflict = detect_conflict(pair, at, window_h=cfg["window_h"])
+        if conflict["has_conflict"] and conflict["severity"] in ("strong", "nuclear"):
+            log_conflict_block(pair, direction, conflict, at)
+            logger.info(f"[cluster] BLOCKED by anti-cluster: {pair} {direction} "
+                        f"severity={conflict['severity']} L={conflict['long_weight']} S={conflict['short_weight']}")
+            return False, sigs, count
+    except Exception as e:
+        logger.warning(f"[cluster] anti-cluster check failed: {e}")
+
     return True, sigs, count
 
 

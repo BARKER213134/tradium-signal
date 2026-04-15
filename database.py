@@ -77,6 +77,11 @@ def _fvg_config() -> Collection:
     return _get_db().system
 
 
+def _conflicts() -> Collection:
+    """Conflicts collection — противоречия между сигналами (Anti-cluster)."""
+    return _get_db().conflicts
+
+
 
 
 def _counters() -> Collection:
