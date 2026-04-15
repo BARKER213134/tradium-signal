@@ -1303,60 +1303,227 @@ setInterval(loadPendingClusters, 30000);
 {% elif bot == 'conflicts' %}
 <!-- ── Anti-cluster / Divergence Detector ──────────────────────────── -->
 <style>
-.cfl-hero { padding:16px 20px; margin-bottom:14px; background:linear-gradient(135deg,rgba(255,77,109,0.10),rgba(255,149,0,0.05)); border:1px solid rgba(255,77,109,0.25); border-radius:12px; }
-.cfl-hero h3 { font-size:15px; font-weight:800; color:var(--text); margin:0; }
-.cfl-hero p { font-size:11px; color:var(--muted); margin:4px 0 0; }
-.cfl-sev-nuclear { color:#ff4d6d; font-weight:800; }
-.cfl-sev-strong  { color:#ff9500; font-weight:700; }
-.cfl-sev-weak    { color:#ffd23e; font-weight:600; }
-.cfl-row-nuclear { background:rgba(255,77,109,0.08); }
-.cfl-row-strong  { background:rgba(255,149,0,0.06); }
-.cfl-row-weak    { background:rgba(255,210,62,0.04); }
-.cfl-src-chip { display:inline-block;padding:2px 6px;border-radius:4px;margin:1px 2px;font-family:var(--font-mono);font-size:10px;background:var(--dark-2);border:1px solid var(--border); }
+/* Hero */
+.cfl-hero {
+  padding: 18px 24px; margin-bottom: 18px;
+  background: linear-gradient(135deg, rgba(255,77,109,0.12), rgba(255,149,0,0.06) 50%, rgba(255,210,62,0.04));
+  border: 1px solid rgba(255,77,109,0.3); border-radius: 14px;
+  position: relative; overflow: hidden;
+}
+.cfl-hero::before {
+  content: ''; position: absolute; top: -50px; right: -50px;
+  width: 200px; height: 200px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,77,109,0.15), transparent 70%);
+  pointer-events: none;
+}
+.cfl-hero-title {
+  font-size: 17px; font-weight: 800; color: var(--text);
+  display: flex; align-items: center; gap: 10px; margin: 0;
+}
+.cfl-hero-title .cfl-pulse {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #ff4d6d; box-shadow: 0 0 12px #ff4d6d;
+  animation: cflPulse 1.8s ease-in-out infinite;
+}
+@keyframes cflPulse {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+.cfl-hero-desc { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.6; max-width: 780px; }
+.cfl-hero-legend { display: flex; gap: 14px; margin-top: 12px; flex-wrap: wrap; }
+.cfl-legend-item { display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10px;color:var(--muted); }
+.cfl-legend-dot { width:8px;height:8px;border-radius:50%; }
+
+/* Stat grid — forced 6-col with fallback */
+.cfl-stats {
+  display: grid !important;
+  grid-template-columns: repeat(6, 1fr) !important;
+  gap: 12px; margin-bottom: 18px;
+}
+@media (max-width: 1100px) { .cfl-stats { grid-template-columns: repeat(3, 1fr) !important; } }
+@media (max-width: 640px)  { .cfl-stats { grid-template-columns: repeat(2, 1fr) !important; } }
+.cfl-stat {
+  background: linear-gradient(135deg, var(--dark-2), rgba(255,255,255,0.02));
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; text-align: center;
+  transition: transform 0.15s, border-color 0.15s;
+}
+.cfl-stat:hover { transform: translateY(-2px); border-color: rgba(255,77,109,0.3); }
+.cfl-stat-lbl { font-family: var(--font-mono); font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em; }
+.cfl-stat-val { font-family: var(--font-mono); font-size: 24px; font-weight: 800; margin-top: 6px; line-height: 1.1; }
+.cfl-stat-nuclear { border-color: rgba(255,77,109,0.35); box-shadow: 0 0 16px rgba(255,77,109,0.12); }
+.cfl-stat-nuclear .cfl-stat-val { color: #ff4d6d; }
+.cfl-stat-strong .cfl-stat-val  { color: #ff9500; }
+.cfl-stat-weak .cfl-stat-val    { color: #ffd23e; }
+.cfl-stat-buy .cfl-stat-val     { color: var(--buy); }
+
+/* Toolbar */
+.cfl-toolbar {
+  display: flex; gap: 10px; align-items: center; padding: 12px 16px;
+  background: var(--dark-2); border: 1px solid var(--border); border-radius: 10px;
+  margin-bottom: 14px; flex-wrap: wrap;
+}
+.cfl-select {
+  background: var(--dark); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 12px; font-size: 11px;
+  font-family: var(--font-mono); cursor: pointer; outline: none;
+}
+.cfl-select:hover { border-color: var(--cyan); }
+.cfl-count {
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  margin-left: auto; padding-right: 4px;
+}
+
+/* Table */
+.cfl-table-wrap { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--dark-2); }
+.cfl-table-wrap table { margin: 0; }
+.cfl-row-nuclear { background: rgba(255,77,109,0.06) !important; }
+.cfl-row-nuclear:hover { background: rgba(255,77,109,0.12) !important; }
+.cfl-row-strong  { background: rgba(255,149,0,0.04) !important; }
+.cfl-row-strong:hover { background: rgba(255,149,0,0.10) !important; }
+.cfl-row-weak    { background: rgba(255,210,62,0.03) !important; }
+.cfl-row-weak:hover { background: rgba(255,210,62,0.08) !important; }
+
+/* Severity badges */
+.cfl-sev-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 20px;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 800;
+  letter-spacing: 0.06em; white-space: nowrap;
+}
+.cfl-sev-nuclear {
+  background: linear-gradient(135deg, rgba(255,77,109,0.25), rgba(255,77,109,0.10));
+  color: #ff4d6d; border: 1px solid rgba(255,77,109,0.4);
+}
+.cfl-sev-strong {
+  background: linear-gradient(135deg, rgba(255,149,0,0.22), rgba(255,149,0,0.08));
+  color: #ff9500; border: 1px solid rgba(255,149,0,0.4);
+}
+.cfl-sev-weak {
+  background: linear-gradient(135deg, rgba(255,210,62,0.22), rgba(255,210,62,0.08));
+  color: #ffd23e; border: 1px solid rgba(255,210,62,0.4);
+}
+
+/* Source chips */
+.cfl-src-chip {
+  display: inline-flex; align-items: center;
+  padding: 3px 7px; border-radius: 6px; margin: 1px 2px;
+  font-family: var(--font-mono); font-size: 11px;
+  background: var(--dark); border: 1px solid var(--border);
+  line-height: 1;
+}
+.cfl-src-chip.cfl-src-long  { border-color: rgba(0,229,160,0.3); background: rgba(0,229,160,0.08); }
+.cfl-src-chip.cfl-src-short { border-color: rgba(255,77,109,0.3); background: rgba(255,77,109,0.08); }
+
+/* Weight bar (визуал LONG vs SHORT) */
+.cfl-weight-bar {
+  display: flex; height: 6px; border-radius: 3px; overflow: hidden;
+  background: var(--dark); border: 1px solid var(--border);
+  min-width: 140px; margin-top: 4px;
+}
+.cfl-weight-long  { background: linear-gradient(90deg, #00e5a0, #00b88c); }
+.cfl-weight-short { background: linear-gradient(90deg, #ff4d6d, #cc3d57); }
+
+/* Anomaly veto badge */
+.cfl-veto {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 14px;
+  background: linear-gradient(135deg, #ff4d6d, #c73950);
+  color: #fff; font-family: var(--font-mono); font-size: 9px;
+  font-weight: 800; letter-spacing: 0.1em;
+  box-shadow: 0 0 12px rgba(255,77,109,0.4);
+}
+
+.cfl-pair-cell {
+  display: flex; flex-direction: column; gap: 3px;
+}
+.cfl-pair-name {
+  font-family: var(--font-mono); font-weight: 800;
+  font-size: 13px; color: var(--cyan);
+}
+.cfl-pair-blocked {
+  font-family: var(--font-mono); font-size: 10px; color: var(--muted);
+  display: inline-flex; align-items: center; gap: 4px;
+}
 </style>
 
 <div class="cfl-hero">
-  <h3>⚠️ Anti-cluster / Divergence Detector</h3>
-  <p>Ситуации где источники противоречат друг другу по паре. Такие кластеры блокируются от формирования чтобы не входить в ловушки.
-     <b>Anomaly veto</b> (🚨 nuclear) = последний свежий сигнал от Anomaly противоречит большинству → разворот уже начался.</p>
+  <div class="cfl-hero-title"><span class="cfl-pulse"></span> ⚠️ Anti-cluster · Divergence Detector</div>
+  <div class="cfl-hero-desc">
+    Обнаруживает <b>противоречия</b> между источниками на одной паре. Когда LONG и SHORT сигналы от разных детекторов сосуществуют — это значит рынок не определился, кластер формировать <b>опасно</b>. Такие кластеры блокируются автоматически.
+  </div>
+  <div class="cfl-hero-legend">
+    <div class="cfl-legend-item"><span class="cfl-legend-dot" style="background:#ff4d6d;box-shadow:0 0 8px #ff4d6d;"></span><b style="color:#ff4d6d">NUCLEAR</b> — Anomaly veto, разворот начался</div>
+    <div class="cfl-legend-item"><span class="cfl-legend-dot" style="background:#ff9500"></span><b style="color:#ff9500">STRONG</b> — силы равны (ratio ≥ 0.5)</div>
+    <div class="cfl-legend-item"><span class="cfl-legend-dot" style="background:#ffd23e"></span><b style="color:#ffd23e">WEAK</b> — одна сторона доминирует (ratio ≥ 0.3)</div>
+    <div class="cfl-legend-item" style="opacity:0.6;"><span style="font-size:12px;">Веса:</span> ⚠ Anomaly ×2.0 · 🎯 Confluence ×1.3 · 📡🚀 Tradium/CV ×1.0</div>
+  </div>
 </div>
 
-<div class="fvg-stats" style="margin-bottom:14px;">
-  <div class="fvg-stat"><div class="fvg-stat-lbl">Активных</div><div class="fvg-stat-val" id="cflActive">—</div></div>
-  <div class="fvg-stat"><div class="fvg-stat-lbl">🚨 Nuclear</div><div class="fvg-stat-val" id="cflNuclear">—</div></div>
-  <div class="fvg-stat"><div class="fvg-stat-lbl">🔴 Strong</div><div class="fvg-stat-val" id="cflStrong">—</div></div>
-  <div class="fvg-stat"><div class="fvg-stat-lbl">🟡 Weak</div><div class="fvg-stat-val" id="cflWeak">—</div></div>
-  <div class="fvg-stat"><div class="fvg-stat-lbl">За 7 дней</div><div class="fvg-stat-val" id="cflTotal7d">—</div></div>
-  <div class="fvg-stat"><div class="fvg-stat-lbl">Save rate</div><div class="fvg-stat-val" id="cflSaveRate">—</div></div>
+<div class="cfl-stats">
+  <div class="cfl-stat">
+    <div class="cfl-stat-lbl">Активных</div>
+    <div class="cfl-stat-val" id="cflActive">—</div>
+  </div>
+  <div class="cfl-stat cfl-stat-nuclear">
+    <div class="cfl-stat-lbl">🚨 Nuclear</div>
+    <div class="cfl-stat-val" id="cflNuclear">—</div>
+  </div>
+  <div class="cfl-stat cfl-stat-strong">
+    <div class="cfl-stat-lbl">🔴 Strong</div>
+    <div class="cfl-stat-val" id="cflStrong">—</div>
+  </div>
+  <div class="cfl-stat cfl-stat-weak">
+    <div class="cfl-stat-lbl">🟡 Weak</div>
+    <div class="cfl-stat-val" id="cflWeak">—</div>
+  </div>
+  <div class="cfl-stat">
+    <div class="cfl-stat-lbl">За 7 дней</div>
+    <div class="cfl-stat-val" id="cflTotal7d">—</div>
+  </div>
+  <div class="cfl-stat cfl-stat-buy">
+    <div class="cfl-stat-lbl">Save rate</div>
+    <div class="cfl-stat-val" id="cflSaveRate">—</div>
+  </div>
 </div>
 
-<div class="an-toolbar" style="padding:10px 18px;gap:8px;">
-  <select id="cflHours" onchange="loadConflicts()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+<div class="cfl-toolbar">
+  <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Окно</span>
+  <select id="cflHours" onchange="loadConflicts()" class="cfl-select">
     <option value="1">1 час</option>
     <option value="4" selected>4 часа</option>
     <option value="12">12 часов</option>
     <option value="24">24 часа</option>
     <option value="168">Неделя</option>
   </select>
-  <select id="cflSev" onchange="loadConflicts()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
-    <option value="">Все severity</option>
+  <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-left:8px;">Severity</span>
+  <select id="cflSev" onchange="loadConflicts()" class="cfl-select">
+    <option value="">Все</option>
     <option value="nuclear">🚨 Nuclear</option>
     <option value="strong">🔴 Strong</option>
     <option value="weak">🟡 Weak</option>
   </select>
-  <span id="cflCount" class="an-filter-count"></span>
+  <span id="cflCount" class="cfl-count"></span>
 </div>
 
-<div class="table-wrap">
+<div class="cfl-table-wrap">
   <table>
     <thead>
       <tr>
-        <th>Время</th><th>Пара</th><th>Блок</th><th>Severity</th>
-        <th>LONG (weight)</th><th>SHORT (weight)</th><th>Ratio</th><th>Veto</th>
+        <th>Время</th>
+        <th>Пара</th>
+        <th>Severity</th>
+        <th>🟢 LONG</th>
+        <th>🔴 SHORT</th>
+        <th>Баланс сил</th>
+        <th>Veto</th>
       </tr>
     </thead>
     <tbody id="cflBody">
-      <tr><td colspan="8" style="text-align:center;padding:40px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="7" style="text-align:center;padding:60px;color:var(--muted);">
+        <div style="font-size:36px;margin-bottom:8px;opacity:0.5;">⏳</div>
+        <div style="font-family:var(--font-mono);">Загрузка…</div>
+      </td></tr>
     </tbody>
   </table>
 </div>
@@ -1374,20 +1541,14 @@ async function loadConflicts() {
     let items = d.items || [];
     if (sev) items = items.filter(i => i.severity === sev);
     _cflData = items;
-    // Stats
     const s = d.stats || {};
     document.getElementById('cflActive').textContent = items.length;
     document.getElementById('cflNuclear').textContent = (s.by_severity||{}).nuclear || 0;
-    document.getElementById('cflNuclear').className = 'fvg-stat-val cfl-sev-nuclear';
     document.getElementById('cflStrong').textContent = (s.by_severity||{}).strong || 0;
-    document.getElementById('cflStrong').className = 'fvg-stat-val cfl-sev-strong';
     document.getElementById('cflWeak').textContent = (s.by_severity||{}).weak || 0;
-    document.getElementById('cflWeak').className = 'fvg-stat-val cfl-sev-weak';
     document.getElementById('cflTotal7d').textContent = s.total || 0;
     const sr = s.save_rate;
-    const srEl = document.getElementById('cflSaveRate');
-    if (sr == null) { srEl.textContent = '—'; }
-    else { srEl.textContent = sr + '%'; srEl.className = 'fvg-stat-val ' + (sr >= 60 ? 'text-buy' : 'text-muted'); }
+    document.getElementById('cflSaveRate').textContent = sr == null ? '—' : sr + '%';
     document.getElementById('cflCount').textContent = `${items.length} конфликтов в окне`;
     renderConflicts(items);
   } catch(e) { }
@@ -1395,32 +1556,59 @@ async function loadConflicts() {
 
 function renderConflicts(items) {
   const tb = document.getElementById('cflBody');
-  if (!items.length) { tb.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;" class="text-muted">Нет конфликтов — все сигналы согласованы ✅</td></tr>'; return; }
+  if (!items.length) {
+    tb.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:60px;">
+      <div style="font-size:44px;margin-bottom:10px;">✅</div>
+      <div style="font-family:var(--font-mono);font-size:13px;color:var(--text);font-weight:700;margin-bottom:4px;">Все сигналы согласованы</div>
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);">Нет конфликтов в выбранном окне — источники работают синхронно</div>
+    </td></tr>`;
+    return;
+  }
   tb.innerHTML = items.map(c => {
     const t = c.detected_at ? new Date(c.detected_at).toLocaleString('ru', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
     const pairClean = (c.pair||'').replace('/USDT','');
-    const dirE = c.blocked_direction === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+    const dirE = c.blocked_direction === 'LONG' ? '🟢' : '🔴';
+    const dirClr = c.blocked_direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
     const sevLabel = {nuclear:'🚨 NUCLEAR', strong:'🔴 STRONG', weak:'🟡 WEAK'}[c.severity] || c.severity;
     const sevCls = 'cfl-sev-'+c.severity;
     const rowCls = 'cfl-row-'+c.severity;
-    const longsSrc = (c.longs||[]).map(s=>`<span class="cfl-src-chip">${_cflSrcIcon[s.source]||'•'}</span>`).join('');
-    const shortsSrc = (c.shorts||[]).map(s=>`<span class="cfl-src-chip">${_cflSrcIcon[s.source]||'•'}</span>`).join('');
-    const veto = c.anomaly_veto ? '⚠️ ANOMALY' : '';
+    const longsSrc = (c.longs||[]).map(s=>`<span class="cfl-src-chip cfl-src-long" title="${s.source}">${_cflSrcIcon[s.source]||'•'}</span>`).join('');
+    const shortsSrc = (c.shorts||[]).map(s=>`<span class="cfl-src-chip cfl-src-short" title="${s.source}">${_cflSrcIcon[s.source]||'•'}</span>`).join('');
+    const lw = c.long_weight || 0, sw = c.short_weight || 0;
+    const total = lw + sw;
+    const lPct = total > 0 ? Math.round(lw / total * 100) : 50;
+    const sPct = 100 - lPct;
+    const veto = c.anomaly_veto ? `<span class="cfl-veto">⚠ ANOMALY VETO</span>` : '';
     return `<tr class="${rowCls}" style="cursor:pointer;" onclick="openConflictChart('${c.pair}','${c.blocked_direction}')">
-      <td class="mono text-muted" style="font-size:11px;">${t}</td>
-      <td class="mono text-accent fw-700">${pairClean}</td>
-      <td class="mono">${dirE}</td>
-      <td class="mono ${sevCls}">${sevLabel}</td>
-      <td class="mono">${longsSrc} <b style="color:var(--buy)">${c.long_weight}</b></td>
-      <td class="mono">${shortsSrc} <b style="color:var(--sell)">${c.short_weight}</b></td>
-      <td class="mono">${c.ratio}</td>
-      <td class="mono" style="color:#ff4d6d;font-size:10px;">${veto}</td>
+      <td class="mono" style="font-size:11px;color:var(--muted);white-space:nowrap;">${t}</td>
+      <td>
+        <div class="cfl-pair-cell">
+          <span class="cfl-pair-name">${pairClean}</span>
+          <span class="cfl-pair-blocked"><span style="color:${dirClr};font-weight:700;">${dirE} ${c.blocked_direction}</span> заблокирован</span>
+        </div>
+      </td>
+      <td><span class="cfl-sev-badge ${sevCls}">${sevLabel}</span></td>
+      <td>
+        <div>${longsSrc || '<span style="color:var(--muted);font-size:10px;">—</span>'}</div>
+        <div class="mono" style="color:var(--buy);font-weight:700;font-size:11px;margin-top:3px;">${lw}w · ${lPct}%</div>
+      </td>
+      <td>
+        <div>${shortsSrc || '<span style="color:var(--muted);font-size:10px;">—</span>'}</div>
+        <div class="mono" style="color:var(--sell);font-weight:700;font-size:11px;margin-top:3px;">${sw}w · ${sPct}%</div>
+      </td>
+      <td>
+        <div class="cfl-weight-bar" title="LONG ${lPct}% · SHORT ${sPct}%">
+          <div class="cfl-weight-long" style="width:${lPct}%"></div>
+          <div class="cfl-weight-short" style="width:${sPct}%"></div>
+        </div>
+        <div class="mono" style="font-size:10px;color:var(--muted);margin-top:4px;text-align:center;">ratio ${c.ratio}</div>
+      </td>
+      <td>${veto}</td>
     </tr>`;
   }).join('');
 }
 
 function openConflictChart(pair, direction) {
-  // Переиспользуем существующую модалку openPendingChart из base.html
   if (typeof openPendingChart === 'function') openPendingChart(pair, direction);
 }
 
