@@ -647,6 +647,10 @@
             <a href="/logout" class="logout-btn" title="Выйти">⎋</a>
         </div>
     </header>
+    <div id="clusterReadyBar" class="cluster-ready-bar" style="display:none;">
+      <span class="crb-lbl">⚡ СОЗРЕВАЮТ ДО КЛАСТЕРА:</span>
+      <span id="clusterReadyList"></span>
+    </div>
     <div class="content">
         {% block content %}{% endblock %}
     </div>
@@ -831,6 +835,37 @@ function toggleReversalModal() {
 // Первичная загрузка
 setTimeout(_refreshReversal, 1000);
 
+// ── Cluster Ready bar ────────────────────────────────────────
+async function _refreshClusterReady() {
+  try {
+    const r = await fetch('/api/pending-clusters');
+    const d = await r.json();
+    const items = d.items || [];
+    const bar = document.getElementById('clusterReadyBar');
+    const list = document.getElementById('clusterReadyList');
+    if (!bar || !list) return;
+    if (!items.length) { bar.style.display='none'; return; }
+    bar.style.display='flex';
+    list.innerHTML = items.slice(0, 15).map(p => {
+      const col = p.direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
+      const e = p.direction === 'LONG' ? '🟢' : '🔴';
+      const pair = (p.pair||'').replace('/USDT','');
+      return `<span class="crb-chip"><span style="color:${col}">${e}</span> ${pair} <b style="color:${col}">${p.count}/${p.min}</b> <span style="color:var(--muted);font-size:9px;">${p.time_left_h}ч</span></span>`;
+    }).join('');
+  } catch(e) {}
+}
+setTimeout(_refreshClusterReady, 1500);
+setInterval(_refreshClusterReady, 30000);
+
+// Глобальный helper — используется таблицами бот1-4 для добавления badge к строке
+window.getPendingForPair = async function(pair, direction) {
+  try {
+    const r = await fetch('/api/pending-clusters');
+    const d = await r.json();
+    return (d.items || []).find(p => p.pair === pair && p.direction === direction) || null;
+  } catch { return null; }
+};
+
 function _updateKcBar(kc) {
   const kcEl = document.getElementById('kcBar');
   if (!kcEl || !kc) return;
@@ -944,6 +979,20 @@ function showToast(msg, type='info') {
 #reversalBar:hover { background:rgba(255,255,255,0.06)!important; }
 #reversalModal { display:none; }
 #reversalModal.open { display:flex; }
+
+.cluster-ready-bar {
+  display:flex; align-items:center; gap:8px; padding:6px 14px;
+  background:linear-gradient(90deg, rgba(255,210,62,0.08), rgba(0,229,160,0.04));
+  border-bottom:1px solid var(--border); font-family:var(--font-mono);
+  font-size:11px; overflow-x:auto; white-space:nowrap;
+}
+.cluster-ready-bar .crb-lbl { color:var(--muted); flex-shrink:0; font-size:10px; letter-spacing:0.05em; }
+.cluster-ready-bar .crb-chip {
+  display:inline-flex; align-items:center; gap:4px;
+  background:rgba(255,210,62,0.06); border:1px solid rgba(255,210,62,0.2);
+  border-radius:14px; padding:2px 10px;
+}
+.cluster-ready-bar .crb-chip b { font-weight:700; }
 .sortable { cursor:pointer; user-select:none; transition:color 0.15s; white-space:nowrap; }
 .sortable:hover { color:var(--accent); }
 </style>
