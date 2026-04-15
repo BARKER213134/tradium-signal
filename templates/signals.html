@@ -3258,7 +3258,8 @@ async function openJournalChart(idx, forceTF) {
     });
     series.setData(d.candles);
 
-    // Маркеры: все сигналы по монете за 48ч (из /api/pair-signals) + текущий
+    // Маркеры: все сигналы по монете из _journalData (уже включают cluster/paper/все)
+    // + дополнительно из /api/pair-signals для покрытия старых, что могли не попасть в журнал
     const nearestCandle = (ts) => {
       if (!ts) return d.candles[d.candles.length - 1];
       let mc = d.candles[d.candles.length - 1], minD = Infinity;
@@ -3270,12 +3271,35 @@ async function openJournalChart(idx, forceTF) {
     };
     const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠'};
     const modalMarkerMap = new Map();
-    const allSigs = [{at_ts: s.at_ts, direction: s.direction, source: s.source, price: s.entry, pair: s.pair, tp1: s.tp1, sl: s.sl, entry: s.entry, pattern: s.pattern, score: s.score, status: s.status}];
+
+    // Базовая строка для сопоставления символа: нормализуем к "BTCUSDT"
+    const targetSym = (s.symbol || (s.pair || '').replace('/','')).toUpperCase();
+
+    // 1. Из _journalData — все сигналы по этой паре (все источники, включая cluster/paper)
+    const journalSigs = (_journalData || []).filter(x => {
+      const xSym = (x.symbol || (x.pair||'').replace('/','')).toUpperCase();
+      return xSym === targetSym;
+    });
+
+    const seen = new Set();
+    const allSigs = [];
+    for (const x of journalSigs) {
+      const k = `${x.source}_${x.at_ts}_${x.direction}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      allSigs.push({
+        at_ts: x.at_ts, direction: x.direction, source: x.source,
+        price: x.entry, pair: x.pair, tp1: x.tp1, sl: x.sl, entry: x.entry,
+        pattern: x.pattern, score: x.score, status: x.status,
+      });
+    }
+
+    // 2. Дополнительно /api/pair-signals за 72ч — вдруг что-то не попало в журнал
+    //    (для clusters не берём отдельно — они уже в journalData)
     try {
       const pairForApi = (s.pair || s.symbol || '').includes('/') ? (s.pair || s.symbol) : (s.pair || s.symbol || '').replace(/USDT$/i,'/USDT');
-      const rr = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pairForApi)}&window_h=48`);
+      const rr = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pairForApi)}&window_h=72`);
       const dd = await rr.json();
-      const seen = new Set([`${s.source}_${s.at_ts}_${s.direction}`]);
       for (const dir of ['LONG','SHORT']) {
         for (const ss of ((dd.items || {})[dir] || [])) {
           const k = `${ss.source}_${ss.at_ts}_${dir}`;

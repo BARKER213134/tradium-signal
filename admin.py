@@ -1091,7 +1091,7 @@ async def api_pair_signals(pair: str, direction: str = "", window_h: int = 8):
     out = {"pair": norm, "direction": direction, "window_h": window_h, "items": {}}
     dirs = [direction] if direction else ["LONG", "SHORT"]
     for d in dirs:
-        sigs = collect_signals_for(norm, d, now, window_h)
+        sigs = collect_signals_for(norm, d, now, window_h, include_clusters=True)
         out["items"][d] = [
             {
                 "source": s["source"],

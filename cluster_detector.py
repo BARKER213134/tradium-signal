@@ -71,9 +71,15 @@ def _norm_pair(pair: str) -> str:
     return p
 
 
-def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: int) -> list[dict]:
+def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: int,
+                         include_clusters: bool = False) -> list[dict]:
     """Собирает все сигналы на данной паре+направлении в окне [end_at - window_h, end_at].
-    Возвращает список unified-словарей: {source, at, price, meta}"""
+    Возвращает список unified-словарей: {source, at, price, meta}
+
+    include_clusters=False по умолчанию — чтобы should_trigger_cluster НЕ учитывал
+    предыдущие кластеры как исходные сигналы (иначе дубль подсчёта).
+    Для UI-маркеров (pair-signals endpoint) — выставляем True чтобы кластеры рисовались.
+    """
     norm = _norm_pair(pair)
     sym_variants = {norm, norm.replace("/", "")}  # ETH/USDT и ETHUSDT
     start = end_at - timedelta(hours=window_h)
@@ -135,6 +141,26 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
                      "strength": c.get("strength"),
                      "pattern": c.get("pattern")},
         })
+
+    # Clusters — композитные сигналы (только для UI-маркеров, не для cluster-triggering)
+    if include_clusters:
+        for cl in _clusters().find({
+            "trigger_at": {"$gte": start, "$lte": end_at},
+            "direction": direction,
+            "$or": [{"symbol": norm.replace("/", "")}, {"pair": norm}],
+        }):
+            out.append({
+                "source": "cluster",
+                "at": cl["trigger_at"],
+                "price": cl.get("trigger_price"),
+                "meta": {"strength": cl.get("strength"),
+                         "status": cl.get("status"),
+                         "signals_count": cl.get("signals_count"),
+                         "sources_count": cl.get("sources_count"),
+                         "tp": cl.get("tp_price"),
+                         "sl": cl.get("sl_price"),
+                         "pnl_pct": cl.get("pnl_percent")},
+            })
 
     out.sort(key=lambda x: x["at"])
     return out
