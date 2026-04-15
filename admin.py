@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1203,6 +1203,26 @@ async def api_fvg_scan_now():
     mon_events = await asyncio.to_thread(monitor_signals)
     events_summary = {k: len(v) for k, v in mon_events.items()}
     return {"scan": scan_stats, "monitor": events_summary}
+
+
+@app.get("/api/fvg-candles")
+async def api_fvg_candles(instrument: str, tf: str = "1h", limit: int = 150):
+    """Свечи для FVG графика через yfinance. instrument — ключ из INSTRUMENTS
+    (EURUSD, GBPJPY, XAUUSD, SPX500 и т.д.)."""
+    from fvg_scanner import INSTRUMENTS, fetch_candles
+    key = (instrument or "").upper()
+    entry = INSTRUMENTS.get(key)
+    if not entry:
+        return {"ok": False, "error": f"unknown instrument {instrument}"}
+    ticker, _asset = entry
+    # yfinance период: 7d для 1h даёт ~160 свечей (хватает); для 4h/1d — больше
+    period = "7d" if tf in ("15m", "30m", "1h") else "60d" if tf == "4h" else "1y"
+    candles = await asyncio.to_thread(fetch_candles, ticker, period, tf)
+    if not candles:
+        return {"ok": False, "error": "no data from yfinance"}
+    data = [{"time": c["t"], "open": c["o"], "high": c["h"],
+             "low": c["l"], "close": c["c"]} for c in candles[-limit:]]
+    return {"ok": True, "candles": data, "ticker": ticker, "instrument": key}
 
 
 @app.get("/api/reversal-meter")

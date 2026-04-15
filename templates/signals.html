@@ -1796,18 +1796,10 @@ async function toggleFvgChart(idx, sig) {
   const area = document.getElementById('fvgCh'+idx);
   if (area.dataset.loaded) return;
   area.dataset.loaded = '1';
-  // Mapping yfinance ticker → our journal-candles API (not supported for forex)
-  // Placeholder: показываем info block
-  area.innerHTML = `<div style="padding:30px;text-align:center;color:var(--muted);">
-    <div style="font-size:14px;color:var(--text);margin-bottom:12px;">${sig.instrument} · ${sig.direction.toUpperCase()}</div>
-    <div style="font-family:var(--font-mono);font-size:11px;line-height:1.7;">
-      FVG zone: ${sig.fvg_bottom} — ${sig.fvg_top} (${(sig.fvg_size_rel*100).toFixed(3)}%)<br>
-      Entry: ${sig.entry_price} | SL: ${sig.sl_price}<br>
-      ${sig.entered_price ? 'Entered: '+sig.entered_price : 'Waiting retest'}<br>
-      ${sig.trailing_active ? 'Trailing armed, SL: '+sig.trailing_sl : ''}
-    </div>
-    <div style="margin-top:16px;font-size:10px;color:var(--muted);">График Forex через yfinance — загрузим отдельный viewer</div>
-  </div>`;
+  area.setAttribute('data-fvg-area', '1');
+  area._sig = sig;
+  area._tf = '1h';
+  _renderFvgChart(area, sig, '1h');  // функция из base.html
 }
 
 async function fvgScanNow() {
@@ -1916,12 +1908,30 @@ setInterval(loadFvgSignals, 30000);
   <button id="fjSoundBtn" onclick="_fjSound=!_fjSound;this.textContent=_fjSound?'🔔':'🔕'" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
 </div>
 
+<!-- Статистика -->
+<div class="fvg-stats" style="margin-bottom:14px;">
+  <div class="fvg-stat"><div class="fvg-stat-lbl">Всего</div><div class="fvg-stat-val" id="fjStatTotal">—</div></div>
+  <div class="fvg-stat"><div class="fvg-stat-lbl">⏳ Waiting</div><div class="fvg-stat-val" id="fjStatWait">—</div></div>
+  <div class="fvg-stat"><div class="fvg-stat-lbl">🎯 Open</div><div class="fvg-stat-val" id="fjStatOpen">—</div></div>
+  <div class="fvg-stat"><div class="fvg-stat-lbl">Win Rate</div><div class="fvg-stat-val" id="fjStatWR">—</div></div>
+  <div class="fvg-stat"><div class="fvg-stat-lbl">Sum R</div><div class="fvg-stat-val" id="fjStatSumR">—</div></div>
+  <div class="fvg-stat"><div class="fvg-stat-lbl">Avg R</div><div class="fvg-stat-val" id="fjStatAvgR">—</div></div>
+</div>
+
 <div class="table-wrap">
   <table>
     <thead>
       <tr>
-        <th>Время</th><th>Инстр</th><th>Класс</th><th>TF</th><th>Напр</th>
-        <th>Zone</th><th>Entry</th><th>Статус</th><th>R</th><th>Peak R</th>
+        <th class="sortable" onclick="fjSort('formed_at')" id="fjSort_formed_at">Время ▼</th>
+        <th class="sortable" onclick="fjSort('instrument')" id="fjSort_instrument">Инстр</th>
+        <th class="sortable" onclick="fjSort('asset_class')" id="fjSort_asset_class">Класс</th>
+        <th class="sortable" onclick="fjSort('timeframe')" id="fjSort_timeframe">TF</th>
+        <th class="sortable" onclick="fjSort('direction')" id="fjSort_direction">Напр</th>
+        <th>Zone</th>
+        <th class="sortable" onclick="fjSort('entry_price')" id="fjSort_entry_price">Entry</th>
+        <th class="sortable" onclick="fjSort('status')" id="fjSort_status">Статус</th>
+        <th class="sortable" onclick="fjSort('outcome_R')" id="fjSort_outcome_R">R</th>
+        <th class="sortable" onclick="fjSort('peak_R')" id="fjSort_peak_R">Peak R</th>
       </tr>
     </thead>
     <tbody id="fjBody">
@@ -1930,9 +1940,23 @@ setInterval(loadFvgSignals, 30000);
   </table>
 </div>
 
+<!-- Модалка с LWC-графиком -->
+<div id="fjChartModal" style="display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);">
+  <div onclick="event.stopPropagation();" style="width:1100px;max-width:96vw;height:80vh;background:var(--dark);border:1px solid var(--accent);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);">
+      <div id="fjChartTitle" style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text);">—</div>
+      <button onclick="document.getElementById('fjChartModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">×</button>
+    </div>
+    <div id="fjChartContainer" style="flex:1;"></div>
+  </div>
+</div>
+
 <script>
 let _fjSound = true;
 let _fjLastIds = new Set();
+let _fjData = [];
+let _fjSortField = 'formed_at';
+let _fjSortAsc = false;
 
 async function loadForexJournal() {
   const status = document.getElementById('fjStatus').value;
@@ -1944,21 +1968,100 @@ async function loadForexJournal() {
     const r = await fetch('/api/fvg-journal?' + qs);
     const d = await r.json();
     const items = d.items || [];
-    document.getElementById('fjCount').textContent = `${items.length} · WR ${d.stats.wr || 0}% · Sum ${d.stats.sum_r >= 0 ? '+' : ''}${d.stats.sum_r || 0}R`;
-    renderJournalRows(items);
+    _fjData = items;
+    const s = d.stats || {};
+    document.getElementById('fjStatTotal').textContent = s.total || 0;
+    document.getElementById('fjStatWait').textContent = s.waiting || 0;
+    document.getElementById('fjStatOpen').textContent = s.entered || 0;
+    const wr = s.wr || 0;
+    const wrEl = document.getElementById('fjStatWR');
+    wrEl.textContent = wr + '%';
+    wrEl.className = 'fvg-stat-val ' + (wr >= 40 ? 'text-buy' : wr >= 25 ? '' : 'text-sell');
+    const sr = s.sum_r || 0;
+    const srEl = document.getElementById('fjStatSumR');
+    srEl.textContent = (sr >= 0 ? '+' : '') + sr + 'R';
+    srEl.className = 'fvg-stat-val ' + (sr >= 0 ? 'text-buy' : 'text-sell');
+    const ar = s.avg_r || 0;
+    document.getElementById('fjStatAvgR').textContent = (ar >= 0 ? '+' : '') + ar.toFixed(3) + 'R';
+    document.getElementById('fjCount').textContent = `${items.length} в окне`;
+    _fjRenderSorted();
 
     // Звук на новые
     const curIds = new Set(items.map(i => (i.instrument || '') + '|' + (i.formed_ts || '')));
     if (_fjSound && _fjLastIds.size > 0) {
+      let newSignals = [];
       for (const id of curIds) {
         if (!_fjLastIds.has(id)) {
-          _playBeep();
-          break;
+          const s = items.find(i => (i.instrument||'') + '|' + (i.formed_ts||'') === id);
+          if (s) newSignals.push(s);
         }
+      }
+      if (newSignals.length) {
+        _playBeep();
+        _showFjToast(newSignals);
       }
     }
     _fjLastIds = curIds;
   } catch (e) { }
+}
+
+function fjSort(field) {
+  if (_fjSortField === field) _fjSortAsc = !_fjSortAsc;
+  else { _fjSortField = field; _fjSortAsc = false; }
+  document.querySelectorAll('[id^="fjSort_"]').forEach(el => {
+    const f = el.id.replace('fjSort_','');
+    const base = el.textContent.replace(/[▲▼]/g,'').trim();
+    el.textContent = base + (f === _fjSortField ? (_fjSortAsc ? ' ▲' : ' ▼') : '');
+  });
+  _fjRenderSorted();
+}
+
+function _fjRenderSorted() {
+  const _numFields = new Set(['entry_price','outcome_R','peak_R','fvg_size_rel']);
+  const arr = [..._fjData];
+  arr.sort((a,b) => {
+    let va = a[_fjSortField], vb = b[_fjSortField];
+    if (_fjSortField === 'formed_at') {
+      va = va ? new Date(va).getTime() : 0;
+      vb = vb ? new Date(vb).getTime() : 0;
+    }
+    if (va == null) va = _numFields.has(_fjSortField) ? -Infinity : '';
+    if (vb == null) vb = _numFields.has(_fjSortField) ? -Infinity : '';
+    if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+    if (va < vb) return _fjSortAsc ? -1 : 1;
+    if (va > vb) return _fjSortAsc ? 1 : -1;
+    return 0;
+  });
+  renderJournalRows(arr);
+}
+
+function _showFjToast(signals) {
+  const toast = document.createElement('div');
+  toast.className = 'j-toast';
+  const first = signals[0];
+  const dirE = first.direction === 'bullish' ? '🟢' : '🔴';
+  toast.innerHTML = `<div class="j-toast-title">🔔 Новый FVG ${dirE} ${first.instrument}</div>
+    <div class="j-toast-body">${signals.length > 1 ? `+${signals.length-1} ещё · ` : ''}Entry ${first.entry_price} · SL ${first.sl_price}</div>`;
+  toast.onclick = () => toast.remove();
+  document.body.appendChild(toast);
+  setTimeout(() => { toast.style.animation = 'jToastOut 0.3s forwards'; setTimeout(() => toast.remove(), 300); }, 5000);
+}
+
+function openFjChart(idx) {
+  const sig = _fjData[idx];
+  if (!sig) return;
+  const modal = document.getElementById('fjChartModal');
+  const container = document.getElementById('fjChartContainer');
+  const title = document.getElementById('fjChartTitle');
+  const dirE = sig.direction === 'bullish' ? '🟢' : '🔴';
+  const stBadge = sig.status === 'TP' ? '✅ TP' : sig.status === 'SL' ? '❌ SL' : sig.status === 'ENTERED' ? '🎯 OPEN' : sig.status === 'WAITING_RETEST' ? '⏳ WAITING' : sig.status;
+  const R = sig.outcome_R != null ? ((sig.outcome_R >= 0 ? '+' : '') + sig.outcome_R.toFixed(2) + 'R') : '—';
+  title.innerHTML = `${dirE} <b>${sig.instrument}</b> · ${sig.direction.toUpperCase()} · Entry <code>${sig.entry_price}</code> · SL <code>${sig.sl_price}</code> · ${stBadge} · ${R}`;
+  modal.style.display = 'flex';
+  container.innerHTML = '';
+  container._sig = sig;
+  container._tf = '1h';
+  _renderFvgChart(container, sig, '1h');
 }
 
 function _playBeep() {
@@ -1982,7 +2085,8 @@ function _playBeep() {
 function renderJournalRows(items) {
   const tb = document.getElementById('fjBody');
   if (!items.length) { tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;" class="text-muted">Нет сигналов</td></tr>'; return; }
-  tb.innerHTML = items.map(s => {
+  tb.innerHTML = items.map((s, i) => {
+    const origIdx = _fjData.indexOf(s);
     const dir = s.direction === 'bullish' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
     const t = s.formed_at ? new Date(s.formed_at).toLocaleString('ru', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
     const stMap = {WAITING_RETEST:['⏳ WAIT','badge-status'], ENTERED:['🎯 OPEN','badge-buy'], TP:['✅ TP','badge-buy'], SL:['❌ SL','badge-sell'], EXPIRED:['⏱ EXP','badge-status'], TIMEOUT:['⏱ TO','badge-status']};
@@ -1992,7 +2096,7 @@ function renderJournalRows(items) {
     const rCls = R != null ? (R > 0 ? 'text-buy fw-700' : 'text-sell fw-700') : 'text-muted';
     const peak = (s.peak_R || 0).toFixed(2);
     const rowCls = s.status === 'TP' ? 'fvg-row-tp' : s.status === 'SL' ? 'fvg-row-sl' : s.status === 'ENTERED' ? 'fvg-row-entered' : s.status === 'WAITING_RETEST' ? 'fvg-row-waiting' : s.status === 'EXPIRED' ? 'fvg-row-expired' : '';
-    return `<tr class="${rowCls}">
+    return `<tr class="${rowCls}" style="cursor:pointer;" onclick="openFjChart(${origIdx})">
       <td class="mono text-muted" style="font-size:11px;">${t}</td>
       <td class="mono fw-700 text-accent">${s.instrument}</td>
       <td class="mono text-muted">${s.asset_class}</td>
@@ -2006,6 +2110,18 @@ function renderJournalRows(items) {
     </tr>`;
   }).join('');
 }
+
+// ESC закрывает модалку графика
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const m = document.getElementById('fjChartModal');
+    if (m && m.style.display !== 'none') m.style.display='none';
+  }
+});
+(function(){
+  const m = document.getElementById('fjChartModal');
+  if (m) m.onclick = (e) => { if (e.target === m) m.style.display='none'; };
+})();
 
 loadForexJournal();
 setInterval(loadForexJournal, 30000);
