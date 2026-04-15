@@ -808,7 +808,9 @@ async def _check_once():
         ]:
             try:
                 print(f"[WATCHER] step: {step_name}", flush=True)
-                await asyncio.wait_for(step_fn(), timeout=120)
+                # fvg_scan грузит yfinance для 32 инструментов → нужно больше времени
+                step_timeout = 300 if step_name == "fvg_scan" else 120
+                await asyncio.wait_for(step_fn(), timeout=step_timeout)
             except asyncio.TimeoutError:
                 print(f"[WATCHER] step '{step_name}' TIMEOUT (120s)", flush=True)
             except Exception as e:
@@ -1878,27 +1880,38 @@ async def _check_forex_fvg_scan():
         now = _t.time()
         if now - _fvg_last_scan_ts < interval:
             return
-        _fvg_last_scan_ts = now
         # Получаем snapshot waiting до скана, потом — после
         from database import _fvg_signals
         before = {(s["instrument"], s.get("formed_ts")) for s in _fvg_signals().find(
             {"status": "WAITING_RETEST"}, {"instrument": 1, "formed_ts": 1}
         )}
+        print("[FVG-SCAN] starting scan_all...", flush=True)
         stats = await asyncio.to_thread(scan_all)
+        # Ставим timestamp ПОСЛЕ успешного скана — защита от timeout-loop
+        _fvg_last_scan_ts = _t.time()
         after_docs = list(_fvg_signals().find(
-            {"status": "WAITING_RETEST"}, {"instrument": 1, "formed_ts": 1, "direction": 1, "fvg_top": 1, "fvg_bottom": 1, "fvg_size_rel": 1, "impulse_body_ratio": 1, "entry_price": 1, "sl_price": 1, "formed_price": 1, "timeframe": 1, "asset_class": 1}
+            {"status": "WAITING_RETEST"}, {"instrument": 1, "formed_ts": 1, "direction": 1, "fvg_top": 1, "fvg_bottom": 1, "fvg_size_rel": 1, "impulse_body_ratio": 1, "entry_price": 1, "sl_price": 1, "formed_price": 1, "timeframe": 1, "asset_class": 1, "formed_at": 1}
         ))
-        # Новые FVG — алерты
+        # Новые FVG — алерты (только те что сформировались за последние 2ч, иначе анти-спам)
+        from datetime import datetime, timedelta
+        alert_cutoff = datetime.utcnow() - timedelta(hours=2)
         new_count = 0
+        skipped_old = 0
         for s in after_docs:
             key = (s["instrument"], s.get("formed_ts"))
-            if key not in before:
-                await _send_fvg_formed_alert(s)
-                new_count += 1
-        if new_count or stats["new_fvgs"]:
-            logger.info(f"[FVG-SCAN] scanned {stats['total_instruments']} instruments, {new_count} new alerts")
+            if key in before:
+                continue
+            formed_at = s.get("formed_at")
+            if formed_at and hasattr(formed_at, "timestamp"):
+                if formed_at.replace(tzinfo=None) if formed_at.tzinfo else formed_at < alert_cutoff:
+                    skipped_old += 1
+                    continue
+            await _send_fvg_formed_alert(s)
+            new_count += 1
+        print(f"[FVG-SCAN] done: {stats['total_instruments']} instruments, {stats['new_fvgs']} new in DB, {new_count} alerts, {skipped_old} old skipped", flush=True)
     except Exception as e:
-        logger.debug(f"fvg scan: {e}")
+        import traceback
+        print(f"[FVG-SCAN] ERROR: {e}\n{traceback.format_exc()[-500:]}", flush=True)
 
 
 async def _check_forex_fvg_monitor():

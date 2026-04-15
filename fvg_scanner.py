@@ -81,10 +81,12 @@ DEFAULT_CONFIG = {
     "timeframe": "1H",
     "scan_interval_min": 10,
     "min_body_ratio": 0.5,
-    "min_size_rel_forex": 0.0003,
+    # Снижено 0.03% → 0.015% (форекс/индексы): текущая волатильность даёт FVG 0.02-0.025%,
+    # TradingView их видит → наша система должна тоже.
+    "min_size_rel_forex": 0.00015,
     "min_size_rel_metal": 0.0005,
     "min_size_rel_energy": 0.0005,
-    "min_size_rel_index": 0.0003,
+    "min_size_rel_index": 0.00015,
     "session_filter": "london_ny",     # london_ny | london | ny | any
     "max_wait_bars": 30,
     "max_hold_bars": 50,
