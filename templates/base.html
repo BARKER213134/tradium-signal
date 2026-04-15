@@ -1195,12 +1195,51 @@ function _sigTooltipHTML(o) {
 }
 
 async function _renderLwcSignalChart(containerId, opts) {
-  // opts: { symbol, direction, entry, tp1, sl, at, title, pattern, score, tf (default '1h') }
+  // opts: { symbol, direction, entry, tp1, sl, at, title, pattern, score, tf (default '1h'),
+  //         markers?: [{at, direction, source, price, meta}],
+  //         fetchPairSignals?: bool, windowH?: int }
+  //
+  // Если fetchPairSignals=true — тянет /api/pair-signals и мерджит в markers,
+  // чтобы на графике одной монеты показались ВСЕ сигналы из БД за окно.
   const container = document.getElementById(containerId);
   if (!container) return;
   container._signalOpts = opts;
   const tf = opts.tf || container.dataset.tf || '1h';
   container.dataset.tf = tf;
+
+  // Fetch pair signals (all sources) if requested — но только на первый рендер,
+  // чтобы переключение TF не делало лишних запросов
+  if (opts.fetchPairSignals && !opts._markersFetched && opts.symbol) {
+    try {
+      const pairForApi = opts.symbol.includes('/') ? opts.symbol : opts.symbol.replace(/USDT$/i, '/USDT');
+      const wh = opts.windowH || 24;
+      const r = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pairForApi)}&window_h=${wh}`);
+      const d = await r.json();
+      const combined = [...(opts.markers || [])];
+      // Добавляем "основной" сигнал из opts (тот что открыли в аккордеоне)
+      if (opts.at && opts.direction && opts.source) {
+        combined.push({
+          at: opts.at, direction: opts.direction, source: opts.source,
+          price: opts.entry, meta: {pattern: opts.pattern, score: opts.score, tp1: opts.tp1, sl: opts.sl},
+        });
+      }
+      const seen = new Set(combined.map(m => {
+        const ts = typeof m.at === 'number' ? m.at : Math.floor(new Date(m.at).getTime()/1000);
+        return `${m.source}_${ts}_${m.direction}`;
+      }));
+      for (const dir of ['LONG','SHORT']) {
+        for (const s of ((d.items || {})[dir] || [])) {
+          const k = `${s.source}_${s.at_ts}_${dir}`;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          combined.push({at: s.at_ts || s.at, direction: dir, source: s.source, price: s.price, meta: s.meta || {}});
+        }
+      }
+      opts.markers = combined;
+      opts._markersFetched = true;
+      container._signalOpts = opts;
+    } catch (e) { /* silent */ }
+  }
 
   await _ensureLwc();
   if (!window.LightweightCharts) {

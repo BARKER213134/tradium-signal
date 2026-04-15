@@ -641,6 +641,7 @@ async function toggleCluster(rowId, symbol) {
       title: symbol.replace('USDT','') + ' · Аномалия',
       score: anom.score,
       source: 'anomaly',
+      fetchPairSignals: true, windowH: 24,
     });
   }
 }
@@ -903,6 +904,7 @@ function toggleConfluenceRow(rowId, symbol) {
       score: conf.score,
       pattern: conf.pattern,
       source: 'confluence',
+      fetchPairSignals: true, windowH: 24,
     });
   }
 }
@@ -1564,24 +1566,61 @@ async function _renderPaperChart(idx, tf) {
     });
     series.setData(d.candles);
 
-    // Entry marker
+    // Маркеры: entry позиции + все сигналы по паре за 48ч (все источники)
+    const nearestP = (ts) => {
+      if (!ts) return d.candles[d.candles.length-1];
+      let mc = d.candles[d.candles.length-1], minD = Infinity;
+      for (const c of d.candles) { const diff = Math.abs(c.time - ts); if (diff < minD) { minD = diff; mc = c; } }
+      return mc;
+    };
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀'};
     const entryTs = p.opened_at ? Math.floor(new Date(p.opened_at).getTime()/1000) : 0;
-    let mc = d.candles[d.candles.length-1];
-    if (entryTs) {
-      let minD = Infinity;
-      for (const c of d.candles) { const diff = Math.abs(c.time - entryTs); if (diff < minD) { minD = diff; mc = c; } }
-    }
+    const mainMc = nearestP(entryTs);
     const isLong = p.direction === 'LONG';
-    series.setMarkers([{
-      time: mc.time,
-      position: isLong ? 'belowBar' : 'aboveBar',
-      color: isLong ? '#00e5a0' : '#ff4d6d',
-      shape: isLong ? 'arrowUp' : 'arrowDown',
-      text: `${p.direction} ${p.entry}`,
-    }]);
+
+    const paperMarkerMap = new Map();
+    paperMarkerMap.set(mainMc.time, p);
+    const paperAllSigs = [];
+    try {
+      const pairForApi = (p.pair || p.symbol || '').includes('/') ? (p.pair || p.symbol) : (p.symbol || '').replace(/USDT$/i,'/USDT');
+      const rr = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pairForApi)}&window_h=48`);
+      const dd = await rr.json();
+      for (const dir of ['LONG','SHORT']) {
+        for (const ss of ((dd.items || {})[dir] || [])) {
+          paperAllSigs.push({at_ts: ss.at_ts, direction: dir, source: ss.source, price: ss.price, meta: ss.meta});
+        }
+      }
+    } catch(e) {}
+
+    const byKey = new Map();
+    // Основной entry paper-позиции (ярко выделен)
+    byKey.set(mainMc.time + '_' + p.direction, {time: mainMc.time, isLong, icons: new Set(['🤖']), items: [p], main: true});
+    for (const m of paperAllSigs) {
+      const mcc = nearestP(m.at_ts);
+      const isL = m.direction === 'LONG';
+      const key = mcc.time + '_' + m.direction;
+      if (!byKey.has(key)) byKey.set(key, {time: mcc.time, isLong: isL, icons: new Set(), items: []});
+      const g = byKey.get(key);
+      g.icons.add(srcIconMap[m.source] || '•');
+      g.items.push(m);
+      if (!paperMarkerMap.has(mcc.time)) paperMarkerMap.set(mcc.time, m);
+    }
+    const markers = [];
+    for (const g of byKey.values()) {
+      const icons = [...g.icons].join('');
+      markers.push({
+        time: g.time,
+        position: g.isLong ? 'belowBar' : 'aboveBar',
+        color: g.isLong ? '#00e5a0' : '#ff4d6d',
+        shape: g.isLong ? 'arrowUp' : 'arrowDown',
+        text: g.main ? `🤖 ${p.entry}` : icons + (g.items.length > 1 ? ` ×${g.items.length}` : ''),
+      });
+    }
+    markers.sort((a,b) => a.time - b.time);
+    series.setMarkers(markers);
 
     // Save marker time for tooltip
-    area._markerTime = mc.time;
+    area._markerTime = mainMc.time;
     _attachPaperTooltip(chart, area, p);
 
     if (p.entry) series.createPriceLine({ price: p.entry, color: '#ffd23e', lineWidth: 2, lineStyle: 0, title: 'Entry' });
@@ -2715,30 +2754,60 @@ async function openJournalChart(idx, forceTF) {
     });
     series.setData(d.candles);
 
-    // Маркер входа
-    const entryTs = s.at_ts || 0;
-    let markerCandle = d.candles[d.candles.length - 1];
-    if (entryTs) {
-      let minDiff = Infinity;
+    // Маркеры: все сигналы по монете за 48ч (из /api/pair-signals) + текущий
+    const nearestCandle = (ts) => {
+      if (!ts) return d.candles[d.candles.length - 1];
+      let mc = d.candles[d.candles.length - 1], minD = Infinity;
       for (const c of d.candles) {
-        const diff = Math.abs(c.time - entryTs);
-        if (diff < minDiff) { minDiff = diff; markerCandle = c; }
+        const diff = Math.abs(c.time - ts);
+        if (diff < minD) { minD = diff; mc = c; }
       }
-    }
-
-    const isLong = s.direction === 'LONG';
-    const _srcIcon = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠' : s.source === 'confluence' ? '🎯' : s.source === 'paper' ? '🤖' : '🚀';
-    series.setMarkers([{
-      time: markerCandle.time,
-      position: isLong ? 'belowBar' : 'aboveBar',
-      color: isLong ? '#00e5a0' : '#ff4d6d',
-      shape: isLong ? 'arrowUp' : 'arrowDown',
-      text: _srcIcon,
-    }]);
-
-    // Tooltip для маркера в модалке
+      return mc;
+    };
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀'};
     const modalMarkerMap = new Map();
-    modalMarkerMap.set(markerCandle.time, s);
+    const allSigs = [{at_ts: s.at_ts, direction: s.direction, source: s.source, price: s.entry, pair: s.pair, tp1: s.tp1, sl: s.sl, entry: s.entry, pattern: s.pattern, score: s.score, status: s.status}];
+    try {
+      const pairForApi = (s.pair || s.symbol || '').includes('/') ? (s.pair || s.symbol) : (s.pair || s.symbol || '').replace(/USDT$/i,'/USDT');
+      const rr = await fetch(`/api/pair-signals?pair=${encodeURIComponent(pairForApi)}&window_h=48`);
+      const dd = await rr.json();
+      const seen = new Set([`${s.source}_${s.at_ts}_${s.direction}`]);
+      for (const dir of ['LONG','SHORT']) {
+        for (const ss of ((dd.items || {})[dir] || [])) {
+          const k = `${ss.source}_${ss.at_ts}_${dir}`;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          allSigs.push({at_ts: ss.at_ts, direction: dir, source: ss.source, price: ss.price, meta: ss.meta});
+        }
+      }
+    } catch(e) {}
+
+    const byKey = new Map();
+    for (const m of allSigs) {
+      const mc = nearestCandle(m.at_ts);
+      const isL = m.direction === 'LONG';
+      const key = mc.time + '_' + m.direction;
+      if (!byKey.has(key)) byKey.set(key, {time: mc.time, isLong: isL, icons: new Set(), items: []});
+      const g = byKey.get(key);
+      g.icons.add(srcIconMap[m.source] || '•');
+      g.items.push(m);
+      modalMarkerMap.set(mc.time, m);
+    }
+    const markers = [];
+    for (const g of byKey.values()) {
+      const icons = [...g.icons].join('');
+      markers.push({
+        time: g.time,
+        position: g.isLong ? 'belowBar' : 'aboveBar',
+        color: g.isLong ? '#00e5a0' : '#ff4d6d',
+        shape: g.isLong ? 'arrowUp' : 'arrowDown',
+        text: icons + (g.items.length > 1 ? ` ×${g.items.length}` : ''),
+      });
+    }
+    markers.sort((a,b) => a.time - b.time);
+    series.setMarkers(markers);
+
+    // Tooltip для маркеров
     _attachTooltip(chart, container, modalMarkerMap);
 
     // Entry линия
@@ -3494,6 +3563,7 @@ async function toggleAiAnalysis(idx, pair, direction, entry, pattern) {
       title: pair.replace('/USDT','') + ' · CV',
       pattern,
       source: 'cryptovizor',
+      fetchPairSignals: true, windowH: 48,
     });
   }
 
@@ -4363,10 +4433,11 @@ function renderSignal(s) {
   tfEl.textContent = s.timeframe || '—';
   statusEl.textContent = s.status || 'СЛЕЖУ';
 
-  // Chart
+  // Chart: PNG из GridFS + живой LWC-график с маркерами всех сигналов по паре за 48ч
   const chartHtml = s.has_chart
     ? `<div class="modal-chart-wrap"><img src="/chart/${s.id}" alt="chart" onerror="this.parentElement.innerHTML='<div class=\\'modal-chart-empty\\'>График загружается…</div>'"></div>`
     : `<div class="modal-chart-empty">График отсутствует</div>`;
+  const lwcChartHtml = `<div id="modalLwcChart_${s.id}" style="height:400px;margin-top:12px;border:1px solid var(--border);border-radius:10px;overflow:hidden;"></div>`;
 
   // Trend dots
   const trendHtml = s.trend ? renderTrend(s.trend) : '—';
@@ -4418,6 +4489,7 @@ function renderSignal(s) {
 
   document.getElementById('modalBody').innerHTML = `
     ${chartHtml}
+    ${lwcChartHtml}
     <div class="modal-stats">${statsHtml}</div>
     ${aiHtml}
     ${commentHtml}
@@ -4427,6 +4499,27 @@ function renderSignal(s) {
     </div>
   `;
   loadEvents(s.id);
+
+  // Живой LWC-график с маркерами всех сигналов по паре
+  try {
+    const sym = (s.pair || '').replace('/', '').toUpperCase();
+    const atTs = s.pattern_triggered_at || s.received_at;
+    if (sym && (s.source === 'cryptovizor' || s.source === 'tradium') && window._renderLwcSignalChart !== false) {
+      _renderLwcSignalChart('modalLwcChart_' + s.id, {
+        symbol: sym,
+        direction: s.direction,
+        entry: s.entry,
+        tp1: s.tp1,
+        sl: s.sl,
+        at: atTs,
+        title: (s.pair || '') + ' · ' + (s.source || ''),
+        pattern: s.chart_notes || '',
+        score: s.ai_score,
+        source: s.source || 'cryptovizor',
+        fetchPairSignals: true, windowH: 48,
+      });
+    }
+  } catch(e) { console.warn('[modal lwc]', e); }
 }
 
 async function loadEvents(id) {
@@ -4497,6 +4590,7 @@ async function toggleTradiumChart(idx, pair, direction, entry, tp1, sl, ts, patt
     title: (pair||'').replace('/USDT','') + ' · Tradium',
     pattern: pattern || '',
     source: 'tradium',
+    fetchPairSignals: true, windowH: 48,
   });
 }
 
