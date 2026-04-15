@@ -2143,7 +2143,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="168">Неделя</option>
     <option value="0">Всё время</option>
   </select>
-  <button id="jStrongOnlyBtn" onclick="_toggleStrongOnly()" title="Только STRONG: Confluence≥5, Anomaly≥70, CV с паттерном" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;">⭐ Strong only</button>
+  <button id="jStrongOnlyBtn" onclick="_toggleStrongOnly()" title="Только STRONG: Confluence≥5, Anomaly≥70, CV с паттерном" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">⭐ Strong · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
 </div>
 
@@ -2605,15 +2605,19 @@ function _toggleStrongOnly() {
       btn.style.background = 'linear-gradient(135deg, rgba(0,212,255,0.15), rgba(123,92,255,0.10))';
       btn.style.borderColor = 'var(--cyan)';
       btn.style.color = 'var(--cyan)';
-      btn.textContent = '⭐ Strong only: ON';
+      btn.textContent = '⭐ Strong · ON';
     } else {
       btn.style.background = 'none';
       btn.style.borderColor = 'var(--border)';
       btn.style.color = 'var(--muted)';
-      btn.textContent = '⭐ Strong only';
+      btn.textContent = '⭐ Strong · OFF';
     }
   }
+  // Сохраняем позицию скролла, чтобы таблица не прыгала при смене количества строк
+  const scrollY = window.scrollY;
   filterJournal();
+  // После рендера восстанавливаем (requestAnimationFrame чтобы после layout)
+  requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
 }
 
 function renderJournalPage() {
