@@ -2330,7 +2330,11 @@ async def api_journal():
     items = []
 
     # Tradium signals
+    # Если pattern_triggered (DCA4 hit) — используем pattern_triggered_at как время активации,
+    # чтобы «зрелый» сигнал не отфильтровывался по окну (при received_at 2 дня назад).
     for s in _signals().find({"source": "tradium"}).sort("received_at", -1):
+        pat_trig = bool(s.get("pattern_triggered"))
+        at_dt = s.get("pattern_triggered_at") if pat_trig and s.get("pattern_triggered_at") else s.get("received_at")
         items.append({
             "source": "tradium",
             "symbol": (s.get("pair") or "").replace("/", "").upper(),
@@ -2343,8 +2347,10 @@ async def api_journal():
             "score": s.get("ai_score"),
             "st_passed": s.get("st_passed"),
             "pump_score": s.get("pump_score", 0),
-            "at": s["received_at"].isoformat() if hasattr(s.get("received_at"), "isoformat") else str(s.get("received_at", "")),
-            "at_ts": int(s["received_at"].timestamp()) if hasattr(s.get("received_at"), "timestamp") else 0,
+            "pattern_triggered": pat_trig,
+            "received_at": s["received_at"].isoformat() if hasattr(s.get("received_at"), "isoformat") else None,
+            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
+            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
 
     # Cryptovizor signals (только с паттерном, сортируем по времени паттерна)
