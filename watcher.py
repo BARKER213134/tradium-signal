@@ -1821,22 +1821,17 @@ async def _send_cluster_alert(cl: dict):
         f"{strength_emoji} <b>CLUSTER SIGNAL · {strength}</b> {strength_emoji}\n"
         f"\n"
         f"<b>{pair}/USDT</b> · {dir_emoji} <b>{direction}</b>\n"
-        f"<code>{cl['symbol']}</code>\n"
+        f"📍 Цена сейчас: <code>{cl['trigger_price']}</code>\n"
         f"\n"
         f"📊 <b>{cl['signals_count']} сигналов</b> из <b>{cl['sources_count']} источников</b>\n"
         f"\n"
         f"─── Участники ───\n"
         + "\n".join(participants) + "\n"
         f"\n"
-        f"─── Entry ───\n"
-        f"📍 Trigger: <code>{cl['trigger_price']}</code>\n"
-        f"🎯 TP: <code>{cl['tp_price']:.6f}</code> (+{tp_pct:.1f}%)\n"
-        f"🛑 SL: <code>{cl['sl_price']:.6f}</code> (-{sl_pct:.1f}%)\n"
-        f"\n"
         f"─── Cluster + Reversal ───\n"
         f"{combo_line}\n"
         f"\n"
-        f"💡 <i>Backtest WR: 78.6% · {lev_rec}</i>"
+        f"💡 <i>Backtest WR: 78.6%</i>"
     )
 
     try:
@@ -1861,30 +1856,9 @@ async def _send_cluster_alert(cl: dict):
 
 
 async def _send_cluster_close_alert(cl: dict):
-    """Отправляет уведомление о закрытии кластера (TP/SL)."""
-    if not _bot7:
-        _setup_bot7()
-    if not _bot7 or not _admin_chat_id:
-        return
-    status = cl.get("status", "?")
-    pnl = cl.get("pnl_percent", 0)
-    is_tp = status == "TP"
-    emoji = "🎯" if is_tp else "🛑"
-    outcome = "✅ ПРИБЫЛЬ" if is_tp else "❌ УБЫТОК"
-    pair = cl["pair"].replace("/USDT", "")
-    text = (
-        f"{emoji} <b>CLUSTER {status}</b> · {pair}/USDT\n"
-        f"\n"
-        f"Entry: <code>{cl['trigger_price']}</code>\n"
-        f"Exit:  <code>{cl.get('exit_price')}</code>\n"
-        f"PnL: <b>{pnl:+.2f}%</b>\n"
-        f"\n"
-        f"{outcome} · {cl.get('strength', '')}"
-    )
-    try:
-        await _bot7.send_message(_admin_chat_id, text, parse_mode="HTML")
-    except Exception:
-        pass
+    """NO-OP: пользователь просил в BOT7 только сигналы, без TP/SL уведомлений.
+    Статус закрытия виден в UI и в БД, но в Telegram не шлём."""
+    return
 
 
 async def _cluster_check_on_signal(pair: str, direction: str, at=None):
