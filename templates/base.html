@@ -672,10 +672,16 @@
             <a href="/logout" class="logout-btn" title="Выйти">⎋</a>
         </div>
     </header>
+    {% set ns = namespace(cat='crypto') %}
+    {% if bots and bot %}
+      {% for b in bots %}{% if b.id == bot %}{% set ns.cat = b.category %}{% endif %}{% endfor %}
+    {% endif %}
+    {% if ns.cat == 'crypto' %}
     <div id="clusterReadyBar" class="cluster-ready-bar" style="display:none;">
       <span class="crb-lbl">⚡ СОЗРЕВАЮТ ДО КЛАСТЕРА:</span>
       <span id="clusterReadyList"></span>
     </div>
+    {% endif %}
     <div class="content">
         {% block content %}{% endblock %}
     </div>
