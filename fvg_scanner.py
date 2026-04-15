@@ -148,6 +148,99 @@ def _td_interval(tf: str) -> str:
     return {"15m":"15min","30m":"30min","1h":"1h","4h":"4h","1d":"1day"}.get(tf, tf)
 
 
+def _td_log_usage(credits: int, op: str, symbols: list = None, success: bool = True) -> None:
+    """Логирует трату credits в td_quota collection (для мониторинга квоты).
+    Собирается только успешные запросы (429 = 0 credits)."""
+    if credits <= 0:
+        return
+    try:
+        from database import _td_quota
+        _td_quota().insert_one({
+            "at": utcnow(),
+            "credits": credits,
+            "op": op,
+            "symbols": (symbols or [])[:20],
+            "success": success,
+        })
+    except Exception:
+        pass
+
+
+def get_td_quota_stats() -> dict:
+    """Статистика по квоте TwelveData: расход за день, скорость, прогноз."""
+    from database import _td_quota
+    from config import TWELVEDATA_API_KEY
+    now = utcnow()
+    day_start = datetime(now.year, now.month, now.day, tzinfo=None)
+    hour_ago = now - timedelta(hours=1)
+    min5_ago = now - timedelta(minutes=5)
+
+    # Сколько credits за день (UTC)
+    day_docs = list(_td_quota().find({"at": {"$gte": day_start}}, {"credits": 1, "op": 1, "at": 1}))
+    day_credits = sum(d.get("credits", 0) for d in day_docs)
+    # За час
+    hour_credits = sum(d.get("credits", 0) for d in day_docs if d.get("at") and d["at"] >= hour_ago)
+    # За 5 минут (rate check)
+    min5_credits = sum(d.get("credits", 0) for d in day_docs if d.get("at") and d["at"] >= min5_ago)
+
+    # Последний запрос
+    last_doc = _td_quota().find_one({}, sort=[("at", -1)])
+    last_at = last_doc["at"].isoformat() if last_doc and hasattr(last_doc.get("at"), "isoformat") else None
+
+    # Разбивка по операциям
+    by_op = {}
+    for d in day_docs:
+        op = d.get("op", "?")
+        by_op[op] = by_op.get(op, 0) + d.get("credits", 0)
+
+    # Статус
+    daily_limit = 800
+    min_limit = 8
+    remaining = max(0, daily_limit - day_credits)
+    pct = round(day_credits / daily_limit * 100, 1)
+    if pct >= 95:
+        status = "critical"
+    elif pct >= 75:
+        status = "warning"
+    else:
+        status = "ok"
+
+    # Прогноз — экстраполяция по текущей скорости
+    # Количество минут с начала суток
+    minutes_elapsed = max(1, int((now - day_start).total_seconds() / 60))
+    minutes_remaining = max(0, 1440 - minutes_elapsed)
+    rate_per_min = day_credits / minutes_elapsed
+    projected_eod = day_credits + rate_per_min * minutes_remaining
+
+    return {
+        "enabled": bool(TWELVEDATA_API_KEY),
+        "day_credits": day_credits,
+        "hour_credits": hour_credits,
+        "min5_credits": min5_credits,
+        "daily_limit": daily_limit,
+        "min_limit": min_limit,
+        "remaining": remaining,
+        "pct_used": pct,
+        "status": status,  # ok | warning | critical
+        "projected_eod": round(projected_eod),
+        "rate_per_min": round(rate_per_min, 2),
+        "min_rate_pct": round(min5_credits / min_limit * 20, 1),  # % от minute limit за 5м * 20
+        "by_op": by_op,
+        "last_call_at": last_at,
+    }
+
+
+def cleanup_td_quota_old(days: int = 2) -> int:
+    """Чистит старые записи td_quota (keep 2 days)."""
+    try:
+        from database import _td_quota
+        cutoff = utcnow() - timedelta(days=days)
+        r = _td_quota().delete_many({"at": {"$lt": cutoff}})
+        return r.deleted_count
+    except Exception:
+        return 0
+
+
 def fetch_candles_twelvedata(td_symbol: str, interval: str = "1h", outputsize: int = 200) -> list[dict]:
     """Один инструмент через TwelveData. Возвращает candles в нашем формате."""
     from config import TWELVEDATA_API_KEY
@@ -165,9 +258,16 @@ def fetch_candles_twelvedata(td_symbol: str, interval: str = "1h", outputsize: i
         }
         r = httpx.get(url, params=params, timeout=15)
         d = r.json()
-        if d.get("status") == "error" or not d.get("values"):
-            logger.warning(f"[TD] {td_symbol} {interval}: {d.get('message','no values')}")
+        if d.get("status") == "error":
+            # 429 не считаем в квоте (credits не потрачены)
+            code = d.get("code")
+            logger.warning(f"[TD] {td_symbol} {interval}: {d.get('message','error')} (code={code})")
+            if code != 429:
+                _td_log_usage(1, "single_err", [td_symbol], success=False)
             return []
+        if not d.get("values"):
+            return []
+        _td_log_usage(1, "single", [td_symbol])
         out = []
         from datetime import datetime as _dt
         for v in reversed(d["values"]):
@@ -222,10 +322,16 @@ def fetch_candles_twelvedata_batch(td_symbols: list, interval: str = "1h", outpu
                 logger.warning(f"[TD batch] 429 on chunk {chunk[:3]}... skipping rest (quota exhausted)")
                 for sym in chunk:
                     out[sym] = []
-                # Выходим — дальше всё равно будет 429
                 break
+            # Учёт credits: по 1 за каждый валидный символ в ответе
             if len(chunk) == 1 and "values" in d:
                 d = {chunk[0]: d}
+            successful_syms = [s for s in chunk
+                               if isinstance(d.get(s), dict)
+                               and d[s].get("status") != "error"
+                               and d[s].get("values")]
+            if successful_syms:
+                _td_log_usage(len(successful_syms), "batch", successful_syms)
             for sym in chunk:
                 sym_data = d.get(sym) or {}
                 if sym_data.get("status") == "error" or not sym_data.get("values"):

@@ -1973,9 +1973,19 @@ setInterval(loadPaperStatus, 15000);
 .fvg-row-expired { opacity:0.5; }
 </style>
 
-<div class="fvg-hero">
-  <h3>📈 Forex FVG — Hybrid v2 Live Signals</h3>
-  <p>32 инструмента · 1H · Conservative entry на ретесте FVG + Trailing stop · Backtest WR 43%, Avg R +0.14</p>
+<div class="fvg-hero" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+  <div style="flex:1;">
+    <h3>📈 Forex FVG — Hybrid v2 Live Signals</h3>
+    <p>32 инструмента · 1H · Conservative entry на ретесте FVG + Trailing stop · Данные форекса: <b>TwelveData</b> (брокер-качество)</p>
+  </div>
+  <div id="fvgQuotaCard" style="min-width:200px;padding:10px 14px;background:rgba(0,0,0,0.25);border:1px solid var(--border);border-radius:10px;font-family:var(--font-mono);font-size:10px;">
+    <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px;">TwelveData квота</div>
+    <div id="fvgQuotaText" style="font-size:12px;font-weight:700;color:var(--text);">—</div>
+    <div id="fvgQuotaBar" style="height:4px;background:var(--dark);border-radius:2px;margin-top:6px;overflow:hidden;">
+      <div id="fvgQuotaFill" style="height:100%;width:0%;background:var(--accent);transition:width 0.3s, background 0.3s;"></div>
+    </div>
+    <div id="fvgQuotaDetails" style="color:var(--muted);font-size:10px;margin-top:4px;line-height:1.4;">—</div>
+  </div>
 </div>
 
 <div class="fvg-stats">
@@ -2188,6 +2198,39 @@ document.addEventListener('keydown', e => {
 });
 document.getElementById('fvgSettingsModal').onclick = (e) => { if (e.target.id === 'fvgSettingsModal') e.target.style.display='none'; };
 
+async function loadFvgQuota() {
+  try {
+    const r = await fetch('/api/td-quota');
+    const q = await r.json();
+    const text = document.getElementById('fvgQuotaText');
+    const fill = document.getElementById('fvgQuotaFill');
+    const bar = document.getElementById('fvgQuotaBar');
+    const details = document.getElementById('fvgQuotaDetails');
+    if (!q.enabled) {
+      text.textContent = 'Ключ не задан';
+      text.style.color = 'var(--sell)';
+      fill.style.width = '0%';
+      details.textContent = 'Добавь TWELVEDATA_API_KEY в Railway';
+      return;
+    }
+    text.innerHTML = `${q.day_credits}<span style="color:var(--muted);font-weight:500;"> / ${q.daily_limit}</span>`;
+    const pct = Math.min(100, q.pct_used || 0);
+    fill.style.width = pct + '%';
+    const color = q.status === 'critical' ? '#ff4d6d'
+                : q.status === 'warning'  ? '#ff9500'
+                : '#00e5a0';
+    fill.style.background = color;
+    text.style.color = q.status === 'ok' ? 'var(--text)' : color;
+    const badge = q.status === 'critical' ? '🚨' : q.status === 'warning' ? '⚠️' : '✅';
+    details.innerHTML = `${badge} ${pct}% · прогноз EOD: <b>${q.projected_eod}</b><br>
+      rate <b>${q.rate_per_min}</b>/min · последний час <b>${q.hour_credits}</b>`;
+  } catch(e) {
+    document.getElementById('fvgQuotaText').textContent = '—';
+    document.getElementById('fvgQuotaDetails').textContent = 'Ошибка загрузки';
+  }
+}
+loadFvgQuota();
+setInterval(loadFvgQuota, 60000);  // раз в минуту
 loadFvgSignals();
 setInterval(loadFvgSignals, 30000);
 </script>

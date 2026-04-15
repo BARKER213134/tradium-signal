@@ -82,6 +82,11 @@ def _conflicts() -> Collection:
     return _get_db().conflicts
 
 
+def _td_quota() -> Collection:
+    """TwelveData usage tracking — log of credits spent."""
+    return _get_db().td_quota
+
+
 
 
 def _counters() -> Collection:
