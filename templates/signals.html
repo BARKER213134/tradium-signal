@@ -3651,7 +3651,7 @@ setInterval(updatePricesAndPnl, 10000);
     <tbody>
       {% for s in signals %}
       {% set _clk_ts = (s.pattern_triggered_at or s.dca4_triggered_at or s.received_at) %}
-      <tr class="signal-row{% if tab == 'results' %} ai-clickable{% if s.comment %} ai-done{% endif %}{% elif tab in ('dca4', 'reversal') %} ai-clickable{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" data-tp1="{{ s.tp1 or '' }}" data-sl="{{ s.sl or '' }}" data-ts="{{ _clk_ts.timestamp()|int if _clk_ts and _clk_ts is not string else '' }}" {% if tab == 'results' %}onclick="toggleResultAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.status }}', '{{ s.pnl_percent or 0 }}', '{{ s.exit_price or 0 }}', '{{ s.tp1 or 0 }}', '{{ s.sl or 0 }}')" style="cursor:pointer;"{% elif tab in ('dca4', 'reversal') %}onclick="toggleTradiumChart({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry or 0 }}', '{{ s.tp1 or 0 }}', '{{ s.sl or 0 }}', '{{ _clk_ts.timestamp()|int if _clk_ts and _clk_ts is not string else 0 }}', '{{ s.pattern_name or '' }}')" style="cursor:pointer;"{% endif %}>
+      <tr class="signal-row{% if tab == 'results' %} ai-clickable{% if s.comment %} ai-done{% endif %}{% elif tab in ('tradium', 'dca4', 'reversal') %} ai-clickable{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" data-tp1="{{ s.tp1 or '' }}" data-sl="{{ s.sl or '' }}" data-ts="{{ _clk_ts.timestamp()|int if _clk_ts and _clk_ts is not string else '' }}" {% if tab == 'results' %}onclick="toggleResultAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.status }}', '{{ s.pnl_percent or 0 }}', '{{ s.exit_price or 0 }}', '{{ s.tp1 or 0 }}', '{{ s.sl or 0 }}')" style="cursor:pointer;"{% elif tab in ('tradium', 'dca4', 'reversal') %}onclick="toggleTradiumChart({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry or 0 }}', '{{ s.tp1 or 0 }}', '{{ s.sl or 0 }}', '{{ _clk_ts.timestamp()|int if _clk_ts and _clk_ts is not string else 0 }}', '{{ s.pattern_name or '' }}')" style="cursor:pointer;"{% endif %}>
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
         <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT', '') }}</td>
@@ -3704,7 +3704,7 @@ setInterval(updatePricesAndPnl, 10000);
           </div>
         </td>
       </tr>
-      {% elif tab in ('dca4', 'reversal') %}
+      {% elif tab in ('tradium', 'dca4', 'reversal') %}
       <tr id="trd_row{{ loop.index }}" style="display:none;" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();">
         <td colspan="14" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
           <div id="trd_chart{{ loop.index }}" style="min-height:380px;" onmousedown="event.stopPropagation();"></div>
