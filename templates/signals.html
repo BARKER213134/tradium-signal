@@ -3279,7 +3279,8 @@ setInterval(updatePricesAndPnl, 10000);
     </thead>
     <tbody>
       {% for s in signals %}
-      <tr class="signal-row{% if tab == 'results' %} ai-clickable{% if s.comment %} ai-done{% endif %}{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" {% if tab == 'results' %}onclick="toggleResultAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.status }}', '{{ s.pnl_percent or 0 }}', '{{ s.exit_price or 0 }}', '{{ s.tp1 or 0 }}', '{{ s.sl or 0 }}')" style="cursor:pointer;"{% endif %}>
+      {% set _clk_ts = (s.pattern_triggered_at or s.dca4_triggered_at or s.received_at) %}
+      <tr class="signal-row{% if tab == 'results' %} ai-clickable{% if s.comment %} ai-done{% endif %}{% elif tab in ('dca4', 'reversal') %} ai-clickable{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" data-tp1="{{ s.tp1 or '' }}" data-sl="{{ s.sl or '' }}" data-ts="{{ _clk_ts.timestamp()|int if _clk_ts and _clk_ts is not string else '' }}" {% if tab == 'results' %}onclick="toggleResultAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.status }}', '{{ s.pnl_percent or 0 }}', '{{ s.exit_price or 0 }}', '{{ s.tp1 or 0 }}', '{{ s.sl or 0 }}')" style="cursor:pointer;"{% elif tab in ('dca4', 'reversal') %}onclick="toggleTradiumChart({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry or 0 }}', '{{ s.tp1 or 0 }}', '{{ s.sl or 0 }}', '{{ _clk_ts.timestamp()|int if _clk_ts and _clk_ts is not string else 0 }}', '{{ s.pattern_name or '' }}')" style="cursor:pointer;"{% endif %}>
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
         <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT', '') }}</td>
@@ -3330,6 +3331,12 @@ setInterval(updatePricesAndPnl, 10000);
               <button class="btn-analyze" onclick="event.stopPropagation();loadResultAnalysis({{ loop.index }},'{{ s.pair|replace("'","") }}','{{ s.direction }}','{{ s.entry }}','{{ s.status }}','{{ s.pnl_percent or 0 }}','{{ s.exit_price or 0 }}','{{ s.tp1 or 0 }}','{{ s.sl or 0 }}')">🤖 Разбор сделки</button>
             </div>
           </div>
+        </td>
+      </tr>
+      {% elif tab in ('dca4', 'reversal') %}
+      <tr id="trd_row{{ loop.index }}" style="display:none;" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();">
+        <td colspan="14" style="padding:0;background:var(--dark-2);border-bottom:1px solid var(--border);">
+          <div id="trd_chart{{ loop.index }}" style="min-height:380px;" onmousedown="event.stopPropagation();"></div>
         </td>
       </tr>
       {% endif %}
@@ -4093,6 +4100,33 @@ function renderResultCard(text, pair, status, pnl) {
   html += `<div class="ai-section"><div class="ai-section-title">Разбор сделки</div><div class="ai-text">${text.replace(/\n/g,'<br>')}</div></div>`;
   html += '</div>';
   return html;
+}
+
+let _lastToggleTrd = 0;
+async function toggleTradiumChart(idx, pair, direction, entry, tp1, sl, ts, pattern) {
+  const now = Date.now();
+  if (now - _lastToggleTrd < 500) return;
+  _lastToggleTrd = now;
+  const row = document.getElementById('trd_row'+idx);
+  if (!row) return;
+  if (row.style.display !== 'none') { row.style.display='none'; return; }
+  row.style.display = 'table-row';
+  const container = document.getElementById('trd_chart'+idx);
+  if (!container || container.dataset.loaded) return;
+  container.dataset.loaded = '1';
+  const sym = (pair || '').replace('/','');
+  const at = (ts && ts !== '0') ? parseInt(ts) : null;
+  _renderLwcSignalChart('trd_chart'+idx, {
+    symbol: sym,
+    direction: direction || 'LONG',
+    entry: parseFloat(entry) || null,
+    tp1: parseFloat(tp1) || null,
+    sl: parseFloat(sl) || null,
+    at,
+    title: (pair||'').replace('/USDT','') + ' · Tradium',
+    pattern: pattern || '',
+    source: 'tradium',
+  });
 }
 
 let _lastToggleRes = 0;
