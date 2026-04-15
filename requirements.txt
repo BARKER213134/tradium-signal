@@ -14,3 +14,4 @@ matplotlib==3.10.3
 pandas==2.2.3
 websockets==13.1
 selenium
+yfinance==0.2.50
