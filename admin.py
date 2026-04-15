@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1203,6 +1203,32 @@ async def api_fvg_scan_now():
     mon_events = await asyncio.to_thread(monitor_signals)
     events_summary = {k: len(v) for k, v in mon_events.items()}
     return {"scan": scan_stats, "monitor": events_summary}
+
+
+@app.get("/api/smart-levels")
+async def api_smart_levels(symbol: str, tf: str = "1h", limit: int = 300,
+                           enable: str = "clusters,sr,period,rounds,pivots"):
+    """Smart Levels для графика: прошлые кластеры, auto S/R, PDH/PDL, round numbers, pivots.
+    Использует Binance klines + нашу clusters collection."""
+    from exchange import get_klines_any
+    from smart_levels import get_smart_levels
+    enable_list = [x.strip() for x in enable.split(",") if x.strip()]
+    pair = symbol.replace("USDT", "/USDT") if "USDT" in symbol and "/" not in symbol else symbol
+    candles_raw = await asyncio.to_thread(get_klines_any, pair, tf, limit)
+    candles = []
+    for c in (candles_raw or []):
+        t = c.get("t")
+        if t and t > 10**12:
+            t = int(t / 1000)
+        candles.append({
+            "time": t,
+            "high": c.get("h"),
+            "low": c.get("l"),
+            "open": c.get("o"),
+            "close": c.get("c"),
+        })
+    levels = await asyncio.to_thread(get_smart_levels, symbol, candles, enable_list)
+    return {"ok": True, "symbol": symbol, "levels": levels}
 
 
 @app.get("/api/conflicts")
