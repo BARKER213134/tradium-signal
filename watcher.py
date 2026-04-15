@@ -808,8 +808,9 @@ async def _check_once():
         ]:
             try:
                 print(f"[WATCHER] step: {step_name}", flush=True)
-                # fvg_scan грузит yfinance для 32 инструментов → нужно больше времени
-                step_timeout = 300 if step_name == "fvg_scan" else 120
+                # fvg_scan: 22 forex через TwelveData батчами по 7 с 65с throttle (~4 мин)
+                #         + 10 yfinance (~30s). Поднимаем таймаут до 600с с запасом.
+                step_timeout = 600 if step_name == "fvg_scan" else 120
                 await asyncio.wait_for(step_fn(), timeout=step_timeout)
             except asyncio.TimeoutError:
                 print(f"[WATCHER] step '{step_name}' TIMEOUT (120s)", flush=True)

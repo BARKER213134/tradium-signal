@@ -59,6 +59,11 @@ BOT7_BOT_TOKEN = os.getenv("BOT7_BOT_TOKEN", "")
 # Восьмой бот — Forex FVG Alerts
 BOT8_BOT_TOKEN = os.getenv("BOT8_BOT_TOKEN", "")
 
+# TwelveData API — для форекс-данных (надёжнее чем yfinance для форекса)
+# Free tier: 800 req/day, 8 req/min
+# Регистрация: https://twelvedata.com/
+TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
+
 # Список ботов для UI
 # category: 'crypto' | 'stocks' (forex/metals/indices/energy через FVG)
 BOTS = [

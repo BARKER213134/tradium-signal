@@ -1260,33 +1260,47 @@ async def api_conflicts_check(payload: dict):
 
 @app.get("/api/fvg-candles")
 async def api_fvg_candles(instrument: str, tf: str = "1h", limit: int = 150):
-    """Свечи для FVG графика. Сначала пробуем yfinance live, при неудаче — кеш в БД.
-    instrument — ключ из INSTRUMENTS (EURUSD, GBPJPY, XAUUSD, SPX500 и т.д.)."""
-    from fvg_scanner import INSTRUMENTS, fetch_candles, cache_candles, get_cached_candles
+    """Свечи для FVG графика.
+    Приоритет источников:
+      форекс:  TwelveData → yfinance → кеш
+      остальное: yfinance → кеш
+    """
+    from fvg_scanner import (INSTRUMENTS, fetch_candles, cache_candles,
+                             get_cached_candles, fetch_candles_twelvedata)
     key = (instrument or "").upper()
     entry = INSTRUMENTS.get(key)
     if not entry:
         return {"ok": False, "error": f"unknown instrument {instrument}"}
-    ticker, _asset = entry
+    ticker = entry[0]
+    td_symbol = entry[2] if len(entry) >= 3 else None
     period = "7d" if tf in ("15m", "30m", "1h") else "60d" if tf == "4h" else "1y"
-    # 1. Live yfinance
-    candles = await asyncio.to_thread(fetch_candles, ticker, period, tf)
-    source = "yfinance"
+
+    candles = []
+    source = None
+    # 1. Форекс → TwelveData
+    if td_symbol:
+        candles = await asyncio.to_thread(fetch_candles_twelvedata, td_symbol, tf, min(limit, 200))
+        if candles:
+            source = "twelvedata"
+    # 2. yfinance (как fallback для форекса или основной для прочего)
+    if not candles:
+        candles = await asyncio.to_thread(fetch_candles, ticker, period, tf)
+        if candles:
+            source = "yfinance"
+    # 3. Кеш из БД
     if candles:
-        # сохраняем в кеш (для 1h только, остальные TF пока не храним)
         if tf == "1h":
             try:
                 await asyncio.to_thread(cache_candles, key, tf, candles)
             except Exception:
                 pass
     else:
-        # 2. Fallback — кеш из БД
-        cached = await asyncio.to_thread(get_cached_candles, key, tf, 240)  # кеш свежее 4ч
+        cached = await asyncio.to_thread(get_cached_candles, key, tf, 240)
         if cached:
             candles = cached
             source = "cache"
     if not candles:
-        return {"ok": False, "error": f"no data (yfinance failed, no cache for {key} {tf})"}
+        return {"ok": False, "error": f"no data (all sources failed for {key} {tf})"}
     data = [{"time": c["t"], "open": c["o"], "high": c["h"],
              "low": c["l"], "close": c["c"]} for c in candles[-limit:]]
     return {"ok": True, "candles": data, "ticker": ticker, "instrument": key, "source": source}

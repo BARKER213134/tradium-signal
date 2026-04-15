@@ -33,45 +33,48 @@ logger = logging.getLogger(__name__)
 
 
 # ── Инструменты (32) ────────────────────────────────────────
+# tuple = (yfinance_ticker, asset_class, twelvedata_symbol_or_None)
+# Форекс-символы в TwelveData формате "EUR/USD". Metals/Indices/Energy — остаются
+# на yfinance (там данные хорошие и не стоит жечь TD квоту).
 INSTRUMENTS = {
     # Forex Majors (7)
-    "EURUSD":  ("EURUSD=X", "forex"),
-    "GBPUSD":  ("GBPUSD=X", "forex"),
-    "USDJPY":  ("USDJPY=X", "forex"),
-    "USDCHF":  ("USDCHF=X", "forex"),
-    "AUDUSD":  ("AUDUSD=X", "forex"),
-    "NZDUSD":  ("NZDUSD=X", "forex"),
-    "USDCAD":  ("USDCAD=X", "forex"),
+    "EURUSD":  ("EURUSD=X", "forex", "EUR/USD"),
+    "GBPUSD":  ("GBPUSD=X", "forex", "GBP/USD"),
+    "USDJPY":  ("USDJPY=X", "forex", "USD/JPY"),
+    "USDCHF":  ("USDCHF=X", "forex", "USD/CHF"),
+    "AUDUSD":  ("AUDUSD=X", "forex", "AUD/USD"),
+    "NZDUSD":  ("NZDUSD=X", "forex", "NZD/USD"),
+    "USDCAD":  ("USDCAD=X", "forex", "USD/CAD"),
     # Crosses (13)
-    "EURGBP":  ("EURGBP=X", "forex"),
-    "EURJPY":  ("EURJPY=X", "forex"),
-    "EURCHF":  ("EURCHF=X", "forex"),
-    "EURAUD":  ("EURAUD=X", "forex"),
-    "EURCAD":  ("EURCAD=X", "forex"),
-    "GBPJPY":  ("GBPJPY=X", "forex"),
-    "GBPAUD":  ("GBPAUD=X", "forex"),
-    "GBPCAD":  ("GBPCAD=X", "forex"),
-    "AUDJPY":  ("AUDJPY=X", "forex"),
-    "AUDCAD":  ("AUDCAD=X", "forex"),
-    "AUDNZD":  ("AUDNZD=X", "forex"),
-    "CADJPY":  ("CADJPY=X", "forex"),
-    "CHFJPY":  ("CHFJPY=X", "forex"),
+    "EURGBP":  ("EURGBP=X", "forex", "EUR/GBP"),
+    "EURJPY":  ("EURJPY=X", "forex", "EUR/JPY"),
+    "EURCHF":  ("EURCHF=X", "forex", "EUR/CHF"),
+    "EURAUD":  ("EURAUD=X", "forex", "EUR/AUD"),
+    "EURCAD":  ("EURCAD=X", "forex", "EUR/CAD"),
+    "GBPJPY":  ("GBPJPY=X", "forex", "GBP/JPY"),
+    "GBPAUD":  ("GBPAUD=X", "forex", "GBP/AUD"),
+    "GBPCAD":  ("GBPCAD=X", "forex", "GBP/CAD"),
+    "AUDJPY":  ("AUDJPY=X", "forex", "AUD/JPY"),
+    "AUDCAD":  ("AUDCAD=X", "forex", "AUD/CAD"),
+    "AUDNZD":  ("AUDNZD=X", "forex", "AUD/NZD"),
+    "CADJPY":  ("CADJPY=X", "forex", "CAD/JPY"),
+    "CHFJPY":  ("CHFJPY=X", "forex", "CHF/JPY"),
     # Exotics (2)
-    "USDMXN":  ("USDMXN=X", "forex"),
-    "USDNOK":  ("USDNOK=X", "forex"),
-    # Metals (2)
-    "XAUUSD":  ("GC=F", "metal"),
-    "XAGUSD":  ("SI=F", "metal"),
-    # Indices (6)
-    "SPX500":  ("^GSPC", "index"),
-    "NAS100":  ("^IXIC", "index"),
-    "US30":    ("^DJI",  "index"),
-    "GER40":   ("^GDAXI", "index"),
-    "UK100":   ("^FTSE", "index"),
-    "JPN225":  ("^N225", "index"),
+    "USDMXN":  ("USDMXN=X", "forex", "USD/MXN"),
+    "USDNOK":  ("USDNOK=X", "forex", "USD/NOK"),
+    # Metals (2) — через yfinance (данные с NYMEX/COMEX хорошие)
+    "XAUUSD":  ("GC=F", "metal", None),
+    "XAGUSD":  ("SI=F", "metal", None),
+    # Indices (6) — через yfinance
+    "SPX500":  ("^GSPC", "index", None),
+    "NAS100":  ("^IXIC", "index", None),
+    "US30":    ("^DJI",  "index", None),
+    "GER40":   ("^GDAXI", "index", None),
+    "UK100":   ("^FTSE", "index", None),
+    "JPN225":  ("^N225", "index", None),
     # Energy (2)
-    "USOIL":   ("CL=F",  "energy"),
-    "UKOIL":   ("BZ=F",  "energy"),
+    "USOIL":   ("CL=F",  "energy", None),
+    "UKOIL":   ("BZ=F",  "energy", None),
 }
 
 
@@ -79,7 +82,9 @@ INSTRUMENTS = {
 DEFAULT_CONFIG = {
     "enabled_instruments": list(INSTRUMENTS.keys()),
     "timeframe": "1H",
-    "scan_interval_min": 10,
+    # 60 мин — оптимум под TwelveData free (8 credits/min, 800/day).
+    # 22 forex × 24 часа = 528 credits/day. Остаётся запас 272 на UI клики.
+    "scan_interval_min": 60,
     # Тюнинг: подняли чувствительность до уровня TradingView-индикатора FVG.
     #   body 0.5 → 0.4 (ловим моменты с менее трендовыми импульсами)
     #   size forex/index 0.03% → 0.015% (соответствует текущей волатильности)
@@ -135,6 +140,117 @@ def save_config(cfg: dict) -> dict:
         return get_config()
     _fvg_config().update_one({"_id": "fvg_config"}, {"$set": safe}, upsert=True)
     return get_config()
+
+
+# ── TwelveData fetcher (для форекса) ────────────────────────
+def _td_interval(tf: str) -> str:
+    """Приводит нашу TF нотацию к формату TwelveData."""
+    return {"15m":"15min","30m":"30min","1h":"1h","4h":"4h","1d":"1day"}.get(tf, tf)
+
+
+def fetch_candles_twelvedata(td_symbol: str, interval: str = "1h", outputsize: int = 200) -> list[dict]:
+    """Один инструмент через TwelveData. Возвращает candles в нашем формате."""
+    from config import TWELVEDATA_API_KEY
+    if not TWELVEDATA_API_KEY:
+        return []
+    import httpx
+    try:
+        url = "https://api.twelvedata.com/time_series"
+        params = {
+            "symbol": td_symbol,
+            "interval": _td_interval(interval),
+            "outputsize": outputsize,
+            "apikey": TWELVEDATA_API_KEY,
+            "timezone": "UTC",
+        }
+        r = httpx.get(url, params=params, timeout=15)
+        d = r.json()
+        if d.get("status") == "error" or not d.get("values"):
+            logger.warning(f"[TD] {td_symbol} {interval}: {d.get('message','no values')}")
+            return []
+        out = []
+        from datetime import datetime as _dt
+        for v in reversed(d["values"]):
+            try:
+                ts = int(_dt.fromisoformat(v["datetime"].replace(" ","T")).replace(tzinfo=timezone.utc).timestamp())
+                out.append({
+                    "t": ts,
+                    "o": float(v["open"]),
+                    "h": float(v["high"]),
+                    "l": float(v["low"]),
+                    "c": float(v["close"]),
+                    "v": float(v.get("volume", 0) or 0),
+                })
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        logger.warning(f"[TD] {td_symbol} failed: {e}")
+        return []
+
+
+def fetch_candles_twelvedata_batch(td_symbols: list, interval: str = "1h", outputsize: int = 200,
+                                    chunk_size: int = 7, throttle_s: int = 65) -> dict:
+    """Батч через TwelveData с учётом free tier rate limit: 8 credits/min.
+    Каждый символ в батче = 1 credit. Используем chunk=7 (запас до лимита),
+    между чанками ждём throttle_s секунд чтобы не словить 429.
+
+    Возвращает {td_symbol: [candles...]}.
+    """
+    from config import TWELVEDATA_API_KEY
+    if not TWELVEDATA_API_KEY or not td_symbols:
+        return {}
+    import httpx, time
+    from datetime import datetime as _dt
+    out = {}
+    for i in range(0, len(td_symbols), chunk_size):
+        chunk = td_symbols[i:i+chunk_size]
+        # Пауза перед не-первым чанком (не перед первым чтоб не тормозить)
+        if i > 0:
+            time.sleep(throttle_s)
+        try:
+            r = httpx.get("https://api.twelvedata.com/time_series", params={
+                "symbol": ",".join(chunk),
+                "interval": _td_interval(interval),
+                "outputsize": outputsize,
+                "apikey": TWELVEDATA_API_KEY,
+                "timezone": "UTC",
+            }, timeout=20)
+            d = r.json()
+            # Глобальный rate-limit ответ
+            if d.get("status") == "error" and d.get("code") == 429:
+                logger.warning(f"[TD batch] 429 on chunk {chunk[:3]}... skipping rest (quota exhausted)")
+                for sym in chunk:
+                    out[sym] = []
+                # Выходим — дальше всё равно будет 429
+                break
+            if len(chunk) == 1 and "values" in d:
+                d = {chunk[0]: d}
+            for sym in chunk:
+                sym_data = d.get(sym) or {}
+                if sym_data.get("status") == "error" or not sym_data.get("values"):
+                    out[sym] = []
+                    continue
+                parsed = []
+                for v in reversed(sym_data["values"]):
+                    try:
+                        ts = int(_dt.fromisoformat(v["datetime"].replace(" ","T")).replace(tzinfo=timezone.utc).timestamp())
+                        parsed.append({
+                            "t": ts,
+                            "o": float(v["open"]),
+                            "h": float(v["high"]),
+                            "l": float(v["low"]),
+                            "c": float(v["close"]),
+                            "v": float(v.get("volume", 0) or 0),
+                        })
+                    except Exception:
+                        continue
+                out[sym] = parsed
+        except Exception as e:
+            logger.warning(f"[TD batch] chunk {chunk[:3]}... failed: {e}")
+            for sym in chunk:
+                out[sym] = []
+    return out
 
 
 # ── yfinance wrapper ────────────────────────────────────────
@@ -251,15 +367,12 @@ def _passes_hybrid_v2(fvg: FVG, asset_class: str, cfg: dict) -> bool:
 
 
 # ── Scan: основная функция ──────────────────────────────────
-def scan_one_instrument(name: str, ticker: str, asset_class: str, cfg: dict) -> int:
-    """Сканирует один инструмент. Возвращает сколько новых FVG создано."""
-    candles = fetch_candles(ticker, period="7d", interval="1h")
+def _process_candles_for_instrument(name: str, ticker: str, asset_class: str, candles: list, cfg: dict) -> int:
+    """Общая логика: детект FVG + запись в БД. Выделено чтобы scan_one и batch могли переиспользовать."""
     if len(candles) < 20:
         return 0
-    # Кешируем для UI графиков (чтобы не дёргать yfinance каждый клик)
     cache_candles(name, "1h", candles)
-
-    fvgs = detect_fvg(candles, min_size_rel=0.0001)  # грубый порог — потом фильтруем v2
+    fvgs = detect_fvg(candles, min_size_rel=0.0001)
     if not fvgs:
         return 0
 
@@ -333,20 +446,94 @@ def scan_one_instrument(name: str, ticker: str, asset_class: str, cfg: dict) -> 
     return created
 
 
+def scan_one_instrument(name: str, ticker: str, asset_class: str, cfg: dict, td_symbol=None) -> int:
+    """Сканирует один инструмент.
+    Если td_symbol задан (форекс) — пробуем TwelveData → fallback yfinance.
+    Иначе (metal/index/energy) — сразу yfinance.
+    """
+    candles = []
+    if td_symbol:
+        candles = fetch_candles_twelvedata(td_symbol, interval="1h", outputsize=200)
+        if not candles:
+            logger.info(f"[FVG] {name}: TD empty → yfinance fallback")
+    if not candles:
+        candles = fetch_candles(ticker, period="7d", interval="1h")
+    return _process_candles_for_instrument(name, ticker, asset_class, candles, cfg)
+
+
 def scan_all() -> dict:
-    """Сканирует все enabled инструменты. Возвращает статистику."""
+    """Сканирует все enabled инструменты.
+    Smart Hybrid: форекс через TwelveData batch (меньше запросов), остальное yfinance.
+    Возвращает статистику.
+    """
     cfg = get_config()
     enabled = cfg.get("enabled_instruments", list(INSTRUMENTS.keys()))
-    stats = {"total_instruments": 0, "new_fvgs": 0, "errors": 0}
+    stats = {"total_instruments": 0, "new_fvgs": 0, "errors": 0, "td_used": 0, "yf_used": 0}
 
+    # Разделяем: форекс → TD batch; остальное → yfinance sequential
+    forex_names = []
+    other_names = []
     for name in enabled:
         if name not in INSTRUMENTS:
             continue
-        ticker, asset_class = INSTRUMENTS[name]
+        entry = INSTRUMENTS[name]
+        # INSTRUMENTS теперь (ticker, asset_class, td_symbol)
+        if len(entry) >= 3 and entry[2]:
+            forex_names.append(name)
+        else:
+            other_names.append(name)
+
+    # 1. Форекс через TwelveData batch
+    from config import TWELVEDATA_API_KEY
+    if forex_names and TWELVEDATA_API_KEY:
+        td_symbols = [INSTRUMENTS[n][2] for n in forex_names]
+        name_by_td = {INSTRUMENTS[n][2]: n for n in forex_names}
         try:
-            n = scan_one_instrument(name, ticker, asset_class, cfg)
+            td_data = fetch_candles_twelvedata_batch(td_symbols, interval="1h", outputsize=200)
+            for td_sym, candles in td_data.items():
+                name = name_by_td.get(td_sym)
+                if not name:
+                    continue
+                ticker, asset_class, _ = INSTRUMENTS[name]
+                if candles:
+                    try:
+                        n = _process_candles_for_instrument(name, ticker, asset_class, candles, cfg)
+                        stats["new_fvgs"] += n
+                        stats["total_instruments"] += 1
+                        stats["td_used"] += 1
+                    except Exception as e:
+                        logger.warning(f"[FVG] TD process {name}: {e}")
+                        stats["errors"] += 1
+                else:
+                    # TD вернул пусто → fallback yfinance
+                    try:
+                        n = scan_one_instrument(name, ticker, asset_class, cfg, td_symbol=None)
+                        stats["new_fvgs"] += n
+                        stats["total_instruments"] += 1
+                        stats["yf_used"] += 1
+                    except Exception as e:
+                        logger.warning(f"[FVG] YF fallback {name}: {e}")
+                        stats["errors"] += 1
+        except Exception as e:
+            logger.exception(f"[FVG] TD batch fail: {e}")
+            # Полный fallback на yfinance для всех форекс
+            other_names = forex_names + other_names
+            forex_names = []
+    else:
+        # Нет TD ключа — всё через yfinance
+        other_names = forex_names + other_names
+        forex_names = []
+
+    # 2. Остальное через yfinance sequential
+    for name in other_names:
+        if name not in INSTRUMENTS:
+            continue
+        ticker, asset_class = INSTRUMENTS[name][0], INSTRUMENTS[name][1]
+        try:
+            n = scan_one_instrument(name, ticker, asset_class, cfg, td_symbol=None)
             stats["new_fvgs"] += n
             stats["total_instruments"] += 1
+            stats["yf_used"] += 1
         except Exception as e:
             logger.debug(f"scan {name}: {e}")
             stats["errors"] += 1
