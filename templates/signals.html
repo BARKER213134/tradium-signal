@@ -2536,7 +2536,9 @@ function filterJournal() {
   const minTs = timeH > 0 ? nowTs - timeH * 3600 : 0;
 
   let filtered = _journalData.filter(s => {
-    if (minTs && (s.at_ts || 0) < minTs) return false;
+    // Tradium сигналы показываем всегда независимо от временного окна
+    // (их мало, они ценные — не прячем за фильтром "24ч")
+    if (minTs && s.source !== 'tradium' && (s.at_ts || 0) < minTs) return false;
     if (src && s.source !== src) return false;
     if (dir && s.direction !== dir) return false;
     if (kc === 'pass' && s.st_passed !== true) return false;
