@@ -1207,22 +1207,36 @@ async def api_fvg_scan_now():
 
 @app.get("/api/fvg-candles")
 async def api_fvg_candles(instrument: str, tf: str = "1h", limit: int = 150):
-    """Свечи для FVG графика через yfinance. instrument — ключ из INSTRUMENTS
-    (EURUSD, GBPJPY, XAUUSD, SPX500 и т.д.)."""
-    from fvg_scanner import INSTRUMENTS, fetch_candles
+    """Свечи для FVG графика. Сначала пробуем yfinance live, при неудаче — кеш в БД.
+    instrument — ключ из INSTRUMENTS (EURUSD, GBPJPY, XAUUSD, SPX500 и т.д.)."""
+    from fvg_scanner import INSTRUMENTS, fetch_candles, cache_candles, get_cached_candles
     key = (instrument or "").upper()
     entry = INSTRUMENTS.get(key)
     if not entry:
         return {"ok": False, "error": f"unknown instrument {instrument}"}
     ticker, _asset = entry
-    # yfinance период: 7d для 1h даёт ~160 свечей (хватает); для 4h/1d — больше
     period = "7d" if tf in ("15m", "30m", "1h") else "60d" if tf == "4h" else "1y"
+    # 1. Live yfinance
     candles = await asyncio.to_thread(fetch_candles, ticker, period, tf)
+    source = "yfinance"
+    if candles:
+        # сохраняем в кеш (для 1h только, остальные TF пока не храним)
+        if tf == "1h":
+            try:
+                await asyncio.to_thread(cache_candles, key, tf, candles)
+            except Exception:
+                pass
+    else:
+        # 2. Fallback — кеш из БД
+        cached = await asyncio.to_thread(get_cached_candles, key, tf, 240)  # кеш свежее 4ч
+        if cached:
+            candles = cached
+            source = "cache"
     if not candles:
-        return {"ok": False, "error": "no data from yfinance"}
+        return {"ok": False, "error": f"no data (yfinance failed, no cache for {key} {tf})"}
     data = [{"time": c["t"], "open": c["o"], "high": c["h"],
              "low": c["l"], "close": c["c"]} for c in candles[-limit:]]
-    return {"ok": True, "candles": data, "ticker": ticker, "instrument": key}
+    return {"ok": True, "candles": data, "ticker": ticker, "instrument": key, "source": source}
 
 
 @app.get("/api/reversal-meter")

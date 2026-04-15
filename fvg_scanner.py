@@ -137,14 +137,11 @@ def save_config(cfg: dict) -> dict:
 
 
 # ── yfinance wrapper ────────────────────────────────────────
-def fetch_candles(ticker: str, period: str = "7d", interval: str = "1h") -> list[dict]:
-    """Скачивает свечи через yfinance."""
-    try:
-        import yfinance as yf
-        df = yf.download(ticker, period=period, interval=interval,
-                         progress=False, auto_adjust=True, threads=False)
-        if df.empty:
-            return []
+def fetch_candles(ticker: str, period: str = "7d", interval: str = "1h", retries: int = 2) -> list[dict]:
+    """Скачивает свечи через yfinance с retry. Fallback — Ticker.history()."""
+    import yfinance as yf
+
+    def _parse_df(df):
         candles = []
         for ts, row in df.iterrows():
             try:
@@ -154,18 +151,77 @@ def fetch_candles(ticker: str, period: str = "7d", interval: str = "1h") -> list
                 o, h, l, c = v("Open"), v("High"), v("Low"), v("Close")
                 if not (o > 0 and h > 0 and l > 0 and c > 0):
                     continue
-                # pandas timestamp → unix seconds
                 ts_val = ts
-                if hasattr(ts_val, "timestamp"):
-                    unix = int(ts_val.timestamp())
-                else:
-                    unix = 0
+                unix = int(ts_val.timestamp()) if hasattr(ts_val, "timestamp") else 0
                 candles.append({"t": unix, "o": o, "h": h, "l": l, "c": c, "v": 0})
             except Exception:
                 continue
         return candles
+
+    last_err = None
+    # Attempt 1-2: yf.download
+    for attempt in range(retries):
+        try:
+            df = yf.download(ticker, period=period, interval=interval,
+                             progress=False, auto_adjust=True, threads=False)
+            if df is not None and not df.empty:
+                out = _parse_df(df)
+                if out:
+                    return out
+                last_err = "df.empty after parse"
+            else:
+                last_err = "df is empty/None"
+        except Exception as e:
+            last_err = f"download: {e}"
+    # Attempt 3: Ticker.history (альтернативный путь yfinance — иногда работает когда download падает)
+    try:
+        tk = yf.Ticker(ticker)
+        df = tk.history(period=period, interval=interval, auto_adjust=True)
+        if df is not None and not df.empty:
+            out = _parse_df(df)
+            if out:
+                return out
+            last_err = "Ticker.history: empty after parse"
+        else:
+            last_err = "Ticker.history: empty"
     except Exception as e:
-        logger.debug(f"fetch {ticker}: {e}")
+        last_err = f"Ticker.history: {e}"
+
+    logger.warning(f"[fvg.fetch_candles] {ticker} {interval} {period} FAILED: {last_err}")
+    return []
+
+
+def cache_candles(instrument: str, tf: str, candles: list[dict]) -> None:
+    """Сохраняет последние N свечей в БД для fallback'а когда yfinance недоступен."""
+    try:
+        from database import _get_db
+        _get_db().fvg_candle_cache.update_one(
+            {"instrument": instrument, "tf": tf},
+            {"$set": {
+                "instrument": instrument, "tf": tf,
+                "candles": candles[-200:],  # последние 200
+                "cached_at": utcnow(),
+            }},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+
+def get_cached_candles(instrument: str, tf: str, max_age_min: int = 60) -> list[dict]:
+    """Возвращает кеш если он свежий (< max_age_min минут)."""
+    try:
+        from database import _get_db
+        doc = _get_db().fvg_candle_cache.find_one({"instrument": instrument, "tf": tf})
+        if not doc or not doc.get("candles"):
+            return []
+        cached_at = doc.get("cached_at")
+        if cached_at and hasattr(cached_at, "timestamp"):
+            age_min = (utcnow() - cached_at).total_seconds() / 60
+            if age_min > max_age_min:
+                return []
+        return doc["candles"]
+    except Exception:
         return []
 
 
@@ -199,6 +255,8 @@ def scan_one_instrument(name: str, ticker: str, asset_class: str, cfg: dict) -> 
     candles = fetch_candles(ticker, period="7d", interval="1h")
     if len(candles) < 20:
         return 0
+    # Кешируем для UI графиков (чтобы не дёргать yfinance каждый клик)
+    cache_candles(name, "1h", candles)
 
     fvgs = detect_fvg(candles, min_size_rel=0.0001)  # грубый порог — потом фильтруем v2
     if not fvgs:
