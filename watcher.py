@@ -1813,6 +1813,27 @@ def _setup_bot9():
         logger.error(f"BOT9 init fail: {e}")
 
 
+def _fmt_price(v):
+    """Округление цены под magnitude — без ужасных хвостов."""
+    if v is None:
+        return "—"
+    try:
+        v = float(v)
+    except Exception:
+        return str(v)
+    if v == 0:
+        return "0"
+    abs_v = abs(v)
+    if abs_v >= 1000:  decimals = 2
+    elif abs_v >= 10:  decimals = 3
+    elif abs_v >= 1:   decimals = 4
+    elif abs_v >= 0.1: decimals = 5
+    elif abs_v >= 0.01: decimals = 6
+    elif abs_v >= 0.001: decimals = 7
+    else: decimals = 8
+    return f"{v:.{decimals}f}".rstrip("0").rstrip(".")
+
+
 async def _send_top_pick_alert(sig: dict):
     """👑 Top Pick alert — сигнал подтверждён STRONG Confluence ≤ 48h."""
     if not _bot9:
@@ -1821,56 +1842,92 @@ async def _send_top_pick_alert(sig: dict):
         return
     try:
         t_type = sig.get("type", "signal")
-        type_emoji = {"cluster": "💠", "tradium": "📡", "cryptovizor": "🚀"}.get(t_type, "📍")
-        type_label = {"cluster": "Cluster", "tradium": "Tradium", "cryptovizor": "Cryptovizor"}.get(t_type, t_type.title())
+        type_map = {
+            "cluster":     ("💠", "CLUSTER"),
+            "tradium":     ("📡", "TRADIUM"),
+            "cryptovizor": ("🚀", "CRYPTOVIZOR"),
+            "confluence":  ("🎯", "CONFLUENCE"),
+        }
+        type_emoji, type_label = type_map.get(t_type, ("📍", t_type.upper()))
         pair = (sig.get("pair") or "").replace("/USDT", "")
         direction = sig.get("direction", "LONG")
-        dir_e = "🟢" if direction in ("LONG", "BUY") else "🔴"
+        is_long = direction in ("LONG", "BUY")
+        dir_e = "🟢" if is_long else "🔴"
         entry = sig.get("entry")
         tp = sig.get("tp")
         sl = sig.get("sl")
 
+        # Расчёт TP%, SL%, R:R
+        tp_pct_str = sl_pct_str = rr_str = ""
+        try:
+            if entry and tp:
+                tp_pct = (tp - entry) / entry * 100 if is_long else (entry - tp) / entry * 100
+                tp_pct_str = f"  <b>({'+' if tp_pct >= 0 else ''}{tp_pct:.2f}%)</b>"
+            if entry and sl:
+                sl_pct = (sl - entry) / entry * 100 if is_long else (entry - sl) / entry * 100
+                sl_pct_str = f"  <b>({'+' if sl_pct >= 0 else ''}{sl_pct:.2f}%)</b>"
+            if entry and tp and sl:
+                reward = abs(tp - entry)
+                risk = abs(entry - sl)
+                if risk > 0:
+                    rr = reward / risk
+                    rr_str = f" · R:R <b>1:{rr:.1f}</b>"
+        except Exception:
+            pass
+
         # Подтверждения
-        confirmations_text = ""
         confirmations = sig.get("confirmations") or []
+        n_conf = sig.get("confirmations_count") or len(confirmations) or 1
+        confs_block = ""
         if confirmations:
             lines = []
             for c in confirmations[:3]:
+                c_src = c.get("source", "")
+                c_emoji = {"confluence":"🎯","cluster":"💠","tradium":"📡","cryptovizor":"🚀"}.get(c_src, "•")
                 at = c.get("at", "")
                 try:
                     from datetime import datetime
                     dt = datetime.fromisoformat(at.replace("Z", "+00:00")) if at else None
-                    at_str = dt.strftime("%d.%m %H:%M") if dt else "?"
+                    at_str = dt.strftime("%d.%m %H:%M") if dt else ""
                 except Exception:
-                    at_str = str(at)[:16]
-                lines.append(f"   🎯 score=<b>{c.get('score','?')}</b> at {at_str}")
-            confirmations_text = "\n" + "\n".join(lines)
+                    at_str = str(at)[:16] if at else ""
+                score = c.get("score")
+                strength = c.get("strength")
+                extra = f" <b>score {score}</b>" if score else (f" <b>{strength}</b>" if strength else "")
+                lines.append(f"   {c_emoji}{extra} <i>{at_str}</i>")
+            confs_block = "\n".join(lines)
             if len(confirmations) > 3:
-                confirmations_text += f"\n   ... и ещё {len(confirmations)-3}"
+                confs_block += f"\n   ... +{len(confirmations)-3}"
 
-        n_conf = sig.get("confirmations_count") or len(confirmations) or 1
+        # Source for confirmations label (какие именно подтверждения?)
+        # Если это Confluence top pick — подтверждают другие сигналы, иначе — STRONG Confluence
+        if t_type == "confluence":
+            conf_header = f"Подтверждён <b>{n_conf}</b> сигналом{'ом' if n_conf==1 else 'ами'} других типов"
+        else:
+            conf_header = f"Подтверждён <b>{n_conf}</b> STRONG Confluence ≤ 48h"
 
         text = (
-            f"👑 <b>TOP PICK DETECTED</b> 👑\n"
+            f"╔═══════════════════════════╗\n"
+            f"   👑 <b>TOP PICK</b>   ·   {type_emoji} {type_label}\n"
+            f"╚═══════════════════════════╝\n"
             f"\n"
-            f"{type_emoji} <b>{type_label}</b> · <b>{pair}/USDT</b> · {dir_e} <b>{direction}</b>\n"
+            f"{dir_e} <b>{pair}/USDT</b> · <b>{direction}</b>{rr_str}\n"
             f"\n"
-            f"✨ Подтверждён <b>{n_conf}</b> STRONG Confluence ≤ 48h:"
-            f"{confirmations_text}\n"
+            f"✨ {conf_header}:\n"
+            f"{confs_block}\n"
             f"\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📍  Entry:  <code>{_fmt_price(entry)}</code>\n"
+            f"🎯  TP:     <code>{_fmt_price(tp)}</code>{tp_pct_str}\n"
+            f"🛑  SL:     <code>{_fmt_price(sl)}</code>{sl_pct_str}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
         )
-        if entry is not None:
-            text += f"🎯 Entry: <code>{entry}</code>\n"
-        if tp is not None:
-            text += f"📈 TP: <code>{tp}</code>\n"
-        if sl is not None:
-            text += f"🛑 SL: <code>{sl}</code>\n"
         if sig.get("pattern"):
             text += f"📋 Pattern: <i>{sig.get('pattern')}</i>\n"
         text += (
             f"\n"
-            f"📊 Историческая WR Top Picks: <b>75%</b> (vs baseline 56%)\n"
-            f"💡 Avg PnL: <b>+0.75%</b>"
+            f"📊 <b>Backtest WR: 75%</b> (vs baseline 56%)\n"
+            f"💰 Avg PnL: <b>+0.75%</b> · PF <b>3.00</b>"
         )
 
         await _bot9.send_message(_admin_chat_id, text, parse_mode="HTML")
