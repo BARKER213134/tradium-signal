@@ -1183,26 +1183,69 @@ async function _ensureLwc() {
 function _sigTooltipHTML(o) {
   const dirC = o.direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
   const dirE = o.direction === 'LONG' ? '🟢' : '🔴';
-  const score = o.meta?.score ?? o.score;
+  const meta = o.meta || {};
+  const score = meta.score ?? o.score;
   const srcIcon = window.sigIcon ? window.sigIcon(o.source, score) : '';
   const titleStr = (srcIcon ? srcIcon + ' ' : '') + (o.title || o.symbol || '');
   let html = `<div style="font-weight:800;font-size:13px;margin-bottom:6px;color:${dirC}">${dirE} ${titleStr}</div>`;
   const row = (l, v, c) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0;"><span style="color:var(--muted)">${l}</span><span style="font-weight:600;color:${c||'var(--text)'}">${v}</span></div>`;
+
+  // Источник (с вариантами по source)
   if (o.source) {
-    const srcLabel = o.source === 'confluence'
-      ? (score >= 5 ? 'Confluence ⭐ STRONG' : 'Confluence MEDIUM')
-      : o.source.charAt(0).toUpperCase() + o.source.slice(1);
+    let srcLabel = o.source.charAt(0).toUpperCase() + o.source.slice(1);
+    if (o.source === 'confluence') {
+      srcLabel = score >= 6 ? 'Confluence 🔥 6+'
+               : score >= 5 ? 'Confluence ⭐ STRONG'
+               : 'Confluence MEDIUM';
+    } else if (o.source === 'cluster') {
+      const strength = meta.strength || '';
+      srcLabel = `💠 Cluster ${strength}`;
+    } else if (o.source === 'anomaly') {
+      srcLabel = '⚠ Anomaly';
+    } else if (o.source === 'tradium') {
+      srcLabel = '📡 Tradium';
+    } else if (o.source === 'cryptovizor') {
+      srcLabel = '🚀 Cryptovizor';
+    } else if (o.source === 'paper') {
+      srcLabel = '🤖 Paper';
+    }
     html += row('Источник', srcLabel);
   }
   if (o.direction) html += row('Направление', o.direction, dirC);
-  if (o.entry) html += row('Entry', o.entry);
-  if (o.tp1) html += row('TP1', o.tp1, 'var(--buy)');
-  if (o.sl) html += row('SL', o.sl, 'var(--sell)');
+
+  // ── Cluster-специфичные поля (приоритет над общими) ─────────
+  if (o.source === 'cluster') {
+    const sc = meta.signals_count, src_n = meta.sources_count;
+    if (sc && src_n) html += row('Голосов', `${sc}×${src_n} источников`);
+    const status = meta.status;
+    if (status) {
+      const stIcon = status === 'TP' ? '✅' : status === 'SL' ? '❌' : status === 'OPEN' ? '⏳' : '—';
+      html += row('Статус', stIcon + ' ' + status);
+    }
+    if (o.price || o.entry) html += row('Entry (cluster)', o.price || o.entry);
+    if (meta.tp) html += row('TP', meta.tp, 'var(--buy)');
+    if (meta.sl) html += row('SL', meta.sl, 'var(--sell)');
+    if (meta.pnl_pct != null && meta.pnl_pct !== 0) {
+      const pnl = meta.pnl_pct;
+      const pnlC = pnl >= 0 ? 'var(--buy)' : 'var(--sell)';
+      html += row('PnL', (pnl>=0?'+':'') + pnl.toFixed(2) + '%', pnlC);
+    }
+  } else {
+    // Обычный сигнал
+    if (o.entry) html += row('Entry', o.entry);
+    if (o.tp1) html += row('TP1', o.tp1, 'var(--buy)');
+    if (o.sl) html += row('SL', o.sl, 'var(--sell)');
+  }
+
   if (o.pattern) html += row('Паттерн', o.pattern);
   if (score != null) html += row('Score', '⭐ ' + score);
-  if (o.at) {
-    const d = new Date(typeof o.at === 'number' ? o.at * 1000 : o.at);
-    html += row('Время', d.toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}));
+  // Время сигнала (если указано)
+  const timeVal = o.at || meta.at;
+  if (timeVal) {
+    const d = new Date(typeof timeVal === 'number' ? timeVal * 1000 : timeVal);
+    if (!isNaN(d.getTime())) {
+      html += row('Время', d.toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}));
+    }
   }
   return html;
 }
