@@ -592,13 +592,19 @@
     </style>
     <script>
       // sigIcon — доступно ДО любых inline скриптов в block content.
-      // Учитывает score для Confluence: ⭐ для STRONG (5+), 🔥 для 6+
-      window.sigIcon = function(src, score) {
+      // - Confluence: 🎯 (MEDIUM, <5) / ⭐ (STRONG, 5+) / 🔥 (6+)
+      // - Top Pick (cluster/tradium/cv with is_top_pick): 👑 prefix
+      // 3-й аргумент meta опционально содержит {is_top_pick: bool}
+      window.sigIcon = function(src, score, meta) {
+        const isTopPick = meta && meta.is_top_pick;
+        const prefix = isTopPick ? '👑' : '';
         if (src === 'confluence') {
           const s = +score || 0;
-          return s >= 6 ? '🔥' : s >= 5 ? '⭐' : '🎯';
+          const base = s >= 6 ? '🔥' : s >= 5 ? '⭐' : '🎯';
+          return prefix + base;
         }
-        return ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
+        const base = ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
+        return prefix + base;
       };
     </script>
 </head>
@@ -1389,7 +1395,7 @@ async function _renderLwcSignalChart(containerId, opts) {
       }
       const g = byTime.get(key);
       const mScore = m.meta?.score ?? m.score;
-      g.icons.add(_sigIconLookup(m.source, mScore));
+      g.icons.add(_sigIconLookup(m.source, mScore, m.meta));
       g.items.push(m);
       markerMap.set(mc.time, m);
     }

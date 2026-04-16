@@ -116,7 +116,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1211,6 +1211,24 @@ async def api_td_quota():
     from fvg_scanner import get_td_quota_stats
     stats = await asyncio.to_thread(get_td_quota_stats)
     return stats
+
+
+@app.get("/api/top-picks")
+async def api_top_picks(hours: int = 96, limit: int = 200):
+    """👑 Top Picks — сигналы подтверждённые STRONG Confluence ≤ 48h."""
+    from top_picks import get_all_top_picks, get_top_picks_stats
+    items = await asyncio.to_thread(get_all_top_picks, hours, limit)
+    stats = await asyncio.to_thread(get_top_picks_stats, 720)  # 30 days
+    return {"items": items, "stats": stats, "total": len(items)}
+
+
+@app.post("/api/top-picks/backfill")
+async def api_top_picks_backfill(payload: dict | None = None):
+    """Пройти по истории и проставить is_top_pick на всех существующих сигналах."""
+    from top_picks import backfill_top_picks
+    days = int((payload or {}).get("days", 30))
+    stats = await asyncio.to_thread(backfill_top_picks, days)
+    return {"ok": True, "stats": stats}
 
 
 @app.post("/api/ai-coin-analysis")
@@ -2473,6 +2491,8 @@ async def api_journal():
             "st_passed": s.get("st_passed"),
             "pump_score": s.get("pump_score", 0),
             "pattern_triggered": pat_trig,
+            "is_top_pick": bool(s.get("is_top_pick")),
+            "top_pick_confirmations_count": s.get("top_pick_confirmations_count", 0),
             "received_at": s["received_at"].isoformat() if hasattr(s.get("received_at"), "isoformat") else None,
             "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
             "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
@@ -2494,6 +2514,8 @@ async def api_journal():
             "score": s.get("ai_score"),
             "st_passed": s.get("st_passed"),
             "pump_score": s.get("pump_score", 0),
+            "is_top_pick": bool(s.get("is_top_pick")),
+            "top_pick_confirmations_count": s.get("top_pick_confirmations_count", 0),
             "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
             "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
@@ -2590,6 +2612,8 @@ async def api_journal():
             "cluster_status": status,
             "cluster_pnl": round(pnl, 2) if pnl is not None else None,
             "cluster_id": c.get("id"),
+            "is_top_pick": bool(c.get("is_top_pick")),
+            "top_pick_confirmations_count": c.get("top_pick_confirmations_count", 0),
             "sources_count": sources_count,
             "signals_count": signals_count,
             "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),

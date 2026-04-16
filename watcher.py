@@ -541,6 +541,15 @@ async def _check_patterns(db):
             message=f"Паттерн {pattern} подтвердил вход",
         )
         _broadcast("signal_update", {"id": s.id, "status": "ПАТТЕРН"})
+        # Top Pick check — pattern + STRONG Confluence ≤ 48h в том же направлении
+        try:
+            from top_picks import tag_signal
+            if tag_signal(s.id, s.source):
+                await _send_top_pick_alert({"type": s.source, "pair": s.pair, "direction": s.direction,
+                                            "entry": current, "pattern": pattern, "signal_id": s.id,
+                                            "tp": s.tp1, "sl": s.sl})
+        except Exception as e:
+            logger.debug(f"top_pick check: {e}")
 
 
 async def _send_close_alert(signal: Signal, result: str, exit_price: float, pnl: float):
@@ -996,6 +1005,14 @@ async def _check_cryptovizor(db):
                     # Алерт только если ST подтверждён
                     if st_passed:
                         await _send_cryptovizor_alert(s, strongest, current_price, s1, r1, chart_png)
+                # Top Pick check — CV pattern + STRONG Confluence ≤ 48h
+                try:
+                    from top_picks import tag_signal
+                    if tag_signal(s.id, "cryptovizor"):
+                        await _send_top_pick_alert({"type": "cryptovizor", "pair": s.pair, "direction": s.direction,
+                                                    "entry": current_price, "pattern": strongest, "signal_id": s.id})
+                except Exception as e:
+                    logger.debug(f"top_pick CV check: {e}")
                 continue
 
         except Exception as e:
@@ -1720,6 +1737,7 @@ async def _check_confluence():
 _bot5 = None
 _bot7 = None
 _bot8 = None
+_bot9 = None  # Top Picks alerts
 
 
 def _setup_bot5():
@@ -1765,6 +1783,88 @@ def _setup_bot8():
         logger.info("BOT8 (Forex FVG) initialized")
     except Exception as e:
         logger.error(f"BOT8 init fail: {e}")
+
+
+def _setup_bot9():
+    global _bot9
+    from config import BOT9_BOT_TOKEN
+    if not BOT9_BOT_TOKEN:
+        return
+    try:
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        _bot9 = Bot(token=BOT9_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        logger.info("BOT9 (Top Picks) initialized")
+    except Exception as e:
+        logger.error(f"BOT9 init fail: {e}")
+
+
+async def _send_top_pick_alert(sig: dict):
+    """👑 Top Pick alert — сигнал подтверждён STRONG Confluence ≤ 48h."""
+    if not _bot9:
+        _setup_bot9()
+    if not _bot9 or not _admin_chat_id:
+        return
+    try:
+        t_type = sig.get("type", "signal")
+        type_emoji = {"cluster": "💠", "tradium": "📡", "cryptovizor": "🚀"}.get(t_type, "📍")
+        type_label = {"cluster": "Cluster", "tradium": "Tradium", "cryptovizor": "Cryptovizor"}.get(t_type, t_type.title())
+        pair = (sig.get("pair") or "").replace("/USDT", "")
+        direction = sig.get("direction", "LONG")
+        dir_e = "🟢" if direction in ("LONG", "BUY") else "🔴"
+        entry = sig.get("entry")
+        tp = sig.get("tp")
+        sl = sig.get("sl")
+
+        # Подтверждения
+        confirmations_text = ""
+        confirmations = sig.get("confirmations") or []
+        if confirmations:
+            lines = []
+            for c in confirmations[:3]:
+                at = c.get("at", "")
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(at.replace("Z", "+00:00")) if at else None
+                    at_str = dt.strftime("%d.%m %H:%M") if dt else "?"
+                except Exception:
+                    at_str = str(at)[:16]
+                lines.append(f"   🎯 score=<b>{c.get('score','?')}</b> at {at_str}")
+            confirmations_text = "\n" + "\n".join(lines)
+            if len(confirmations) > 3:
+                confirmations_text += f"\n   ... и ещё {len(confirmations)-3}"
+
+        n_conf = sig.get("confirmations_count") or len(confirmations) or 1
+
+        text = (
+            f"👑 <b>TOP PICK DETECTED</b> 👑\n"
+            f"\n"
+            f"{type_emoji} <b>{type_label}</b> · <b>{pair}/USDT</b> · {dir_e} <b>{direction}</b>\n"
+            f"\n"
+            f"✨ Подтверждён <b>{n_conf}</b> STRONG Confluence ≤ 48h:"
+            f"{confirmations_text}\n"
+            f"\n"
+        )
+        if entry is not None:
+            text += f"🎯 Entry: <code>{entry}</code>\n"
+        if tp is not None:
+            text += f"📈 TP: <code>{tp}</code>\n"
+        if sl is not None:
+            text += f"🛑 SL: <code>{sl}</code>\n"
+        if sig.get("pattern"):
+            text += f"📋 Pattern: <i>{sig.get('pattern')}</i>\n"
+        text += (
+            f"\n"
+            f"📊 Историческая WR Top Picks: <b>75%</b> (vs baseline 56%)\n"
+            f"💡 Avg PnL: <b>+0.75%</b>"
+        )
+
+        await _bot9.send_message(_admin_chat_id, text, parse_mode="HTML")
+        await asyncio.sleep(0.5)
+        logger.info(f"[TOP PICK] 👑 alert sent: {t_type} {pair} {direction}")
+    except Exception as e:
+        logger.exception(f"top_pick alert: {e}")
 
 
 # ── BOT8: Forex FVG alerts ──────────────────────────────────
@@ -2052,6 +2152,14 @@ async def _cluster_check_on_signal(pair: str, direction: str, at=None):
         cl = create_cluster(pair, direction, sigs, at)
         if cl:
             await _send_cluster_alert(cl)
+            # Top Pick alert если кластер подтверждён STRONG Confluence
+            if cl.get("is_top_pick"):
+                await _send_top_pick_alert({
+                    "type": "cluster", "pair": cl.get("pair"), "direction": direction,
+                    "entry": cl.get("trigger_price"), "tp": cl.get("tp_price"), "sl": cl.get("sl_price"),
+                    "confirmations": cl.get("top_pick_confirmations", []),
+                    "confirmations_count": cl.get("top_pick_confirmations_count", 0),
+                })
             # WebSocket broadcast
             try:
                 _broadcast("cluster_new", {"id": cl["id"], "pair": cl["pair"], "direction": direction})

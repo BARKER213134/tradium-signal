@@ -1302,6 +1302,261 @@ setInterval(loadClusters, 30000);
 setInterval(loadPendingClusters, 30000);
 </script>
 
+{% elif bot == 'top_picks' %}
+<!-- ── 👑 Top Picks ─────────────────────────────────────────────────── -->
+<style>
+.tp-hero {
+  padding: 20px 24px; margin-bottom: 18px;
+  background: linear-gradient(135deg, rgba(255,210,62,0.18), rgba(255,149,0,0.08) 50%, rgba(123,92,255,0.06));
+  border: 1px solid rgba(255,210,62,0.4); border-radius: 14px;
+  position: relative; overflow: hidden;
+}
+.tp-hero::before {
+  content: ''; position: absolute; top: -40px; right: -40px; width: 180px; height: 180px;
+  border-radius: 50%; background: radial-gradient(circle, rgba(255,210,62,0.2), transparent 70%);
+  pointer-events: none; animation: tpPulse 3s ease-in-out infinite;
+}
+@keyframes tpPulse { 0%,100% { opacity:1 } 50% { opacity:0.5 } }
+.tp-hero-title {
+  font-size: 18px; font-weight: 900; display: flex; align-items: center; gap: 10px; margin: 0;
+  background: linear-gradient(135deg, #ffd23e, #ff9500);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  letter-spacing: 0.02em;
+}
+.tp-hero-desc { font-size: 12px; color: var(--muted); margin: 8px 0 0; line-height: 1.6; max-width: 780px; }
+.tp-hero-wr { margin-top: 12px; display: inline-block; padding: 5px 12px; background: rgba(0,229,160,0.12); border: 1px solid rgba(0,229,160,0.4); border-radius: 20px; font-family: var(--font-mono); font-size: 11px; font-weight: 700; color: #00e5a0; }
+
+.tp-stats {
+  display: grid !important;
+  grid-template-columns: repeat(6, 1fr) !important;
+  gap: 12px; margin-bottom: 18px;
+}
+@media (max-width: 1100px) { .tp-stats { grid-template-columns: repeat(3, 1fr) !important; } }
+@media (max-width: 640px)  { .tp-stats { grid-template-columns: repeat(2, 1fr) !important; } }
+.tp-stat {
+  background: linear-gradient(135deg, var(--dark-2), rgba(255,255,255,0.02));
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; text-align: center;
+  transition: transform 0.15s, border-color 0.15s;
+}
+.tp-stat:hover { transform: translateY(-2px); border-color: rgba(255,210,62,0.4); }
+.tp-stat-lbl { font-family: var(--font-mono); font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.12em; }
+.tp-stat-val { font-family: var(--font-mono); font-size: 24px; font-weight: 800; margin-top: 6px; line-height: 1.1; color: var(--text); }
+
+.tp-toolbar {
+  display: flex; gap: 10px; align-items: center; padding: 12px 16px;
+  background: var(--dark-2); border: 1px solid var(--border); border-radius: 10px;
+  margin-bottom: 14px; flex-wrap: wrap;
+}
+.tp-select {
+  background: var(--dark); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 12px; font-size: 11px;
+  font-family: var(--font-mono); cursor: pointer; outline: none;
+}
+
+.tp-table-wrap { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--dark-2); }
+.tp-table-wrap table { margin: 0; }
+
+/* Type badges */
+.tp-type {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 10px; font-family: var(--font-mono);
+  font-size: 10px; font-weight: 700;
+}
+.tp-type-cluster     { background: rgba(0,212,255,0.18);  color: #33c4ff;  border: 1px solid rgba(0,212,255,0.35); }
+.tp-type-tradium     { background: rgba(255,77,109,0.15); color: #ff4d6d; border: 1px solid rgba(255,77,109,0.35); }
+.tp-type-cryptovizor { background: rgba(255,149,0,0.15);  color: #ff9500;  border: 1px solid rgba(255,149,0,0.35); }
+
+/* Status badges */
+.tp-status {
+  display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 10px;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 700;
+}
+.tp-status-tp     { background: rgba(0,229,160,0.25); color: #00e5a0; }
+.tp-status-sl     { background: rgba(255,77,109,0.20); color: #ff4d6d; }
+.tp-status-open   { background: rgba(255,210,62,0.20); color: #ffd23e; }
+
+.tp-row:hover { background: rgba(255,210,62,0.05) !important; }
+
+/* Confirmations chips */
+.tp-conf-chips { display: inline-flex; gap: 4px; }
+.tp-conf-chip {
+  background: rgba(255,210,62,0.12); border: 1px solid rgba(255,210,62,0.3);
+  border-radius: 6px; padding: 2px 6px; font-family: var(--font-mono);
+  font-size: 10px; color: #ffd23e;
+}
+</style>
+
+<div class="tp-hero">
+  <div class="tp-hero-title">👑 Top Picks</div>
+  <div class="tp-hero-desc">
+    Сигналы <b>подтверждённые STRONG Confluence</b> (score ≥ 5) за последние 48 часов в том же направлении.
+    По бектесту на 48 кластерах — <b>WR 75%</b> vs baseline 56%, Avg PnL <b>+0.75%</b> vs 0.19%.
+    Меньше шума, только то что стоит внимания.
+  </div>
+  <div class="tp-hero-wr">📊 Backtest WR: 75% · Avg +0.75% · PF 3.00</div>
+</div>
+
+<div class="tp-stats">
+  <div class="tp-stat"><div class="tp-stat-lbl">Всего Top Picks</div><div class="tp-stat-val" id="tpTotal">—</div></div>
+  <div class="tp-stat"><div class="tp-stat-lbl">🎯 Активных</div><div class="tp-stat-val" id="tpActive" style="color:#ffd23e;">—</div></div>
+  <div class="tp-stat"><div class="tp-stat-lbl">✅ TP</div><div class="tp-stat-val" id="tpTP" style="color:#00e5a0;">—</div></div>
+  <div class="tp-stat"><div class="tp-stat-lbl">❌ SL</div><div class="tp-stat-val" id="tpSL" style="color:#ff4d6d;">—</div></div>
+  <div class="tp-stat"><div class="tp-stat-lbl">Win Rate</div><div class="tp-stat-val" id="tpWR">—</div></div>
+  <div class="tp-stat"><div class="tp-stat-lbl">Sum PnL</div><div class="tp-stat-val" id="tpPnL">—</div></div>
+</div>
+
+<div class="tp-toolbar">
+  <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Тип</span>
+  <select id="tpFilterType" onchange="loadTopPicks()" class="tp-select">
+    <option value="">Все типы</option>
+    <option value="cluster">💠 Кластеры</option>
+    <option value="tradium">📡 Tradium</option>
+    <option value="cryptovizor">🚀 CV</option>
+  </select>
+  <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-left:6px;">Окно</span>
+  <select id="tpHours" onchange="loadTopPicks()" class="tp-select">
+    <option value="24">24ч</option>
+    <option value="96" selected>4 дня</option>
+    <option value="168">7 дней</option>
+    <option value="720">30 дней</option>
+  </select>
+  <button onclick="tpBackfill()" class="tp-select" style="cursor:pointer;margin-left:auto;">🔄 Backfill истории</button>
+  <span id="tpCount" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
+</div>
+
+<div class="tp-table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Время</th>
+        <th>Тип</th>
+        <th>Пара</th>
+        <th>Напр</th>
+        <th>Подтверждений</th>
+        <th>Entry</th>
+        <th>TP / SL</th>
+        <th>Статус</th>
+        <th>PnL</th>
+      </tr>
+    </thead>
+    <tbody id="tpBody">
+      <tr><td colspan="9" style="text-align:center;padding:60px;color:var(--muted);">
+        <div style="font-size:36px;margin-bottom:8px;opacity:0.5;">⏳</div>
+        <div style="font-family:var(--font-mono);">Загрузка Top Picks…</div>
+      </td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function loadTopPicks() {
+  const type = document.getElementById('tpFilterType').value;
+  const hours = document.getElementById('tpHours').value;
+  try {
+    const r = await fetch(`/api/top-picks?hours=${hours}&limit=300`);
+    const d = await r.json();
+    let items = d.items || [];
+    if (type) items = items.filter(i => i.type === type);
+
+    // Stats
+    const s = d.stats || {};
+    document.getElementById('tpTotal').textContent = s.total || 0;
+    document.getElementById('tpActive').textContent = s.active || 0;
+    document.getElementById('tpTP').textContent = s.tp || 0;
+    document.getElementById('tpSL').textContent = s.sl || 0;
+    const wrEl = document.getElementById('tpWR');
+    if (s.wr == null) { wrEl.textContent = '—'; wrEl.style.color = 'var(--muted)'; }
+    else { wrEl.textContent = s.wr + '%'; wrEl.style.color = s.wr >= 60 ? '#00e5a0' : s.wr >= 40 ? 'var(--text)' : '#ff4d6d'; }
+    const pnlEl = document.getElementById('tpPnL');
+    pnlEl.textContent = (s.sum_pnl >= 0 ? '+' : '') + (s.sum_pnl || 0) + '%';
+    pnlEl.style.color = (s.sum_pnl || 0) >= 0 ? '#00e5a0' : '#ff4d6d';
+    document.getElementById('tpCount').textContent = `${items.length} отображено`;
+
+    renderTopPicks(items);
+  } catch(e) { console.warn(e); }
+}
+
+function renderTopPicks(items) {
+  const tb = document.getElementById('tpBody');
+  if (!items.length) {
+    tb.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:60px;">
+      <div style="font-size:44px;margin-bottom:10px;">👑</div>
+      <div style="font-family:var(--font-mono);font-size:13px;color:var(--text);font-weight:700;margin-bottom:4px;">Пока нет Top Picks в окне</div>
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);">Появятся когда кластер/Tradium/CV сигнал получит подтверждение STRONG Confluence</div>
+    </td></tr>`;
+    return;
+  }
+  tb.innerHTML = items.map((p, i) => {
+    const t = p.at ? new Date(p.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+    const pairClean = (p.pair || '').replace('/USDT', '');
+    const isLong = p.direction === 'LONG' || p.direction === 'BUY';
+    const dirE = isLong ? '🟢 LONG' : '🔴 SHORT';
+    const dirC = isLong ? 'var(--buy)' : 'var(--sell)';
+
+    const typeLabel = {cluster:'💠 Cluster', tradium:'📡 Tradium', cryptovizor:'🚀 CV'}[p.type] || p.type;
+    const typeCls = `tp-type-${p.type}`;
+
+    const nConf = p.confirmations_count || 0;
+    const confChips = `<span class="tp-conf-chip">⭐ ×${nConf}</span>`;
+
+    const status = p.status;
+    let statusHtml = '';
+    if (status === 'TP') statusHtml = '<span class="tp-status tp-status-tp">✅ TP</span>';
+    else if (status === 'SL') statusHtml = '<span class="tp-status tp-status-sl">❌ SL</span>';
+    else statusHtml = `<span class="tp-status tp-status-open">⏳ ${status || 'OPEN'}</span>`;
+
+    const pnl = p.pnl_pct;
+    let pnlStr = '—', pnlColor = 'var(--muted)';
+    if (pnl != null) {
+      pnlStr = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%';
+      pnlColor = pnl >= 0 ? 'var(--buy)' : 'var(--sell)';
+    }
+
+    const tp = p.tp, sl = p.sl;
+    const tpSl = (tp != null || sl != null)
+      ? `<span class="mono" style="font-size:10px;"><span style="color:var(--buy)">${tp || '—'}</span> / <span style="color:var(--sell)">${sl || '—'}</span></span>`
+      : '—';
+
+    return `<tr class="tp-row" style="cursor:pointer;" onclick="tpOpenChart(${i})">
+      <td class="mono" style="font-size:11px;color:var(--muted);white-space:nowrap;">${t}</td>
+      <td><span class="tp-type ${typeCls}">${typeLabel}</span></td>
+      <td class="mono" style="font-weight:800;color:var(--cyan);font-size:13px;">👑 ${pairClean}</td>
+      <td><span style="color:${dirC};font-weight:700;font-family:var(--font-mono);">${dirE}</span></td>
+      <td>${confChips}</td>
+      <td class="mono" style="font-weight:700;">${p.entry || '—'}</td>
+      <td>${tpSl}</td>
+      <td>${statusHtml}</td>
+      <td class="mono" style="color:${pnlColor};font-weight:700;">${pnlStr}</td>
+    </tr>`;
+  }).join('');
+
+  window._tpData = items;
+}
+
+function tpOpenChart(idx) {
+  const p = window._tpData[idx];
+  if (!p || typeof openPendingChart !== 'function') return;
+  openPendingChart(p.pair, p.direction === 'BUY' ? 'LONG' : (p.direction === 'SELL' ? 'SHORT' : p.direction));
+}
+
+async function tpBackfill() {
+  if (!confirm('Запустить backfill для всех сигналов за последние 30 дней? Это проставит is_top_pick флаги.')) return;
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = '⏳ Обрабатываю...';
+  try {
+    const r = await fetch('/api/top-picks/backfill', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({days:30})});
+    const d = await r.json();
+    alert(`✅ Готово!\nClusters: ${d.stats.clusters_tagged}\nTradium: ${d.stats.tradium_tagged}\nCV: ${d.stats.cv_tagged}\nИтого: ${d.stats.total}`);
+    loadTopPicks();
+  } catch(e) { alert('Ошибка: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '🔄 Backfill истории'; }
+}
+
+loadTopPicks();
+setInterval(loadTopPicks, 30000);
+</script>
+
 {% elif bot == 'coin_analysis' %}
 <!-- ── 🧠 AI Coin Analyzer ─────────────────────────────────────────── -->
 <style>
@@ -3211,6 +3466,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="0">Всё время</option>
   </select>
   <button id="jStrongOnlyBtn" onclick="_toggleStrongOnly()" title="Только STRONG: Confluence≥5, Anomaly≥70, CV с паттерном" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">⭐ Strong · OFF</button>
+  <button id="jTopPickBtn" onclick="_toggleTopPicks()" title="Только Top Picks — сигналы подтверждённые STRONG Confluence" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">👑 Top · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
 </div>
 
@@ -3620,6 +3876,7 @@ function filterJournal() {
       if (s.source === 'anomaly' && (s.score || 0) < 70) return false;
       if (s.source === 'cryptovizor' && !s.pattern) return false;
     }
+    if (window._journalTopPickOnly && !s.is_top_pick) return false;
     return true;
   });
   // Apply current sort
@@ -3672,6 +3929,27 @@ function jGoPage(p) {
   const totalPages = Math.ceil(_journalFiltered.length / _jPerPage);
   _jPage = Math.max(1, Math.min(p, totalPages));
   renderJournalPage();
+}
+
+function _toggleTopPicks() {
+  window._journalTopPickOnly = !window._journalTopPickOnly;
+  const btn = document.getElementById('jTopPickBtn');
+  if (btn) {
+    if (window._journalTopPickOnly) {
+      btn.style.background = 'linear-gradient(135deg, rgba(255,210,62,0.20), rgba(255,149,0,0.10))';
+      btn.style.borderColor = '#ffd23e';
+      btn.style.color = '#ffd23e';
+      btn.textContent = '👑 Top · ON';
+    } else {
+      btn.style.background = 'none';
+      btn.style.borderColor = 'var(--border)';
+      btn.style.color = 'var(--muted)';
+      btn.textContent = '👑 Top · OFF';
+    }
+  }
+  const scrollY = window.scrollY;
+  filterJournal();
+  requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
 }
 
 function _toggleStrongOnly() {
@@ -3743,7 +4021,8 @@ function renderJournal(items, startIdx) {
       if (src === 'confluence') return (+sc||0) >= 5 ? '⭐' : '🎯';
       return {tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'}[src] || '•';
     });
-    const srcBadge = _icon(s.source, s.score);
+    const topPickPrefix = s.is_top_pick ? '👑 ' : '';
+    const srcBadge = topPickPrefix + _icon(s.source, s.score);
     const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐' : 'Confluence') : s.source === 'paper' ? 'Paper' : s.source === 'cluster' ? 'Cluster' : 'CV';
     const stFail = s.st_passed === false;
     const pumpHigh = (s.pump_score || 0) >= 2;

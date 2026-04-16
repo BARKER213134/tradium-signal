@@ -59,6 +59,9 @@ BOT7_BOT_TOKEN = os.getenv("BOT7_BOT_TOKEN", "")
 # Восьмой бот — Forex FVG Alerts
 BOT8_BOT_TOKEN = os.getenv("BOT8_BOT_TOKEN", "")
 
+# BOT9 — Top Picks alerts (сигналы подтверждённые STRONG Confluence)
+BOT9_BOT_TOKEN = os.getenv("BOT9_BOT_TOKEN", "")
+
 # TwelveData API — для форекс-данных (надёжнее чем yfinance для форекса)
 # Free tier: 800 req/day, 8 req/min
 # Регистрация: https://twelvedata.com/
@@ -72,6 +75,7 @@ BOTS = [
     {"id": "anomaly", "label": "Аномалии", "category": "crypto"},
     {"id": "confluence", "label": "Confluence", "category": "crypto"},
     {"id": "clusters", "label": "Кластеры", "category": "crypto"},
+    {"id": "top_picks", "label": "👑 Top Picks", "category": "crypto"},
     {"id": "conflicts", "label": "⚠ Conflicts", "category": "crypto"},
     {"id": "coin_analysis", "label": "🧠 AI Анализ", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
