@@ -2554,6 +2554,8 @@ async def api_journal():
             "score": c.get("score"),
             "st_passed": c.get("st_passed"),
             "pump_score": c.get("pump_score", 0),
+            "is_top_pick": bool(c.get("is_top_pick")),
+            "top_pick_confirmations_count": c.get("top_pick_confirmations_count", 0),
             "at": c["detected_at"].isoformat() if hasattr(c.get("detected_at"), "isoformat") else str(c.get("detected_at", "")),
             "at_ts": int(c["detected_at"].timestamp()) if hasattr(c.get("detected_at"), "timestamp") else 0,
         })

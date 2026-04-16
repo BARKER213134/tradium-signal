@@ -26,9 +26,16 @@ TOP_PICK_MIN_SCORE = 5  # STRONG Confluence
 
 
 def is_top_pick(pair: str, direction: str, at: Optional[datetime] = None,
-                window_h: int = TOP_PICK_WINDOW_H) -> dict:
-    """Проверяет: есть ли STRONG Confluence (score>=5) в том же направлении
-    за последние window_h часов до at.
+                window_h: int = TOP_PICK_WINDOW_H,
+                for_source: str = "") -> dict:
+    """Проверяет попадает ли сигнал в Top Pick.
+
+    Логика:
+      - Для cluster/tradium/cryptovizor: достаточно 1+ STRONG Confluence (score>=5)
+        в том же направлении за window_h часов → Top Pick
+      - Для confluence (score>=5): требуется хотя бы 1 другой сигнал (cluster/
+        tradium triggered/CV pattern) на той же паре в том же направлении
+        за window_h часов → Top Pick (симметрия)
 
     Returns:
       {
@@ -43,23 +50,72 @@ def is_top_pick(pair: str, direction: str, at: Optional[datetime] = None,
     norm_sym = norm.replace("/", "")
     start = at - timedelta(hours=window_h)
 
-    confs = list(_confluence().find({
-        "$or": [{"pair": norm}, {"symbol": norm_sym}],
-        "direction": direction,
-        "score": {"$gte": TOP_PICK_MIN_SCORE},
-        "detected_at": {"$gte": start, "$lte": at},
-    }))
-
     confirmations = []
-    for c in confs:
-        confirmations.append({
-            "source": "confluence",
-            "score": c.get("score"),
-            "at": c.get("detected_at").isoformat() if hasattr(c.get("detected_at"), "isoformat") else None,
-            "direction": c.get("direction"),
-            "pattern": c.get("pattern"),
-            "strength": c.get("strength"),
-        })
+
+    if for_source == "confluence":
+        # Для Confluence подтверждающие = cluster/Tradium/CV
+        from database import _clusters
+        # Cluster
+        for cl in _clusters().find({
+            "$or": [{"pair": norm}, {"symbol": norm_sym}],
+            "direction": direction,
+            "trigger_at": {"$gte": start, "$lte": at},
+        }):
+            confirmations.append({
+                "source": "cluster",
+                "at": cl.get("trigger_at").isoformat() if hasattr(cl.get("trigger_at"), "isoformat") else None,
+                "direction": cl.get("direction"),
+                "strength": cl.get("strength"),
+                "signals_count": cl.get("signals_count"),
+            })
+        # Tradium triggered
+        for s in _signals().find({
+            "source": "tradium", "pattern_triggered": True,
+            "pair": {"$in": [norm, norm_sym]},
+            "direction": direction,
+            "$or": [
+                {"pattern_triggered_at": {"$gte": start, "$lte": at}},
+                {"received_at": {"$gte": start, "$lte": at}},
+            ],
+        }):
+            t = s.get("pattern_triggered_at") or s.get("received_at")
+            confirmations.append({
+                "source": "tradium",
+                "at": t.isoformat() if hasattr(t, "isoformat") else None,
+                "direction": s.get("direction"),
+                "ai_score": s.get("ai_score"),
+            })
+        # CV triggered
+        for s in _signals().find({
+            "source": "cryptovizor", "pattern_triggered": True,
+            "pair": {"$in": [norm, norm_sym]},
+            "direction": direction,
+            "pattern_triggered_at": {"$gte": start, "$lte": at},
+        }):
+            confirmations.append({
+                "source": "cryptovizor",
+                "at": s.get("pattern_triggered_at").isoformat() if hasattr(s.get("pattern_triggered_at"), "isoformat") else None,
+                "direction": s.get("direction"),
+                "pattern": s.get("pattern_name"),
+                "ai_score": s.get("ai_score"),
+            })
+    else:
+        # Для cluster/tradium/CV подтверждающие = STRONG Confluence
+        confs = list(_confluence().find({
+            "$or": [{"pair": norm}, {"symbol": norm_sym}],
+            "direction": direction,
+            "score": {"$gte": TOP_PICK_MIN_SCORE},
+            "detected_at": {"$gte": start, "$lte": at},
+        }))
+        for c in confs:
+            confirmations.append({
+                "source": "confluence",
+                "score": c.get("score"),
+                "at": c.get("detected_at").isoformat() if hasattr(c.get("detected_at"), "isoformat") else None,
+                "direction": c.get("direction"),
+                "pattern": c.get("pattern"),
+                "strength": c.get("strength"),
+            })
 
     return {
         "is_top_pick": len(confirmations) > 0,
@@ -73,7 +129,7 @@ def tag_cluster(cluster_id: int) -> bool:
     c = _clusters().find_one({"id": cluster_id})
     if not c:
         return False
-    res = is_top_pick(c.get("pair", ""), c.get("direction", ""), c.get("trigger_at"))
+    res = is_top_pick(c.get("pair", ""), c.get("direction", ""), c.get("trigger_at"), for_source="cluster")
     if res["is_top_pick"]:
         _clusters().update_one({"_id": c["_id"]}, {"$set": {
             "is_top_pick": True,
@@ -90,11 +146,28 @@ def tag_signal(signal_db_id: int, source: str) -> bool:
     s = _signals().find_one({"id": signal_db_id, "source": source})
     if not s:
         return False
-    # Для этих сигналов time of interest = pattern_triggered_at (когда стал активен)
     at = s.get("pattern_triggered_at") or s.get("received_at")
-    res = is_top_pick(s.get("pair", ""), s.get("direction", ""), at)
+    res = is_top_pick(s.get("pair", ""), s.get("direction", ""), at, for_source=source)
     if res["is_top_pick"]:
         _signals().update_one({"_id": s["_id"]}, {"$set": {
+            "is_top_pick": True,
+            "top_pick_tagged_at": utcnow(),
+            "top_pick_confirmations": res["confirmations"],
+            "top_pick_confirmations_count": res["confirmations_count"],
+        }})
+        return True
+    return False
+
+
+def tag_confluence(conf_id) -> bool:
+    """Для Confluence STRONG — проверка и флаг (подтверждение от cluster/Tradium/CV)."""
+    c = _confluence().find_one({"_id": conf_id})
+    if not c or (c.get("score") or 0) < TOP_PICK_MIN_SCORE:
+        return False
+    at = c.get("detected_at")
+    res = is_top_pick(c.get("pair") or c.get("symbol", ""), c.get("direction", ""), at, for_source="confluence")
+    if res["is_top_pick"]:
+        _confluence().update_one({"_id": c["_id"]}, {"$set": {
             "is_top_pick": True,
             "top_pick_tagged_at": utcnow(),
             "top_pick_confirmations": res["confirmations"],
@@ -107,17 +180,16 @@ def tag_signal(signal_db_id: int, source: str) -> bool:
 def backfill_top_picks(days: int = 30) -> dict:
     """Пробегает по истории, проставляет is_top_pick на всех подходящих сигналах.
 
-    Returns: {clusters_tagged, tradium_tagged, cv_tagged, total}
+    Returns: {clusters_tagged, tradium_tagged, cv_tagged, confluence_tagged, total}
     """
     since = utcnow() - timedelta(days=days)
-    stats = {"clusters_tagged": 0, "tradium_tagged": 0, "cv_tagged": 0}
+    stats = {"clusters_tagged": 0, "tradium_tagged": 0, "cv_tagged": 0, "confluence_tagged": 0}
 
     # Clusters
     for c in _clusters().find({"trigger_at": {"$gte": since}}):
-        # Уже обработан?
-        if c.get("is_top_pick") is not None:  # уже есть флаг
+        if c.get("is_top_pick") is not None:
             continue
-        res = is_top_pick(c.get("pair", ""), c.get("direction", ""), c.get("trigger_at"))
+        res = is_top_pick(c.get("pair", ""), c.get("direction", ""), c.get("trigger_at"), for_source="cluster")
         update_doc = {"top_pick_checked_at": utcnow()}
         if res["is_top_pick"]:
             update_doc.update({
@@ -140,7 +212,7 @@ def backfill_top_picks(days: int = 30) -> dict:
         if s.get("is_top_pick") is not None:
             continue
         at = s.get("pattern_triggered_at") or s.get("received_at")
-        res = is_top_pick(s.get("pair", ""), s.get("direction", ""), at)
+        res = is_top_pick(s.get("pair", ""), s.get("direction", ""), at, for_source="tradium")
         update_doc = {"top_pick_checked_at": utcnow()}
         if res["is_top_pick"]:
             update_doc.update({
@@ -163,7 +235,7 @@ def backfill_top_picks(days: int = 30) -> dict:
         if s.get("is_top_pick") is not None:
             continue
         at = s.get("pattern_triggered_at") or s.get("received_at")
-        res = is_top_pick(s.get("pair", ""), s.get("direction", ""), at)
+        res = is_top_pick(s.get("pair", ""), s.get("direction", ""), at, for_source="cryptovizor")
         update_doc = {"top_pick_checked_at": utcnow()}
         if res["is_top_pick"]:
             update_doc.update({
@@ -177,7 +249,30 @@ def backfill_top_picks(days: int = 30) -> dict:
             update_doc["is_top_pick"] = False
         _signals().update_one({"_id": s["_id"]}, {"$set": update_doc})
 
-    stats["total"] = stats["clusters_tagged"] + stats["tradium_tagged"] + stats["cv_tagged"]
+    # Confluence STRONG (score>=5) — подтверждение от cluster/Tradium/CV
+    for c in _confluence().find({
+        "score": {"$gte": TOP_PICK_MIN_SCORE},
+        "detected_at": {"$gte": since},
+    }):
+        if c.get("is_top_pick") is not None:
+            continue
+        at = c.get("detected_at")
+        pair = c.get("pair") or c.get("symbol", "")
+        res = is_top_pick(pair, c.get("direction", ""), at, for_source="confluence")
+        update_doc = {"top_pick_checked_at": utcnow()}
+        if res["is_top_pick"]:
+            update_doc.update({
+                "is_top_pick": True,
+                "top_pick_tagged_at": utcnow(),
+                "top_pick_confirmations": res["confirmations"],
+                "top_pick_confirmations_count": res["confirmations_count"],
+            })
+            stats["confluence_tagged"] += 1
+        else:
+            update_doc["is_top_pick"] = False
+        _confluence().update_one({"_id": c["_id"]}, {"$set": update_doc})
+
+    stats["total"] = sum(v for k, v in stats.items() if k.endswith("_tagged"))
     return stats
 
 
@@ -259,6 +354,32 @@ def get_all_top_picks(hours: int = 168, limit: int = 200) -> list[dict]:
             "confirmations": s.get("top_pick_confirmations", []),
             "signal_id": s.get("id"),
             "ai_score": s.get("ai_score"),
+        })
+
+    # Confluence STRONG с подтверждением
+    for c in _confluence().find({
+        "is_top_pick": True,
+        "detected_at": {"$gte": since},
+    }):
+        at = c.get("detected_at")
+        pair = c.get("pair") or (c.get("symbol") or "").replace("USDT", "/USDT")
+        out.append({
+            "type": "confluence",
+            "pair": pair,
+            "symbol": (pair or "").replace("/", ""),
+            "direction": c.get("direction", ""),
+            "entry": c.get("price"),
+            "tp": c.get("r1"),
+            "sl": c.get("s1"),
+            "at": at.isoformat() if hasattr(at, "isoformat") else str(at),
+            "at_ts": int(at.timestamp()) if hasattr(at, "timestamp") else 0,
+            "status": "ACTIVE",  # confluence не имеет lifecycle
+            "pnl_pct": None,
+            "score": c.get("score"),
+            "pattern": c.get("pattern"),
+            "confirmations_count": c.get("top_pick_confirmations_count", 0),
+            "confirmations": c.get("top_pick_confirmations", []),
+            "conf_id": str(c.get("_id")),
         })
 
     out.sort(key=lambda x: -(x.get("at_ts") or 0))

@@ -1712,7 +1712,7 @@ async def _check_confluence():
             "detected_at": now,
             "st_passed": st_passed,
         }
-        _confluence().insert_one(doc)
+        insert_res = _confluence().insert_one(doc)
         confluence_scan_state["found"] += 1
         results.append(r)
         logger.info(f"Confluence: {r['symbol']} score={r['score']} {r['strength']} {r['direction']} ST={'✅' if st_passed else '❌'}")
@@ -1723,6 +1723,19 @@ async def _check_confluence():
             r["_st"] = st_data
             await _send_confluence_alert(r)
             await asyncio.sleep(1.5)  # Telegram rate limit protection
+
+        # Top Pick check — Confluence STRONG + cluster/tradium/CV ≤ 48h
+        if r["score"] >= 5:
+            try:
+                from top_picks import tag_confluence
+                if tag_confluence(insert_res.inserted_id):
+                    await _send_top_pick_alert({
+                        "type": "confluence", "pair": r["pair"], "direction": r["direction"],
+                        "entry": r["price"], "tp": r.get("r1"), "sl": r.get("s1"),
+                        "pattern": r.get("pattern"),
+                    })
+            except Exception as e:
+                logger.debug(f"top_pick Confluence check: {e}")
 
     confluence_scan_state["running"] = False
     confluence_scan_state["progress"] = 100

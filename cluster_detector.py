@@ -141,7 +141,8 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
             "price": c.get("price"),
             "meta": {"score": c.get("score"),
                      "strength": c.get("strength"),
-                     "pattern": c.get("pattern")},
+                     "pattern": c.get("pattern"),
+                     "is_top_pick": bool(c.get("is_top_pick"))},
         })
 
     # Clusters — композитные сигналы (только для UI-маркеров, не для cluster-triggering)
