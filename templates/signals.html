@@ -2693,7 +2693,7 @@ async function _renderPaperChart(idx, tf) {
       const key = mcc.time + '_' + m.direction;
       if (!byKey.has(key)) byKey.set(key, {time: mcc.time, isLong: isL, icons: new Set(), items: []});
       const g = byKey.get(key);
-      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score));
+      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, m.meta));
       g.items.push(m);
       if (!paperMarkerMap.has(mcc.time)) paperMarkerMap.set(mcc.time, m);
     }
@@ -3762,7 +3762,7 @@ async function loadCoinChart(coin) {
         if (diff < minD) { minD = diff; mc = c; }
       }
       const isLong = s.direction === 'LONG';
-      const srcIcon = window.sigIcon(s.source, s.score);
+      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick});
       markers.push({
         time: mc.time,
         direction: s.direction,
@@ -3861,7 +3861,7 @@ function _showJournalToast(newSignals) {
 
   const count = newSignals.length;
   const previews = newSignals.slice(0, 3).map(s => {
-    const src = window.sigIcon(s.source, s.score);
+    const src = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick});
     const pair = (s.symbol || s.pair || '').replace('USDT','').replace('/','');
     const dir = s.direction === 'LONG' ? '🟢' : '🔴';
     const score = s.score ? ` · ${s.score}` : '';
@@ -4166,7 +4166,7 @@ async function openJournalChart(idx, forceTF) {
   const sym = s.symbol || (s.pair || '').replace('/', '');
   const dirE = s.direction === 'LONG' ? '🟢' : '🔴';
 
-  const srcBadge = window.sigIcon(s.source, s.score);
+  const srcBadge = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick});
   const srcName = s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐ STRONG' : 'Confluence') : 'CV';
   const patternInfo = s.pattern ? ` · ${s.pattern}` : '';
   const scoreInfo = s.score ? ` · ${s.score}` : '';
@@ -4246,6 +4246,9 @@ async function openJournalChart(idx, forceTF) {
         at_ts: x.at_ts, direction: x.direction, source: x.source,
         price: x.entry, pair: x.pair, tp1: x.tp1, sl: x.sl, entry: x.entry,
         pattern: x.pattern, score: x.score, status: x.status,
+        // is_top_pick в _journalData = верхнеуровневое поле; в meta помещаем для sigIcon
+        meta: {is_top_pick: !!x.is_top_pick, score: x.score},
+        is_top_pick: !!x.is_top_pick,
       });
     }
 
@@ -4272,7 +4275,7 @@ async function openJournalChart(idx, forceTF) {
       const key = mc.time + '_' + m.direction;
       if (!byKey.has(key)) byKey.set(key, {time: mc.time, isLong: isL, icons: new Set(), items: []});
       const g = byKey.get(key);
-      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score));
+      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, m.meta));
       g.items.push(m);
       modalMarkerMap.set(mc.time, m);
     }
