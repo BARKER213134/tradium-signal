@@ -96,7 +96,8 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
             "at": s["pattern_triggered_at"],
             "price": s.get("pattern_price") or s.get("entry"),
             "meta": {"pattern_name": s.get("pattern_name", ""),
-                     "ai_score": s.get("ai_score")},
+                     "ai_score": s.get("ai_score"),
+                     "is_top_pick": bool(s.get("is_top_pick"))},
         })
 
     # Tradium
@@ -110,7 +111,8 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
             "at": s["received_at"],
             "price": s.get("entry"),
             "meta": {"ai_score": s.get("ai_score"),
-                     "setup_number": s.get("setup_number")},
+                     "setup_number": s.get("setup_number"),
+                     "is_top_pick": bool(s.get("is_top_pick"))},
         })
 
     # Anomaly — symbol может быть ETHUSDT или pair ETH/USDT
@@ -159,7 +161,8 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
                          "sources_count": cl.get("sources_count"),
                          "tp": cl.get("tp_price"),
                          "sl": cl.get("sl_price"),
-                         "pnl_pct": cl.get("pnl_percent")},
+                         "pnl_pct": cl.get("pnl_percent"),
+                         "is_top_pick": bool(cl.get("is_top_pick"))},
             })
 
     out.sort(key=lambda x: x["at"])

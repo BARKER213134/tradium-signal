@@ -1536,9 +1536,75 @@ function renderTopPicks(items) {
 
 function tpOpenChart(idx) {
   const p = window._tpData[idx];
-  if (!p || typeof openPendingChart !== 'function') return;
-  openPendingChart(p.pair, p.direction === 'BUY' ? 'LONG' : (p.direction === 'SELL' ? 'SHORT' : p.direction));
+  if (!p) return;
+  const dir = p.direction === 'BUY' ? 'LONG' : (p.direction === 'SELL' ? 'SHORT' : p.direction);
+
+  // Своя модалка для top pick
+  let modal = document.getElementById('tpChartModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'tpChartModal';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:250;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);';
+    modal.onclick = (e) => { if (e.target === modal) modal.style.display='none'; };
+    document.body.appendChild(modal);
+  }
+  const dirColor = dir === 'LONG' ? 'var(--buy)' : 'var(--sell)';
+  const dirE = dir === 'LONG' ? '🟢' : '🔴';
+  const pairClean = (p.pair || '').replace('/USDT','');
+  const symbol = (p.symbol || (p.pair||'').replace('/','')).toUpperCase();
+  const typeLabel = {cluster:'💠 Cluster', tradium:'📡 Tradium', cryptovizor:'🚀 Cryptovizor'}[p.type] || p.type;
+  const statusBadge = p.status === 'TP' ? '<span style="color:var(--buy)">✅ TP</span>'
+                    : p.status === 'SL' ? '<span style="color:var(--sell)">❌ SL</span>'
+                    : '<span style="color:#ffd23e">⏳ OPEN</span>';
+  const pnlStr = p.pnl_pct != null ? `<span style="color:${p.pnl_pct >= 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${p.pnl_pct >= 0 ? '+' : ''}${p.pnl_pct.toFixed(2)}%</span>` : '—';
+
+  modal.innerHTML = `
+    <div onclick="event.stopPropagation();" style="width:1100px;max-width:96vw;height:82vh;background:var(--dark);border:1px solid ${dirColor};border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);display:flex;flex-direction:column;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--border);">
+        <div style="font-family:var(--font-mono);font-size:13px;font-weight:800;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span style="color:#ffd23e;font-size:18px;">👑</span>
+          <span style="color:${dirColor};">${dirE} ${pairClean}/USDT</span>
+          <span style="color:var(--muted);">·</span>
+          <span style="color:var(--text);font-size:12px;">${typeLabel}</span>
+          <span style="color:var(--muted);">·</span>
+          <span style="color:#ffd23e;font-size:11px;">⭐×${p.confirmations_count||0}</span>
+          <span style="color:var(--muted);">·</span>
+          ${statusBadge}
+          <span style="color:var(--muted);">·</span>
+          ${pnlStr}
+        </div>
+        <button onclick="document.getElementById('tpChartModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;flex-shrink:0;">×</button>
+      </div>
+      <div id="tpChartBody" style="flex:1;position:relative;"></div>
+    </div>`;
+  modal.style.display='flex';
+
+  setTimeout(() => {
+    if (typeof _renderLwcSignalChart === 'function') {
+      _renderLwcSignalChart('tpChartBody', {
+        symbol: symbol,
+        direction: dir,
+        entry: p.entry,
+        tp1: p.tp,
+        sl: p.sl,
+        at: p.at_ts || p.at,
+        title: pairClean + '/USDT · 👑 Top Pick',
+        source: p.type,
+        score: p.confirmations_count,
+        fetchPairSignals: true, windowH: 96,
+      });
+    } else {
+      document.getElementById('tpChartBody').innerHTML = '<div style="padding:40px;text-align:center;color:var(--sell);">_renderLwcSignalChart недоступен</div>';
+    }
+  }, 50);
 }
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const m = document.getElementById('tpChartModal');
+    if (m && m.style.display !== 'none') m.style.display='none';
+  }
+});
 
 async function tpBackfill() {
   if (!confirm('Запустить backfill для всех сигналов за последние 30 дней? Это проставит is_top_pick флаги.')) return;
