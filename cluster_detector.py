@@ -193,38 +193,44 @@ def compute_pending_state(pair: str, direction: str) -> dict:
 
 def get_pending_clusters(limit: int = 50) -> list[dict]:
     """Возвращает список пар которые сейчас в pending состоянии (1/N, ждём ещё).
-    Сканирует все уникальные пары за последнее окно."""
+    Сканирует уникальные пары за последнее окно (с projection и capping)."""
     cfg = get_config()
     now = utcnow()
     since = now - timedelta(hours=cfg["window_h"])
-    # Собираем уникальные (pair, direction) из последнего окна
     pairs_dirs: set = set()
 
+    # Projection — только нужные поля; limit — предохранитель
     for s in _signals().find({
         "source": {"$in": ["cryptovizor", "tradium"]},
         "$or": [{"pattern_triggered_at": {"$gte": since}}, {"received_at": {"$gte": since}}],
         "direction": {"$ne": None}, "pair": {"$ne": None},
-    }):
+    }, {"pair": 1, "direction": 1}).limit(500):
         pair = _norm_pair(s.get("pair"))
         d = s.get("direction")
         if pair and d in ("LONG", "SHORT"):
             pairs_dirs.add((pair, d))
 
-    for a in _anomalies().find({"detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]}}):
+    for a in _anomalies().find({
+        "detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]},
+    }, {"pair": 1, "symbol": 1, "direction": 1}).limit(500):
         pair = _norm_pair(a.get("pair") or a.get("symbol", "").replace("USDT", "/USDT"))
         d = a.get("direction")
         if pair:
             pairs_dirs.add((pair, d))
 
-    for c in _confluence().find({"detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]}}):
+    for c in _confluence().find({
+        "detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]},
+    }, {"pair": 1, "symbol": 1, "direction": 1}).limit(500):
         pair = _norm_pair(c.get("pair") or c.get("symbol", "").replace("USDT", "/USDT"))
         d = c.get("direction")
         if pair:
             pairs_dirs.add((pair, d))
 
-    # Для каждой считаем состояние
+    # Hard cap — максимум 100 уникальных пар (иначе compute_pending_state × N слишком долго)
+    pairs_list = list(pairs_dirs)[:100]
+
     out = []
-    for pair, direction in pairs_dirs:
+    for pair, direction in pairs_list:
         state = compute_pending_state(pair, direction)
         if state["state"] == "pending":
             out.append({
@@ -232,7 +238,7 @@ def get_pending_clusters(limit: int = 50) -> list[dict]:
                 "count": state["count"], "min": state["min"],
                 "time_left_h": state["time_left_h"],
             })
-    out.sort(key=lambda x: -x["count"])  # по убыванию готовности
+    out.sort(key=lambda x: -x["count"])
     return out[:limit]
 
 

@@ -1105,13 +1105,21 @@ async def api_pair_signals(pair: str, direction: str = "", window_h: int = 8):
     return out
 
 
+_pending_clusters_cache = {"at": 0, "data": None}
+
 @app.get("/api/pending-clusters")
 async def api_pending_clusters():
-    """Монеты которые сейчас 1/N — ждут второго сигнала."""
+    """Монеты которые сейчас 1/N — ждут второго сигнала. Cache 90s."""
+    import time as _t
     from cluster_detector import get_pending_clusters, get_config
+    now = _t.time()
+    if _pending_clusters_cache["data"] and (now - _pending_clusters_cache["at"]) < 90:
+        return _pending_clusters_cache["data"]
     pending = await asyncio.to_thread(get_pending_clusters, 50)
     cfg = await asyncio.to_thread(get_config)
-    return {"items": pending, "config": cfg}
+    data = {"items": pending, "config": cfg}
+    _pending_clusters_cache.update({"at": now, "data": data})
+    return data
 
 
 @app.post("/api/backfill-clusters")
@@ -1213,13 +1221,23 @@ async def api_td_quota():
     return stats
 
 
+_top_picks_cache = {"at": 0, "key": None, "data": None}
+
 @app.get("/api/top-picks")
 async def api_top_picks(hours: int = 96, limit: int = 200):
-    """👑 Top Picks — сигналы подтверждённые STRONG Confluence ≤ 48h."""
+    """👑 Top Picks — сигналы подтверждённые STRONG Confluence ≤ 48h.
+    In-memory cache 60s (полный рефреш раз в минуту)."""
+    import time as _t
     from top_picks import get_all_top_picks, get_top_picks_stats
+    now = _t.time()
+    key = f"{hours}_{limit}"
+    if _top_picks_cache["key"] == key and (now - _top_picks_cache["at"]) < 60:
+        return _top_picks_cache["data"]
     items = await asyncio.to_thread(get_all_top_picks, hours, limit)
-    stats = await asyncio.to_thread(get_top_picks_stats, 720)  # 30 days
-    return {"items": items, "stats": stats, "total": len(items)}
+    stats = await asyncio.to_thread(get_top_picks_stats, 720)
+    data = {"items": items, "stats": stats, "total": len(items), "cached": False}
+    _top_picks_cache.update({"at": now, "key": key, "data": {**data, "cached": True}})
+    return data
 
 
 @app.post("/api/top-picks/backfill")
@@ -2465,17 +2483,32 @@ async def api_paper_reset():
     return {"ok": True}
 
 
+_journal_cache = {"at": 0, "data": None}
+
 @app.get("/api/journal")
 async def api_journal():
-    """Все сигналы из 4 источников — для вкладки Журнал."""
+    """Все сигналы из 4 источников — для вкладки Журнал.
+    Server-side limit 14 days + per-source cap. Cache 45s.
+    """
+    import time as _t
+    now_ts = _t.time()
+    if _journal_cache["data"] and (now_ts - _journal_cache["at"]) < 45:
+        return _journal_cache["data"]
+
     from database import _signals, _anomalies, _confluence
+    from datetime import datetime, timedelta
+    since_14d = datetime.utcnow() - timedelta(days=14)
 
     items = []
 
-    # Tradium signals
-    # Если pattern_triggered (DCA4 hit) — используем pattern_triggered_at как время активации,
-    # чтобы «зрелый» сигнал не отфильтровывался по окну (при received_at 2 дня назад).
-    for s in _signals().find({"source": "tradium"}).sort("received_at", -1):
+    # Tradium signals (все — их мало, ~33)
+    # Если pattern_triggered (DCA4 hit) — используем pattern_triggered_at как время активации.
+    for s in _signals().find({"source": "tradium"}, {
+        "pair":1, "direction":1, "entry":1, "tp1":1, "sl":1, "trend":1, "comment":1,
+        "ai_score":1, "st_passed":1, "pump_score":1, "pattern_triggered":1,
+        "is_top_pick":1, "top_pick_confirmations_count":1,
+        "received_at":1, "pattern_triggered_at":1,
+    }).sort("received_at", -1).limit(100):
         pat_trig = bool(s.get("pattern_triggered"))
         at_dt = s.get("pattern_triggered_at") if pat_trig and s.get("pattern_triggered_at") else s.get("received_at")
         items.append({
@@ -2498,8 +2531,16 @@ async def api_journal():
             "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
 
-    # Cryptovizor signals (только с паттерном, сортируем по времени паттерна)
-    for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True}).sort("pattern_triggered_at", -1):
+    # Cryptovizor signals (только с паттерном за последние 14 дней, cap 300)
+    for s in _signals().find({
+        "source": "cryptovizor", "pattern_triggered": True,
+        "pattern_triggered_at": {"$gte": since_14d},
+    }, {
+        "pair":1, "direction":1, "entry":1, "pattern_price":1, "dca1":1, "dca2":1,
+        "pattern_name":1, "ai_score":1, "st_passed":1, "pump_score":1,
+        "is_top_pick":1, "top_pick_confirmations_count":1,
+        "received_at":1, "pattern_triggered_at":1,
+    }).sort("pattern_triggered_at", -1).limit(300):
         # Время = когда паттерн сработал (не когда монета добавлена)
         at_dt = s.get("pattern_triggered_at") or s.get("received_at")
         items.append({
@@ -2520,8 +2561,11 @@ async def api_journal():
             "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
 
-    # Anomalies
-    for a in _anomalies().find().sort("detected_at", -1):
+    # Anomalies (14 дней, cap 300)
+    for a in _anomalies().find({"detected_at": {"$gte": since_14d}}, {
+        "symbol":1, "pair":1, "direction":1, "price":1, "anomalies":1,
+        "score":1, "st_passed":1, "pump_score":1, "detected_at":1,
+    }).sort("detected_at", -1).limit(300):
         types = [x["type"] for x in a.get("anomalies", [])]
         items.append({
             "source": "anomaly",
@@ -2539,8 +2583,13 @@ async def api_journal():
             "at_ts": int(a["detected_at"].timestamp()) if hasattr(a.get("detected_at"), "timestamp") else 0,
         })
 
-    # Confluence
-    for c in _confluence().find().sort("detected_at", -1):
+    # Confluence (14 дней, cap 300)
+    for c in _confluence().find({"detected_at": {"$gte": since_14d}}, {
+        "symbol":1, "pair":1, "direction":1, "price":1, "r1":1, "s1":1,
+        "pattern":1, "strength":1, "factors":1, "score":1,
+        "st_passed":1, "pump_score":1, "is_top_pick":1,
+        "top_pick_confirmations_count":1, "detected_at":1,
+    }).sort("detected_at", -1).limit(300):
         ftypes = [f["type"] for f in c.get("factors", [])]
         items.append({
             "source": "confluence",
@@ -2624,7 +2673,9 @@ async def api_journal():
 
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
-    return {"items": items}
+    data = {"items": items}
+    _journal_cache.update({"at": now_ts, "data": data})
+    return data
 
 
 @app.get("/api/journal-candles")

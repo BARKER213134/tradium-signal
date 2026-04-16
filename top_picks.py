@@ -282,8 +282,20 @@ def get_all_top_picks(hours: int = 168, limit: int = 200) -> list[dict]:
     since = utcnow() - timedelta(hours=hours)
     out = []
 
+    # Projection — только нужные для UI. top_pick_confirmations не включаем
+    # в общем списке (грузится в модалке при клике, если понадобится).
+    CL_FIELDS = {"pair":1,"symbol":1,"direction":1,"trigger_price":1,"tp_price":1,
+                 "sl_price":1,"trigger_at":1,"status":1,"pnl_percent":1,"strength":1,
+                 "sources_count":1,"signals_count":1,"top_pick_confirmations_count":1,"id":1}
+    SIG_FIELDS = {"pair":1,"direction":1,"entry":1,"pattern_price":1,"tp1":1,"sl":1,
+                  "dca1":1,"dca2":1,"pattern_triggered_at":1,"received_at":1,"status":1,
+                  "pattern_name":1,"source":1,"ai_score":1,
+                  "top_pick_confirmations_count":1,"id":1}
+    CF_FIELDS = {"pair":1,"symbol":1,"direction":1,"price":1,"r1":1,"s1":1,"score":1,
+                 "pattern":1,"detected_at":1,"top_pick_confirmations_count":1}
+
     # Clusters
-    for c in _clusters().find({"is_top_pick": True, "trigger_at": {"$gte": since}}):
+    for c in _clusters().find({"is_top_pick": True, "trigger_at": {"$gte": since}}, CL_FIELDS).sort("trigger_at", -1).limit(limit):
         at = c.get("trigger_at")
         out.append({
             "type": "cluster",
@@ -310,7 +322,7 @@ def get_all_top_picks(hours: int = 168, limit: int = 200) -> list[dict]:
         "is_top_pick": True, "source": "tradium",
         "pattern_triggered": True,
         "pattern_triggered_at": {"$gte": since},
-    }):
+    }, SIG_FIELDS).sort("pattern_triggered_at", -1).limit(limit):
         at = s.get("pattern_triggered_at") or s.get("received_at")
         out.append({
             "type": "tradium",
@@ -325,7 +337,6 @@ def get_all_top_picks(hours: int = 168, limit: int = 200) -> list[dict]:
             "status": s.get("status", "СЛЕЖУ"),
             "pnl_pct": None,
             "confirmations_count": s.get("top_pick_confirmations_count", 0),
-            "confirmations": s.get("top_pick_confirmations", []),
             "signal_id": s.get("id"),
             "ai_score": s.get("ai_score"),
         })
@@ -335,7 +346,7 @@ def get_all_top_picks(hours: int = 168, limit: int = 200) -> list[dict]:
         "is_top_pick": True, "source": "cryptovizor",
         "pattern_triggered": True,
         "pattern_triggered_at": {"$gte": since},
-    }):
+    }, SIG_FIELDS).sort("pattern_triggered_at", -1).limit(limit):
         at = s.get("pattern_triggered_at") or s.get("received_at")
         out.append({
             "type": "cryptovizor",
@@ -351,7 +362,6 @@ def get_all_top_picks(hours: int = 168, limit: int = 200) -> list[dict]:
             "pnl_pct": None,
             "pattern_name": s.get("pattern_name"),
             "confirmations_count": s.get("top_pick_confirmations_count", 0),
-            "confirmations": s.get("top_pick_confirmations", []),
             "signal_id": s.get("id"),
             "ai_score": s.get("ai_score"),
         })
@@ -360,7 +370,7 @@ def get_all_top_picks(hours: int = 168, limit: int = 200) -> list[dict]:
     for c in _confluence().find({
         "is_top_pick": True,
         "detected_at": {"$gte": since},
-    }):
+    }, CF_FIELDS).sort("detected_at", -1).limit(limit):
         at = c.get("detected_at")
         pair = c.get("pair") or (c.get("symbol") or "").replace("USDT", "/USDT")
         out.append({
@@ -378,7 +388,6 @@ def get_all_top_picks(hours: int = 168, limit: int = 200) -> list[dict]:
             "score": c.get("score"),
             "pattern": c.get("pattern"),
             "confirmations_count": c.get("top_pick_confirmations_count", 0),
-            "confirmations": c.get("top_pick_confirmations", []),
             "conf_id": str(c.get("_id")),
         })
 
@@ -387,29 +396,54 @@ def get_all_top_picks(hours: int = 168, limit: int = 200) -> list[dict]:
 
 
 def get_top_picks_stats(hours: int = 720) -> dict:
-    """Статистика по Top Picks за период (по умолчанию 30 дней)."""
-    items = get_all_top_picks(hours=hours, limit=1000)
-    total = len(items)
-    # Только кластеры имеют outcome пока
-    closed = [i for i in items if i.get("type") == "cluster" and i.get("status") in ("TP", "SL")]
-    tp = sum(1 for i in closed if i.get("status") == "TP")
-    sl = sum(1 for i in closed if i.get("status") == "SL")
-    open_count = sum(1 for i in items if i.get("status") in ("OPEN", "СЛЕЖУ"))
-    pnls = [i.get("pnl_pct") or 0 for i in closed]
-    sum_pnl = sum(pnls)
-    avg_pnl = sum_pnl / len(pnls) if pnls else 0
+    """Статистика по Top Picks (count-based, без полной выборки документов)."""
+    since = utcnow() - timedelta(hours=hours)
+
+    # Количества через count_documents — быстро
+    n_clusters = _clusters().count_documents({"is_top_pick": True, "trigger_at": {"$gte": since}})
+    n_tradium = _signals().count_documents({
+        "is_top_pick": True, "source": "tradium", "pattern_triggered": True,
+        "pattern_triggered_at": {"$gte": since},
+    })
+    n_cv = _signals().count_documents({
+        "is_top_pick": True, "source": "cryptovizor", "pattern_triggered": True,
+        "pattern_triggered_at": {"$gte": since},
+    })
+    n_conf = _confluence().count_documents({"is_top_pick": True, "detected_at": {"$gte": since}})
+
+    # Cluster outcomes — нужны PnL и статусы, но только по cluster TP/SL
+    tp = _clusters().count_documents({"is_top_pick": True, "status": "TP", "trigger_at": {"$gte": since}})
+    sl = _clusters().count_documents({"is_top_pick": True, "status": "SL", "trigger_at": {"$gte": since}})
+    open_count = _clusters().count_documents({"is_top_pick": True, "status": "OPEN", "trigger_at": {"$gte": since}})
+
+    # Sum/Avg PnL через aggregation (только cluster closed)
+    try:
+        pipeline = [
+            {"$match": {"is_top_pick": True, "status": {"$in": ["TP", "SL"]},
+                        "trigger_at": {"$gte": since}}},
+            {"$group": {"_id": None, "sum": {"$sum": "$pnl_percent"}, "cnt": {"$sum": 1}}},
+        ]
+        agg = list(_clusters().aggregate(pipeline))
+        if agg:
+            sum_pnl = agg[0].get("sum") or 0
+            cnt = agg[0].get("cnt") or 0
+            avg_pnl = sum_pnl / cnt if cnt else 0
+        else:
+            sum_pnl, avg_pnl = 0, 0
+    except Exception:
+        sum_pnl, avg_pnl = 0, 0
+
     wr = tp / (tp + sl) * 100 if (tp + sl) > 0 else None
-    by_type = {}
-    for i in items:
-        t = i.get("type", "?")
-        by_type[t] = by_type.get(t, 0) + 1
     return {
-        "total": total,
+        "total": n_clusters + n_tradium + n_cv + n_conf,
         "active": open_count,
         "tp": tp,
         "sl": sl,
         "wr": round(wr, 1) if wr is not None else None,
         "sum_pnl": round(sum_pnl, 2),
         "avg_pnl": round(avg_pnl, 3),
-        "by_type": by_type,
+        "by_type": {
+            "cluster": n_clusters, "tradium": n_tradium,
+            "cryptovizor": n_cv, "confluence": n_conf,
+        },
     }
