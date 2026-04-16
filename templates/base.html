@@ -1183,14 +1183,23 @@ async function _ensureLwc() {
 function _sigTooltipHTML(o) {
   const dirC = o.direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
   const dirE = o.direction === 'LONG' ? '🟢' : '🔴';
-  let html = `<div style="font-weight:800;font-size:13px;margin-bottom:6px;color:${dirC}">${dirE} ${o.title || (o.symbol || '')}</div>`;
+  const score = o.meta?.score ?? o.score;
+  const srcIcon = window.sigIcon ? window.sigIcon(o.source, score) : '';
+  const titleStr = (srcIcon ? srcIcon + ' ' : '') + (o.title || o.symbol || '');
+  let html = `<div style="font-weight:800;font-size:13px;margin-bottom:6px;color:${dirC}">${dirE} ${titleStr}</div>`;
   const row = (l, v, c) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0;"><span style="color:var(--muted)">${l}</span><span style="font-weight:600;color:${c||'var(--text)'}">${v}</span></div>`;
+  if (o.source) {
+    const srcLabel = o.source === 'confluence'
+      ? (score >= 5 ? 'Confluence ⭐ STRONG' : 'Confluence MEDIUM')
+      : o.source.charAt(0).toUpperCase() + o.source.slice(1);
+    html += row('Источник', srcLabel);
+  }
   if (o.direction) html += row('Направление', o.direction, dirC);
   if (o.entry) html += row('Entry', o.entry);
   if (o.tp1) html += row('TP1', o.tp1, 'var(--buy)');
   if (o.sl) html += row('SL', o.sl, 'var(--sell)');
   if (o.pattern) html += row('Паттерн', o.pattern);
-  if (o.score != null) html += row('Score', '⭐ ' + o.score);
+  if (score != null) html += row('Score', '⭐ ' + score);
   if (o.at) {
     const d = new Date(typeof o.at === 'number' ? o.at * 1000 : o.at);
     html += row('Время', d.toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}));
@@ -1292,6 +1301,16 @@ async function _renderLwcSignalChart(containerId, opts) {
   //   opts.markers = [{at, direction, source, price, meta}] — для cluster, где много сигналов
   //   иначе один маркер по opts.at/opts.direction/opts.source (старая логика)
   const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠'};
+  // sigIcon — учитывает score для Confluence: ⭐ для STRONG (5+), 🔥 для 6+
+  // Глобально доступно через window.sigIcon(source, score)
+  window.sigIcon = function(src, score) {
+    if (src === 'confluence') {
+      const s = +score || 0;
+      return s >= 6 ? '🔥' : s >= 5 ? '⭐' : '🎯';
+    }
+    return srcIconMap[src] || '•';
+  };
+  const _sigIconLookup = window.sigIcon;
   const nearest = (ts) => {
     if (!ts) return d.candles[d.candles.length-1];
     let mc = d.candles[d.candles.length-1], minD = Infinity;
@@ -1315,7 +1334,8 @@ async function _renderLwcSignalChart(containerId, opts) {
         byTime.set(key, {time: mc.time, isLong: isL, icons: new Set(), items: []});
       }
       const g = byTime.get(key);
-      g.icons.add(srcIconMap[m.source] || '•');
+      const mScore = m.meta?.score ?? m.score;
+      g.icons.add(_sigIconLookup(m.source, mScore));
       g.items.push(m);
       markerMap.set(mc.time, m);
     }
@@ -1336,7 +1356,7 @@ async function _renderLwcSignalChart(containerId, opts) {
     const ts = opts.at ? (typeof opts.at === 'number' ? opts.at : Math.floor(new Date(opts.at).getTime()/1000)) : null;
     const mc = nearest(ts);
     const isLong = opts.direction === 'LONG';
-    const srcIcon = srcIconMap[opts.source] || '🚀';
+    const srcIcon = _sigIconLookup(opts.source, opts.score);
     markers = [{
       time: mc.time,
       position: isLong ? 'belowBar' : 'aboveBar',

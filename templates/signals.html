@@ -1533,6 +1533,10 @@ setInterval(loadPendingClusters, 30000);
 <script>
 let _cflData = [];
 const _cflSrcIcon = {tradium:'📡', cryptovizor:'🚀', anomaly:'⚠', confluence:'🎯', paper:'🤖', cluster:'💠'};
+// Для конфликтов: source от /api/conflicts включает score в meta
+function _cflIcon(s) {
+  return window.sigIcon ? window.sigIcon(s.source, s.meta?.score || 0) : (_cflSrcIcon[s.source] || '•');
+}
 
 async function loadConflicts() {
   const hours = document.getElementById('cflHours').value;
@@ -1574,8 +1578,8 @@ function renderConflicts(items) {
     const sevLabel = {nuclear:'🚨 NUCLEAR', strong:'🔴 STRONG', weak:'🟡 WEAK'}[c.severity] || c.severity;
     const sevCls = 'cfl-sev-'+c.severity;
     const rowCls = 'cfl-row-'+c.severity;
-    const longsSrc = (c.longs||[]).map(s=>`<span class="cfl-src-chip cfl-src-long" title="${s.source}">${_cflSrcIcon[s.source]||'•'}</span>`).join('');
-    const shortsSrc = (c.shorts||[]).map(s=>`<span class="cfl-src-chip cfl-src-short" title="${s.source}">${_cflSrcIcon[s.source]||'•'}</span>`).join('');
+    const longsSrc = (c.longs||[]).map(s=>`<span class="cfl-src-chip cfl-src-long" title="${s.source}${s.meta?.score ? ' score='+s.meta.score:''}">${_cflIcon(s)}</span>`).join('');
+    const shortsSrc = (c.shorts||[]).map(s=>`<span class="cfl-src-chip cfl-src-short" title="${s.source}${s.meta?.score ? ' score='+s.meta.score:''}">${_cflIcon(s)}</span>`).join('');
     const lw = c.long_weight || 0, sw = c.short_weight || 0;
     const total = lw + sw;
     const lPct = total > 0 ? Math.round(lw / total * 100) : 50;
@@ -1919,7 +1923,7 @@ async function _renderPaperChart(idx, tf) {
       const key = mcc.time + '_' + m.direction;
       if (!byKey.has(key)) byKey.set(key, {time: mcc.time, isLong: isL, icons: new Set(), items: []});
       const g = byKey.get(key);
-      g.icons.add(srcIconMap[m.source] || '•');
+      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score));
       g.items.push(m);
       if (!paperMarkerMap.has(mcc.time)) paperMarkerMap.set(mcc.time, m);
     }
@@ -2987,7 +2991,7 @@ async function loadCoinChart(coin) {
         if (diff < minD) { minD = diff; mc = c; }
       }
       const isLong = s.direction === 'LONG';
-      const srcIcon = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠' : s.source === 'confluence' ? '🎯' : s.source === 'paper' ? '🤖' : s.source === 'cluster' ? '💠' : '🚀';
+      const srcIcon = window.sigIcon(s.source, s.score);
       markers.push({
         time: mc.time,
         direction: s.direction,
@@ -3086,7 +3090,7 @@ function _showJournalToast(newSignals) {
 
   const count = newSignals.length;
   const previews = newSignals.slice(0, 3).map(s => {
-    const src = s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : '🚀';
+    const src = window.sigIcon(s.source, s.score);
     const pair = (s.symbol || s.pair || '').replace('USDT','').replace('/','');
     const dir = s.direction === 'LONG' ? '🟢' : '🔴';
     const score = s.score ? ` · ${s.score}` : '';
@@ -3187,19 +3191,29 @@ function filterJournal() {
 
   // Статистика по источникам
   const stats = {};
+  let conf_strong = 0, conf_medium = 0;
   for (const s of filtered) {
     const k = s.source;
     if (!stats[k]) stats[k] = {total: 0, long: 0, short: 0};
     stats[k].total++;
     if (s.direction === 'LONG') stats[k].long++;
     else stats[k].short++;
+    if (k === 'confluence') {
+      if ((s.score || 0) >= 5) conf_strong++;
+      else conf_medium++;
+    }
   }
   const names = {tradium: '📡 Tradium', cryptovizor: '🚀 CV', anomaly: '⚠ Аном', confluence: '🎯 Conf', paper: '🤖 Paper', cluster: '💠 Cluster'};
   const statsEl = document.getElementById('jSourceStats');
   if (statsEl) {
-    statsEl.innerHTML = Object.entries(stats).map(([k, v]) =>
-      `<span>${names[k]||k}: <b>${v.total}</b> (🟢${v.long} 🔴${v.short})</span>`
-    ).join('<span style="color:var(--border);">|</span>');
+    statsEl.innerHTML = Object.entries(stats).map(([k, v]) => {
+      let label = names[k] || k;
+      // Для confluence — добавляем разбивку STRONG / MEDIUM
+      if (k === 'confluence' && (conf_strong || conf_medium)) {
+        label = `🎯 Conf <span style="color:var(--muted);font-size:10px;">(⭐${conf_strong}·${conf_medium})</span>`;
+      }
+      return `<span>${label}: <b>${v.total}</b> (🟢${v.long} 🔴${v.short})</span>`;
+    }).join('<span style="color:var(--border);">|</span>');
   }
 
   renderJournalPage();
@@ -3276,8 +3290,8 @@ function renderJournal(items, startIdx) {
     const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
     const pair = (s.pair || s.symbol || '').replace('/USDT', '');
     const time = s.at ? new Date(s.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
-    const srcBadge = s.source === 'tradium' ? '📡' : s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : s.source === 'paper' ? '🤖' : s.source === 'cluster' ? '💠' : '🚀';
-    const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? 'Confluence' : s.source === 'paper' ? 'Paper' : s.source === 'cluster' ? 'Cluster' : 'CV';
+    const srcBadge = window.sigIcon(s.source, s.score);
+    const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐' : 'Confluence') : s.source === 'paper' ? 'Paper' : s.source === 'cluster' ? 'Cluster' : 'CV';
     const stFail = s.st_passed === false;
     const pumpHigh = (s.pump_score || 0) >= 2;
     const rowCls = pumpHigh ? 'pump-high' : (stFail ? 'st-failed' : '');
@@ -3354,8 +3368,8 @@ async function openJournalChart(idx, forceTF) {
   const sym = s.symbol || (s.pair || '').replace('/', '');
   const dirE = s.direction === 'LONG' ? '🟢' : '🔴';
 
-  const srcBadge = s.source === 'anomaly' ? '⚠️' : s.source === 'confluence' ? '🎯' : '🚀';
-  const srcName = s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? 'Confluence' : 'CV';
+  const srcBadge = window.sigIcon(s.source, s.score);
+  const srcName = s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐ STRONG' : 'Confluence') : 'CV';
   const patternInfo = s.pattern ? ` · ${s.pattern}` : '';
   const scoreInfo = s.score ? ` · ${s.score}` : '';
   title.innerHTML = `${srcBadge} ${srcName} · <b>${pair}</b> · ${dirE} ${s.direction} · <code>${s.entry}</code>${scoreInfo}`;
@@ -3460,7 +3474,7 @@ async function openJournalChart(idx, forceTF) {
       const key = mc.time + '_' + m.direction;
       if (!byKey.has(key)) byKey.set(key, {time: mc.time, isLong: isL, icons: new Set(), items: []});
       const g = byKey.get(key);
-      g.icons.add(srcIconMap[m.source] || '•');
+      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score));
       g.items.push(m);
       modalMarkerMap.set(mc.time, m);
     }
