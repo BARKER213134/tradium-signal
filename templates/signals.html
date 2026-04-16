@@ -1534,9 +1534,12 @@ function renderTopPicks(items) {
   window._tpData = items;
 }
 
+let _tpCurrentIdx = -1;
+
 function tpOpenChart(idx) {
-  const p = window._tpData[idx];
+  const p = window._tpData && window._tpData[idx];
   if (!p) return;
+  _tpCurrentIdx = idx;
   const dir = p.direction === 'BUY' ? 'LONG' : (p.direction === 'SELL' ? 'SHORT' : p.direction);
 
   // Своя модалка для top pick
@@ -1558,10 +1561,14 @@ function tpOpenChart(idx) {
                     : '<span style="color:#ffd23e">⏳ OPEN</span>';
   const pnlStr = p.pnl_pct != null ? `<span style="color:${p.pnl_pct >= 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${p.pnl_pct >= 0 ? '+' : ''}${p.pnl_pct.toFixed(2)}%</span>` : '—';
 
+  const total = (window._tpData || []).length;
+  const prevDisabled = idx <= 0 ? 'disabled' : '';
+  const nextDisabled = idx >= total - 1 ? 'disabled' : '';
+
   modal.innerHTML = `
     <div onclick="event.stopPropagation();" style="width:1100px;max-width:96vw;height:82vh;background:var(--dark);border:1px solid ${dirColor};border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);display:flex;flex-direction:column;">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--border);">
-        <div style="font-family:var(--font-mono);font-size:13px;font-weight:800;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--border);gap:10px;">
+        <div style="font-family:var(--font-mono);font-size:13px;font-weight:800;display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;">
           <span style="color:#ffd23e;font-size:18px;">👑</span>
           <span style="color:${dirColor};">${dirE} ${pairClean}/USDT</span>
           <span style="color:var(--muted);">·</span>
@@ -1573,7 +1580,13 @@ function tpOpenChart(idx) {
           <span style="color:var(--muted);">·</span>
           ${pnlStr}
         </div>
-        <button onclick="document.getElementById('tpChartModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;flex-shrink:0;">×</button>
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+          <button onclick="tpOpenChart(${idx-1})" ${prevDisabled} style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;${prevDisabled?'opacity:0.4;cursor:not-allowed;':''}">◀</button>
+          <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;">${idx+1}/${total}</span>
+          <button onclick="tpOpenChart(${idx+1})" ${nextDisabled} style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;${nextDisabled?'opacity:0.4;cursor:not-allowed;':''}">▶</button>
+          <span style="font-size:9px;color:var(--muted);margin-left:4px;">A/D</span>
+          <button onclick="document.getElementById('tpChartModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;padding:0 8px;">×</button>
+        </div>
       </div>
       <div id="tpChartBody" style="flex:1;position:relative;"></div>
     </div>`;
@@ -1591,6 +1604,7 @@ function tpOpenChart(idx) {
         title: pairClean + '/USDT · 👑 Top Pick',
         source: p.type,
         score: p.confirmations_count,
+        is_top_pick: true,
         fetchPairSignals: true, windowH: 96,
       });
     } else {
@@ -1599,10 +1613,17 @@ function tpOpenChart(idx) {
   }, 50);
 }
 
+// Клавиатура — ESC закрыть, A/◀ prev, D/▶ next
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
-    const m = document.getElementById('tpChartModal');
-    if (m && m.style.display !== 'none') m.style.display='none';
+  const m = document.getElementById('tpChartModal');
+  if (!m || m.style.display === 'none') return;
+  if (e.key === 'Escape') { m.style.display='none'; return; }
+  const total = (window._tpData || []).length;
+  if ((e.key === 'a' || e.key === 'A' || e.key === 'ф' || e.key === 'Ф' || e.key === 'ArrowLeft') && _tpCurrentIdx > 0) {
+    e.preventDefault(); tpOpenChart(_tpCurrentIdx - 1);
+  }
+  if ((e.key === 'd' || e.key === 'D' || e.key === 'в' || e.key === 'В' || e.key === 'ArrowRight') && _tpCurrentIdx < total - 1) {
+    e.preventDefault(); tpOpenChart(_tpCurrentIdx + 1);
   }
 });
 
