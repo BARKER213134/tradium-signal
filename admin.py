@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1334,6 +1334,29 @@ async def api_tv_webhook(request: Request):
         except Exception:
             pass
     return result
+
+
+@app.get("/api/fvg-top-picks")
+async def api_fvg_top_picks(hours: int = 168, limit: int = 200, min_score: int = 5):
+    """FVG Top Picks — сигналы с confluence_score >= min_score за N часов.
+    Cache 60s (async-lock)."""
+    from cache_utils import top_picks_cache
+    async def _compute():
+        from fvg_top_picks import get_top_picks, get_top_picks_stats
+        items = await asyncio.to_thread(get_top_picks, hours, limit, min_score)
+        stats = await asyncio.to_thread(get_top_picks_stats, 720)
+        return {"items": items, "stats": stats, "total": len(items)}
+    return await top_picks_cache.get_or_compute(f"fvg_tp_{hours}_{limit}_{min_score}", _compute)
+
+
+@app.post("/api/fvg-rescore-all")
+async def api_fvg_rescore_all(payload: dict | None = None):
+    """Пересчитать confluence_score для всех FVG за N часов (default 168h=7d).
+    Используется после изменения логики scoring или бэкфилла 4H алертов."""
+    from fvg_top_picks import rescore_all
+    hours = int((payload or {}).get("hours", 168))
+    stats = await asyncio.to_thread(rescore_all, hours)
+    return {"ok": True, "stats": stats}
 
 
 async def _send_fvg_formed_alert_safe(result: dict):

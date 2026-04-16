@@ -226,6 +226,17 @@ def process_tv_webhook(payload: dict) -> dict:
     }
     res = _fvg_signals().insert_one(doc)
     logger.info(f"[tv-webhook] NEW {instrument} {direction_raw} @ {price} (ATR zone: {fvg_bottom:.5f}-{fvg_top:.5f})")
+
+    # Confluence Score + Top Pick tagging
+    score_result = {}
+    try:
+        from fvg_top_picks import tag_fvg
+        score_result = tag_fvg(res.inserted_id, candles=candles, atr=atr, retroact=True)
+        if score_result.get("is_top_pick"):
+            logger.info(f"[tv-webhook] {instrument} tagged as TOP PICK (score={score_result.get('score')})")
+    except Exception as e:
+        logger.warning(f"[tv-webhook] scoring failed: {e}")
+
     return {
         "ok": True,
         "reason": "created",
@@ -234,4 +245,8 @@ def process_tv_webhook(payload: dict) -> dict:
         "entry": entry_price,
         "sl": sl_price,
         "fvg_id": str(res.inserted_id),
+        "confluence_score": score_result.get("score"),
+        "is_top_pick": score_result.get("is_top_pick"),
+        "breakdown": score_result.get("breakdown"),
+        "retagged_related": score_result.get("retagged"),
     }
