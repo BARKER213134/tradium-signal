@@ -2670,7 +2670,7 @@ async function _renderPaperChart(idx, tf) {
       layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
       grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
       rightPriceScale: { borderColor: '#1a1e2a' },
-      timeScale: { borderColor: '#1a1e2a', timeVisible: true },
+      timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
       width: area.clientWidth, height: 260,
     });
     const series = chart.addCandlestickSeries({
@@ -3761,7 +3761,7 @@ async function loadCoinChart(coin) {
       grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
       crosshair: { mode: 0 },
       rightPriceScale: { borderColor: '#1a1e2a' },
-      timeScale: { borderColor: '#1a1e2a', timeVisible: true },
+      timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
       width: chartDiv.clientWidth, height: 400,
     });
     const series = chart.addCandlestickSeries({
@@ -4223,7 +4223,7 @@ async function openJournalChart(idx, forceTF) {
       grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
       crosshair: { mode: 0 },
       rightPriceScale: { borderColor: '#1a1e2a' },
-      timeScale: { borderColor: '#1a1e2a', timeVisible: true },
+      timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
       width: container.clientWidth,
       height: container.clientHeight,
     });

@@ -1354,7 +1354,7 @@ async function _renderLwcSignalChart(containerId, opts) {
     grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
     crosshair: { mode: 0 },
     rightPriceScale: { borderColor: '#1a1e2a' },
-    timeScale: { borderColor: '#1a1e2a', timeVisible: true },
+    timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
     width: chartDiv.clientWidth, height: chartDiv.clientHeight || 320,
   });
   const series = chart.addCandlestickSeries({
@@ -1710,7 +1710,7 @@ async function _renderFvgChart(area, sig, tf) {
     grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
     crosshair: { mode: 0 },
     rightPriceScale: { borderColor: '#1a1e2a' },
-    timeScale: { borderColor: '#1a1e2a', timeVisible: true },
+    timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
     width: chartDiv.clientWidth,
     height: chartDiv.clientHeight || 340,
   });
