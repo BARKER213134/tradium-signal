@@ -1295,7 +1295,12 @@ async function _renderLwcSignalChart(containerId, opts) {
       if (opts.at && opts.direction && opts.source) {
         combined.push({
           at: opts.at, direction: opts.direction, source: opts.source,
-          price: opts.entry, meta: {pattern: opts.pattern, score: opts.score, tp1: opts.tp1, sl: opts.sl},
+          price: opts.entry,
+          meta: {
+            pattern: opts.pattern, score: opts.score,
+            tp1: opts.tp1, sl: opts.sl,
+            is_top_pick: !!opts.is_top_pick,  // критично — иначе дедуп убьёт pair-signals версию с is_top_pick
+          },
         });
       }
       const seen = new Set(combined.map(m => {
