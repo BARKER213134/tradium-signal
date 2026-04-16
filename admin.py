@@ -74,7 +74,36 @@ async def lifespan(app):
         t.cancel()
 
 
+# Sentry (опционально — активен только если SENTRY_DSN задан)
+try:
+    _sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+    if _sentry_dsn:
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            traces_sample_rate=0.1,  # 10% транзакций
+            profiles_sample_rate=0.0,
+            environment=os.getenv("RAILWAY_ENVIRONMENT", "production"),
+            release=os.getenv("RAILWAY_GIT_COMMIT_SHA", "unknown")[:7],
+        )
+        logging.getLogger(__name__).info("[SENTRY] initialized")
+except Exception as _e:
+    logging.getLogger(__name__).warning(f"[SENTRY] init failed: {_e}")
+
 app = FastAPI(title="Tradium Screener Admin", lifespan=lifespan)
+
+# Rate limiting (slowapi)
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    _limiter = Limiter(key_func=get_remote_address, default_limits=["300/minute"])
+    app.state.limiter = _limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+except ImportError:
+    logging.getLogger(__name__).warning("[RATE-LIMIT] slowapi not installed")
+    _limiter = None
+
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates"))
 
 
@@ -116,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -273,11 +302,17 @@ def _resolve_chart_path(p: str) -> str:
 
 @app.get("/chart/{signal_id}")
 async def serve_chart(signal_id: int, db: Session = Depends(get_db)):
+    # Cache headers — чарты неизменны после создания, кешируем на 7 дней.
+    # CloudFlare/Railway CDN увидят это и закешируют на edge → быстрый ответ.
+    cache_headers = {
+        "Cache-Control": "public, max-age=604800, immutable",
+        "CDN-Cache-Control": "public, max-age=604800",
+    }
     # Сначала GridFS (переживает деплой)
     from database import get_chart
     chart_data = await asyncio.to_thread(get_chart, signal_id)
     if chart_data:
-        return Response(content=chart_data, media_type="image/jpeg")
+        return Response(content=chart_data, media_type="image/jpeg", headers=cache_headers)
 
     # Фоллбэк на локальный файл
     signal = await asyncio.to_thread(
@@ -288,7 +323,7 @@ async def serve_chart(signal_id: int, db: Session = Depends(get_db)):
     resolved = _resolve_chart_path(signal.chart_path)
     if not resolved:
         raise HTTPException(status_code=404)
-    return FileResponse(resolved)
+    return FileResponse(resolved, headers=cache_headers)
 
 
 @app.websocket("/ws")
@@ -312,13 +347,45 @@ async def websocket_endpoint(ws: WebSocket):
 
 @app.get("/health")
 async def health():
-    """Healthcheck для Docker / uptime monitors — без авторизации."""
+    """Healthcheck для Docker / uptime monitors — без авторизации.
+    Возвращает полный статус подсистем для внешнего мониторинга."""
+    from datetime import datetime, timedelta
+    from database import utcnow as _utcnow
+    status = {"ok": True, "checks": {}, "ts": _utcnow().isoformat()}
+    # 1. DB ping
     try:
         from database import _signals
         _signals().estimated_document_count()
-        return {"ok": True, "db": "ok"}
+        status["checks"]["db"] = "ok"
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        status["checks"]["db"] = f"fail: {str(e)[:100]}"
+        status["ok"] = False
+    # 2. Userbot (Telethon)
+    try:
+        from userbot import _tg_client
+        status["checks"]["userbot"] = ("connected" if _tg_client and _tg_client.is_connected()
+                                        else "disconnected")
+    except Exception as e:
+        status["checks"]["userbot"] = f"fail: {str(e)[:100]}"
+    # 3. Последние активности по коллекциям (данные не старше 4ч = система живая)
+    try:
+        from database import _signals, _anomalies, _confluence, _clusters
+        from pymongo import DESCENDING
+        now = _utcnow()
+        for name, col, date_field in [
+            ("signals", _signals(), "received_at"),
+            ("anomalies", _anomalies(), "detected_at"),
+            ("confluence", _confluence(), "detected_at"),
+        ]:
+            last = col.find_one({}, sort=[(date_field, DESCENDING)])
+            if last and last.get(date_field):
+                age_min = (now - last[date_field]).total_seconds() / 60
+                status["checks"][f"{name}_last_age_min"] = int(age_min)
+                if age_min > 240:  # 4ч
+                    status["checks"][f"{name}_warning"] = "stale (>4h no new data)"
+    except Exception as e:
+        status["checks"]["activity"] = f"fail: {str(e)[:80]}"
+    return status
 
 
 @app.post("/api/backfill-missed")
@@ -1105,21 +1172,16 @@ async def api_pair_signals(pair: str, direction: str = "", window_h: int = 8):
     return out
 
 
-_pending_clusters_cache = {"at": 0, "data": None}
-
 @app.get("/api/pending-clusters")
 async def api_pending_clusters():
     """Монеты которые сейчас 1/N — ждут второго сигнала. Cache 90s."""
-    import time as _t
-    from cluster_detector import get_pending_clusters, get_config
-    now = _t.time()
-    if _pending_clusters_cache["data"] and (now - _pending_clusters_cache["at"]) < 90:
-        return _pending_clusters_cache["data"]
-    pending = await asyncio.to_thread(get_pending_clusters, 50)
-    cfg = await asyncio.to_thread(get_config)
-    data = {"items": pending, "config": cfg}
-    _pending_clusters_cache.update({"at": now, "data": data})
-    return data
+    from cache_utils import pending_clusters_cache
+    async def _compute():
+        from cluster_detector import get_pending_clusters, get_config
+        pending = await asyncio.to_thread(get_pending_clusters, 50)
+        cfg = await asyncio.to_thread(get_config)
+        return {"items": pending, "config": cfg}
+    return await pending_clusters_cache.get_or_compute("pending", _compute)
 
 
 @app.post("/api/backfill-clusters")
@@ -1213,6 +1275,13 @@ async def api_fvg_scan_now():
     return {"scan": scan_stats, "monitor": events_summary}
 
 
+@app.get("/api/claude-budget")
+async def api_claude_budget():
+    """Мониторинг расхода Claude API токенов."""
+    from claude_budget import get_daily_usage
+    return await asyncio.to_thread(get_daily_usage)
+
+
 @app.get("/api/td-quota")
 async def api_td_quota():
     """Статистика расхода TwelveData API квоты (за последние 24ч)."""
@@ -1221,23 +1290,17 @@ async def api_td_quota():
     return stats
 
 
-_top_picks_cache = {"at": 0, "key": None, "data": None}
-
 @app.get("/api/top-picks")
 async def api_top_picks(hours: int = 96, limit: int = 200):
     """👑 Top Picks — сигналы подтверждённые STRONG Confluence ≤ 48h.
-    In-memory cache 60s (полный рефреш раз в минуту)."""
-    import time as _t
-    from top_picks import get_all_top_picks, get_top_picks_stats
-    now = _t.time()
-    key = f"{hours}_{limit}"
-    if _top_picks_cache["key"] == key and (now - _top_picks_cache["at"]) < 60:
-        return _top_picks_cache["data"]
-    items = await asyncio.to_thread(get_all_top_picks, hours, limit)
-    stats = await asyncio.to_thread(get_top_picks_stats, 720)
-    data = {"items": items, "stats": stats, "total": len(items), "cached": False}
-    _top_picks_cache.update({"at": now, "key": key, "data": {**data, "cached": True}})
-    return data
+    Cache 60s (async-lock safe)."""
+    from cache_utils import top_picks_cache
+    async def _compute():
+        from top_picks import get_all_top_picks, get_top_picks_stats
+        items = await asyncio.to_thread(get_all_top_picks, hours, limit)
+        stats = await asyncio.to_thread(get_top_picks_stats, 720)
+        return {"items": items, "stats": stats, "total": len(items)}
+    return await top_picks_cache.get_or_compute(f"tp_{hours}_{limit}", _compute)
 
 
 @app.post("/api/top-picks/backfill")
@@ -2483,21 +2546,19 @@ async def api_paper_reset():
     return {"ok": True}
 
 
-_journal_cache = {"at": 0, "data": None}
-
 @app.get("/api/journal")
 async def api_journal():
     """Все сигналы из 4 источников — для вкладки Журнал.
-    Server-side limit 14 days + per-source cap. Cache 45s.
-    """
-    import time as _t
-    now_ts = _t.time()
-    if _journal_cache["data"] and (now_ts - _journal_cache["at"]) < 45:
-        return _journal_cache["data"]
+    Server-side limit 14 days + per-source cap. Cache 45s (async-lock safe)."""
+    from cache_utils import journal_cache
+    return await journal_cache.get_or_compute("journal_all", _compute_journal)
 
+
+async def _compute_journal():
     from database import _signals, _anomalies, _confluence
     from datetime import datetime, timedelta
-    since_14d = datetime.utcnow() - timedelta(days=14)
+    from database import utcnow as _utcnow
+    since_14d = _utcnow() - timedelta(days=14)
 
     items = []
 
@@ -2673,9 +2734,7 @@ async def api_journal():
 
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
-    data = {"items": items}
-    _journal_cache.update({"at": now_ts, "data": data})
-    return data
+    return {"items": items}
 
 
 @app.get("/api/journal-candles")
@@ -2888,11 +2947,11 @@ async def api_ai_criteria_generate():
 @app.post("/api/ai-criteria/save")
 async def api_ai_criteria_save(payload: dict):
     """Сохраняет выбранные пользователем критерии."""
-    from database import _get_db
+    from database import _get_db, utcnow as _utcnow
     criteria = payload.get("criteria", [])
     _get_db().settings.update_one(
         {"_id": "ai_criteria"},
-        {"$set": {"criteria": criteria, "updated_at": str(__import__('datetime').datetime.utcnow())}},
+        {"$set": {"criteria": criteria, "updated_at": str(_utcnow())}},
         upsert=True,
     )
     return {"ok": True, "saved": len(criteria)}

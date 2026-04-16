@@ -346,7 +346,7 @@ async def _reversal_block(signal_direction: str | None = None) -> str:
         meter = await asyncio.to_thread(compute_score)
         return "\n" + format_telegram_block(meter, signal_direction)
     except Exception as e:
-        logger.debug(f"Reversal block fail: {e}")
+        logger.warning(f"[reversal-block] {e}", exc_info=True)
         return ""
 
 
@@ -549,7 +549,7 @@ async def _check_patterns(db):
                                             "entry": current, "pattern": pattern, "signal_id": s.id,
                                             "tp": s.tp1, "sl": s.sl})
         except Exception as e:
-            logger.debug(f"top_pick check: {e}")
+            logger.warning(f"[top_pick] {e}", exc_info=True)
 
 
 async def _send_close_alert(signal: Signal, result: str, exit_price: float, pnl: float):
@@ -1012,7 +1012,7 @@ async def _check_cryptovizor(db):
                         await _send_top_pick_alert({"type": "cryptovizor", "pair": s.pair, "direction": s.direction,
                                                     "entry": current_price, "pattern": strongest, "signal_id": s.id})
                 except Exception as e:
-                    logger.debug(f"top_pick CV check: {e}")
+                    logger.warning(f"[top_pick-cv] {e}", exc_info=True)
                 continue
 
         except Exception as e:
@@ -1472,7 +1472,7 @@ async def _check_anomalies():
         import datetime
         existing = _anomalies().find_one({
             "symbol": r["symbol"],
-            "detected_at": {"$gte": datetime.datetime.utcnow() - datetime.timedelta(hours=4)},
+            "detected_at": {"$gte": utcnow() - datetime.timedelta(hours=4)},
         })
         if existing:
             _anomalies().update_one({"_id": existing["_id"]}, {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}})
@@ -1688,7 +1688,7 @@ async def _check_confluence():
         existing = _confluence().find_one({
             "symbol": r["symbol"],
             "direction": r["direction"],
-            "detected_at": {"$gte": datetime.datetime.utcnow() - datetime.timedelta(hours=4)},
+            "detected_at": {"$gte": utcnow() - datetime.timedelta(hours=4)},
         })
         if existing:
             # Обновляем время последнего обнаружения
@@ -1735,7 +1735,7 @@ async def _check_confluence():
                         "pattern": r.get("pattern"),
                     })
             except Exception as e:
-                logger.debug(f"top_pick Confluence check: {e}")
+                logger.warning(f"[top_pick-conf] {e}", exc_info=True)
 
     confluence_scan_state["running"] = False
     confluence_scan_state["progress"] = 100
@@ -1889,7 +1889,7 @@ async def _send_top_pick_alert(sig: dict):
                 if dt:
                     # naive сравнение — убираем tz
                     dt_naive = dt.replace(tzinfo=None) if dt.tzinfo else dt
-                    now_naive = datetime.utcnow()
+                    now_naive = utcnow()
                     age_h = (now_naive - dt_naive).total_seconds() / 3600
                     if age_h < 1: age_str = f"{int(age_h*60)}м назад"
                     elif age_h < 24: age_str = f"{int(age_h)}ч назад"
@@ -2121,7 +2121,7 @@ async def _pending_cluster_block(pair: str, direction: str, triggered: bool = Fa
                 f"(окно {st['time_left_h']}ч)"
             )
     except Exception as e:
-        logger.debug(f"pending block fail: {e}")
+        logger.warning(f"[pending-block] {e}", exc_info=True)
     return ""
 
 
@@ -2213,7 +2213,7 @@ async def _send_cluster_alert(cl: dict):
                 "reversal_score": rev_score,
             })
         except Exception as e:
-            logger.debug(f"paper_on_signal cluster: {e}")
+            logger.warning(f"[paper-cluster] {e}", exc_info=True)
     except Exception as e:
         logger.error(f"Cluster alert fail: {e}")
 
@@ -2252,7 +2252,7 @@ async def _cluster_check_on_signal(pair: str, direction: str, at=None):
                 pass
         return cl
     except Exception as e:
-        logger.debug(f"cluster check fail: {e}")
+        logger.warning(f"[cluster-check] {e}", exc_info=True)
         return None
 
 
@@ -2274,7 +2274,7 @@ async def _check_cluster_outcomes():
             except Exception:
                 pass
     except Exception as e:
-        logger.debug(f"cluster outcomes: {e}")
+        logger.warning(f"[cluster-outcomes] {e}", exc_info=True)
 
 
 async def _send_confluence_alert(r: dict):
@@ -2416,7 +2416,7 @@ async def _check_paper_positions():
                     trades.update_one({"trade_id": c["trade_id"]}, {"$set": {"ai_review": review}})
                 await pt._send_close_alert(trade, review or "")
     except Exception as e:
-        logger.debug(f"Paper positions check: {e}")
+        logger.warning(f"[paper-positions] {e}", exc_info=True)
 
 
 async def _paper_on_signal(signal_data: dict):
@@ -2425,7 +2425,7 @@ async def _paper_on_signal(signal_data: dict):
         import paper_trader as pt
         await pt.on_signal(signal_data)
     except Exception as e:
-        logger.debug(f"Paper on_signal: {e}")
+        logger.warning(f"[paper-signal] {e}", exc_info=True)
 
 
 _watcher_running = False

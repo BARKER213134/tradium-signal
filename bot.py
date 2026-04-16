@@ -103,6 +103,12 @@ async def msg_open(message: types.Message):
 async def start_bot():
     import asyncio as _aio
     logger.info("🤖 Tradium Bot запущен!")
+    # Очищаем webhook + pending updates, иначе при рестарте контейнера
+    # старый webhook всё ещё держит connection → TelegramConflictError.
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+    except Exception as e:
+        logger.warning(f"delete_webhook: {e}")
     for attempt in range(5):
         try:
             await dp.start_polling(bot)

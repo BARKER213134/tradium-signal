@@ -1,0 +1,51 @@
+name: MongoDB Backup
+
+# Еженедельный бэкап MongoDB Atlas в GitHub Artifacts (30 дней retention).
+# Защита от случайного удаления / повреждения production базы.
+#
+# Настройка:
+# 1. В Repo Settings → Secrets and variables → Actions:
+#    - MONGO_URL  (тот же что в Railway)
+#    - MONGO_DB   (имя базы, "tradium")
+# 2. Артефакты доступны в Actions → Workflow run → Artifacts
+#
+# Ручной запуск: Actions → MongoDB Backup → Run workflow
+
+on:
+  schedule:
+    - cron: '13 3 * * 0'  # Каждое воскресенье в 03:13 UTC
+  workflow_dispatch:       # Плюс ручной триггер
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Install mongodump
+        run: |
+          wget -qO- https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2204-x86_64-100.10.0.tgz | tar xz
+          sudo mv mongodb-database-tools-*/bin/mongodump /usr/local/bin/
+          mongodump --version
+
+      - name: Dump DB
+        env:
+          MONGO_URL: ${{ secrets.MONGO_URL }}
+          MONGO_DB: ${{ secrets.MONGO_DB }}
+        run: |
+          mkdir -p backup
+          mongodump --uri="$MONGO_URL" --db="$MONGO_DB" --out=./backup --gzip
+          du -sh backup/
+          ls -la backup/$MONGO_DB/
+
+      - name: Archive
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          tar -czf mongo-backup-$DATE.tar.gz backup/
+          du -sh mongo-backup-$DATE.tar.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mongo-backup-${{ github.run_id }}
+          path: mongo-backup-*.tar.gz
+          retention-days: 30

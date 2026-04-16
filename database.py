@@ -575,6 +575,8 @@ def init_db():
     cl.create_index("direction")
     cl.create_index("trigger_at")
     cl.create_index("status")
+    cl.create_index([("is_top_pick", ASCENDING), ("trigger_at", DESCENDING)])
+    cl.create_index([("symbol", ASCENDING), ("direction", ASCENDING), ("trigger_at", DESCENDING)])
 
     fv = _fvg_signals()
     fv.create_index("instrument")
@@ -582,4 +584,50 @@ def init_db():
     fv.create_index("formed_at")
     fv.create_index("entered_at")
     fv.create_index([("status", ASCENDING), ("formed_at", DESCENDING)])
+
+    # Новые коллекции и indexes (добавлены при аудите платформы)
+    cf = _confluence()
+    cf.create_index("detected_at")
+    cf.create_index([("direction", ASCENDING), ("detected_at", DESCENDING)])
+    cf.create_index([("symbol", ASCENDING), ("direction", ASCENDING), ("detected_at", DESCENDING)])
+    cf.create_index([("pair", ASCENDING), ("direction", ASCENDING), ("detected_at", DESCENDING)])
+    cf.create_index([("score", ASCENDING), ("detected_at", DESCENDING)])
+    cf.create_index([("is_top_pick", ASCENDING), ("detected_at", DESCENDING)])
+
+    conf_col = _conflicts()
+    conf_col.create_index("detected_at")
+    conf_col.create_index([("pair", ASCENDING), ("detected_at", DESCENDING)])
+
+    pt = _get_db().paper_trades
+    pt.create_index("opened_at")
+    pt.create_index([("status", ASCENDING), ("opened_at", DESCENDING)])
+
+    tdq = _get_db().td_quota
+    tdq.create_index("at")
+
+    fcc = _get_db().fvg_candle_cache
+    fcc.create_index([("instrument", ASCENDING), ("tf", ASCENDING)])
+
+    # Signals — composite для top_pick queries
+    col.create_index([("source", ASCENDING), ("pattern_triggered", ASCENDING), ("pattern_triggered_at", DESCENDING)])
+    col.create_index([("is_top_pick", ASCENDING), ("source", ASCENDING)])
+    col.create_index([("pair", ASCENDING), ("direction", ASCENDING), ("source", ASCENDING)])
+
+    # Anomalies — direction queries
+    an.create_index([("pair", ASCENDING), ("direction", ASCENDING), ("detected_at", DESCENDING)])
+    an.create_index([("direction", ASCENDING), ("detected_at", DESCENDING)])
+
+    # TTL cleanup — автоматическое удаление старых записей через 90 дней
+    # Atlas free 512MB не должен переполниться
+    try:
+        # Anomalies: 90 дней (шум, не критичны после закрытия)
+        an.create_index("detected_at", expireAfterSeconds=90*86400, name="ttl_90d")
+        # Confluence: 90 дней
+        cf.create_index("detected_at", expireAfterSeconds=90*86400, name="ttl_90d")
+        # FVG candle cache: 7 дней (refresh'ится сканером)
+        fcc.create_index("cached_at", expireAfterSeconds=7*86400, name="ttl_7d")
+        # TD quota: 14 дней
+        tdq.create_index("at", expireAfterSeconds=14*86400, name="ttl_14d")
+    except Exception:
+        pass  # idempotent — если TTL индексы уже есть, ok
 

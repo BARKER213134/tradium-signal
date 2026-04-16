@@ -670,7 +670,7 @@ async function loadAnomalyAnalysis(symbol, idx) {
 }
 
 loadAnomalies();
-setInterval(loadAnomalies, 60000);
+safeInterval(loadAnomalies, 60000);
 </script>
 
 {% elif bot == 'confluence' %}
@@ -1012,7 +1012,7 @@ setInterval(() => {
 }, 1000);
 
 loadConfluence();
-setInterval(loadConfluence, 60000);
+safeInterval(loadConfluence, 60000);
 pollConfluenceStatus();
 setInterval(pollConfluenceStatus, 5000);
 </script>
@@ -1298,8 +1298,8 @@ document.getElementById('clSettingsModal').onclick = (e) => { if (e.target.id ==
 
 loadClusters();
 loadPendingClusters();
-setInterval(loadClusters, 30000);
-setInterval(loadPendingClusters, 30000);
+safeInterval(loadClusters, 30000);
+safeInterval(loadPendingClusters, 30000);
 </script>
 
 {% elif bot == 'top_picks' %}
@@ -1642,7 +1642,7 @@ async function tpBackfill() {
 }
 
 loadTopPicks();
-setInterval(loadTopPicks, 30000);
+safeInterval(loadTopPicks, 30000);
 </script>
 
 {% elif bot == 'coin_analysis' %}
@@ -2411,7 +2411,7 @@ function openConflictChart(pair, direction) {
 }
 
 loadConflicts();
-setInterval(loadConflicts, 30000);
+safeInterval(loadConflicts, 30000);
 </script>
 
 {% elif bot == 'autotrading' %}
@@ -2751,7 +2751,7 @@ async function resetPaper() {
 }
 
 loadPaperStatus();
-setInterval(loadPaperStatus, 15000);
+safeInterval(loadPaperStatus, 15000);
 </script>
 
 {% elif bot == 'forex_fvg' %}
@@ -3028,9 +3028,9 @@ async function loadFvgQuota() {
   }
 }
 loadFvgQuota();
-setInterval(loadFvgQuota, 60000);  // раз в минуту
+safeInterval(loadFvgQuota, 60000);  // раз в минуту
 loadFvgSignals();
-setInterval(loadFvgSignals, 30000);
+safeInterval(loadFvgSignals, 30000);
 </script>
 
 {% elif bot == 'forex_journal' %}
@@ -3417,7 +3417,7 @@ document.addEventListener('keydown', e => {
 })();
 
 loadForexJournal();
-setInterval(loadForexJournal, 30000);
+safeInterval(loadForexJournal, 30000);
 </script>
 
 {% elif bot == 'journal' %}
@@ -4357,7 +4357,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 loadJournal();
-setInterval(loadJournal, 30000);
+safeInterval(loadJournal, 30000);
 </script>
 
 {% elif bot == 'cryptovizor' %}
