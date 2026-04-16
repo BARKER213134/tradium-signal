@@ -367,8 +367,8 @@ def create_cluster(pair: str, direction: str, signals_in_cluster: list, at: date
 
     # Top Pick detection (кластер + STRONG Confluence ≤ 48h в том же направлении)
     try:
-        from top_picks import is_top_pick
-        tp_res = is_top_pick(pair, direction, at)
+        from top_picks import is_top_pick, _propagate_to_related_confluence
+        tp_res = is_top_pick(pair, direction, at, for_source="cluster")
         if tp_res["is_top_pick"]:
             _clusters().update_one({"_id": doc["_id"]}, {"$set": {
                 "is_top_pick": True,
@@ -379,6 +379,8 @@ def create_cluster(pair: str, direction: str, signals_in_cluster: list, at: date
             doc["is_top_pick"] = True
             doc["top_pick_confirmations"] = tp_res["confirmations"]
             doc["top_pick_confirmations_count"] = tp_res["confirmations_count"]
+            # Retroactively propagate to related Confluence
+            _propagate_to_related_confluence(pair, direction, at)
             logger.info(f"[TOP PICK] 👑 {pair} {direction} cluster confirmed by {tp_res['confirmations_count']} STRONG Confluence")
     except Exception as e:
         logger.warning(f"[cluster] top_pick check failed: {e}")

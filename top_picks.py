@@ -48,18 +48,22 @@ def is_top_pick(pair: str, direction: str, at: Optional[datetime] = None,
         at = utcnow()
     norm = _norm_pair(pair)
     norm_sym = norm.replace("/", "")
+    # Для Confluence окно двухстороннее (±48h) — confluence может появиться ДО
+    # другого сигнала, и надо считать его top pick если сигнал пришёл позже.
+    # Для cluster/tradium/CV — ищем Confluence в прошлом (или ±48h для симметрии).
     start = at - timedelta(hours=window_h)
+    end = at + timedelta(hours=window_h)
 
     confirmations = []
 
     if for_source == "confluence":
-        # Для Confluence подтверждающие = cluster/Tradium/CV
+        # Для Confluence подтверждающие = cluster/Tradium/CV в окне ±48h
         from database import _clusters
         # Cluster
         for cl in _clusters().find({
             "$or": [{"pair": norm}, {"symbol": norm_sym}],
             "direction": direction,
-            "trigger_at": {"$gte": start, "$lte": at},
+            "trigger_at": {"$gte": start, "$lte": end},
         }):
             confirmations.append({
                 "source": "cluster",
@@ -68,14 +72,14 @@ def is_top_pick(pair: str, direction: str, at: Optional[datetime] = None,
                 "strength": cl.get("strength"),
                 "signals_count": cl.get("signals_count"),
             })
-        # Tradium triggered
+        # Tradium triggered (окно ±48h)
         for s in _signals().find({
             "source": "tradium", "pattern_triggered": True,
             "pair": {"$in": [norm, norm_sym]},
             "direction": direction,
             "$or": [
-                {"pattern_triggered_at": {"$gte": start, "$lte": at}},
-                {"received_at": {"$gte": start, "$lte": at}},
+                {"pattern_triggered_at": {"$gte": start, "$lte": end}},
+                {"received_at": {"$gte": start, "$lte": end}},
             ],
         }):
             t = s.get("pattern_triggered_at") or s.get("received_at")
@@ -85,12 +89,12 @@ def is_top_pick(pair: str, direction: str, at: Optional[datetime] = None,
                 "direction": s.get("direction"),
                 "ai_score": s.get("ai_score"),
             })
-        # CV triggered
+        # CV triggered (окно ±48h)
         for s in _signals().find({
             "source": "cryptovizor", "pattern_triggered": True,
             "pair": {"$in": [norm, norm_sym]},
             "direction": direction,
-            "pattern_triggered_at": {"$gte": start, "$lte": at},
+            "pattern_triggered_at": {"$gte": start, "$lte": end},
         }):
             confirmations.append({
                 "source": "cryptovizor",
@@ -125,11 +129,15 @@ def is_top_pick(pair: str, direction: str, at: Optional[datetime] = None,
 
 
 def tag_cluster(cluster_id: int) -> bool:
-    """Проверяет кластер и проставляет is_top_pick если подходит."""
+    """Проверяет кластер и проставляет is_top_pick если подходит.
+    При положительном — ретроспективно отмечает связанные Confluence."""
     c = _clusters().find_one({"id": cluster_id})
     if not c:
         return False
-    res = is_top_pick(c.get("pair", ""), c.get("direction", ""), c.get("trigger_at"), for_source="cluster")
+    pair = c.get("pair", "")
+    direction = c.get("direction", "")
+    at = c.get("trigger_at")
+    res = is_top_pick(pair, direction, at, for_source="cluster")
     if res["is_top_pick"]:
         _clusters().update_one({"_id": c["_id"]}, {"$set": {
             "is_top_pick": True,
@@ -137,17 +145,23 @@ def tag_cluster(cluster_id: int) -> bool:
             "top_pick_confirmations": res["confirmations"],
             "top_pick_confirmations_count": res["confirmations_count"],
         }})
+        _propagate_to_related_confluence(pair, direction, at)
         return True
     return False
 
 
 def tag_signal(signal_db_id: int, source: str) -> bool:
-    """Для Tradium/CV сигналов (_signals collection) — проверка и флаг."""
+    """Для Tradium/CV сигналов (_signals collection) — проверка и флаг.
+    При положительном результате также ретроспективно помечает
+    связанные Confluence STRONG на той же паре+направлении (propagation).
+    """
     s = _signals().find_one({"id": signal_db_id, "source": source})
     if not s:
         return False
     at = s.get("pattern_triggered_at") or s.get("received_at")
-    res = is_top_pick(s.get("pair", ""), s.get("direction", ""), at, for_source=source)
+    pair = s.get("pair", "")
+    direction = s.get("direction", "")
+    res = is_top_pick(pair, direction, at, for_source=source)
     if res["is_top_pick"]:
         _signals().update_one({"_id": s["_id"]}, {"$set": {
             "is_top_pick": True,
@@ -155,8 +169,43 @@ def tag_signal(signal_db_id: int, source: str) -> bool:
             "top_pick_confirmations": res["confirmations"],
             "top_pick_confirmations_count": res["confirmations_count"],
         }})
+        # Retroactive: помечаем связанные Confluence
+        _propagate_to_related_confluence(pair, direction, at)
         return True
     return False
+
+
+def _propagate_to_related_confluence(pair: str, direction: str,
+                                       around_at: Optional[datetime],
+                                       window_h: int = TOP_PICK_WINDOW_H) -> int:
+    """Ретроспективно помечает Confluence STRONG рядом как Top Pick.
+    Вызывается когда другой сигнал стал top pick → подтверждающий
+    Confluence тоже должен стать top pick (симметрия)."""
+    if around_at is None:
+        return 0
+    norm = _norm_pair(pair)
+    norm_sym = norm.replace("/", "")
+    start = around_at - timedelta(hours=window_h)
+    end = around_at + timedelta(hours=window_h)
+    updated = 0
+    for c in _confluence().find({
+        "$or": [{"pair": norm}, {"symbol": norm_sym}],
+        "direction": direction,
+        "score": {"$gte": TOP_PICK_MIN_SCORE},
+        "detected_at": {"$gte": start, "$lte": end},
+        "is_top_pick": {"$ne": True},  # только те что ещё не помечены
+    }):
+        c_at = c.get("detected_at")
+        res = is_top_pick(pair, direction, c_at, for_source="confluence")
+        if res["is_top_pick"]:
+            _confluence().update_one({"_id": c["_id"]}, {"$set": {
+                "is_top_pick": True,
+                "top_pick_tagged_at": utcnow(),
+                "top_pick_confirmations": res["confirmations"],
+                "top_pick_confirmations_count": res["confirmations_count"],
+            }})
+            updated += 1
+    return updated
 
 
 def tag_confluence(conf_id) -> bool:
