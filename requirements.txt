@@ -17,4 +17,3 @@ selenium
 yfinance==0.2.50
 slowapi==0.1.9
 sentry-sdk[fastapi]==2.18.0
-</content>
