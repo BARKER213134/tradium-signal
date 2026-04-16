@@ -1384,9 +1384,10 @@ async def api_conflicts_check(payload: dict):
 @app.get("/api/fvg-candles")
 async def api_fvg_candles(instrument: str, tf: str = "1h", limit: int = 150):
     """Свечи для FVG графика.
-    Приоритет источников:
-      форекс:  TwelveData → yfinance → кеш
-      остальное: yfinance → кеш
+    Приоритет источников (экономим TD квоту — TD только если кеш пуст):
+      1. Кеш из БД (обновляется сканером через TD каждый час)
+      2. yfinance (для интрадей клики — бесплатно)
+      3. TD (только как последний шанс, не на каждый клик)
     """
     from fvg_scanner import (INSTRUMENTS, fetch_candles, cache_candles,
                              get_cached_candles, fetch_candles_twelvedata)
@@ -1400,28 +1401,28 @@ async def api_fvg_candles(instrument: str, tf: str = "1h", limit: int = 150):
 
     candles = []
     source = None
-    # 1. Форекс → TwelveData
-    if td_symbol:
-        candles = await asyncio.to_thread(fetch_candles_twelvedata, td_symbol, tf, min(limit, 200))
-        if candles:
-            source = "twelvedata"
-    # 2. yfinance (как fallback для форекса или основной для прочего)
+    # 1. Кеш (свежий — сканер обновляет раз в 60мин)
+    if tf == "1h":
+        cached = await asyncio.to_thread(get_cached_candles, key, tf, 90)
+        if cached:
+            candles = cached
+            source = "cache"
+    # 2. yfinance — бесплатно, без лимита
     if not candles:
         candles = await asyncio.to_thread(fetch_candles, ticker, period, tf)
         if candles:
             source = "yfinance"
-    # 3. Кеш из БД
-    if candles:
-        if tf == "1h":
-            try:
-                await asyncio.to_thread(cache_candles, key, tf, candles)
-            except Exception:
-                pass
-    else:
-        cached = await asyncio.to_thread(get_cached_candles, key, tf, 240)
-        if cached:
-            candles = cached
-            source = "cache"
+            # Кешируем для следующих кликов
+            if tf == "1h":
+                try:
+                    await asyncio.to_thread(cache_candles, key, tf, candles)
+                except Exception:
+                    pass
+    # 3. TD — последний шанс (редко, экономим квоту)
+    if not candles and td_symbol:
+        candles = await asyncio.to_thread(fetch_candles_twelvedata, td_symbol, tf, min(limit, 200))
+        if candles:
+            source = "twelvedata"
     if not candles:
         return {"ok": False, "error": f"no data (all sources failed for {key} {tf})"}
     data = [{"time": c["t"], "open": c["o"], "high": c["h"],

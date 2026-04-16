@@ -684,31 +684,22 @@ def monitor_signals() -> dict:
         by_ticker.setdefault(s["ticker"], []).append(s)
 
     for ticker, sigs in by_ticker.items():
-        # Для форекса пробуем TD (брокер-качество), для прочих — yfinance
-        # Находим td_symbol по первому сигналу в группе
+        # CRITICAL: monitor_signals вызывается каждые 30с — НЕ дёргать TD live
+        # (исчерпает 800/day за часы). TD обновляет cache только в scan_all
+        # (раз в 60 мин). Monitor читает cache → yfinance fallback.
         first = sigs[0]
-        td_sym = None
-        # Если asset_class == 'forex' и наш INSTRUMENTS содержит TD symbol
         instrument_name = first.get("instrument")
-        if instrument_name and instrument_name in INSTRUMENTS:
-            entry = INSTRUMENTS[instrument_name]
-            if len(entry) >= 3:
-                td_sym = entry[2]
 
         candles = []
-        if td_sym:
-            try:
-                candles = fetch_candles_twelvedata(td_sym, "1h", 50)
-            except Exception:
-                candles = []
+        # 1. Кеш из БД (обновляется сканером через TD раз в час)
+        if instrument_name:
+            candles = get_cached_candles(instrument_name, "1h", max_age_min=90)
+        # 2. Fallback — yfinance (бесплатно, без лимитов; только для проверки цены)
         if not candles:
             try:
                 candles = fetch_candles(ticker, period="2d", interval="1h")
             except Exception:
                 continue
-        if not candles:
-            # Последний шанс — кеш в БД
-            candles = get_cached_candles(instrument_name, "1h", max_age_min=120) if instrument_name else []
         if not candles:
             continue
         last_candle = candles[-1]
