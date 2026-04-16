@@ -1366,6 +1366,7 @@ setInterval(loadPendingClusters, 30000);
 .tp-type-cluster     { background: rgba(0,212,255,0.18);  color: #33c4ff;  border: 1px solid rgba(0,212,255,0.35); }
 .tp-type-tradium     { background: rgba(255,77,109,0.15); color: #ff4d6d; border: 1px solid rgba(255,77,109,0.35); }
 .tp-type-cryptovizor { background: rgba(255,149,0,0.15);  color: #ff9500;  border: 1px solid rgba(255,149,0,0.35); }
+.tp-type-confluence  { background: rgba(255,210,62,0.18); color: #ffd23e; border: 1px solid rgba(255,210,62,0.4); }
 
 /* Status badges */
 .tp-status {
@@ -1494,7 +1495,7 @@ function renderTopPicks(items) {
     const dirE = isLong ? '🟢 LONG' : '🔴 SHORT';
     const dirC = isLong ? 'var(--buy)' : 'var(--sell)';
 
-    const typeLabel = {cluster:'💠 Cluster', tradium:'📡 Tradium', cryptovizor:'🚀 CV'}[p.type] || p.type;
+    const typeLabel = {cluster:'💠 Cluster', tradium:'📡 Tradium', cryptovizor:'🚀 CV', confluence:'🎯 Confluence'}[p.type] || p.type;
     const typeCls = `tp-type-${p.type}`;
 
     const nConf = p.confirmations_count || 0;
@@ -1555,7 +1556,7 @@ function tpOpenChart(idx) {
   const dirE = dir === 'LONG' ? '🟢' : '🔴';
   const pairClean = (p.pair || '').replace('/USDT','');
   const symbol = (p.symbol || (p.pair||'').replace('/','')).toUpperCase();
-  const typeLabel = {cluster:'💠 Cluster', tradium:'📡 Tradium', cryptovizor:'🚀 Cryptovizor'}[p.type] || p.type;
+  const typeLabel = {cluster:'💠 Cluster', tradium:'📡 Tradium', cryptovizor:'🚀 Cryptovizor', confluence:'🎯 Confluence'}[p.type] || p.type;
   const statusBadge = p.status === 'TP' ? '<span style="color:var(--buy)">✅ TP</span>'
                     : p.status === 'SL' ? '<span style="color:var(--sell)">❌ SL</span>'
                     : '<span style="color:#ffd23e">⏳ OPEN</span>';
