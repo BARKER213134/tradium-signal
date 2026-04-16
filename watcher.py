@@ -1873,25 +1873,7 @@ async def _send_top_pick_alert(sig: dict):
         except Exception:
             pass
 
-        # Текущая цена (пробуем через exchange)
-        current_price = None
-        current_diff_pct = None
-        try:
-            from exchange import get_price_any
-            pair_full = sig.get("pair") or (pair + "/USDT")
-            current_price = get_price_any(pair_full)
-            if current_price and entry:
-                current_diff_pct = (current_price - entry) / entry * 100
-        except Exception:
-            pass
-
-        # Текущая сессия (UTC)
-        utc_hour = datetime.now(_tz.utc).hour
-        if 0 <= utc_hour < 7:     session = "🌏 Asia"
-        elif 7 <= utc_hour < 13:  session = "🇬🇧 London"
-        elif 13 <= utc_hour < 16: session = "🇬🇧🇺🇸 London/NY overlap"
-        elif 16 <= utc_hour < 21: session = "🇺🇸 NY"
-        else:                     session = "🌙 Off-hours"
+        # (убрано по запросу: сессия, текущая цена, сноска про базу бектеста)
 
         # Подтверждения
         confirmations = sig.get("confirmations") or []
@@ -1937,15 +1919,7 @@ async def _send_top_pick_alert(sig: dict):
             if signals_n and sources_n: extras.append(f"<b>{signals_n}</b> сигналов / <b>{sources_n}</b> источников")
             if extras: cluster_info = "\n⚡ " + " · ".join(extras)
 
-        # Current price line
-        cur_line = ""
-        if current_price is not None:
-            diff_emoji = "🟢" if (current_diff_pct or 0) >= 0 else "🔴"
-            diff_sign = "+" if (current_diff_pct or 0) >= 0 else ""
-            cur_line = (f"\n💹 Сейчас: <code>{_fmt_price(current_price)}</code> "
-                       f"{diff_emoji} <b>{diff_sign}{current_diff_pct:.2f}%</b> от Entry")
-
-        # Dist to TP/SL percentages помечаем цветом
+        # Dist to TP/SL percentages
         def _pct_str(pct, good_sign):
             if pct is None: return ""
             sign = "+" if pct >= 0 else ""
@@ -1957,9 +1931,8 @@ async def _send_top_pick_alert(sig: dict):
             f"{dir_e} <b>{pair}/USDT</b> · <b>{direction}</b>"
             + (f" · R:R <b>1:{rr:.1f}</b>" if rr else "")
             + cluster_info
-            + f"\n{session}"
+            + "\n\n"
         )
-        text += cur_line + "\n\n"
         text += f"✨ {conf_header}:\n{confs_block}\n\n"
         text += (
             f"📍 Entry <code>{_fmt_price(entry)}</code>\n"
@@ -1969,12 +1942,8 @@ async def _send_top_pick_alert(sig: dict):
         if sig.get("pattern"):
             text += f"📋 Pattern: <i>{sig.get('pattern')}</i>\n"
 
-        # Footer со статистикой
-        text += (
-            f"\n"
-            f"📊 Backtest: WR <b>75%</b> · Avg <b>+0.75%</b> · PF <b>3.00</b>\n"
-            f"<i>База: 48 кластеров, 15 закрытых (11 TP / 4 SL)</i>"
-        )
+        # Компактная сводка по бектесту
+        text += f"\n📊 Backtest: WR <b>75%</b> · Avg <b>+0.75%</b> · PF <b>3.00</b>"
 
         await _bot9.send_message(_admin_chat_id, text, parse_mode="HTML")
         await asyncio.sleep(0.5)
