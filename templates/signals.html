@@ -3290,7 +3290,11 @@ function renderJournal(items, startIdx) {
     const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
     const pair = (s.pair || s.symbol || '').replace('/USDT', '');
     const time = s.at ? new Date(s.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
-    const srcBadge = window.sigIcon(s.source, s.score);
+    const _icon = window.sigIcon || ((src, sc) => {
+      if (src === 'confluence') return (+sc||0) >= 5 ? '⭐' : '🎯';
+      return {tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'}[src] || '•';
+    });
+    const srcBadge = _icon(s.source, s.score);
     const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐' : 'Confluence') : s.source === 'paper' ? 'Paper' : s.source === 'cluster' ? 'Cluster' : 'CV';
     const stFail = s.st_passed === false;
     const pumpHigh = (s.pump_score || 0) >= 2;

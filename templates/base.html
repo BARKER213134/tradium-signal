@@ -590,6 +590,17 @@
         /* ── Pump HIGH POTENTIAL highlight ── */
         .pump-high { background: rgba(255,210,62,0.08) !important; border-left: 3px solid #ffd23e !important; }
     </style>
+    <script>
+      // sigIcon — доступно ДО любых inline скриптов в block content.
+      // Учитывает score для Confluence: ⭐ для STRONG (5+), 🔥 для 6+
+      window.sigIcon = function(src, score) {
+        if (src === 'confluence') {
+          const s = +score || 0;
+          return s >= 6 ? '🔥' : s >= 5 ? '⭐' : '🎯';
+        }
+        return ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
+      };
+    </script>
 </head>
 <body>
 <main class="main" style="margin-left:0;">
