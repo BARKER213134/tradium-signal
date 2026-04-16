@@ -1,0 +1,93 @@
+{
+  "generated_at": "2026-04-16T14:48:14.139992",
+  "results": [
+    {
+      "name": "Cluster TOP",
+      "n": 16,
+      "tp": 12,
+      "sl": 4,
+      "timeout": 0,
+      "wr": 75.0,
+      "sum_r": 8.0,
+      "avg_r": 0.5,
+      "pf": 3.0
+    },
+    {
+      "name": "Cluster REG",
+      "n": 33,
+      "tp": 16,
+      "sl": 17,
+      "timeout": 0,
+      "wr": 48.5,
+      "sum_r": -1.0,
+      "avg_r": -0.03,
+      "pf": 0.94
+    },
+    {
+      "name": "Tradium TOP",
+      "n": 2,
+      "tp": 0,
+      "sl": 0,
+      "timeout": 2,
+      "wr": 0,
+      "sum_r": 0.5,
+      "avg_r": 0.25,
+      "pf": 5.17
+    },
+    {
+      "name": "Tradium REG",
+      "n": 16,
+      "tp": 4,
+      "sl": 7,
+      "timeout": 5,
+      "wr": 36.4,
+      "sum_r": 2.19,
+      "avg_r": 0.137,
+      "pf": 1.31
+    },
+    {
+      "name": "CV TOP",
+      "n": 22,
+      "tp": 7,
+      "sl": 12,
+      "timeout": 3,
+      "wr": 36.8,
+      "sum_r": 0.46,
+      "avg_r": 0.021,
+      "pf": 1.04
+    },
+    {
+      "name": "CV REG",
+      "n": 466,
+      "tp": 112,
+      "sl": 334,
+      "timeout": 20,
+      "wr": 25.1,
+      "sum_r": -176.67,
+      "avg_r": -0.379,
+      "pf": 0.55
+    },
+    {
+      "name": "Confluence TOP",
+      "n": 37,
+      "tp": 15,
+      "sl": 22,
+      "timeout": 0,
+      "wr": 40.5,
+      "sum_r": -25.08,
+      "avg_r": -0.678,
+      "pf": 0.1
+    },
+    {
+      "name": "Confluence REG",
+      "n": 126,
+      "tp": 55,
+      "sl": 70,
+      "timeout": 1,
+      "wr": 44.0,
+      "sum_r": -131.07,
+      "avg_r": -1.04,
+      "pf": 0.24
+    }
+  ]
+}

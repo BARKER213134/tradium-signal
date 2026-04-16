@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 INITIAL_BALANCE = 1000.0
-MAX_POSITIONS = 5
+MAX_POSITIONS = 10  # было 5, поднято для более быстрого накопления статистики
 
 
 def _utcnow():
@@ -348,6 +348,17 @@ async def on_signal(signal_data: dict):
             # RISKY — не повышаем, наоборот AI должен был снизить
         except Exception as e:
             logger.debug(f"cluster boost fail: {e}")
+
+    # Top Pick boost — дополнительный модификатор поверх cluster boost,
+    # применяется если сигнал is_top_pick=true (подтверждён STRONG Confluence).
+    # По бектесту WR Top Picks = 73% vs baseline 56% → можно увеличить size.
+    is_top_pick = signal_data.get("is_top_pick")
+    if is_top_pick:
+        old_lev, old_size = leverage, size_pct
+        # Умеренный буст: +30% leverage, +1 size_pct
+        leverage = max(1, min(10, int(round(leverage * 1.3))))
+        size_pct = max(1, min(5, size_pct + 1))
+        boost_note += f" [👑 TOP PICK: lev {old_lev}→{leverage}, size {old_size}→{size_pct}]"
 
     pos = open_position(
         symbol=signal_data.get("symbol", ""),
