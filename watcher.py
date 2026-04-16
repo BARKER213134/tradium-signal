@@ -1957,6 +1957,36 @@ def _fvg_direction_emoji(d):
     return "🟢" if d == "bullish" else "🔴"
 
 
+def _fvg_top_pick_block(sig) -> str:
+    """Блок '⭐ TOP PICK' для FVG alerts. Возвращает '' если не top pick."""
+    if not sig.get("is_top_pick"):
+        return ""
+    score = sig.get("confluence_score", 0)
+    breakdown = sig.get("score_breakdown") or []
+    # Форматируем bullets
+    lines = []
+    for b in breakdown:
+        src = b.get("source", "")
+        pts = b.get("points", 0)
+        if src == "base_fvg":
+            lines.append(f"  • Base FVG +{pts}")
+        elif src == "multi_tf":
+            lines.append(f"  • Multi-TF (1H↔4H) +{pts} 🔥")
+        elif src == "smart_level":
+            kind = b.get("kind", "")
+            lines.append(f"  • Smart Level ({kind}) +{pts}")
+        elif src == "multi_pair_correlation":
+            n = b.get("correlated_pairs", 0)
+            theme = b.get("theme", "")
+            lines.append(f"  • Multi-Pair ({n} pairs, {theme}) +{pts}")
+        elif src == "atr_strong":
+            lines.append(f"  • ATR strong (≥1.5×) +{pts}")
+    return (
+        f"\n⭐⭐⭐ <b>TOP PICK · score {score}/7</b> ⭐⭐⭐\n"
+        + "\n".join(lines) + "\n"
+    )
+
+
 async def _send_fvg_formed_alert(sig):
     """FVG DETECTED — формирование."""
     if not _bot8:
@@ -1970,24 +2000,27 @@ async def _send_fvg_formed_alert(sig):
         hour = datetime.fromtimestamp(ts, tz=_tz.utc).hour if ts else 0
         session = "🇺🇸 NY" if 13 <= hour < 21 else "🇬🇧 London" if 8 <= hour < 16 else "—"
         size_pct = sig.get("fvg_size_rel", 0) * 100
-        body_pct = sig.get("impulse_body_ratio", 0) * 100
+        body_pct_val = sig.get("impulse_body_ratio")
+        body_line = f"  • Impulse body: {body_pct_val*100:.0f}% ✅\n" if body_pct_val else ""
+        source = sig.get("source", "scan")
+        src_tag = "📡 TV" if source == "tv_webhook" else "🔎 Scan"
+        top_pick_block = _fvg_top_pick_block(sig)
         text = (
-            f"⚡⚡⚡ <b>FVG DETECTED</b> ⚡⚡⚡\n"
+            f"⚡⚡⚡ <b>FVG DETECTED</b> ⚡⚡⚡ {src_tag}\n"
             f"\n"
             f"<b>{sig['instrument']}</b> · {sig.get('timeframe','1H')} · {dir_e} <b>{sig['direction'].upper()}</b>\n"
+            f"{top_pick_block}"
             f"\n"
             f"📍 Formed price: <code>{sig.get('formed_price','?')}</code>\n"
             f"🎯 Zone: <code>{sig['fvg_bottom']:.5f}</code> — <code>{sig['fvg_top']:.5f}</code>\n"
             f"\n"
             f"📊 Quality:\n"
-            f"  • Size: {size_pct:.3f}% ✅\n"
-            f"  • Impulse body: {body_pct:.0f}% ✅\n"
-            f"  • Session: {session} ✅\n"
+            f"  • Size: {size_pct:.3f}%\n"
+            f"{body_line}"
+            f"  • Session: {session}\n"
             f"\n"
             f"⏳ <b>Entry limit:</b> <code>{sig['entry_price']:.5f}</code>\n"
             f"🛑 SL: <code>{sig['sl_price']:.5f}</code>\n"
-            f"\n"
-            f"💡 <i>Hybrid v2 · Backtest WR: 43% · Avg R +0.14</i>"
         )
         await _bot8.send_message(_admin_chat_id, text, parse_mode="HTML")
         await asyncio.sleep(0.5)
@@ -2003,8 +2036,10 @@ async def _send_fvg_entry_alert(sig):
         return
     try:
         dir_e = _fvg_direction_emoji(sig["direction"])
+        top_pick_block = _fvg_top_pick_block(sig)
         text = (
             f"🎯🎯🎯 <b>RETEST ENTRY</b> 🎯🎯🎯\n"
+            f"{top_pick_block}"
             f"\n"
             f"<b>{sig['instrument']}</b> · {dir_e} <b>{'LONG' if sig['direction']=='bullish' else 'SHORT'}</b>\n"
             f"\n"
@@ -2034,8 +2069,9 @@ async def _send_fvg_close_alert(sig, status):
         header = "✅✅✅" if is_tp else "❌❌❌"
         emoji = "✅ TP" if is_tp else "❌ SL"
         outcome = "🚀 ПРИБЫЛЬ" if is_tp else "📉 УБЫТОК"
+        tp_tag = "⭐ " if sig.get("is_top_pick") else ""
         text = (
-            f"{header} <b>{emoji} · {R:+.2f}R</b> {header}\n"
+            f"{header} <b>{tp_tag}{emoji} · {R:+.2f}R</b> {header}\n"
             f"\n"
             f"<b>{sig['instrument']}</b> · {dir_e} {'LONG' if sig['direction']=='bullish' else 'SHORT'} closed\n"
             f"\n"

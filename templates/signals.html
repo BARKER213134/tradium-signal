@@ -2769,6 +2769,10 @@ safeInterval(loadPaperStatus, 15000);
 .fvg-row-tp { background:rgba(0,229,160,0.10); }
 .fvg-row-sl { background:rgba(255,77,109,0.08); }
 .fvg-row-expired { opacity:0.5; }
+.fvg-row-toppick { box-shadow:inset 3px 0 0 #ffd23e; }
+.fvg-toppick-badge { display:inline-block; padding:2px 6px; margin-left:6px; font-family:var(--font-mono); font-size:9px; font-weight:800; color:#000; background:linear-gradient(135deg,#ffd23e,#ffaa00); border-radius:4px; box-shadow:0 0 8px rgba(255,210,62,0.4); vertical-align:middle; cursor:help; }
+.fvg-score-badge { display:inline-block; padding:1px 5px; margin-left:4px; font-family:var(--font-mono); font-size:9px; color:var(--muted); background:rgba(255,255,255,0.06); border:1px solid var(--border); border-radius:3px; vertical-align:middle; }
+.fvg-src-tv { display:inline-block; padding:1px 5px; margin-left:4px; font-family:var(--font-mono); font-size:9px; color:#00d4ff; background:rgba(0,212,255,0.08); border:1px solid rgba(0,212,255,0.3); border-radius:3px; vertical-align:middle; }
 </style>
 
 <div class="fvg-hero" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
@@ -2795,9 +2799,14 @@ safeInterval(loadPaperStatus, 15000);
   <div class="fvg-stat"><div class="fvg-stat-lbl">Avg R</div><div class="fvg-stat-val" id="fvgStatAvgR">—</div></div>
 </div>
 
-<div class="an-toolbar" style="padding:10px 18px;gap:8px;">
+<div class="an-toolbar" style="padding:10px 18px;gap:8px;flex-wrap:wrap;">
   <button onclick="fvgScanNow()" style="background:var(--accent);color:#000;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:var(--font-mono);">🔄 Scan now</button>
   <button onclick="showFvgSettings()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer;color:var(--text);">⚙ Настройки</button>
+  <label style="display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;color:var(--text);cursor:pointer;padding:5px 12px;border:1px solid var(--border);border-radius:6px;">
+    <input type="checkbox" id="fvgOnlyTopPicks" onchange="loadFvgSignals()" style="cursor:pointer;" />
+    <span>⭐ Only Top Picks</span>
+  </label>
+  <button onclick="fvgRescoreAll()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer;color:var(--muted);" title="Пересчитать confluence score для всех FVG за 7 дней">♻ Rescore</button>
   <span id="fvgMsg" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
 </div>
 
@@ -2847,6 +2856,36 @@ safeInterval(loadPaperStatus, 15000);
 </div>
 
 <script>
+function _fvgTopPickBadge(s) {
+  if (!s.is_top_pick) {
+    // Но покажем score если есть (даже если не TP)
+    const sc = s.confluence_score;
+    if (sc && sc > 1) return `<span class="fvg-score-badge" title="Confluence score: ${sc}/7">${sc}</span>`;
+    return '';
+  }
+  const sc = s.confluence_score || 0;
+  const reasons = (s.score_breakdown || []).map(b => {
+    const t = b.source === 'multi_tf' ? 'Multi-TF' :
+              b.source === 'smart_level' ? `Level(${b.kind||'?'})` :
+              b.source === 'multi_pair_correlation' ? `Multi-Pair(${b.correlated_pairs||0})` :
+              b.source === 'atr_strong' ? 'ATR≥1.5x' :
+              b.source === 'base_fvg' ? 'Base' : b.source;
+    return `+${b.points} ${t}`;
+  }).join(', ');
+  return `<span class="fvg-toppick-badge" title="TOP PICK · score ${sc}/7 · ${reasons}">⭐ ${sc}</span>`;
+}
+
+function _fvgSourceBadge(s) {
+  if (s.source === 'tv_webhook') return '<span class="fvg-src-tv" title="TradingView webhook">📡 TV</span>';
+  return '';
+}
+
+function _fvgFilterTopPicks(items) {
+  const only = document.getElementById('fvgOnlyTopPicks');
+  if (only && only.checked) return items.filter(x => x.is_top_pick);
+  return items;
+}
+
 async function loadFvgSignals() {
   try {
     const r = await fetch('/api/fvg-signals');
@@ -2861,9 +2900,20 @@ async function loadFvgSignals() {
     document.getElementById('fvgStatSumR').textContent = (sr >= 0 ? '+' : '') + sr + 'R';
     document.getElementById('fvgStatSumR').className = 'fvg-stat-val ' + (sr >= 0 ? 'text-buy' : 'text-sell');
     document.getElementById('fvgStatAvgR').textContent = (s.avg_r >= 0 ? '+' : '') + (s.avg_r || 0).toFixed(3) + 'R';
-    renderEntered(d.entered || []);
-    renderWaiting(d.waiting || []);
+    renderEntered(_fvgFilterTopPicks(d.entered || []));
+    renderWaiting(_fvgFilterTopPicks(d.waiting || []));
   } catch (e) { }
+}
+
+async function fvgRescoreAll() {
+  const msg = document.getElementById('fvgMsg');
+  msg.textContent = '♻ Rescoring...';
+  try {
+    const r = await fetch('/api/fvg-rescore-all', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{"hours":168}'});
+    const d = await r.json();
+    msg.textContent = `✓ total=${d.stats?.total||0}, top_pick=${d.stats?.tagged_top_pick||0}, changed=${d.stats?.changed||0}`;
+    setTimeout(() => { msg.textContent = ''; loadFvgSignals(); }, 2000);
+  } catch (e) { msg.textContent = '✗ error: ' + e.message; }
 }
 
 function renderEntered(items) {
@@ -2875,9 +2925,11 @@ function renderEntered(items) {
     const peak = (s.peak_R || 0).toFixed(2);
     const peakCls = (s.peak_R || 0) > 0 ? 'text-buy' : 'text-muted';
     const trail = s.trailing_active ? '🟢 armed' : '⚪ waiting +1R';
-    return `<tr class="fvg-row-entered" style="cursor:pointer;" onclick="toggleFvgChart(${i}, ${JSON.stringify(s).replace(/\"/g,'&quot;')})">
+    const rowCls = 'fvg-row-entered' + (s.is_top_pick ? ' fvg-row-toppick' : '');
+    const instrCell = `${s.instrument}${_fvgTopPickBadge(s)}${_fvgSourceBadge(s)}`;
+    return `<tr class="${rowCls}" style="cursor:pointer;" onclick="toggleFvgChart(${i}, ${JSON.stringify(s).replace(/\"/g,'&quot;')})">
       <td class="mono text-muted" style="font-size:11px;">${t}</td>
-      <td class="mono fw-700 text-accent">${s.instrument}</td>
+      <td class="mono fw-700 text-accent">${instrCell}</td>
       <td class="mono text-muted">${s.timeframe}</td>
       <td>${dir}</td>
       <td class="mono">${s.entered_price || s.entry_price}</td>
@@ -2898,9 +2950,11 @@ function renderWaiting(items) {
     const t = s.formed_at ? new Date(s.formed_at).toLocaleString('ru', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
     const sz = (s.fvg_size_rel * 100).toFixed(3);
     const exp = (s.time_left_h || 0).toFixed(1) + 'ч';
-    return `<tr class="fvg-row-waiting" style="cursor:pointer;" onclick="toggleFvgChart(${i+100}, ${JSON.stringify(s).replace(/\"/g,'&quot;')})">
+    const rowCls = 'fvg-row-waiting' + (s.is_top_pick ? ' fvg-row-toppick' : '');
+    const instrCell = `${s.instrument}${_fvgTopPickBadge(s)}${_fvgSourceBadge(s)}`;
+    return `<tr class="${rowCls}" style="cursor:pointer;" onclick="toggleFvgChart(${i+100}, ${JSON.stringify(s).replace(/\"/g,'&quot;')})">
       <td class="mono text-muted" style="font-size:11px;">${t}</td>
-      <td class="mono fw-700 text-accent">${s.instrument}</td>
+      <td class="mono fw-700 text-accent">${instrCell}</td>
       <td class="mono text-muted">${s.asset_class}</td>
       <td>${dir}</td>
       <td class="mono" style="font-size:11px;">${s.fvg_bottom} — ${s.fvg_top}</td>
@@ -3389,9 +3443,12 @@ function renderJournalRows(items) {
     const rStr = R != null ? ((R>=0?'+':'') + R.toFixed(2) + 'R') : '—';
     const rColor = R != null ? (R > 0 ? 'var(--buy)' : 'var(--sell)') : 'var(--muted)';
     const peak = (s.peak_R || 0).toFixed(2);
-    return `<tr class="${st[2]}" style="cursor:pointer;" onclick="openFjChart(${origIdx})">
+    const tpBadge = (typeof _fvgTopPickBadge === 'function') ? _fvgTopPickBadge(s) : '';
+    const srcBadge = (typeof _fvgSourceBadge === 'function') ? _fvgSourceBadge(s) : '';
+    const rowExtra = s.is_top_pick ? ' fvg-row-toppick' : '';
+    return `<tr class="${st[2]}${rowExtra}" style="cursor:pointer;" onclick="openFjChart(${origIdx})">
       <td class="mono" style="font-size:11px;color:var(--muted);white-space:nowrap;">${t}</td>
-      <td class="mono" style="font-weight:800;color:var(--cyan);font-size:13px;">${s.instrument}</td>
+      <td class="mono" style="font-weight:800;color:var(--cyan);font-size:13px;">${s.instrument}${tpBadge}${srcBadge}</td>
       <td class="mono" style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:0.05em;">${s.asset_class}</td>
       <td class="mono" style="color:var(--muted);font-size:11px;">${s.timeframe}</td>
       <td>${dirHtml}</td>
