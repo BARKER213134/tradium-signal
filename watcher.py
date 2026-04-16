@@ -1841,14 +1841,16 @@ async def _send_top_pick_alert(sig: dict):
     if not _bot9 or not _admin_chat_id:
         return
     try:
+        from datetime import datetime, timezone as _tz
+
         t_type = sig.get("type", "signal")
         type_map = {
-            "cluster":     ("💠", "CLUSTER"),
-            "tradium":     ("📡", "TRADIUM"),
-            "cryptovizor": ("🚀", "CRYPTOVIZOR"),
-            "confluence":  ("🎯", "CONFLUENCE"),
+            "cluster":     ("💠", "Cluster"),
+            "tradium":     ("📡", "Tradium"),
+            "cryptovizor": ("🚀", "Cryptovizor"),
+            "confluence":  ("🎯", "Confluence"),
         }
-        type_emoji, type_label = type_map.get(t_type, ("📍", t_type.upper()))
+        type_emoji, type_label = type_map.get(t_type, ("📍", t_type.title()))
         pair = (sig.get("pair") or "").replace("/USDT", "")
         direction = sig.get("direction", "LONG")
         is_long = direction in ("LONG", "BUY")
@@ -1858,76 +1860,120 @@ async def _send_top_pick_alert(sig: dict):
         sl = sig.get("sl")
 
         # Расчёт TP%, SL%, R:R
-        tp_pct_str = sl_pct_str = rr_str = ""
+        tp_pct = sl_pct = rr = None
         try:
             if entry and tp:
                 tp_pct = (tp - entry) / entry * 100 if is_long else (entry - tp) / entry * 100
-                tp_pct_str = f"  <b>({'+' if tp_pct >= 0 else ''}{tp_pct:.2f}%)</b>"
             if entry and sl:
                 sl_pct = (sl - entry) / entry * 100 if is_long else (entry - sl) / entry * 100
-                sl_pct_str = f"  <b>({'+' if sl_pct >= 0 else ''}{sl_pct:.2f}%)</b>"
             if entry and tp and sl:
                 reward = abs(tp - entry)
                 risk = abs(entry - sl)
-                if risk > 0:
-                    rr = reward / risk
-                    rr_str = f" · R:R <b>1:{rr:.1f}</b>"
+                if risk > 0: rr = reward / risk
         except Exception:
             pass
+
+        # Текущая цена (пробуем через exchange)
+        current_price = None
+        current_diff_pct = None
+        try:
+            from exchange import get_price_any
+            pair_full = sig.get("pair") or (pair + "/USDT")
+            current_price = get_price_any(pair_full)
+            if current_price and entry:
+                current_diff_pct = (current_price - entry) / entry * 100
+        except Exception:
+            pass
+
+        # Текущая сессия (UTC)
+        utc_hour = datetime.now(_tz.utc).hour
+        if 0 <= utc_hour < 7:     session = "🌏 Asia"
+        elif 7 <= utc_hour < 13:  session = "🇬🇧 London"
+        elif 13 <= utc_hour < 16: session = "🇬🇧🇺🇸 London/NY overlap"
+        elif 16 <= utc_hour < 21: session = "🇺🇸 NY"
+        else:                     session = "🌙 Off-hours"
 
         # Подтверждения
         confirmations = sig.get("confirmations") or []
         n_conf = sig.get("confirmations_count") or len(confirmations) or 1
-        confs_block = ""
-        if confirmations:
-            lines = []
-            for c in confirmations[:3]:
-                c_src = c.get("source", "")
-                c_emoji = {"confluence":"🎯","cluster":"💠","tradium":"📡","cryptovizor":"🚀"}.get(c_src, "•")
-                at = c.get("at", "")
-                try:
-                    from datetime import datetime
-                    dt = datetime.fromisoformat(at.replace("Z", "+00:00")) if at else None
-                    at_str = dt.strftime("%d.%m %H:%M") if dt else ""
-                except Exception:
-                    at_str = str(at)[:16] if at else ""
-                score = c.get("score")
-                strength = c.get("strength")
-                extra = f" <b>score {score}</b>" if score else (f" <b>{strength}</b>" if strength else "")
-                lines.append(f"   {c_emoji}{extra} <i>{at_str}</i>")
-            confs_block = "\n".join(lines)
-            if len(confirmations) > 3:
-                confs_block += f"\n   ... +{len(confirmations)-3}"
+        confs_lines = []
+        for c in confirmations[:5]:
+            c_src = c.get("source", "")
+            c_emoji = {"confluence":"🎯","cluster":"💠","tradium":"📡","cryptovizor":"🚀"}.get(c_src, "•")
+            at = c.get("at", "")
+            age_str = ""
+            try:
+                dt = datetime.fromisoformat(at.replace("Z", "+00:00")) if at else None
+                if dt:
+                    # naive сравнение — убираем tz
+                    dt_naive = dt.replace(tzinfo=None) if dt.tzinfo else dt
+                    now_naive = datetime.utcnow()
+                    age_h = (now_naive - dt_naive).total_seconds() / 3600
+                    if age_h < 1: age_str = f"{int(age_h*60)}м назад"
+                    elif age_h < 24: age_str = f"{int(age_h)}ч назад"
+                    else: age_str = f"{int(age_h/24)}д назад"
+            except Exception:
+                pass
+            score = c.get("score")
+            strength = c.get("strength")
+            label = f"score <b>{score}</b>" if score else (f"<b>{strength}</b>" if strength else "")
+            confs_lines.append(f"  {c_emoji} {label}  <i>{age_str}</i>")
+        confs_block = "\n".join(confs_lines)
+        if len(confirmations) > 5:
+            confs_block += f"\n  ... +{len(confirmations)-5}"
 
-        # Source for confirmations label (какие именно подтверждения?)
-        # Если это Confluence top pick — подтверждают другие сигналы, иначе — STRONG Confluence
-        if t_type == "confluence":
-            conf_header = f"Подтверждён <b>{n_conf}</b> сигналом{'ом' if n_conf==1 else 'ами'} других типов"
-        else:
-            conf_header = f"Подтверждён <b>{n_conf}</b> STRONG Confluence ≤ 48h"
+        conf_header = (f"Подтверждён <b>{n_conf}</b> сигналом{'ами' if n_conf!=1 else ''} других типов"
+                       if t_type == "confluence"
+                       else f"Подтверждён <b>{n_conf}</b> STRONG Confluence ≤ 48ч")
+
+        # Cluster-специфичные доп поля (если есть)
+        cluster_info = ""
+        if t_type == "cluster":
+            sources_n = sig.get("sources_count")
+            signals_n = sig.get("signals_count")
+            strength = sig.get("strength")
+            extras = []
+            if strength: extras.append(f"<b>{strength}</b>")
+            if signals_n and sources_n: extras.append(f"<b>{signals_n}</b> сигналов / <b>{sources_n}</b> источников")
+            if extras: cluster_info = "\n⚡ " + " · ".join(extras)
+
+        # Current price line
+        cur_line = ""
+        if current_price is not None:
+            diff_emoji = "🟢" if (current_diff_pct or 0) >= 0 else "🔴"
+            diff_sign = "+" if (current_diff_pct or 0) >= 0 else ""
+            cur_line = (f"\n💹 Сейчас: <code>{_fmt_price(current_price)}</code> "
+                       f"{diff_emoji} <b>{diff_sign}{current_diff_pct:.2f}%</b> от Entry")
+
+        # Dist to TP/SL percentages помечаем цветом
+        def _pct_str(pct, good_sign):
+            if pct is None: return ""
+            sign = "+" if pct >= 0 else ""
+            return f" <b>({sign}{pct:.2f}%)</b>"
 
         text = (
-            f"╔═══════════════════════════╗\n"
-            f"   👑 <b>TOP PICK</b>   ·   {type_emoji} {type_label}\n"
-            f"╚═══════════════════════════╝\n"
+            f"👑 <b>TOP PICK</b> · {type_emoji} {type_label}\n"
             f"\n"
-            f"{dir_e} <b>{pair}/USDT</b> · <b>{direction}</b>{rr_str}\n"
-            f"\n"
-            f"✨ {conf_header}:\n"
-            f"{confs_block}\n"
-            f"\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📍  Entry:  <code>{_fmt_price(entry)}</code>\n"
-            f"🎯  TP:     <code>{_fmt_price(tp)}</code>{tp_pct_str}\n"
-            f"🛑  SL:     <code>{_fmt_price(sl)}</code>{sl_pct_str}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{dir_e} <b>{pair}/USDT</b> · <b>{direction}</b>"
+            + (f" · R:R <b>1:{rr:.1f}</b>" if rr else "")
+            + cluster_info
+            + f"\n{session}"
+        )
+        text += cur_line + "\n\n"
+        text += f"✨ {conf_header}:\n{confs_block}\n\n"
+        text += (
+            f"📍 Entry <code>{_fmt_price(entry)}</code>\n"
+            f"🎯 TP    <code>{_fmt_price(tp)}</code>{_pct_str(tp_pct, 1)}\n"
+            f"🛑 SL    <code>{_fmt_price(sl)}</code>{_pct_str(sl_pct, -1)}\n"
         )
         if sig.get("pattern"):
             text += f"📋 Pattern: <i>{sig.get('pattern')}</i>\n"
+
+        # Footer со статистикой
         text += (
             f"\n"
-            f"📊 <b>Backtest WR: 75%</b> (vs baseline 56%)\n"
-            f"💰 Avg PnL: <b>+0.75%</b> · PF <b>3.00</b>"
+            f"📊 Backtest: WR <b>75%</b> · Avg <b>+0.75%</b> · PF <b>3.00</b>\n"
+            f"<i>База: 48 кластеров, 15 закрытых (11 TP / 4 SL)</i>"
         )
 
         await _bot9.send_message(_admin_chat_id, text, parse_mode="HTML")
