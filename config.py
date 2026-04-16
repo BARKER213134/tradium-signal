@@ -67,6 +67,10 @@ BOT9_BOT_TOKEN = os.getenv("BOT9_BOT_TOKEN", "")
 # Регистрация: https://twelvedata.com/
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 
+# TradingView Webhook secret — защита от посторонних POST'ов
+# Должен совпадать с "secret" полем в JSON template в TV alert
+TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET", "tv_f9c3a8b2d4e7f6a1b8c5d9e2f3a7b4c6")
+
 # Список ботов для UI
 # category: 'crypto' | 'stocks' (forex/metals/indices/energy через FVG)
 BOTS = [

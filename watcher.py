@@ -2056,8 +2056,16 @@ async def _send_fvg_close_alert(sig, status):
 _fvg_last_scan_ts = 0
 
 async def _check_forex_fvg_scan():
-    """Периодический скан (раз в scan_interval_min минут)."""
+    """Периодический скан (раз в scan_interval_min минут).
+
+    По-умолчанию ОТКЛЮЧЁН — сигналы FVG теперь приходят через TradingView Webhook
+    (см. /api/tv-webhook + tv_webhook.py). Чтобы включить legacy scan_all
+    детекцию (через yfinance/TD), установи FVG_SCAN_ENABLED=1.
+    """
     global _fvg_last_scan_ts
+    if os.getenv("FVG_SCAN_ENABLED", "0").strip() not in ("1", "true", "yes", "on"):
+        # webhook-only mode — scan_all отключён чтобы не плодить дубли
+        return
     try:
         from fvg_scanner import scan_all, get_config
         cfg = get_config()

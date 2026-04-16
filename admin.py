@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1273,6 +1273,89 @@ async def api_fvg_scan_now():
     mon_events = await asyncio.to_thread(monitor_signals)
     events_summary = {k: len(v) for k, v in mon_events.items()}
     return {"scan": scan_stats, "monitor": events_summary}
+
+
+@app.post("/api/tv-webhook")
+async def api_tv_webhook(request: Request):
+    """TradingView Webhook receiver for FVG alerts.
+
+    Payload:
+      {"secret": "...", "ticker": "EURUSD", "tf": "60",
+       "direction": "bullish"|"bearish", "price": 1.0875,
+       "time": "2026-04-16T10:00:01Z"}
+
+    Returns: {"ok": bool, "reason": str, "instrument": str, "direction": str,
+              "entry": float, "sl": float, "fvg_id": str}
+    """
+    from config import TV_WEBHOOK_SECRET
+    from tv_webhook import process_tv_webhook
+    import logging as _log
+    try:
+        payload = await request.json()
+    except Exception as e:
+        return Response(
+            status_code=400,
+            content=json.dumps({"ok": False, "error": f"invalid JSON: {e}"}),
+            media_type="application/json",
+        )
+    if not isinstance(payload, dict):
+        return Response(
+            status_code=400,
+            content=json.dumps({"ok": False, "error": "payload must be JSON object"}),
+            media_type="application/json",
+        )
+    # Secret check
+    provided = (payload.get("secret") or "").strip()
+    if not TV_WEBHOOK_SECRET or provided != TV_WEBHOOK_SECRET:
+        _log.getLogger(__name__).warning(
+            f"[tv-webhook] invalid secret from {request.client.host if request.client else '?'}"
+        )
+        return Response(
+            status_code=401,
+            content=json.dumps({"ok": False, "error": "invalid secret"}),
+            media_type="application/json",
+        )
+    try:
+        result = await asyncio.to_thread(process_tv_webhook, payload)
+    except Exception as e:
+        import traceback
+        _log.getLogger(__name__).exception(f"[tv-webhook] processing error: {e}")
+        return Response(
+            status_code=500,
+            content=json.dumps({"ok": False, "error": str(e), "trace": traceback.format_exc()[-800:]}),
+            media_type="application/json",
+        )
+    # Send FVG FORMED notification via BOT8 if signal created
+    if result.get("ok") and result.get("reason") == "created":
+        try:
+            from watcher import _send_fvg_formed_alert
+            # fire-and-forget — do not block webhook response
+            asyncio.create_task(_send_fvg_formed_alert_safe(result))
+        except Exception:
+            pass
+    return result
+
+
+async def _send_fvg_formed_alert_safe(result: dict):
+    """Безопасный wrapper — не валит webhook если alert module отсутствует."""
+    try:
+        from database import _fvg_signals
+        from bson import ObjectId
+        fvg_id = result.get("fvg_id")
+        if not fvg_id:
+            return
+        sig = _fvg_signals().find_one({"_id": ObjectId(fvg_id)})
+        if not sig:
+            return
+        try:
+            from watcher import _send_fvg_formed_alert
+            await _send_fvg_formed_alert(sig)
+        except (ImportError, AttributeError):
+            # Функция может отсутствовать — TV webhook работает и без алерта
+            pass
+    except Exception as e:
+        import logging as _log
+        _log.getLogger(__name__).debug(f"[tv-webhook] formed alert skipped: {e}")
 
 
 @app.get("/api/claude-budget")
