@@ -2719,9 +2719,28 @@ async function loadPaperStatus() {
     const r2 = await fetch('/api/paper/history?limit=20');
     const d2 = await r2.json();
     const histDiv = document.getElementById('atHistory');
-    window._paperHistory = d2.items || [];
-    if (d2.items && d2.items.length) {
-      histDiv.innerHTML = d2.items.map((h, idx) => {
+    const newItems = d2.items || [];
+
+    // Ключ списка — сигнатура сделок (id+closed_at). Если не изменился —
+    // НЕ перерисовываем DOM, чтобы не закрывать открытые гармошки.
+    const newKey = newItems.map(h => `${h.trade_id||h._id||h.symbol}_${h.closed_at||''}_${h.pnl_usdt||0}`).join('|');
+    if (histDiv._lastKey === newKey && histDiv.innerHTML.length > 50) {
+      // Данные те же — просто обновим window._paperHistory (на случай если модифицировались внутри)
+      window._paperHistory = newItems;
+      return;  // выходим из функции без рендера
+    }
+
+    // Запомним какие гармошки были открыты (idx) чтобы восстановить
+    const wasOpen = new Set();
+    for (let i = 0; i < (window._paperHistory || []).length; i++) {
+      const el = document.getElementById('paperHistChart' + i);
+      if (el && el.style.display === 'block') wasOpen.add(i);
+    }
+
+    window._paperHistory = newItems;
+    histDiv._lastKey = newKey;
+    if (newItems.length) {
+      histDiv.innerHTML = newItems.map((h, idx) => {
         const win = (h.pnl_usdt || 0) > 0;
         const icon = win ? '✅' : '❌';
         const pair = h.symbol ? h.symbol.replace('USDT','') : '?';
@@ -2750,6 +2769,17 @@ async function loadPaperStatus() {
           <div id="phcChart${idx}" style="height:400px;"></div>
         </div>`;
       }).join('');
+      // Восстановим открытые гармошки (если пользователь что-то развернул)
+      for (const idx of wasOpen) {
+        const el = document.getElementById('paperHistChart' + idx);
+        if (el) {
+          el.style.display = 'block';
+          // Перерисуем график (новый DOM — старый chart объект умер)
+          if (typeof _drawPaperHistChart === 'function') {
+            _drawPaperHistChart(idx);
+          }
+        }
+      }
     } else {
       histDiv.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>';
     }
