@@ -1358,64 +1358,52 @@ async def api_cv_replay_last_alert(payload: dict | None = None):
     payload (optional): {"signal_id": 123} — если хочешь конкретный сигнал.
     """
     import traceback as _tb
-    from database import _signals, _events, utcnow as _unow
+    from database import _signals, _events, utcnow as _unow, Signal
     from datetime import timedelta as _td
-    from sqlalchemy.orm import Session as _SQLSession
-    from database import Signal, SessionLocal as _SQLSess
 
-    # 1. Find target signal
+    # 1. Find target signal from Mongo
     sig_id = (payload or {}).get("signal_id")
-    sess = _SQLSess()
-    try:
-        if sig_id:
-            sig = sess.query(Signal).filter(Signal.id == int(sig_id)).first()
-        else:
-            sig = sess.query(Signal).filter(
-                Signal.source == "cryptovizor",
-                Signal.pattern_triggered == True,
-            ).order_by(Signal.pattern_triggered_at.desc()).first()
-        if not sig:
-            return {"ok": False, "error": "no CV signal with pattern_triggered found"}
-        target = {
-            "id": sig.id,
-            "pair": sig.pair,
-            "direction": sig.direction,
-            "entry": sig.entry,
-            "pattern_name": sig.pattern_name,
-            "pattern_price": sig.pattern_price,
-            "ai_score": sig.ai_score,
-        }
-    finally:
-        sess.close()
+    if sig_id:
+        doc = _signals().find_one({"id": int(sig_id)})
+    else:
+        doc = _signals().find_one(
+            {"source": "cryptovizor", "pattern_triggered": True},
+            sort=[("pattern_triggered_at", -1)],
+        )
+    if not doc:
+        return {"ok": False, "error": "no CV signal with pattern_triggered found"}
+    sig_obj = Signal.from_dict(doc)
+    target = {
+        "id": doc.get("id"),
+        "pair": doc.get("pair"),
+        "direction": doc.get("direction"),
+        "entry": doc.get("entry"),
+        "pattern_name": doc.get("pattern_name"),
+        "pattern_price": doc.get("pattern_price"),
+        "ai_score": doc.get("ai_score"),
+    }
 
     # 2. Try to send via _send_cryptovizor_alert
-    from watcher import _send_cryptovizor_alert, _bot2, _bot, _admin_chat_id
+    import watcher as _w
     result = {
         "ok": True,
         "signal": target,
-        "bot2_ready": bool(_bot2),
-        "admin_chat_id_set": bool(_admin_chat_id),
+        "bot2_ready": bool(_w._bot2),
+        "bot_ready": bool(_w._bot),
+        "admin_chat_id": _w._admin_chat_id,
     }
     try:
-        # Load full Signal ORM
-        sess2 = _SQLSess()
-        try:
-            full_sig = sess2.query(Signal).filter(Signal.id == target["id"]).first()
-            if not full_sig:
-                return {"ok": False, "error": "signal disappeared"}
-            await _send_cryptovizor_alert(
-                full_sig,
-                target["pattern_name"] or "test",
-                target["pattern_price"] or target["entry"],
-                None, None, None,  # s1, r1, chart_png
-            )
-            result["send_attempted"] = True
-        finally:
-            sess2.close()
+        await _w._send_cryptovizor_alert(
+            sig_obj,
+            target["pattern_name"] or "test",
+            target["pattern_price"] or target["entry"] or 0,
+            None, None, None,  # s1, r1, chart_png
+        )
+        result["send_attempted"] = True
     except Exception as e:
         result["ok"] = False
         result["send_exception"] = f"{type(e).__name__}: {e}"
-        result["trace"] = _tb.format_exc()[-1500:]
+        result["trace"] = _tb.format_exc()[-1800:]
 
     # 3. Collect recent cv_alert_error events
     since = _unow() - _td(hours=24)
@@ -1428,7 +1416,7 @@ async def api_cv_replay_last_alert(payload: dict | None = None):
             "signal_id": d.get("signal_id"),
             "pair": d.get("pair"),
             "error": d.get("error"),
-            "trace_tail": (d.get("trace") or "")[-600:],
+            "trace_tail": (d.get("trace") or "")[-800:],
         })
     result["recent_errors"] = errors
     result["recent_error_count"] = len(errors)
