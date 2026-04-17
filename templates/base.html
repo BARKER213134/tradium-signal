@@ -675,6 +675,79 @@
       };
       window.sigIcon._version = 'v4-strong';
       console.log('[sigIcon] loaded', window.sigIcon._version);
+
+      // ─── Market state markers (KC + Reversal changes) ─────────────
+      // Рисует на графике смены Keltner ETH (🛡) и Reversal Meter (🎢)
+      // поверх существующих сигнальных маркеров. Вызывать после setMarkers().
+      //
+      // Usage:
+      //   const events = await fetch(`/api/market-events?since_ts=${firstTs}&until_ts=${lastTs}`).then(r=>r.json());
+      //   const added = window._addMarketStateMarkers(candles, events.events);
+      //   series.setMarkers([...existingMarkers, ...added]);
+      window._addMarketStateMarkers = function(candles, events) {
+        if (!candles || !candles.length || !events || !events.length) return [];
+        const firstTs = candles[0].time;
+        const lastTs = candles[candles.length - 1].time;
+        const nearest = (ts) => {
+          let mc = candles[candles.length - 1], minD = Infinity;
+          for (const c of candles) {
+            const diff = Math.abs(c.time - ts);
+            if (diff < minD) { minD = diff; mc = c; }
+          }
+          return mc;
+        };
+        const out = [];
+        for (const ev of events) {
+          const ts = ev.at_ts || 0;
+          if (!ts || ts < firstTs || ts > lastTs) continue;
+          const mc = nearest(ts);
+          if (ev.type === 'kc') {
+            // Keltner ETH: 🛡 сверху свечи
+            const to = (ev.to || '').toUpperCase();
+            const icon = to === 'LONG' ? '🛡🟢' : to === 'SHORT' ? '🛡🔴' : '🛡⚪';
+            const color = to === 'LONG' ? '#00e5a0' : to === 'SHORT' ? '#ff4d6d' : '#888';
+            out.push({
+              time: mc.time,
+              position: 'aboveBar',
+              color: color,
+              shape: 'square',
+              text: `${icon} KC→${to}`,
+              size: 1,
+            });
+          } else if (ev.type === 'reversal') {
+            // Reversal Meter: 🎢 снизу свечи
+            const to = (ev.to || '').toUpperCase();
+            let icon, color;
+            if (to === 'STRONG_BULL' || to === 'BULL') { icon = '🎢🟢'; color = '#00e5a0'; }
+            else if (to === 'STRONG_BEAR' || to === 'BEAR') { icon = '🎢🔴'; color = '#ff4d6d'; }
+            else { icon = '🎢⚪'; color = '#888'; }
+            const scoreStr = typeof ev.score === 'number' ? ` ${ev.score >= 0 ? '+' : ''}${ev.score}` : '';
+            out.push({
+              time: mc.time,
+              position: 'belowBar',
+              color: color,
+              shape: 'circle',
+              text: `${icon} REV→${to.replace('STRONG_','')}${scoreStr}`,
+              size: 1,
+            });
+          }
+        }
+        return out;
+      };
+
+      // Fetch helper — кешируется на 15 сек
+      window._fetchMarketEvents = async function(firstTs, lastTs) {
+        const cacheKey = `${firstTs}_${lastTs}`;
+        window._meCache = window._meCache || {};
+        const cached = window._meCache[cacheKey];
+        if (cached && (Date.now() - cached.at < 15000)) return cached.events;
+        try {
+          const r = await fetch(`/api/market-events?since_ts=${firstTs}&until_ts=${lastTs}`);
+          const d = await r.json();
+          window._meCache[cacheKey] = { at: Date.now(), events: d.events || [] };
+          return d.events || [];
+        } catch (e) { return []; }
+      };
     </script>
 </head>
 <body>
@@ -1522,6 +1595,17 @@ async function _renderLwcSignalChart(containerId, opts) {
   }
   series.setMarkers(markers);
 
+  // Market state markers (KC + Reversal) async
+  if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
+    window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
+      const msMarkers = window._addMarketStateMarkers(d.candles, events);
+      if (msMarkers.length) {
+        const combined = [...markers, ...msMarkers].sort((a,b) => a.time - b.time);
+        series.setMarkers(combined);
+      }
+    }).catch(() => {});
+  }
+
   if (opts.entry) series.createPriceLine({ price: +opts.entry, color:'#ffd23e', lineWidth:2, lineStyle:0, axisLabelVisible:true, title:'Entry' });
   if (opts.tp1) series.createPriceLine({ price: +opts.tp1, color:'#00e5a0', lineWidth:1, lineStyle:2, axisLabelVisible:true, title:'TP1' });
   if (opts.sl) series.createPriceLine({ price: +opts.sl, color:'#ff4d6d', lineWidth:1, lineStyle:2, axisLabelVisible:true, title:'SL' });
@@ -1857,6 +1941,13 @@ async function _renderFvgChart(area, sig, tf) {
   }
   markers.sort((a,b)=>a.time-b.time);
   series.setMarkers(markers);
+  // Market state overlay (KC + Reversal) — работает и для FVG/forex графиков
+  if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
+    window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
+      const ms = window._addMarketStateMarkers(d.candles, events);
+      if (ms.length) series.setMarkers([...markers, ...ms].sort((a,b) => a.time - b.time));
+    }).catch(() => {});
+  }
   chart.timeScale().fitContent();
 }
 

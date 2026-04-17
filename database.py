@@ -87,6 +87,12 @@ def _td_quota() -> Collection:
     return _get_db().td_quota
 
 
+def _market_events() -> Collection:
+    """Market state changes — Keltner ETH и Reversal Meter zone flips.
+    Используется для маркеров на графиках."""
+    return _get_db().market_events
+
+
 
 
 def _counters() -> Collection:
@@ -628,6 +634,11 @@ def init_db():
         fcc.create_index("cached_at", expireAfterSeconds=7*86400, name="ttl_7d")
         # TD quota: 14 дней
         tdq.create_index("at", expireAfterSeconds=14*86400, name="ttl_14d")
+        # Market events (KC/Reversal changes): 30 дней
+        me = _market_events()
+        me.create_index("at", expireAfterSeconds=30*86400, name="ttl_30d")
+        me.create_index([("at", DESCENDING)])
+        me.create_index([("type", ASCENDING), ("at", DESCENDING)])
     except Exception:
         pass  # idempotent — если TTL индексы уже есть, ok
 

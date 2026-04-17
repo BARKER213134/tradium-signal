@@ -137,11 +137,22 @@ async def _check_reversal_flip():
         _last_reversal_zone = zone
         print(f"[REVERSAL] {old} → {zone} (score={score})", flush=True)
         logger.info(f"Reversal zone change: {old} → {zone} (score={score})")
-        # ⛔ Уведомления о смене Reversal зоны ОТКЛЮЧЕНЫ (решение пользователя
-        # 2026-04-17). Состояние _last_reversal_zone всё равно обновляется —
-        # его читает UI (Reversal Meter виджет). Логи в Railway остаются.
-        # Чтобы включить обратно — раскомментируй блок отправки ниже.
-        # # for bot in [_bot, _bot2, _bot4]: await bot.send_message(...)
+        # Записываем event для маркера на графиках
+        try:
+            from database import _market_events
+            _market_events().insert_one({
+                "at": utcnow(),
+                "type": "reversal",
+                "from": old,
+                "to": zone,
+                "score": score,
+                "direction": direction,
+                "strength": strength,
+            })
+        except Exception as e:
+            logger.warning(f"[REVERSAL] event save fail: {e}")
+        # Уведомления в боты отключены (решение 2026-04-17). Маркеры на
+        # графиках — через /api/market-events.
     except Exception as e:
         print(f"[REVERSAL] ERROR: {e}", flush=True)
 
@@ -164,11 +175,22 @@ async def _check_kc_change():
             _last_kc_direction = d
             print(f"[KC] CHANGED: {old} → {d}", flush=True)
             logger.info(f"KC CHANGED: {old} → {d}")
-            # ⛔ Уведомления о смене Keltner ОТКЛЮЧЕНЫ (решение пользователя
-            # 2026-04-17). Состояние _last_kc_direction обновляется —
-            # его читает логика фильтрации сигналов (LONG/SHORT/NEUTRAL).
-            # Чтобы включить обратно — раскомментируй блок отправки ниже.
-            # # for bot in [_bot, _bot2, _bot4]: await bot.send_message(...)
+            # Записываем event для маркера на графиках
+            try:
+                from database import _market_events
+                _market_events().insert_one({
+                    "at": utcnow(),
+                    "type": "kc",
+                    "from": old,
+                    "to": d,
+                    "price": kc.get("price"),
+                    "upper": kc.get("upper"),
+                    "lower": kc.get("lower"),
+                })
+            except Exception as e:
+                logger.warning(f"[KC] event save fail: {e}")
+            # Уведомления в боты отключены (решение 2026-04-17).
+            # Маркеры на графиках — через /api/market-events.
     except Exception as e:
         print(f"[KC] ERROR: {e}", flush=True)
 

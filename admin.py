@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -2733,6 +2733,45 @@ async def api_journal():
     Server-side limit 14 days + per-source cap. Cache 45s (async-lock safe)."""
     from cache_utils import journal_cache
     return await journal_cache.get_or_compute("journal_all", _compute_journal)
+
+
+@app.get("/api/market-events")
+async def api_market_events(since_ts: int = 0, until_ts: int = 0, types: str = "kc,reversal"):
+    """Смены состояния рынка — Keltner ETH и Reversal Meter.
+    Используется для маркеров на всех графиках.
+
+    Params:
+      since_ts / until_ts — unix timestamps (если 0 — без границы)
+      types — csv "kc,reversal" (по умолчанию оба)
+    """
+    from database import _market_events as _me
+    from datetime import datetime as _dt, timezone as _tz
+    type_list = [t.strip() for t in types.split(",") if t.strip()]
+    q = {}
+    if type_list:
+        q["type"] = {"$in": type_list}
+    if since_ts or until_ts:
+        dq = {}
+        if since_ts:
+            dq["$gte"] = _dt.fromtimestamp(since_ts, tz=_tz.utc).replace(tzinfo=None)
+        if until_ts:
+            dq["$lte"] = _dt.fromtimestamp(until_ts, tz=_tz.utc).replace(tzinfo=None)
+        q["at"] = dq
+    events = []
+    for e in _me().find(q).sort("at", 1).limit(500):
+        at = e.get("at")
+        if not at:
+            continue
+        events.append({
+            "at": at.isoformat() if hasattr(at, "isoformat") else str(at),
+            "at_ts": int(at.timestamp()) if hasattr(at, "timestamp") else 0,
+            "type": e.get("type"),
+            "from": e.get("from"),
+            "to": e.get("to"),
+            "score": e.get("score"),
+            "direction": e.get("direction"),
+        })
+    return {"events": events, "count": len(events)}
 
 
 @app.get("/api/journal/by-symbol")

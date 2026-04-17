@@ -2830,6 +2830,13 @@ async function _drawPaperHistChart(idx) {
     });
     markers.sort((a, b) => a.time - b.time);
     series.setMarkers(markers);
+    // Market state overlay (KC + Reversal)
+    if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
+      window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
+        const ms = window._addMarketStateMarkers(d.candles, events);
+        if (ms.length) series.setMarkers([...markers, ...ms].sort((a,b) => a.time - b.time));
+      }).catch(() => {});
+    }
 
     // ── Линии Entry / TP / SL / Exit ──
     if (h.entry) series.createPriceLine({ price: +h.entry, color: '#ffd23e', lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' });
@@ -3037,6 +3044,13 @@ async function _renderPaperChart(idx, tf) {
     }
     markers.sort((a,b) => a.time - b.time);
     series.setMarkers(markers);
+    // Market state overlay (KC + Reversal)
+    if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
+      window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
+        const ms = window._addMarketStateMarkers(d.candles, events);
+        if (ms.length) series.setMarkers([...markers, ...ms].sort((a,b) => a.time - b.time));
+      }).catch(() => {});
+    }
 
     // Save marker time for tooltip
     area._markerTime = mainMc.time;
@@ -4254,6 +4268,13 @@ async function loadCoinChart(coin) {
     }
     unique.sort((a, b) => a.time - b.time);
     series.setMarkers(unique);
+    // Market state overlay (KC + Reversal)
+    if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
+      window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
+        const ms = window._addMarketStateMarkers(d.candles, events);
+        if (ms.length) series.setMarkers([...unique, ...ms].sort((a,b) => a.time - b.time));
+      }).catch(() => {});
+    }
 
     // Tooltip для маркеров
     _attachTooltip(chart, chartDiv, coinMarkerMap);
@@ -4745,6 +4766,13 @@ async function openJournalChart(idx, forceTF) {
     }
     markers.sort((a,b) => a.time - b.time);
     series.setMarkers(markers);
+    // Market state overlay (KC + Reversal)
+    if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
+      window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
+        const ms = window._addMarketStateMarkers(d.candles, events);
+        if (ms.length) series.setMarkers([...markers, ...ms].sort((a,b) => a.time - b.time));
+      }).catch(() => {});
+    }
 
     // Tooltip для маркеров
     _attachTooltip(chart, container, modalMarkerMap);
