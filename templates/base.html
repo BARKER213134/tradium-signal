@@ -714,22 +714,9 @@
               text: icon,
               size: 1,
             });
-          } else if (ev.type === 'reversal') {
-            // Reversal Meter: 🎢 снизу свечи (только эмоджи)
-            const to = (ev.to || '').toUpperCase();
-            let icon, color;
-            if (to === 'STRONG_BULL' || to === 'BULL') { icon = '🎢🟢'; color = '#00e5a0'; }
-            else if (to === 'STRONG_BEAR' || to === 'BEAR') { icon = '🎢🔴'; color = '#ff4d6d'; }
-            else { icon = '🎢⚪'; color = '#888'; }
-            out.push({
-              time: mc.time,
-              position: 'belowBar',
-              color: color,
-              shape: 'circle',
-              text: icon,
-              size: 1,
-            });
           }
+          // Reversal Meter маркеры отключены — забивали график.
+          // Состояние Reversal видно в отдельном виджете на странице.
         }
         return out;
       };
