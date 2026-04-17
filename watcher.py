@@ -1460,6 +1460,17 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     # AI signals теперь шлются в BOT2 (@trendscryptobot), как и обычные
     # CV-алерты. Fallback на _bot (главный) если BOT2 упал.
     target_bot = _bot2 or _bot
+
+    # ── Маячок СРАЗУ (раньше был в середине — до него не доходило если
+    # Claude API падал на _generate_ai_full_analysis/tg_summary) ──
+    try:
+        from database import _events
+        _events().insert_one({"at": utcnow(), "type": "ai_alert_called",
+            "data": {"signal_id": signal.id, "pair": signal.pair,
+                     "bot_ready": bool(target_bot), "chat_set": bool(_admin_chat_id)}})
+    except Exception:
+        pass
+
     if not target_bot or not _admin_chat_id:
         return
     is_long = signal.direction in ("LONG", "BUY")
@@ -1472,23 +1483,40 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     s1 = getattr(signal, "dca1", None)
     r1 = getattr(signal, "dca2", None)
 
-    # 1. Полный анализ → сохраняем в БД (для сайта)
-    full_analysis = await _generate_ai_full_analysis(signal, current_price, s1, r1)
-    if full_analysis:
-        signal.comment = full_analysis
-        from database import _signals
-        _signals().update_one(
-            {"id": signal.id},
-            {"$set": {"comment": full_analysis}}
-        )
+    # 1. Полный анализ → сохраняем в БД (Claude API, может упасть по budget)
+    full_analysis = None
+    try:
+        full_analysis = await _generate_ai_full_analysis(signal, current_price, s1, r1)
+        if full_analysis:
+            signal.comment = full_analysis
+            from database import _signals
+            _signals().update_one({"id": signal.id}, {"$set": {"comment": full_analysis}})
+    except Exception as e:
+        logger.warning(f"[AI-ALERT] full_analysis fail #{signal.id}: {e}")
+        try:
+            from database import _events
+            _events().insert_one({"at": utcnow(), "type": "ai_full_analysis_error",
+                "data": {"signal_id": signal.id, "pair": signal.pair, "error": f"{type(e).__name__}: {e}"}})
+        except Exception:
+            pass
 
-    # 2. Короткое саммари → для Telegram
-    tg_summary = await _generate_ai_tg_summary(signal, current_price, s1, r1)
+    # 2. Короткое саммари (тоже Claude)
+    tg_summary = None
+    try:
+        tg_summary = await _generate_ai_tg_summary(signal, current_price, s1, r1)
+    except Exception as e:
+        logger.warning(f"[AI-ALERT] tg_summary fail #{signal.id}: {e}")
 
     sym = (signal.pair or "").replace("/", "").upper()
     _st = ai_result.get("st", {})
     _stp = _st.get("confirmed", False) and _st.get("direction") == signal.direction if _st else True
-    _pump = await _pump_check(sym)
+
+    try:
+        _pump = await _pump_check(sym)
+    except Exception as e:
+        logger.warning(f"[AI-ALERT] pump_check fail #{signal.id}: {e}")
+        _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
+
     hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
 
     lvl = ""
@@ -1510,21 +1538,24 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     )
     if tg_summary:
         text += f"\n📝 {tg_summary}\n"
-    text += f"\n{_market_block(_pump, _stp, _st or {})}"
-    text += await _reversal_block(signal.direction)
-    text += await _pending_cluster_block(signal.pair, signal.direction)
-
-    from database import _signals as _sc2
-    _sc2().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
-
-    # ── Маячок event ──
     try:
-        from database import _events
-        _events().insert_one({"at": utcnow(), "type": "ai_alert_called",
-            "data": {"signal_id": signal.id, "pair": signal.pair,
-                     "bot4_primary": target_bot is _bot4}})
-    except Exception:
-        pass
+        text += f"\n{_market_block(_pump, _stp, _st or {})}"
+    except Exception as e:
+        logger.warning(f"[AI-ALERT] market_block fail #{signal.id}: {e}")
+    try:
+        text += await _reversal_block(signal.direction)
+    except Exception as e:
+        logger.warning(f"[AI-ALERT] reversal_block fail #{signal.id}: {e}")
+    try:
+        text += await _pending_cluster_block(signal.pair, signal.direction)
+    except Exception as e:
+        logger.warning(f"[AI-ALERT] cluster_block fail #{signal.id}: {e}")
+
+    try:
+        from database import _signals as _sc2
+        _sc2().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
+    except Exception as e:
+        logger.warning(f"[AI-ALERT] pump save fail #{signal.id}: {e}")
 
     # Главная отправка — с fallback на BOT2/BOT если основной бот упал
     # (типичный случай: BOT4_BOT_TOKEN невалиден, но Bot объект создан).
