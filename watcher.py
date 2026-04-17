@@ -798,14 +798,18 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
 
     sym = (signal.pair or "").replace("/", "").upper()
 
-    # ── Hardened helpers: каждый блок не должен ронять весь алерт ──
+    # ── Hardened helpers: каждый await с собственным timeout 5s ──
+    # Если helper зависнет — продолжаем без этого блока, alert всё равно уйдёт.
     try:
         _stp, _std = _check_keltner_filter(signal.direction)
     except Exception as e:
         logger.warning(f"[CV-ALERT] keltner fail #{signal.id}: {e}")
         _stp, _std = None, {}
     try:
-        _pump = await _pump_check(sym)
+        _pump = await asyncio.wait_for(_pump_check(sym), timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning(f"[CV-ALERT] pump_check TIMEOUT #{signal.id}")
+        _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
     except Exception as e:
         logger.warning(f"[CV-ALERT] pump_check fail #{signal.id}: {e}")
         _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
@@ -840,11 +844,15 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"{mkt_block}"
     )
     try:
-        text += await _reversal_block(signal.direction)
+        text += await asyncio.wait_for(_reversal_block(signal.direction), timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning(f"[CV-ALERT] reversal_block TIMEOUT #{signal.id}")
     except Exception as e:
         logger.warning(f"[CV-ALERT] reversal_block fail #{signal.id}: {e}")
     try:
-        text += await _pending_cluster_block(pair, signal.direction)
+        text += await asyncio.wait_for(_pending_cluster_block(pair, signal.direction), timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning(f"[CV-ALERT] cluster_block TIMEOUT #{signal.id}")
     except Exception as e:
         logger.warning(f"[CV-ALERT] cluster_block fail #{signal.id}: {e}")
 
@@ -1439,14 +1447,19 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     s1 = getattr(signal, "dca1", None)
     r1 = getattr(signal, "dca2", None)
 
-    # 1. Полный анализ → сохраняем в БД (Claude API, может упасть по budget)
+    # 1. Полный анализ (Claude API — timeout 15s)
     full_analysis = None
     try:
-        full_analysis = await _generate_ai_full_analysis(signal, current_price, s1, r1)
+        full_analysis = await asyncio.wait_for(
+            _generate_ai_full_analysis(signal, current_price, s1, r1),
+            timeout=15.0,
+        )
         if full_analysis:
             signal.comment = full_analysis
             from database import _signals
             _signals().update_one({"id": signal.id}, {"$set": {"comment": full_analysis}})
+    except asyncio.TimeoutError:
+        logger.warning(f"[AI-ALERT] full_analysis TIMEOUT #{signal.id}")
     except Exception as e:
         logger.warning(f"[AI-ALERT] full_analysis fail #{signal.id}: {e}")
         try:
@@ -1456,10 +1469,15 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
         except Exception:
             pass
 
-    # 2. Короткое саммари (тоже Claude)
+    # 2. Короткое саммари (Claude — timeout 10s)
     tg_summary = None
     try:
-        tg_summary = await _generate_ai_tg_summary(signal, current_price, s1, r1)
+        tg_summary = await asyncio.wait_for(
+            _generate_ai_tg_summary(signal, current_price, s1, r1),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"[AI-ALERT] tg_summary TIMEOUT #{signal.id}")
     except Exception as e:
         logger.warning(f"[AI-ALERT] tg_summary fail #{signal.id}: {e}")
 
@@ -1468,7 +1486,10 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     _stp = _st.get("confirmed", False) and _st.get("direction") == signal.direction if _st else True
 
     try:
-        _pump = await _pump_check(sym)
+        _pump = await asyncio.wait_for(_pump_check(sym), timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning(f"[AI-ALERT] pump_check TIMEOUT #{signal.id}")
+        _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
     except Exception as e:
         logger.warning(f"[AI-ALERT] pump_check fail #{signal.id}: {e}")
         _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
@@ -1499,11 +1520,15 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     except Exception as e:
         logger.warning(f"[AI-ALERT] market_block fail #{signal.id}: {e}")
     try:
-        text += await _reversal_block(signal.direction)
+        text += await asyncio.wait_for(_reversal_block(signal.direction), timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning(f"[AI-ALERT] reversal_block TIMEOUT #{signal.id}")
     except Exception as e:
         logger.warning(f"[AI-ALERT] reversal_block fail #{signal.id}: {e}")
     try:
-        text += await _pending_cluster_block(signal.pair, signal.direction)
+        text += await asyncio.wait_for(_pending_cluster_block(signal.pair, signal.direction), timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning(f"[AI-ALERT] cluster_block TIMEOUT #{signal.id}")
     except Exception as e:
         logger.warning(f"[AI-ALERT] cluster_block fail #{signal.id}: {e}")
 
