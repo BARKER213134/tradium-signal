@@ -4028,11 +4028,17 @@ function filterJournal() {
     if (minScore && (s.score || 0) < minScore) return false;
     if (pump === 'high' && (s.pump_score || 0) < 2) return false;
     if (window._journalStrongOnly) {
-      // Strong only: Confluence ≥5, Anomaly ≥70, CV с паттерном
-      // Tradium, Paper, Cluster — всегда показываем (кластер сам по себе композит)
-      if (s.source === 'confluence' && (s.score || 0) < 5) return false;
-      if (s.source === 'anomaly' && (s.score || 0) < 70) return false;
-      if (s.source === 'cryptovizor' && !s.pattern) return false;
+      // Strong only — единый критерий с window.isStrongSignal (Variant B)
+      //   Confluence ≥5, Anomaly ≥70, CV pattern + ai_score ≥50,
+      //   Cluster STRONG/MEGA, Tradium pattern_triggered
+      if (window.isStrongSignal) {
+        if (!window.isStrongSignal(s)) return false;
+      } else {
+        // fallback для старых правил (если isStrongSignal не загружен)
+        if (s.source === 'confluence' && (s.score || 0) < 5) return false;
+        if (s.source === 'anomaly' && (s.score || 0) < 70) return false;
+        if (s.source === 'cryptovizor' && !s.pattern) return false;
+      }
     }
     if (window._journalTopPickOnly && !s.is_top_pick) return false;
     return true;

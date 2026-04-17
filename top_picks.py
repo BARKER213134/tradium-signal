@@ -209,12 +209,19 @@ def _propagate_to_related_confluence(pair: str, direction: str,
 
 
 def tag_confluence(conf_id) -> bool:
-    """Для Confluence STRONG — проверка и флаг (подтверждение от cluster/Tradium/CV)."""
+    """Для Confluence STRONG — проверка и флаг (подтверждение от cluster/Tradium/CV).
+
+    ВАЖНО: при положительном срабатывании также запускает обратный retroactive
+    tagging — помечает связанные cluster/Tradium/CV сигналы в окне ±48h,
+    которые могли не стать top pick потому что Confluence появился ПОСЛЕ них.
+    """
     c = _confluence().find_one({"_id": conf_id})
     if not c or (c.get("score") or 0) < TOP_PICK_MIN_SCORE:
         return False
     at = c.get("detected_at")
-    res = is_top_pick(c.get("pair") or c.get("symbol", ""), c.get("direction", ""), at, for_source="confluence")
+    pair = c.get("pair") or c.get("symbol", "")
+    direction = c.get("direction", "")
+    res = is_top_pick(pair, direction, at, for_source="confluence")
     if res["is_top_pick"]:
         _confluence().update_one({"_id": c["_id"]}, {"$set": {
             "is_top_pick": True,
@@ -222,8 +229,94 @@ def tag_confluence(conf_id) -> bool:
             "top_pick_confirmations": res["confirmations"],
             "top_pick_confirmations_count": res["confirmations_count"],
         }})
+        # Retroactive: помечаем связанные cluster/Tradium/CV которые могли
+        # быть созданы ДО этой Confluence и не стали top pick.
+        try:
+            _propagate_confluence_to_related(pair, direction, at)
+        except Exception as e:
+            logger.warning(f"[tag_confluence] propagate fail: {e}")
         return True
     return False
+
+
+def _propagate_confluence_to_related(pair: str, direction: str,
+                                       around_at: Optional[datetime],
+                                       window_h: int = TOP_PICK_WINDOW_H) -> dict:
+    """Обратный propagation: когда STRONG Confluence становится top pick,
+    помечаем связанные cluster/Tradium/CV сигналы в окне ±48h, которые
+    не имеют is_top_pick=True (False или None).
+
+    Returns: {clusters, tradium, cv} — сколько обновлено.
+    """
+    stats = {"clusters": 0, "tradium": 0, "cv": 0}
+    if around_at is None:
+        return stats
+    norm = _norm_pair(pair)
+    norm_sym = norm.replace("/", "")
+    start = around_at - timedelta(hours=window_h)
+    end = around_at + timedelta(hours=window_h)
+
+    # Clusters
+    for cl in _clusters().find({
+        "$or": [{"pair": norm}, {"symbol": norm_sym}],
+        "direction": direction,
+        "trigger_at": {"$gte": start, "$lte": end},
+        "is_top_pick": {"$ne": True},
+    }):
+        r = is_top_pick(norm, direction, cl.get("trigger_at"), for_source="cluster")
+        if r["is_top_pick"]:
+            _clusters().update_one({"_id": cl["_id"]}, {"$set": {
+                "is_top_pick": True,
+                "top_pick_tagged_at": utcnow(),
+                "top_pick_confirmations": r["confirmations"],
+                "top_pick_confirmations_count": r["confirmations_count"],
+            }})
+            stats["clusters"] += 1
+
+    # Tradium triggered
+    for s in _signals().find({
+        "source": "tradium", "pattern_triggered": True,
+        "pair": {"$in": [norm, norm_sym]},
+        "direction": direction,
+        "$or": [
+            {"pattern_triggered_at": {"$gte": start, "$lte": end}},
+            {"received_at": {"$gte": start, "$lte": end}},
+        ],
+        "is_top_pick": {"$ne": True},
+    }):
+        at_sig = s.get("pattern_triggered_at") or s.get("received_at")
+        r = is_top_pick(norm, direction, at_sig, for_source="tradium")
+        if r["is_top_pick"]:
+            _signals().update_one({"_id": s["_id"]}, {"$set": {
+                "is_top_pick": True,
+                "top_pick_tagged_at": utcnow(),
+                "top_pick_confirmations": r["confirmations"],
+                "top_pick_confirmations_count": r["confirmations_count"],
+            }})
+            stats["tradium"] += 1
+
+    # Cryptovizor triggered
+    for s in _signals().find({
+        "source": "cryptovizor", "pattern_triggered": True,
+        "pair": {"$in": [norm, norm_sym]},
+        "direction": direction,
+        "pattern_triggered_at": {"$gte": start, "$lte": end},
+        "is_top_pick": {"$ne": True},
+    }):
+        at_sig = s.get("pattern_triggered_at")
+        r = is_top_pick(norm, direction, at_sig, for_source="cryptovizor")
+        if r["is_top_pick"]:
+            _signals().update_one({"_id": s["_id"]}, {"$set": {
+                "is_top_pick": True,
+                "top_pick_tagged_at": utcnow(),
+                "top_pick_confirmations": r["confirmations"],
+                "top_pick_confirmations_count": r["confirmations_count"],
+            }})
+            stats["cv"] += 1
+
+    if any(stats.values()):
+        logger.info(f"[top_pick] Reverse-propagation from Confluence {pair} {direction}: {stats}")
+    return stats
 
 
 def backfill_top_picks(days: int = 30) -> dict:

@@ -607,25 +607,39 @@
         return setInterval(() => { if (!window._pollingPaused) fn(); }, ms);
       };
 
-      // isStrongSignal — единый критерий "силы" сигнала.
+      // isStrongSignal — единый критерий "силы" сигнала (Variant B tightened).
       // Используется в:
       //   • фильтре "Only Strong" в Journal
       //   • sigIcon (для префикса ⭐)
       //   • маркерах на графиках
-      // Правила (должны совпадать с фильтром _journalStrongOnly в signals.html):
-      //   confluence: score ≥ 5
-      //   anomaly: score ≥ 70
-      //   cryptovizor: есть pattern (любой)
-      //   tradium / cluster / paper: всегда strong
+      // ⭐ должен быть редким маркером качества, не ковровым.
+      // Правила:
+      //   confluence:  score ≥ 5
+      //   anomaly:     score ≥ 70
+      //   cryptovizor: pattern + ai_score ≥ 50 (tightened — был просто pattern)
+      //   cluster:     strength in {MEGA, STRONG} (раньше — всегда)
+      //   tradium:     pattern_triggered (раньше — всегда)
+      //   paper:       обычные, больше не strong по умолчанию
       window.isStrongSignal = function(s) {
         if (!s) return false;
         const src = s.source;
         const score = +s.score || 0;
         if (src === 'confluence') return score >= 5;
         if (src === 'anomaly') return score >= 70;
-        if (src === 'cryptovizor') return !!s.pattern;
-        // tradium, cluster, paper — всегда strong по умолчанию
-        return src === 'tradium' || src === 'cluster' || src === 'paper';
+        if (src === 'cryptovizor') {
+          if (!s.pattern) return false;
+          const ai = +(s.ai_score ?? (s.meta && s.meta.ai_score) ?? 0);
+          return ai >= 50;
+        }
+        if (src === 'cluster') {
+          const strength = (s.strength || (s.meta && s.meta.strength) || '').toUpperCase();
+          return strength === 'MEGA' || strength === 'STRONG';
+        }
+        if (src === 'tradium') {
+          // triggered обязателен — иначе это просто setup
+          return !!(s.pattern_triggered || (s.meta && s.meta.pattern_triggered));
+        }
+        return false;
       };
 
       // sigIcon v4 (with meta.is_top_pick + meta.strong support)
