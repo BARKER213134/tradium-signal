@@ -850,6 +850,24 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     при любой ошибке полный traceback пишется в events с type='cv_alert_error'.
     """
     import traceback as _tb
+    # ── Маячок: пишем event что вызов ДОШЁЛ до функции ──
+    try:
+        from database import _events
+        _events().insert_one({
+            "at": utcnow(),
+            "type": "cv_alert_called",
+            "data": {
+                "signal_id": signal.id,
+                "pair": signal.pair,
+                "pattern": pattern,
+                "has_chart": bool(chart_png),
+                "bot2_ready": bool(_bot2),
+                "bot_ready": bool(_bot),
+                "admin_chat_set": bool(_admin_chat_id),
+            },
+        })
+    except Exception:
+        pass
     target_bot = _bot2 or _bot
     if not target_bot or not _admin_chat_id:
         logger.warning(f"[CV-ALERT] skip #{signal.id}: bot={bool(target_bot)} chat={bool(_admin_chat_id)}")
@@ -1055,14 +1073,37 @@ async def _check_cryptovizor(db):
                 if s1 is not None: s.dca1 = s1
                 if r1 is not None: s.dca2 = r1
 
-                # AI score
-                await _ai_score_and_alert_pattern(s, strongest, current_price, s1, r1, chart_png, candles, db)
+                # AI score — Claude может упасть (budget/timeout), не критично для алерта
+                try:
+                    await _ai_score_and_alert_pattern(s, strongest, current_price, s1, r1, chart_png, candles, db)
+                except Exception as e:
+                    logger.warning(f"[CV] _ai_score_and_alert_pattern fail #{s.id}: {e}")
+                    try:
+                        from database import _events
+                        _events().insert_one({"at": utcnow(), "type": "cv_ai_score_error",
+                            "data": {"signal_id": s.id, "pair": s.pair, "error": f"{type(e).__name__}: {e}"}})
+                    except Exception:
+                        pass
 
                 # SuperTrend ETH фильтр
-                st_passed, st_data = _check_keltner_filter(s.direction)
+                try:
+                    st_passed, st_data = _check_keltner_filter(s.direction)
+                except Exception as e:
+                    logger.warning(f"[CV] keltner fail #{s.id}: {e}")
+                    st_passed, st_data = True, {}  # default: пропускаем алерт если фильтр упал
 
                 # AI filter решает: Сигнал AI или обычный Сигнал
-                ai_passed = await _run_ai_filter(s, current_price, db)
+                try:
+                    ai_passed = await _run_ai_filter(s, current_price, db)
+                except Exception as e:
+                    logger.warning(f"[CV] _run_ai_filter fail #{s.id}: {e}")
+                    try:
+                        from database import _events
+                        _events().insert_one({"at": utcnow(), "type": "cv_ai_filter_error",
+                            "data": {"signal_id": s.id, "pair": s.pair, "error": f"{type(e).__name__}: {e}"}})
+                    except Exception:
+                        pass
+                    ai_passed = False  # fallback: обычный CV-алерт
                 if ai_passed:
                     s.status = "ПАТТЕРН"
                     s.filter_reason = f"AI_SIGNAL:score={s.ai_score or 0}"
