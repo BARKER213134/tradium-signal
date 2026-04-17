@@ -844,9 +844,15 @@ async def _check_once():
 async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: float,
                                    s1: float | None, r1: float | None,
                                    chart_png: bytes | None):
-    """Алерт в отдельный бот BOT2 для Cryptovizor."""
+    """Алерт в отдельный бот BOT2 для Cryptovizor.
+
+    Hardened: каждый внешний вызов в try/except с None fallback,
+    при любой ошибке полный traceback пишется в events с type='cv_alert_error'.
+    """
+    import traceback as _tb
     target_bot = _bot2 or _bot
     if not target_bot or not _admin_chat_id:
+        logger.warning(f"[CV-ALERT] skip #{signal.id}: bot={bool(target_bot)} chat={bool(_admin_chat_id)}")
         return
     is_long = signal.direction in ("LONG", "BUY")
     dir_emoji = "🟢" if is_long else "🔴"
@@ -869,13 +875,30 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     r1_line = f"\n🔴 <b>R1:</b> <code>{r1}</code>" if r1 else ""
 
     sym = (signal.pair or "").replace("/", "").upper()
-    _stp, _std = _check_keltner_filter(signal.direction)
-    _pump = await _pump_check(sym)
+
+    # ── Hardened helpers: каждый блок не должен ронять весь алерт ──
+    try:
+        _stp, _std = _check_keltner_filter(signal.direction)
+    except Exception as e:
+        logger.warning(f"[CV-ALERT] keltner fail #{signal.id}: {e}")
+        _stp, _std = None, {}
+    try:
+        _pump = await _pump_check(sym)
+    except Exception as e:
+        logger.warning(f"[CV-ALERT] pump_check fail #{signal.id}: {e}")
+        _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
+
     hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
 
     lvl = ""
     if s1: lvl += f"🟢 S1: <code>{s1}</code> | "
     if r1: lvl += f"🔴 R1: <code>{r1}</code>"
+
+    try:
+        mkt_block = _market_block(_pump, _stp, _std)
+    except Exception as e:
+        logger.warning(f"[CV-ALERT] market_block fail #{signal.id}: {e}")
+        mkt_block = ""
 
     text = (
         f"{hp}"
@@ -892,14 +915,30 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"{ai_line}"
         f"⚡ Тренд: {_fmt_trend(signal.trend)}\n"
         f"\n"
-        f"{_market_block(_pump, _stp, _std)}"
+        f"{mkt_block}"
     )
-    text += await _reversal_block(signal.direction)
-    text += await _pending_cluster_block(pair, signal.direction)
-    # Сохраняем pump в БД
-    from database import _signals as _sc
-    _sc().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
+    try:
+        text += await _reversal_block(signal.direction)
+    except Exception as e:
+        logger.warning(f"[CV-ALERT] reversal_block fail #{signal.id}: {e}")
+    try:
+        text += await _pending_cluster_block(pair, signal.direction)
+    except Exception as e:
+        logger.warning(f"[CV-ALERT] cluster_block fail #{signal.id}: {e}")
 
+    # Сохраняем pump в БД (не критично, оборачиваем)
+    try:
+        from database import _signals as _sc
+        _sc().update_one({"id": signal.id}, {"$set": {
+            "pump_score": _pump.get("score", 0),
+            "pump_factors": _pump.get("factors", []),
+        }})
+    except Exception as e:
+        logger.warning(f"[CV-ALERT] pump save fail #{signal.id}: {e}")
+
+    # ── Главная отправка ──
+    sent_ok = False
+    err_info = None
     try:
         if chart_png:
             from aiogram.types import BufferedInputFile
@@ -907,11 +946,53 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
             await target_bot.send_photo(_admin_chat_id, photo=photo, caption=text, parse_mode="HTML")
         else:
             await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
-        logger.info(f"Cryptovizor alert sent #{signal.id} {pair} {pattern}")
-        await _paper_on_signal({"symbol": sym, "direction": signal.direction, "entry": current_price, "source": "cryptovizor", "pattern": pattern, "score": getattr(signal, "ai_score", None), "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
+        sent_ok = True
+        logger.info(f"[CV-ALERT] sent #{signal.id} {pair} {pattern}")
+    except Exception as e:
+        err_info = f"{type(e).__name__}: {e}"
+        logger.error(f"[CV-ALERT] SEND FAIL #{signal.id} {pair}: {err_info}\n{_tb.format_exc()[-600:]}")
+        # Записываем в events для дальнейшей диагностики через UI/API
+        try:
+            from database import _events
+            _events().insert_one({
+                "at": utcnow(),
+                "type": "cv_alert_error",
+                "data": {
+                    "signal_id": signal.id,
+                    "pair": pair,
+                    "pattern": pattern,
+                    "error": err_info,
+                    "trace": _tb.format_exc()[-1500:],
+                    "has_chart": bool(chart_png),
+                    "text_len": len(text),
+                },
+            })
+        except Exception:
+            pass
+        # Фоллбэк: пробуем без фото и без HTML (на случай если parse_mode подводит)
+        if chart_png:
+            try:
+                await target_bot.send_message(_admin_chat_id,
+                    f"⚠ CV alert (fallback no-photo) #{signal.id} {pair} {pattern}\n"
+                    f"Error: {err_info}\n"
+                    f"Entry={signal.entry} Now={current_price}")
+                logger.info(f"[CV-ALERT] fallback text sent #{signal.id}")
+            except Exception as e2:
+                logger.error(f"[CV-ALERT] fallback also failed #{signal.id}: {e2}")
+
+    # Paper trading / cluster check — не зависят от успеха отправки
+    try:
+        await _paper_on_signal({"symbol": sym, "direction": signal.direction, "entry": current_price,
+                                 "source": "cryptovizor", "pattern": pattern,
+                                 "score": getattr(signal, "ai_score", None),
+                                 "pump_vol": _pump.get("volume_spike", 0),
+                                 "pump_oi": _pump.get("oi_change", 0)})
+    except Exception as e:
+        logger.warning(f"[CV-ALERT] paper_on_signal fail #{signal.id}: {e}")
+    try:
         await _cluster_check_on_signal(pair, signal.direction)
     except Exception as e:
-        logger.error(f"Cryptovizor alert fail #{signal.id}: {e}")
+        logger.warning(f"[CV-ALERT] cluster_check fail #{signal.id}: {e}")
 
 
 async def _check_cryptovizor(db):

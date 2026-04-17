@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1347,6 +1347,92 @@ async def api_fvg_top_picks(hours: int = 168, limit: int = 200, min_score: int =
         stats = await asyncio.to_thread(get_top_picks_stats, 720)
         return {"items": items, "stats": stats, "total": len(items)}
     return await top_picks_cache.get_or_compute(f"fvg_tp_{hours}_{limit}_{min_score}", _compute)
+
+
+@app.post("/api/cv-replay-last-alert")
+async def api_cv_replay_last_alert(payload: dict | None = None):
+    """Диагностический endpoint — проигрывает alert для последнего CV-сигнала
+    с pattern_triggered=True. Возвращает результат отправки + последние
+    cv_alert_error из events.
+
+    payload (optional): {"signal_id": 123} — если хочешь конкретный сигнал.
+    """
+    import traceback as _tb
+    from database import _signals, _events, utcnow as _unow
+    from datetime import timedelta as _td
+    from sqlalchemy.orm import Session as _SQLSession
+    from database import Signal, SessionLocal as _SQLSess
+
+    # 1. Find target signal
+    sig_id = (payload or {}).get("signal_id")
+    sess = _SQLSess()
+    try:
+        if sig_id:
+            sig = sess.query(Signal).filter(Signal.id == int(sig_id)).first()
+        else:
+            sig = sess.query(Signal).filter(
+                Signal.source == "cryptovizor",
+                Signal.pattern_triggered == True,
+            ).order_by(Signal.pattern_triggered_at.desc()).first()
+        if not sig:
+            return {"ok": False, "error": "no CV signal with pattern_triggered found"}
+        target = {
+            "id": sig.id,
+            "pair": sig.pair,
+            "direction": sig.direction,
+            "entry": sig.entry,
+            "pattern_name": sig.pattern_name,
+            "pattern_price": sig.pattern_price,
+            "ai_score": sig.ai_score,
+        }
+    finally:
+        sess.close()
+
+    # 2. Try to send via _send_cryptovizor_alert
+    from watcher import _send_cryptovizor_alert, _bot2, _bot, _admin_chat_id
+    result = {
+        "ok": True,
+        "signal": target,
+        "bot2_ready": bool(_bot2),
+        "admin_chat_id_set": bool(_admin_chat_id),
+    }
+    try:
+        # Load full Signal ORM
+        sess2 = _SQLSess()
+        try:
+            full_sig = sess2.query(Signal).filter(Signal.id == target["id"]).first()
+            if not full_sig:
+                return {"ok": False, "error": "signal disappeared"}
+            await _send_cryptovizor_alert(
+                full_sig,
+                target["pattern_name"] or "test",
+                target["pattern_price"] or target["entry"],
+                None, None, None,  # s1, r1, chart_png
+            )
+            result["send_attempted"] = True
+        finally:
+            sess2.close()
+    except Exception as e:
+        result["ok"] = False
+        result["send_exception"] = f"{type(e).__name__}: {e}"
+        result["trace"] = _tb.format_exc()[-1500:]
+
+    # 3. Collect recent cv_alert_error events
+    since = _unow() - _td(hours=24)
+    errors = []
+    for ev in _events().find({"type": "cv_alert_error", "at": {"$gte": since}}).sort("at", -1).limit(10):
+        d = ev.get("data", {})
+        at = ev.get("at")
+        errors.append({
+            "at": at.isoformat() if hasattr(at, "isoformat") else None,
+            "signal_id": d.get("signal_id"),
+            "pair": d.get("pair"),
+            "error": d.get("error"),
+            "trace_tail": (d.get("trace") or "")[-600:],
+        })
+    result["recent_errors"] = errors
+    result["recent_error_count"] = len(errors)
+    return result
 
 
 @app.post("/api/fvg-rescore-all")
