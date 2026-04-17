@@ -1454,40 +1454,11 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     s1 = getattr(signal, "dca1", None)
     r1 = getattr(signal, "dca2", None)
 
-    # 1. Полный анализ (Claude API — timeout 15s)
-    full_analysis = None
-    try:
-        full_analysis = await asyncio.wait_for(
-            _generate_ai_full_analysis(signal, current_price, s1, r1),
-            timeout=15.0,
-        )
-        if full_analysis:
-            signal.comment = full_analysis
-            from database import _signals
-            _signals().update_one({"id": signal.id}, {"$set": {"comment": full_analysis}})
-    except asyncio.TimeoutError:
-        logger.warning(f"[AI-ALERT] full_analysis TIMEOUT #{signal.id}")
-    except Exception as e:
-        logger.warning(f"[AI-ALERT] full_analysis fail #{signal.id}: {e}")
-        try:
-            from database import _events
-            _events().insert_one({"at": utcnow(), "type": "ai_full_analysis_error",
-                "data": {"signal_id": signal.id, "pair": signal.pair, "error": f"{type(e).__name__}: {e}"}})
-        except Exception:
-            pass
-
-    # 2. Короткое саммари (Claude — timeout 10s)
-    tg_summary = None
-    try:
-        tg_summary = await asyncio.wait_for(
-            _generate_ai_tg_summary(signal, current_price, s1, r1),
-            timeout=10.0,
-        )
-    except asyncio.TimeoutError:
-        logger.warning(f"[AI-ALERT] tg_summary TIMEOUT #{signal.id}")
-    except Exception as e:
-        logger.warning(f"[AI-ALERT] tg_summary fail #{signal.id}: {e}")
-
+    # FAST PATH (2026-04-17): Claude-блоки вынесены в background task.
+    # Основной алерт уходит за 2-5 сек с базовой инфой. AI анализ
+    # сохраняется в signal.comment позже и доступен в UI + может быть
+    # отправлен reply-сообщением если нужно.
+    tg_summary = None  # Быстрый алерт без саммари
     sym = (signal.pair or "").replace("/", "").upper()
     _st = ai_result.get("st", {})
     _stp = _st.get("confirmed", False) and _st.get("direction") == signal.direction if _st else True
@@ -1588,6 +1559,29 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
         await _cluster_check_on_signal(signal.pair, signal.direction)
     except Exception as e:
         logger.warning(f"[AI-ALERT] cluster fail #{signal.id}: {e}")
+
+    # ── Fire-and-forget: AI-анализ в фоне (не блокирует отправку) ──
+    # Алерт уже ушёл. Claude-анализ сохранится в signal.comment для UI.
+    if sent:
+        asyncio.create_task(_ai_background_analysis(signal, current_price, s1, r1))
+
+
+async def _ai_background_analysis(signal, current_price, s1, r1):
+    """Фоновый AI-анализ через Claude. Сохраняется в signal.comment для
+    отображения в UI. Не блокирует отправку Telegram-алерта."""
+    try:
+        full_analysis = await asyncio.wait_for(
+            _generate_ai_full_analysis(signal, current_price, s1, r1),
+            timeout=30.0,
+        )
+        if full_analysis:
+            from database import _signals as _sc_bg
+            _sc_bg().update_one({"id": signal.id}, {"$set": {"comment": full_analysis}})
+            logger.info(f"[AI-BG] analysis saved #{signal.id}")
+    except asyncio.TimeoutError:
+        logger.warning(f"[AI-BG] full_analysis TIMEOUT #{signal.id}")
+    except Exception as e:
+        logger.warning(f"[AI-BG] full_analysis fail #{signal.id}: {e}")
 
 
 _anomaly_batch_idx = 0
