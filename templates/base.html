@@ -607,19 +607,44 @@
         return setInterval(() => { if (!window._pollingPaused) fn(); }, ms);
       };
 
-      // sigIcon v3 (with meta.is_top_pick support) — defined in <head>, available before block scripts
+      // isStrongSignal — единый критерий "силы" сигнала.
+      // Используется в:
+      //   • фильтре "Only Strong" в Journal
+      //   • sigIcon (для префикса ⭐)
+      //   • маркерах на графиках
+      // Правила (должны совпадать с фильтром _journalStrongOnly в signals.html):
+      //   confluence: score ≥ 5
+      //   anomaly: score ≥ 70
+      //   cryptovizor: есть pattern (любой)
+      //   tradium / cluster / paper: всегда strong
+      window.isStrongSignal = function(s) {
+        if (!s) return false;
+        const src = s.source;
+        const score = +s.score || 0;
+        if (src === 'confluence') return score >= 5;
+        if (src === 'anomaly') return score >= 70;
+        if (src === 'cryptovizor') return !!s.pattern;
+        // tradium, cluster, paper — всегда strong по умолчанию
+        return src === 'tradium' || src === 'cluster' || src === 'paper';
+      };
+
+      // sigIcon v4 (with meta.is_top_pick + meta.strong support)
       window.sigIcon = function(src, score, meta) {
         const isTopPick = meta && meta.is_top_pick;
-        const prefix = isTopPick ? '👑' : '';
+        const isStrong = meta && meta.strong;
+        // 👑 перекрывает ⭐ (top pick выше strong)
+        const prefix = isTopPick ? '👑' : (isStrong ? '⭐' : '');
         if (src === 'confluence') {
           const s = +score || 0;
           const base = s >= 6 ? '🔥' : s >= 5 ? '⭐' : '🎯';
+          // Для confluence не дублируем ⭐ — он уже в base при score≥5
+          if (isStrong && !isTopPick && s >= 5) return (isTopPick ? '👑' : '') + base;
           return prefix + base;
         }
         const base = ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
         return prefix + base;
       };
-      window.sigIcon._version = 'v3-meta-top-pick';
+      window.sigIcon._version = 'v4-strong';
       console.log('[sigIcon] loaded', window.sigIcon._version);
     </script>
 </head>
@@ -1217,7 +1242,15 @@ function _sigTooltipHTML(o) {
   const dirE = o.direction === 'LONG' ? '🟢' : '🔴';
   const meta = o.meta || {};
   const score = meta.score ?? o.score;
-  const srcIcon = window.sigIcon ? window.sigIcon(o.source, score, meta) : '';
+  // enrich meta with strong flag based on full signal object
+  const _tipMeta = Object.assign({}, meta, {
+    strong: window.isStrongSignal ? window.isStrongSignal({
+      source: o.source,
+      score: score,
+      pattern: o.pattern || meta.pattern,
+    }) : false,
+  });
+  const srcIcon = window.sigIcon ? window.sigIcon(o.source, score, _tipMeta) : '';
   const titleStr = (srcIcon ? srcIcon + ' ' : '') + (o.title || o.symbol || '');
   let html = `<div style="font-weight:800;font-size:13px;margin-bottom:6px;color:${dirC}">${dirE} ${titleStr}</div>`;
   const row = (l, v, c) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0;"><span style="color:var(--muted)">${l}</span><span style="font-weight:600;color:${c||'var(--text)'}">${v}</span></div>`;
@@ -1408,7 +1441,14 @@ async function _renderLwcSignalChart(containerId, opts) {
       }
       const g = byTime.get(key);
       const mScore = m.meta?.score ?? m.score;
-      const iconResult = _sigIconLookup(m.source, mScore, m.meta);
+      const _mkMeta = Object.assign({}, m.meta || {}, {
+        strong: window.isStrongSignal ? window.isStrongSignal({
+          source: m.source,
+          score: mScore,
+          pattern: m.pattern || m.meta?.pattern,
+        }) : false,
+      });
+      const iconResult = _sigIconLookup(m.source, mScore, _mkMeta);
       if (m.meta && m.meta.is_top_pick) {
         console.log('[TOP PICK marker]', m.source, 'meta:', m.meta, '→ icon:', iconResult);
       }
@@ -1433,7 +1473,15 @@ async function _renderLwcSignalChart(containerId, opts) {
     const ts = opts.at ? (typeof opts.at === 'number' ? opts.at : Math.floor(new Date(opts.at).getTime()/1000)) : null;
     const mc = nearest(ts);
     const isLong = opts.direction === 'LONG';
-    const srcIcon = _sigIconLookup(opts.source, opts.score, {is_top_pick: opts.is_top_pick});
+    const _optStrong = window.isStrongSignal ? window.isStrongSignal({
+      source: opts.source,
+      score: opts.score,
+      pattern: opts.pattern,
+    }) : false;
+    const srcIcon = _sigIconLookup(opts.source, opts.score, {
+      is_top_pick: opts.is_top_pick,
+      strong: _optStrong,
+    });
     markers = [{
       time: mc.time,
       position: isLong ? 'belowBar' : 'aboveBar',

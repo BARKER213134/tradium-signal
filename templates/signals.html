@@ -2327,7 +2327,16 @@ let _cflData = [];
 const _cflSrcIcon = {tradium:'📡', cryptovizor:'🚀', anomaly:'⚠', confluence:'🎯', paper:'🤖', cluster:'💠'};
 // Для конфликтов: source от /api/conflicts включает score в meta
 function _cflIcon(s) {
-  return window.sigIcon ? window.sigIcon(s.source, s.meta?.score || 0) : (_cflSrcIcon[s.source] || '•');
+  if (!window.sigIcon) return _cflSrcIcon[s.source] || '•';
+  const _strong = window.isStrongSignal ? window.isStrongSignal({
+    source: s.source,
+    score: s.meta?.score,
+    pattern: s.meta?.pattern,
+  }) : false;
+  return window.sigIcon(s.source, s.meta?.score || 0, {
+    is_top_pick: !!s.meta?.is_top_pick,
+    strong: _strong,
+  });
 }
 
 async function loadConflicts() {
@@ -2715,7 +2724,10 @@ async function _renderPaperChart(idx, tf) {
       const key = mcc.time + '_' + m.direction;
       if (!byKey.has(key)) byKey.set(key, {time: mcc.time, isLong: isL, icons: new Set(), items: []});
       const g = byKey.get(key);
-      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, m.meta));
+      const _pMeta = Object.assign({}, m.meta || {}, {
+        strong: window.isStrongSignal ? window.isStrongSignal(m) : false,
+      });
+      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, _pMeta));
       g.items.push(m);
       if (!paperMarkerMap.has(mcc.time)) paperMarkerMap.set(mcc.time, m);
     }
@@ -3841,7 +3853,8 @@ async function loadCoinChart(coin) {
         if (diff < minD) { minD = diff; mc = c; }
       }
       const isLong = s.direction === 'LONG';
-      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick});
+      const _strongM = window.isStrongSignal ? window.isStrongSignal(s) : false;
+      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _strongM});
       markers.push({
         time: mc.time,
         direction: s.direction,
@@ -4162,12 +4175,11 @@ function renderJournal(items, startIdx) {
     const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
     const pair = (s.pair || s.symbol || '').replace('/USDT', '');
     const time = s.at ? new Date(s.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
-    const _icon = window.sigIcon || ((src, sc) => {
-      if (src === 'confluence') return (+sc||0) >= 5 ? '⭐' : '🎯';
-      return {tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'}[src] || '•';
-    });
-    const topPickPrefix = s.is_top_pick ? '👑 ' : '';
-    const srcBadge = topPickPrefix + _icon(s.source, s.score);
+    const isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
+    const srcBadge = window.sigIcon
+      ? window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: isStrong})
+      : ((s.is_top_pick ? '👑 ' : (isStrong ? '⭐ ' : '')) +
+         ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠', confluence:'🎯'}[s.source] || '•'));
     const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐' : 'Confluence') : s.source === 'paper' ? 'Paper' : s.source === 'cluster' ? 'Cluster' : 'CV';
     const stFail = s.st_passed === false;
     const pumpHigh = (s.pump_score || 0) >= 2;
@@ -4245,7 +4257,8 @@ async function openJournalChart(idx, forceTF) {
   const sym = s.symbol || (s.pair || '').replace('/', '');
   const dirE = s.direction === 'LONG' ? '🟢' : '🔴';
 
-  const srcBadge = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick});
+  const _isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
+  const srcBadge = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _isStrong});
   const srcName = s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐ STRONG' : 'Confluence') : 'CV';
   const patternInfo = s.pattern ? ` · ${s.pattern}` : '';
   const scoreInfo = s.score ? ` · ${s.score}` : '';
@@ -4354,7 +4367,10 @@ async function openJournalChart(idx, forceTF) {
       const key = mc.time + '_' + m.direction;
       if (!byKey.has(key)) byKey.set(key, {time: mc.time, isLong: isL, icons: new Set(), items: []});
       const g = byKey.get(key);
-      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, m.meta));
+      const _mMeta = Object.assign({}, m.meta || {}, {
+        strong: window.isStrongSignal ? window.isStrongSignal(m) : false,
+      });
+      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, _mMeta));
       g.items.push(m);
       modalMarkerMap.set(mc.time, m);
     }
