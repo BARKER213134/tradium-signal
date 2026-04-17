@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -2733,6 +2733,25 @@ async def api_journal():
     Server-side limit 14 days + per-source cap. Cache 45s (async-lock safe)."""
     from cache_utils import journal_cache
     return await journal_cache.get_or_compute("journal_all", _compute_journal)
+
+
+@app.get("/api/backtest/today")
+async def api_backtest_today(hours: int = 24, tp_pct: float = 3.0, sl_pct: float = 2.0, hold_h: int = 48):
+    """Бэктест всех сегодняшних сигналов (или за N часов).
+    Возвращает WR/PnL по каждой категории (CV/Cluster/Confluence, ai≥50/70,
+    STRONG+MEGA, top_pick, ALL TOP PICKS vs NON-TOP).
+
+    Query params:
+      hours   — окно (default 24 = с начала UTC суток)
+      tp_pct  — take profit %
+      sl_pct  — stop loss %
+      hold_h  — максимум баров удержания
+    """
+    import backtest_today
+    result = await asyncio.to_thread(
+        backtest_today.run, hours, tp_pct, sl_pct, hold_h,
+    )
+    return result
 
 
 @app.post("/api/market-events/backfill")
