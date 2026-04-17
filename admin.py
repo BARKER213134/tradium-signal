@@ -2836,6 +2836,8 @@ def _market_events_backfill_sync(days: int) -> dict:
 
         prev_zone = None
         rev_inserts = []
+        score_samples = []
+        errors_in_loop = {"count": 0, "first": None}
         # Шаг 1 час за N дней
         for h in range(days * 24):
             at = since + _td(hours=h)
@@ -2844,7 +2846,13 @@ def _market_events_backfill_sync(days: int) -> dict:
                                   cv_preloaded=cv_preload,
                                   cf_preloaded=cf_preload,
                                   an_preloaded=an_preload)
-            except Exception:
+                if h % 24 == 0:
+                    score_samples.append(r.get("score", 0))
+            except Exception as e_inner:
+                errors_in_loop["count"] += 1
+                if errors_in_loop["first"] is None:
+                    import traceback as _tb2
+                    errors_in_loop["first"] = f"{type(e_inner).__name__}: {e_inner} | trace: {_tb2.format_exc()[-400:]}"
                 continue
             sc = r.get("score", 0)
             zone = _reversal_zone(sc)
@@ -2866,6 +2874,14 @@ def _market_events_backfill_sync(days: int) -> dict:
         if rev_inserts:
             _market_events().insert_many(rev_inserts)
             stats["reversal_events"] = len(rev_inserts)
+        stats["reversal_diag"] = {
+            "cv_preload": len(cv_preload),
+            "cf_preload": len(cf_preload),
+            "an_preload": len(an_preload),
+            "inner_errors": errors_in_loop["count"],
+            "first_error": errors_in_loop["first"],
+            "score_samples": score_samples[:10],
+        }
     except Exception as e:
         import traceback
         stats["errors"].append(f"Reversal fail: {e}\n{traceback.format_exc()[-500:]}")
