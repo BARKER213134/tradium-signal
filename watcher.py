@@ -1513,13 +1513,58 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     from database import _signals as _sc2
     _sc2().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
 
+    # ── Маячок event ──
     try:
-        await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
-        logger.info(f"AI signal alert sent #{signal.id}")
+        from database import _events
+        _events().insert_one({"at": utcnow(), "type": "ai_alert_called",
+            "data": {"signal_id": signal.id, "pair": signal.pair,
+                     "bot4_primary": target_bot is _bot4}})
+    except Exception:
+        pass
+
+    # Главная отправка — с fallback на BOT2/BOT если основной бот упал
+    # (типичный случай: BOT4_BOT_TOKEN невалиден, но Bot объект создан).
+    bots_to_try = [b for b in [target_bot, _bot2, _bot] if b is not None]
+    # Убираем дубли сохраняя порядок
+    seen_ids = set()
+    unique_bots = []
+    for b in bots_to_try:
+        if id(b) not in seen_ids:
+            seen_ids.add(id(b))
+            unique_bots.append(b)
+
+    sent = False
+    last_err = None
+    for i, b in enumerate(unique_bots):
+        try:
+            await b.send_message(_admin_chat_id, text, parse_mode="HTML")
+            sent = True
+            name = "BOT4" if b is _bot4 else "BOT2" if b is _bot2 else "BOT"
+            logger.info(f"[AI-ALERT] sent #{signal.id} via {name}" + (" (fallback)" if i > 0 else ""))
+            break
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            logger.warning(f"[AI-ALERT] attempt {i+1} failed #{signal.id}: {last_err}")
+
+    if not sent:
+        logger.error(f"[AI-ALERT] ALL BOTS FAILED #{signal.id}: {last_err}")
+        try:
+            from database import _events
+            import traceback as _tb
+            _events().insert_one({"at": utcnow(), "type": "ai_alert_all_failed",
+                "data": {"signal_id": signal.id, "pair": signal.pair,
+                         "error": last_err, "attempts": len(unique_bots)}})
+        except Exception:
+            pass
+
+    try:
         await _paper_on_signal({"symbol": sym, "direction": signal.direction, "entry": current_price, "source": "ai_signal", "pattern": signal.pattern_name, "score": score, "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
+    except Exception as e:
+        logger.warning(f"[AI-ALERT] paper fail #{signal.id}: {e}")
+    try:
         await _cluster_check_on_signal(signal.pair, signal.direction)
     except Exception as e:
-        logger.error(f"AI signal alert fail: {e}")
+        logger.warning(f"[AI-ALERT] cluster fail #{signal.id}: {e}")
 
 
 _anomaly_batch_idx = 0
