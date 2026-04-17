@@ -132,21 +132,24 @@ def _ind_btc_eth_lead(cv_all: list, t: datetime) -> tuple[float, dict]:
 
 # ── Публичное API ──────────────────────────────────────────────
 
-def compute_score(at: datetime | None = None) -> dict:
+def compute_score(at: datetime | None = None,
+                   cv_preloaded: list | None = None,
+                   cf_preloaded: list | None = None,
+                   an_preloaded: list | None = None) -> dict:
     """Возвращает composite score и все компоненты на момент времени `at` (UTC naive).
     Если at не задан — текущий момент.
+
+    Для batch бэктеста можно передать preloaded данные (список за больший период);
+    функция сама отфильтрует нужные окна по `at`.
 
     Returns:
         {
             "score": int,                 # -100..+100
             "direction": "BULLISH"|"BEARISH"|"NEUTRAL",
             "strength": "STRONG"|"MODERATE"|"WEAK"|"NONE",
-            "components": {
-                "imbalance": {"score": float, "weight": float, "details": dict},
-                ...
-            },
-            "cv_count": {"L": 9, "S": 0, "total_2h": 9},
-            "conf_count": {"L": 14, "S": 30, "total_2h": 44},
+            "components": {...},
+            "cv_count": {"L": ..., "S": ..., "total_2h": ...},
+            "conf_count": {"L": ..., "S": ..., "total_2h": ...},
             "at": "ISO timestamp",
         }
     """
@@ -154,25 +157,38 @@ def compute_score(at: datetime | None = None) -> dict:
     if t.tzinfo is not None:
         t = t.replace(tzinfo=None)
 
-    # Загружаем окна (read-only, быстро)
     cv_since = t - timedelta(hours=LOOKBACK_H)
-    cv_all = list(_signals().find(
-        {"source": "cryptovizor", "pattern_triggered": True,
-         "pattern_triggered_at": {"$gte": t - timedelta(hours=2), "$lte": t},
-         "direction": {"$ne": None}},
-        {"pair": 1, "direction": 1, "pattern_name": 1, "pattern_triggered_at": 1, "_id": 0}
-    ))
-    cv_window = [c for c in cv_all if cv_since <= c["pattern_triggered_at"] <= t]
+    an_since = t - timedelta(hours=ANOMALY_H)
 
-    cf_window = list(_confluence().find(
-        {"detected_at": {"$gte": cv_since, "$lte": t}, "direction": {"$ne": None}},
-        {"symbol": 1, "direction": 1, "detected_at": 1, "_id": 0}
-    ))
+    if cv_preloaded is not None:
+        cv_all = [c for c in cv_preloaded
+                  if c.get("pattern_triggered_at") and c["pattern_triggered_at"] <= t]
+    else:
+        cv_all = list(_signals().find(
+            {"source": "cryptovizor", "pattern_triggered": True,
+             "pattern_triggered_at": {"$gte": t - timedelta(hours=2), "$lte": t},
+             "direction": {"$ne": None}},
+            {"pair": 1, "direction": 1, "pattern_name": 1, "pattern_triggered_at": 1, "_id": 0}
+        ))
+    cv_window = [c for c in cv_all if cv_since <= c.get("pattern_triggered_at") <= t]
 
-    an_window = list(_anomalies().find(
-        {"detected_at": {"$gte": t - timedelta(hours=ANOMALY_H), "$lte": t}},
-        {"symbol": 1, "anomalies": 1, "detected_at": 1, "_id": 0}
-    ))
+    if cf_preloaded is not None:
+        cf_window = [c for c in cf_preloaded
+                     if c.get("detected_at") and cv_since <= c["detected_at"] <= t]
+    else:
+        cf_window = list(_confluence().find(
+            {"detected_at": {"$gte": cv_since, "$lte": t}, "direction": {"$ne": None}},
+            {"symbol": 1, "direction": 1, "detected_at": 1, "_id": 0}
+        ))
+
+    if an_preloaded is not None:
+        an_window = [a for a in an_preloaded
+                     if a.get("detected_at") and an_since <= a["detected_at"] <= t]
+    else:
+        an_window = list(_anomalies().find(
+            {"detected_at": {"$gte": t - timedelta(hours=ANOMALY_H), "$lte": t}},
+            {"symbol": 1, "anomalies": 1, "detected_at": 1, "_id": 0}
+        ))
 
     pi_sig, pi_det = _ind_pattern_imbalance(cv_window)
     vc_sig, vc_det = _ind_velocity_cluster(cv_all, t)
