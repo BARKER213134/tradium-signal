@@ -1207,7 +1207,8 @@ async def _fill_missing_ai_analysis(db):
             logger.info(f"AI analysis filled for #{sig_id} {pair}")
 
             # Отправляем в бот если ещё не отправлено
-            target_bot = _bot4 or _bot2 or _bot
+            # BOT4 отключён — всё идёт в BOT2 (см. комментарий в _send_ai_signal_alert)
+            target_bot = _bot2 or _bot
             if target_bot and _admin_chat_id:
                 dir_emoji = "🟢" if doc.get("direction") in ("LONG", "BUY") else "🔴"
                 p = pair.replace("/USDT", "")
@@ -1455,7 +1456,10 @@ async def _generate_ai_tg_summary(signal, current_price, s1, r1):
 
 
 async def _send_ai_signal_alert(signal, ai_result, current_price):
-    target_bot = _bot4 or _bot2 or _bot
+    # BOT4 отключён (токен невалиден — решение пользователя 2026-04-17).
+    # AI signals теперь шлются в BOT2 (@trendscryptobot), как и обычные
+    # CV-алерты. Fallback на _bot (главный) если BOT2 упал.
+    target_bot = _bot2 or _bot
     if not target_bot or not _admin_chat_id:
         return
     is_long = signal.direction in ("LONG", "BUY")
