@@ -2781,6 +2781,9 @@ def _market_events_backfill_sync(days: int) -> dict:
                 ts = candles[i].get("t") or candles[i].get("time")
                 if not ts:
                     continue
+                # Binance отдаёт timestamp в миллисекундах — нормализуем
+                if ts > 10**12:
+                    ts = ts // 1000
                 at_dt = _dt.fromtimestamp(ts, tz=_tz.utc).replace(tzinfo=None)
                 if at_dt < since:
                     prev_dir = d
