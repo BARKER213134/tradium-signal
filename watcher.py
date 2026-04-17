@@ -798,10 +798,17 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
 
     sym = (signal.pair or "").replace("/", "").upper()
 
-    # ── Hardened helpers: каждый await с собственным timeout 5s ──
-    # Если helper зависнет — продолжаем без этого блока, alert всё равно уйдёт.
+    # ── Hardened helpers: sync функции через asyncio.to_thread + wait_for ──
+    # Без этого синхронный httpx (_check_keltner_filter → Binance API)
+    # блокирует весь event loop, и даже timeout на async не срабатывает.
     try:
-        _stp, _std = _check_keltner_filter(signal.direction)
+        _stp, _std = await asyncio.wait_for(
+            asyncio.to_thread(_check_keltner_filter, signal.direction),
+            timeout=5.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"[CV-ALERT] keltner TIMEOUT #{signal.id}")
+        _stp, _std = None, {}
     except Exception as e:
         logger.warning(f"[CV-ALERT] keltner fail #{signal.id}: {e}")
         _stp, _std = None, {}
