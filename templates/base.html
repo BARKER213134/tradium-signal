@@ -702,7 +702,7 @@
           if (!ts || ts < firstTs || ts > lastTs) continue;
           const mc = nearest(ts);
           if (ev.type === 'kc') {
-            // Keltner ETH: 🛡 сверху свечи
+            // Keltner ETH: 🛡 сверху свечи (только эмоджи, без текста)
             const to = (ev.to || '').toUpperCase();
             const icon = to === 'LONG' ? '🛡🟢' : to === 'SHORT' ? '🛡🔴' : '🛡⚪';
             const color = to === 'LONG' ? '#00e5a0' : to === 'SHORT' ? '#ff4d6d' : '#888';
@@ -711,23 +711,22 @@
               position: 'aboveBar',
               color: color,
               shape: 'square',
-              text: `${icon} KC→${to}`,
+              text: icon,
               size: 1,
             });
           } else if (ev.type === 'reversal') {
-            // Reversal Meter: 🎢 снизу свечи
+            // Reversal Meter: 🎢 снизу свечи (только эмоджи)
             const to = (ev.to || '').toUpperCase();
             let icon, color;
             if (to === 'STRONG_BULL' || to === 'BULL') { icon = '🎢🟢'; color = '#00e5a0'; }
             else if (to === 'STRONG_BEAR' || to === 'BEAR') { icon = '🎢🔴'; color = '#ff4d6d'; }
             else { icon = '🎢⚪'; color = '#888'; }
-            const scoreStr = typeof ev.score === 'number' ? ` ${ev.score >= 0 ? '+' : ''}${ev.score}` : '';
             out.push({
               time: mc.time,
               position: 'belowBar',
               color: color,
               shape: 'circle',
-              text: `${icon} REV→${to.replace('STRONG_','')}${scoreStr}`,
+              text: icon,
               size: 1,
             });
           }
