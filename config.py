@@ -80,7 +80,10 @@ BOTS = [
     {"id": "confluence", "label": "Confluence", "category": "crypto"},
     {"id": "clusters", "label": "Кластеры", "category": "crypto"},
     {"id": "top_picks", "label": "👑 Top Picks", "category": "crypto"},
-    {"id": "conflicts", "label": "⚠ Conflicts", "category": "crypto"},
+    # {"id": "conflicts", "label": "⚠ Conflicts", "category": "crypto"},  # кнопка скрыта
+    # — функционал остаётся: endpoint /api/conflicts, вкладка по прямому URL
+    # /signals?bot=conflicts работает, данные детектируются в фоне через
+    # anti_cluster_detector. Включить обратно: раскомментировать строку.
     {"id": "coin_analysis", "label": "🧠 AI Анализ", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
