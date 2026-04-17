@@ -105,11 +105,16 @@ def is_top_pick(pair: str, direction: str, at: Optional[datetime] = None,
             })
     else:
         # Для cluster/tradium/CV подтверждающие = STRONG Confluence
+        # Окно ±48h (двустороннее) — Confluence может появиться ДО сигнала
+        # (тренд уже сформирован) ИЛИ ПОСЛЕ (подтверждение на retest).
+        # Раньше было {"$gte": start, "$lte": at} — односторонне только в прошлое,
+        # что ломало retroactive tagging: 15+ CV с is_top_pick=False при наличии
+        # Confluence после них. См. диагностику БД 2026-04-17.
         confs = list(_confluence().find({
             "$or": [{"pair": norm}, {"symbol": norm_sym}],
             "direction": direction,
             "score": {"$gte": TOP_PICK_MIN_SCORE},
-            "detected_at": {"$gte": start, "$lte": at},
+            "detected_at": {"$gte": start, "$lte": end},
         }))
         for c in confs:
             confirmations.append({
