@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -2733,6 +2733,143 @@ async def api_journal():
     Server-side limit 14 days + per-source cap. Cache 45s (async-lock safe)."""
     from cache_utils import journal_cache
     return await journal_cache.get_or_compute("journal_all", _compute_journal)
+
+
+@app.post("/api/market-events/backfill")
+async def api_market_events_backfill(payload: dict | None = None):
+    """Бэктест: вычисляет исторические смены Keltner ETH и Reversal Meter
+    за N дней и записывает их в market_events для отображения на графиках.
+
+    payload: {"days": 30}  (default 30)
+    """
+    days = int((payload or {}).get("days", 30))
+    return await asyncio.to_thread(_market_events_backfill_sync, days)
+
+
+def _market_events_backfill_sync(days: int) -> dict:
+    from database import _market_events, _signals, _confluence, _anomalies, utcnow as _unow
+    from datetime import timedelta as _td, timezone as _tz, datetime as _dt
+    from exchange import get_klines_any, _calc_keltner
+    from watcher import _reversal_zone
+    from reversal_meter import compute_score
+
+    stats = {"kc_events": 0, "reversal_events": 0, "candles_loaded": 0, "errors": []}
+    since = _unow() - _td(days=days)
+
+    # ── 1) KC ETH: ETH 1H свечи за N дней ─────────────────────────
+    try:
+        # Берём с запасом: чтобы для первой свечи периода уже был валидный KC,
+        # нужно period+1 прошлых свечей. period=20, берём +40 сверху.
+        total_hours = days * 24 + 40
+        candles = get_klines_any("ETH/USDT", "1h", limit=min(total_hours, 1000))
+        stats["candles_loaded"] = len(candles)
+        if not candles or len(candles) < 25:
+            stats["errors"].append("insufficient ETH candles")
+        else:
+            # Удаляем существующие KC backfill events в этом окне (чтоб не дублировать)
+            _market_events().delete_many({
+                "type": "kc",
+                "backfilled": True,
+                "at": {"$gte": since},
+            })
+            prev_dir = None
+            kc_inserts = []
+            # Проходим по свечам начиная с index=25 (есть валидный ATR)
+            for i in range(25, len(candles)):
+                slice_candles = candles[:i + 1]
+                d = _calc_keltner(slice_candles)
+                ts = candles[i].get("t") or candles[i].get("time")
+                if not ts:
+                    continue
+                at_dt = _dt.fromtimestamp(ts, tz=_tz.utc).replace(tzinfo=None)
+                if at_dt < since:
+                    prev_dir = d
+                    continue
+                if prev_dir is None:
+                    prev_dir = d
+                    continue
+                if d != prev_dir:
+                    kc_inserts.append({
+                        "at": at_dt,
+                        "type": "kc",
+                        "from": prev_dir,
+                        "to": d,
+                        "backfilled": True,
+                    })
+                    prev_dir = d
+            if kc_inserts:
+                _market_events().insert_many(kc_inserts)
+                stats["kc_events"] = len(kc_inserts)
+    except Exception as e:
+        import traceback
+        stats["errors"].append(f"KC fail: {e}\n{traceback.format_exc()[-500:]}")
+
+    # ── 2) Reversal Meter: прогнать compute_score по каждому часу ──
+    try:
+        # Preload данных один раз для скорости
+        cv_preload = list(_signals().find(
+            {"source": "cryptovizor", "pattern_triggered": True,
+             "pattern_triggered_at": {"$gte": since - _td(hours=3)},
+             "direction": {"$ne": None}},
+            {"pair": 1, "direction": 1, "pattern_name": 1, "pattern_triggered_at": 1, "_id": 0}
+        ))
+        cf_preload = list(_confluence().find(
+            {"detected_at": {"$gte": since - _td(hours=3)},
+             "direction": {"$ne": None}},
+            {"symbol": 1, "direction": 1, "detected_at": 1, "_id": 0}
+        ))
+        an_preload = list(_anomalies().find(
+            {"detected_at": {"$gte": since - _td(hours=3)},
+             "direction": {"$ne": None}},
+            {"symbol": 1, "direction": 1, "detected_at": 1, "score": 1, "_id": 0}
+        ))
+
+        # Удаляем существующие Reversal backfill events в окне
+        _market_events().delete_many({
+            "type": "reversal",
+            "backfilled": True,
+            "at": {"$gte": since},
+        })
+
+        prev_zone = None
+        rev_inserts = []
+        # Шаг 1 час за N дней
+        for h in range(days * 24):
+            at = since + _td(hours=h)
+            try:
+                r = compute_score(at=at,
+                                  cv_preloaded=cv_preload,
+                                  cf_preloaded=cf_preload,
+                                  an_preloaded=an_preload)
+            except Exception:
+                continue
+            sc = r.get("score", 0)
+            zone = _reversal_zone(sc)
+            if prev_zone is None:
+                prev_zone = zone
+                continue
+            if zone != prev_zone:
+                rev_inserts.append({
+                    "at": at,
+                    "type": "reversal",
+                    "from": prev_zone,
+                    "to": zone,
+                    "score": sc,
+                    "direction": r.get("direction"),
+                    "strength": r.get("strength"),
+                    "backfilled": True,
+                })
+                prev_zone = zone
+        if rev_inserts:
+            _market_events().insert_many(rev_inserts)
+            stats["reversal_events"] = len(rev_inserts)
+    except Exception as e:
+        import traceback
+        stats["errors"].append(f"Reversal fail: {e}\n{traceback.format_exc()[-500:]}")
+
+    stats["total"] = stats["kc_events"] + stats["reversal_events"]
+    stats["days"] = days
+    return stats
 
 
 @app.get("/api/market-events")
