@@ -4046,12 +4046,21 @@ async function loadCoinChart(coin) {
   const chartDiv = document.getElementById('jCoinChart');
   const countEl = document.getElementById('jCoinCount');
 
-  // Находим все сигналы по этой монете
   const sym = coin.replace('/','').replace('USDT','') + 'USDT';
-  const signals = _journalData.filter(s => {
-    const sSym = (s.symbol || '').toUpperCase();
-    return sSym === sym || sSym.startsWith(coin);
-  });
+
+  // ── Точечный запрос по монете (без лимитов /api/journal) ──
+  let signals = [];
+  try {
+    const rJ = await fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(coin)}&days=30`);
+    const dJ = await rJ.json();
+    signals = dJ.items || [];
+  } catch (e) {
+    // Fallback на локальный фильтр
+    signals = _journalData.filter(s => {
+      const sSym = (s.symbol || '').toUpperCase();
+      return sSym === sym || sSym.startsWith(coin);
+    });
+  }
 
   if (!signals.length) {
     countEl.textContent = '0 сигналов';
@@ -4076,9 +4085,12 @@ async function loadCoinChart(coin) {
     });
   }
 
-  // Свечи
+  // Свечи — динамический limit под TF, чтобы покрыть ≥30 дней сигналов
+  // 1h × 720 = 30д, 4h × 180 = 30д, 1d × 60 = 60д, 15m/30m оставляем 200
+  const limitByTF = { '1h': 720, '4h': 200, '1d': 60, '30m': 300, '15m': 400 };
+  const candleLimit = limitByTF[_coinTF] || 200;
   try {
-    const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=${_coinTF}&limit=200`);
+    const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=${_coinTF}&limit=${candleLimit}`);
     const d = await r.json();
     if (!d.ok || !d.candles.length) {
       chartDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">Нет данных для ' + coin + '</div>';
@@ -4102,11 +4114,22 @@ async function loadCoinChart(coin) {
     series.setData(d.candles);
 
     // Все маркеры + tooltip map
+    // Пропускаем сигналы ВНЕ окна свечей (чтоб не лепить фантомы к первой/последней свече).
+    // Окно: от первой свечи до последней ± TF/2 запас.
     const markers = [];
     const coinMarkerMap = new Map();
+    const tfSec = {'15m':900,'30m':1800,'1h':3600,'4h':14400,'1d':86400}[_coinTF] || 3600;
+    const firstTs = d.candles.length ? d.candles[0].time : 0;
+    const lastTs = d.candles.length ? d.candles[d.candles.length-1].time : 0;
+    let skippedOutOfRange = 0;
     for (const s of signals) {
       const ts = s.at_ts || 0;
       if (!ts) continue;
+      // ФИКС фантомов: если сигнал вне окна свечей — НЕ рисуем маркер
+      if (ts < firstTs - tfSec || ts > lastTs + tfSec * 2) {
+        skippedOutOfRange++;
+        continue;
+      }
       let mc = d.candles[d.candles.length - 1];
       let minD = Infinity;
       for (const c of d.candles) {
@@ -4125,6 +4148,9 @@ async function loadCoinChart(coin) {
         source: s.source,
       });
       coinMarkerMap.set(mc.time, s);
+    }
+    if (skippedOutOfRange > 0) {
+      countEl.textContent = `${signals.length} сигналов · ${skippedOutOfRange} вне графика`;
     }
     // Группируем по (time, direction). Чтобы на одной свече разные направления
     // не сталкивались — каждый LONG/SHORT рисуется отдельным маркером

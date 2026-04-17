@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert") or path.startswith("/static"):
+        if path in ("/login", "/health", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -2735,6 +2735,167 @@ async def api_journal():
     return await journal_cache.get_or_compute("journal_all", _compute_journal)
 
 
+@app.get("/api/journal/by-symbol")
+async def api_journal_by_symbol(symbol: str, days: int = 30):
+    """Все сигналы по конкретной монете из всех источников — для ручного
+    поиска. Возвращает без лимитов на источник, в окне days (default 30).
+    Формат ответа идентичен /api/journal, но без кеша (редкий вызов)."""
+    return await asyncio.to_thread(_compute_journal_by_symbol_sync, symbol, days)
+
+
+def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
+    from database import _signals, _anomalies, _confluence, _clusters
+    from datetime import timedelta
+    from database import utcnow as _utcnow
+    since = _utcnow() - timedelta(days=days)
+    # Нормализация: "BNB" → "BNBUSDT", "BNB/USDT" → "BNBUSDT", "bnb" → "BNBUSDT"
+    sym_clean = (symbol or "").upper().strip().replace("/", "")
+    if not sym_clean:
+        return {"items": []}
+    if not sym_clean.endswith("USDT"):
+        sym_clean = sym_clean + "USDT"
+    base = sym_clean[:-4]  # "BNB"
+    pair_slash = f"{base}/USDT"
+    # Queries для каждой collection — ловим и "pair":"BNB/USDT" и "symbol":"BNBUSDT"
+    pair_or = {"$or": [{"pair": pair_slash}, {"symbol": sym_clean}]}
+
+    items = []
+
+    # Tradium
+    for s in _signals().find({"source": "tradium", **pair_or}, {
+        "pair":1, "direction":1, "entry":1, "tp1":1, "sl":1, "trend":1, "comment":1,
+        "ai_score":1, "st_passed":1, "pump_score":1, "pattern_triggered":1,
+        "is_top_pick":1, "top_pick_confirmations_count":1,
+        "received_at":1, "pattern_triggered_at":1,
+    }).sort("received_at", -1):
+        pat_trig = bool(s.get("pattern_triggered"))
+        at_dt = s.get("pattern_triggered_at") if pat_trig and s.get("pattern_triggered_at") else s.get("received_at")
+        if not at_dt or at_dt < since:
+            continue
+        items.append({
+            "source": "tradium",
+            "symbol": (s.get("pair") or "").replace("/", "").upper(),
+            "pair": s.get("pair", ""),
+            "direction": s.get("direction", ""),
+            "entry": s.get("entry"),
+            "tp1": s.get("tp1"),
+            "sl": s.get("sl"),
+            "pattern": s.get("trend") or s.get("comment") or "",
+            "score": s.get("ai_score"),
+            "st_passed": s.get("st_passed"),
+            "pump_score": s.get("pump_score", 0),
+            "pattern_triggered": pat_trig,
+            "is_top_pick": bool(s.get("is_top_pick")),
+            "top_pick_confirmations_count": s.get("top_pick_confirmations_count", 0),
+            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else None,
+            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+        })
+
+    # Cryptovizor
+    for s in _signals().find({
+        "source": "cryptovizor", "pattern_triggered": True,
+        "pattern_triggered_at": {"$gte": since}, **pair_or,
+    }, {
+        "pair":1, "direction":1, "entry":1, "pattern_price":1, "dca1":1, "dca2":1,
+        "pattern_name":1, "ai_score":1, "st_passed":1, "pump_score":1,
+        "is_top_pick":1, "top_pick_confirmations_count":1,
+        "received_at":1, "pattern_triggered_at":1,
+    }).sort("pattern_triggered_at", -1):
+        at_dt = s.get("pattern_triggered_at") or s.get("received_at")
+        items.append({
+            "source": "cryptovizor",
+            "symbol": (s.get("pair") or "").replace("/", "").upper(),
+            "pair": s.get("pair", ""),
+            "direction": s.get("direction", ""),
+            "entry": s.get("pattern_price") or s.get("entry"),
+            "tp1": s.get("dca2"),
+            "sl": s.get("dca1"),
+            "pattern": s.get("pattern_name", ""),
+            "score": s.get("ai_score"),
+            "st_passed": s.get("st_passed"),
+            "pump_score": s.get("pump_score", 0),
+            "is_top_pick": bool(s.get("is_top_pick")),
+            "top_pick_confirmations_count": s.get("top_pick_confirmations_count", 0),
+            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else None,
+            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+        })
+
+    # Anomalies
+    for a in _anomalies().find({"detected_at": {"$gte": since}, **pair_or}, {
+        "symbol":1, "pair":1, "direction":1, "price":1, "anomalies":1,
+        "score":1, "st_passed":1, "pump_score":1, "detected_at":1,
+    }).sort("detected_at", -1):
+        types = [x["type"] for x in a.get("anomalies", [])]
+        items.append({
+            "source": "anomaly",
+            "symbol": a.get("symbol", ""),
+            "pair": a.get("pair", ""),
+            "direction": a.get("direction", ""),
+            "entry": a.get("price"),
+            "tp1": None, "sl": None,
+            "pattern": ", ".join(types[:3]),
+            "score": a.get("score"),
+            "st_passed": a.get("st_passed"),
+            "pump_score": a.get("pump_score", 0),
+            "at": a["detected_at"].isoformat() if hasattr(a.get("detected_at"), "isoformat") else None,
+            "at_ts": int(a["detected_at"].timestamp()) if hasattr(a.get("detected_at"), "timestamp") else 0,
+        })
+
+    # Confluence
+    for c in _confluence().find({"detected_at": {"$gte": since}, **pair_or}, {
+        "symbol":1, "pair":1, "direction":1, "price":1, "r1":1, "s1":1,
+        "pattern":1, "strength":1, "factors":1, "score":1,
+        "st_passed":1, "pump_score":1, "is_top_pick":1,
+        "top_pick_confirmations_count":1, "detected_at":1,
+    }).sort("detected_at", -1):
+        items.append({
+            "source": "confluence",
+            "symbol": c.get("symbol", ""),
+            "pair": c.get("pair", ""),
+            "direction": c.get("direction", ""),
+            "entry": c.get("price"),
+            "tp1": c.get("r1"),
+            "sl": c.get("s1"),
+            "pattern": c.get("pattern") or c.get("strength", ""),
+            "score": c.get("score"),
+            "st_passed": c.get("st_passed"),
+            "pump_score": c.get("pump_score", 0),
+            "is_top_pick": bool(c.get("is_top_pick")),
+            "top_pick_confirmations_count": c.get("top_pick_confirmations_count", 0),
+            "at": c["detected_at"].isoformat() if hasattr(c.get("detected_at"), "isoformat") else None,
+            "at_ts": int(c["detected_at"].timestamp()) if hasattr(c.get("detected_at"), "timestamp") else 0,
+        })
+
+    # Clusters
+    for cl in _clusters().find({"trigger_at": {"$gte": since}, **pair_or}).sort("trigger_at", -1):
+        at_dt = cl.get("trigger_at")
+        strength = cl.get("strength", "NORMAL")
+        items.append({
+            "source": "cluster",
+            "symbol": (cl.get("pair") or cl.get("symbol") or "").replace("/", "").upper(),
+            "pair": cl.get("pair", ""),
+            "direction": cl.get("direction", ""),
+            "entry": cl.get("trigger_price"),
+            "tp1": cl.get("tp_price"),
+            "sl": cl.get("sl_price"),
+            "pattern": f"{strength} · {cl.get('signals_count',0)}×{cl.get('sources_count',0)}",
+            "score": abs(cl.get("reversal_score") or 0),
+            "cluster_strength": strength,
+            "cluster_status": cl.get("status", "OPEN"),
+            "cluster_pnl": round(cl.get("pnl_percent") or 0, 2) if cl.get("pnl_percent") is not None else None,
+            "cluster_id": cl.get("id"),
+            "is_top_pick": bool(cl.get("is_top_pick")),
+            "top_pick_confirmations_count": cl.get("top_pick_confirmations_count", 0),
+            "sources_count": cl.get("sources_count", 0),
+            "signals_count": cl.get("signals_count", 0),
+            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else None,
+            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+        })
+
+    items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
+    return {"items": items, "symbol": sym_clean, "days": days, "count": len(items)}
+
+
 async def _compute_journal():
     from database import _signals, _anomalies, _confluence
     from datetime import datetime, timedelta
@@ -2750,7 +2911,7 @@ async def _compute_journal():
         "ai_score":1, "st_passed":1, "pump_score":1, "pattern_triggered":1,
         "is_top_pick":1, "top_pick_confirmations_count":1,
         "received_at":1, "pattern_triggered_at":1,
-    }).sort("received_at", -1).limit(100):
+    }).sort("received_at", -1).limit(300):
         pat_trig = bool(s.get("pattern_triggered"))
         at_dt = s.get("pattern_triggered_at") if pat_trig and s.get("pattern_triggered_at") else s.get("received_at")
         items.append({
@@ -2773,7 +2934,7 @@ async def _compute_journal():
             "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
 
-    # Cryptovizor signals (только с паттерном за последние 14 дней, cap 300)
+    # Cryptovizor signals (только с паттерном за последние 14 дней, cap 800)
     for s in _signals().find({
         "source": "cryptovizor", "pattern_triggered": True,
         "pattern_triggered_at": {"$gte": since_14d},
@@ -2782,7 +2943,7 @@ async def _compute_journal():
         "pattern_name":1, "ai_score":1, "st_passed":1, "pump_score":1,
         "is_top_pick":1, "top_pick_confirmations_count":1,
         "received_at":1, "pattern_triggered_at":1,
-    }).sort("pattern_triggered_at", -1).limit(300):
+    }).sort("pattern_triggered_at", -1).limit(800):
         # Время = когда паттерн сработал (не когда монета добавлена)
         at_dt = s.get("pattern_triggered_at") or s.get("received_at")
         items.append({
@@ -2803,11 +2964,11 @@ async def _compute_journal():
             "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
 
-    # Anomalies (14 дней, cap 300)
+    # Anomalies (14 дней, cap 800)
     for a in _anomalies().find({"detected_at": {"$gte": since_14d}}, {
         "symbol":1, "pair":1, "direction":1, "price":1, "anomalies":1,
         "score":1, "st_passed":1, "pump_score":1, "detected_at":1,
-    }).sort("detected_at", -1).limit(300):
+    }).sort("detected_at", -1).limit(800):
         types = [x["type"] for x in a.get("anomalies", [])]
         items.append({
             "source": "anomaly",
@@ -2825,13 +2986,13 @@ async def _compute_journal():
             "at_ts": int(a["detected_at"].timestamp()) if hasattr(a.get("detected_at"), "timestamp") else 0,
         })
 
-    # Confluence (14 дней, cap 300)
+    # Confluence (14 дней, cap 1500 — их ~1500 за 14 дней)
     for c in _confluence().find({"detected_at": {"$gte": since_14d}}, {
         "symbol":1, "pair":1, "direction":1, "price":1, "r1":1, "s1":1,
         "pattern":1, "strength":1, "factors":1, "score":1,
         "st_passed":1, "pump_score":1, "is_top_pick":1,
         "top_pick_confirmations_count":1, "detected_at":1,
-    }).sort("detected_at", -1).limit(300):
+    }).sort("detected_at", -1).limit(1500):
         ftypes = [f["type"] for f in c.get("factors", [])]
         items.append({
             "source": "confluence",
