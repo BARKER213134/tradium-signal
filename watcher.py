@@ -137,67 +137,11 @@ async def _check_reversal_flip():
         _last_reversal_zone = zone
         print(f"[REVERSAL] {old} → {zone} (score={score})", flush=True)
         logger.info(f"Reversal zone change: {old} → {zone} (score={score})")
-
-        # Форматируем алерт
-        sign = "+" if score > 0 else ""
-        if zone == "STRONG_BULL":
-            header = "🔥🔥🔥 STRONG BULLISH REVERSAL 🔥🔥🔥"
-            emoji = "🚀"
-        elif zone == "BULL":
-            header = "🟢 BULLISH BREWING"
-            emoji = "🟢"
-        elif zone == "STRONG_BEAR":
-            header = "🔥🔥🔥 STRONG BEARISH REVERSAL 🔥🔥🔥"
-            emoji = "📉"
-        elif zone == "BEAR":
-            header = "🔴 BEARISH BREWING"
-            emoji = "🔴"
-        else:
-            header = "⚪ NEUTRAL"
-            emoji = "⚪"
-
-        cv = meter.get("cv_count", {})
-        cf = meter.get("conf_count", {})
-
-        text = (
-            f"🔔🔔🔔🔔🔔🔔🔔🔔🔔🔔\n"
-            f"\n"
-            f"{emoji} <b>REVERSAL METER FLIP</b>\n"
-            f"\n"
-            f"{header}\n"
-            f"\n"
-            f"Score: <b>{sign}{score}</b> (было: {old})\n"
-            f"\n"
-            f"📊 За 2ч:\n"
-            f"  CV: 🟢{cv.get('L',0)} 🔴{cv.get('S',0)}\n"
-            f"  Conf: 🟢{cf.get('L',0)} 🔴{cf.get('S',0)}\n"
-            f"\n"
-            f"💡 <i>Следите за следующими сигналами — {'LONG' if score > 0 else 'SHORT' if score < 0 else ''} сейчас в фаворе.</i>\n"
-            f"\n"
-            f"🔔🔔🔔🔔🔔🔔🔔🔔🔔🔔"
-        )
-
-        # Отправляем во все боты (кроме паузы для rate limit)
-        for bot in [_bot, _bot2, _bot4]:
-            if bot and _admin_chat_id:
-                try:
-                    await bot.send_message(_admin_chat_id, text, parse_mode="HTML")
-                    await asyncio.sleep(0.3)
-                except Exception:
-                    pass
-        if _bot3 and _admin_chat_id:
-            try:
-                await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
-                await asyncio.sleep(0.3)
-            except Exception:
-                pass
-        if _bot5 and _admin_chat_id:
-            try:
-                await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
-                await asyncio.sleep(0.3)
-            except Exception:
-                pass
-        # BOT6 (Paper Trading) намеренно исключён — туда шлём только трейды
+        # ⛔ Уведомления о смене Reversal зоны ОТКЛЮЧЕНЫ (решение пользователя
+        # 2026-04-17). Состояние _last_reversal_zone всё равно обновляется —
+        # его читает UI (Reversal Meter виджет). Логи в Railway остаются.
+        # Чтобы включить обратно — раскомментируй блок отправки ниже.
+        # # for bot in [_bot, _bot2, _bot4]: await bot.send_message(...)
     except Exception as e:
         print(f"[REVERSAL] ERROR: {e}", flush=True)
 
@@ -218,75 +162,13 @@ async def _check_kc_change():
         if d != _last_kc_direction:
             old = _last_kc_direction
             _last_kc_direction = d
-            print(f"[KC] CHANGED: {old} → {d} !!!", flush=True)
+            print(f"[KC] CHANGED: {old} → {d}", flush=True)
             logger.info(f"KC CHANGED: {old} → {d}")
-
-            if d == "NEUTRAL":
-                emoji = "⚪"
-                text = (
-                    f"🔔🔔🔔🔔🔔🔔🔔🔔🔔🔔\n"
-                    f"\n"
-                    f"⚡ <b>KELTNER ETH СМЕНИЛСЯ!</b>\n"
-                    f"\n"
-                    f"{emoji} <b>{old}</b> → <b>NEUTRAL</b>\n"
-                    f"\n"
-                    f"📌 ETH вернулся в канал\n"
-                    f"📌 Все сигналы теперь проходят\n"
-                    f"📌 LONG и SHORT разрешены\n"
-                    f"\n"
-                    f"🔔🔔🔔🔔🔔🔔🔔🔔🔔🔔"
-                )
-            elif d == "LONG":
-                emoji = "🟢"
-                text = (
-                    f"🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀\n"
-                    f"\n"
-                    f"⚡ <b>KELTNER ETH → LONG!</b>\n"
-                    f"\n"
-                    f"{emoji} <b>{old}</b> → <b>LONG</b>\n"
-                    f"\n"
-                    f"📌 ETH пробил верхнюю границу канала\n"
-                    f"📌 Только LONG сигналы проходят\n"
-                    f"📌 SHORT сигналы будут отфильтрованы\n"
-                    f"\n"
-                    f"🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"
-                )
-            else:
-                emoji = "🔴"
-                text = (
-                    f"🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻\n"
-                    f"\n"
-                    f"⚡ <b>KELTNER ETH → SHORT!</b>\n"
-                    f"\n"
-                    f"{emoji} <b>{old}</b> → <b>SHORT</b>\n"
-                    f"\n"
-                    f"📌 ETH пробил нижнюю границу канала\n"
-                    f"📌 Только SHORT сигналы проходят\n"
-                    f"📌 LONG сигналы будут отфильтрованы\n"
-                    f"\n"
-                    f"🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻"
-                )
-
-            text += _eth_line()
-
-            # Отправляем во ВСЕ боты
-            for bot in [_bot, _bot2, _bot4]:
-                if bot and _admin_chat_id:
-                    try:
-                        await bot.send_message(_admin_chat_id, text, parse_mode="HTML")
-                    except Exception:
-                        pass
-            if _bot3 and _admin_chat_id:
-                try:
-                    await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
-                except Exception:
-                    pass
-            if _bot5 and _admin_chat_id:
-                try:
-                    await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
-                except Exception:
-                    pass
-            # BOT6 (Paper Trading) намеренно исключён — туда шлём только трейды
+            # ⛔ Уведомления о смене Keltner ОТКЛЮЧЕНЫ (решение пользователя
+            # 2026-04-17). Состояние _last_kc_direction обновляется —
+            # его читает логика фильтрации сигналов (LONG/SHORT/NEUTRAL).
+            # Чтобы включить обратно — раскомментируй блок отправки ниже.
+            # # for bot in [_bot, _bot2, _bot4]: await bot.send_message(...)
     except Exception as e:
         print(f"[KC] ERROR: {e}", flush=True)
 
