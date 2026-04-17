@@ -2632,7 +2632,7 @@ async function loadPaperStatus() {
     }
   } catch {}
 
-  // История
+  // История — гармошка (как позиции)
   try {
     const r2 = await fetch('/api/paper/history?limit=20');
     const d2 = await r2.json();
@@ -2645,7 +2645,7 @@ async function loadPaperStatus() {
         const pair = h.symbol ? h.symbol.replace('USDT','') : '?';
         const pnlCls = win ? 'text-buy' : 'text-sell';
         const closedAt = h.closed_at ? new Date(h.closed_at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-        return `<div class="at-pos at-hist-row" style="cursor:pointer;flex-wrap:wrap;" onclick="openPaperHistChart(${idx})" title="Клик — открыть график">
+        return `<div class="at-pos at-hist-row" style="cursor:pointer;flex-wrap:wrap;" onclick="togglePaperHistChart(${idx})" title="Клик — график вниз">
           <span>${icon}</span>
           <span class="mono fw-700" style="min-width:70px;">${pair}</span>
           <span>${h.direction}</span>
@@ -2653,6 +2653,19 @@ async function loadPaperStatus() {
           <span class="mono ${pnlCls} fw-700">${(h.pnl_pct||0) >= 0 ? '+' : ''}${(h.pnl_pct||0).toFixed(1)}%</span>
           <span class="mono ${pnlCls}">$${(h.pnl_usdt||0) >= 0 ? '+' : ''}${(h.pnl_usdt||0).toFixed(2)}</span>
           <span class="text-muted" style="font-size:10px;margin-left:auto;">${h.ai_review || h.ai_reasoning || ''}</span>
+        </div>
+        <div id="paperHistChart${idx}" style="display:none;background:#0a0e14;border-bottom:1px solid var(--border);" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();">
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;">
+            <span id="phcTitle${idx}" style="color:var(--text);"></span>
+            <div style="margin-left:auto;display:flex;gap:4px;">
+              <button class="tf-btn" onclick="_setPaperHistTF(${idx},'15m')">15m</button>
+              <button class="tf-btn" onclick="_setPaperHistTF(${idx},'30m')">30m</button>
+              <button class="tf-btn active" onclick="_setPaperHistTF(${idx},'1h')">1h</button>
+              <button class="tf-btn" onclick="_setPaperHistTF(${idx},'4h')">4h</button>
+              <button class="tf-btn" onclick="_setPaperHistTF(${idx},'1d')">1d</button>
+            </div>
+          </div>
+          <div id="phcChart${idx}" style="height:400px;"></div>
         </div>`;
       }).join('');
     } else {
@@ -2661,47 +2674,53 @@ async function loadPaperStatus() {
   } catch {}
 }
 
-// ─── Paper History Chart modal ────────────────────────────────────
-async function openPaperHistChart(idx) {
+// ─── Paper History Chart — гармошка inline (как позиции) ──────────
+window._paperHistTF = {};  // idx → tf
+
+function _setPaperHistTF(idx, tf) {
+  window._paperHistTF[idx] = tf;
+  // update active state на кнопках
+  const row = document.getElementById('paperHistChart' + idx);
+  if (row) {
+    row.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+    row.querySelectorAll('.tf-btn').forEach(b => {
+      if (b.textContent === tf) b.classList.add('active');
+    });
+  }
+  _drawPaperHistChart(idx);
+}
+
+async function togglePaperHistChart(idx) {
+  const area = document.getElementById('paperHistChart' + idx);
+  if (!area) return;
+  if (area.style.display !== 'none') {
+    area.style.display = 'none';
+    return;
+  }
+  area.style.display = 'block';
+  // по умолчанию 1h
+  if (!window._paperHistTF[idx]) window._paperHistTF[idx] = '1h';
+  await _drawPaperHistChart(idx);
+}
+
+async function _drawPaperHistChart(idx) {
   const h = (window._paperHistory || [])[idx];
   if (!h) return;
-  // Переиспользуем journal modal если есть
-  let modal = document.getElementById('journalChartModal');
-  let container, title, counter;
-  if (modal) {
-    container = document.getElementById('jChartContainer');
-    title = document.getElementById('jChartTitle');
-    counter = document.getElementById('jChartCounter');
-  } else {
-    // Создаём свой модал (если пользователь не открывал журнал)
-    modal = document.createElement('div');
-    modal.id = 'paperHistModal';
-    modal.className = 'modal';
-    modal.innerHTML = `
-      <div class="modal-backdrop" onclick="document.getElementById('paperHistModal').remove()"></div>
-      <div class="modal-panel" style="width:92vw;max-width:1200px;height:78vh;display:flex;flex-direction:column;">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border);">
-          <div id="phTitle" style="font-family:var(--font-mono);font-size:13px;color:var(--text);"></div>
-          <button onclick="document.getElementById('paperHistModal').remove()" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">×</button>
-        </div>
-        <div id="phChart" style="flex:1;padding:0;background:#0a0e14;"></div>
-      </div>`;
-      document.body.appendChild(modal);
-    container = document.getElementById('phChart');
-    title = document.getElementById('phTitle');
-  }
-  const pair = (h.symbol || '').replace('USDT','');
+  const tf = window._paperHistTF[idx] || '1h';
+  const pair = (h.symbol || '').replace('USDT', '');
   const sym = h.symbol || '';
   const dirE = h.direction === 'LONG' ? '🟢' : '🔴';
-  const win = (h.pnl_usdt||0) > 0;
+  const win = (h.pnl_usdt || 0) > 0;
   const status = win ? '✅ TP' : '❌ SL';
-  const pnlStr = `${(h.pnl_pct||0) >= 0 ? '+' : ''}${(h.pnl_pct||0).toFixed(2)}%`;
-  title.innerHTML = `🤖 Paper · <b>${pair}</b> · ${dirE} ${h.direction} · ${status} ${pnlStr}`;
-  if (counter) counter.textContent = `${idx + 1}/${(window._paperHistory||[]).length}`;
-  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Загрузка…</div>';
-  if (modal.classList && !modal.classList.contains('open')) modal.classList.add('open');
+  const pnlStr = `${(h.pnl_pct || 0) >= 0 ? '+' : ''}${(h.pnl_pct || 0).toFixed(2)}%`;
+  const titleEl = document.getElementById('phcTitle' + idx);
+  if (titleEl) titleEl.innerHTML = `🤖 Paper · <b style="color:var(--cyan)">${pair}</b> · ${dirE} ${h.direction} · ${status} <span class="${win ? 'text-buy' : 'text-sell'}">${pnlStr}</span>`;
 
-  // Load LWC if needed
+  const chartDiv = document.getElementById('phcChart' + idx);
+  if (!chartDiv) return;
+  chartDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Загрузка…</div>';
+
+  // LWC
   if (!window._lwcLoaded) {
     await new Promise(resolve => {
       const sc = document.createElement('script');
@@ -2711,22 +2730,30 @@ async function openPaperHistChart(idx) {
     });
   }
 
+  // Параллельно: свечи + все сигналы по монете из journal/by-symbol
+  const limitByTF = { '1h': 720, '4h': 200, '1d': 60, '30m': 300, '15m': 400 };
+  const candleLimit = limitByTF[tf] || 200;
   try {
-    const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=1h&limit=200`);
-    const d = await r.json();
+    const [candleR, sigR] = await Promise.all([
+      fetch(`/api/journal-candles?symbol=${sym}&tf=${tf}&limit=${candleLimit}`),
+      fetch(`/api/journal/by-symbol?symbol=${pair}&days=30`).catch(() => null),
+    ]);
+    const d = await candleR.json();
     if (!d.ok || !d.candles || !d.candles.length) {
-      container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">Нет данных</div>';
+      chartDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">Нет данных</div>';
       return;
     }
-    container.innerHTML = '';
-    const chart = LightweightCharts.createChart(container, {
+    const allSigs = sigR ? ((await sigR.json()).items || []) : [];
+
+    chartDiv.innerHTML = '';
+    const chart = LightweightCharts.createChart(chartDiv, {
       layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
       grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
       crosshair: { mode: 0 },
       rightPriceScale: { borderColor: '#1a1e2a' },
       timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
-      width: container.clientWidth,
-      height: container.clientHeight,
+      width: chartDiv.clientWidth,
+      height: 400,
     });
     const series = chart.addCandlestickSeries({
       upColor: '#00e5a0', downColor: '#ff4d6d',
@@ -2735,29 +2762,63 @@ async function openPaperHistChart(idx) {
     });
     series.setData(d.candles);
 
-    // Маркер входа/выхода
+    // ── Маркеры ──
     const markers = [];
-    const openedTs = h.opened_at ? Math.floor(new Date(h.opened_at).getTime()/1000) : null;
-    const closedTs = h.closed_at ? Math.floor(new Date(h.closed_at).getTime()/1000) : null;
+    const tfSec = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 3600;
+    const firstTs = d.candles[0].time;
+    const lastTs = d.candles[d.candles.length - 1].time;
     const nearest = (ts) => {
       if (!ts) return null;
-      let mc = d.candles[d.candles.length-1], minD = Infinity;
+      let mc = d.candles[d.candles.length - 1], minD = Infinity;
       for (const c of d.candles) {
         const diff = Math.abs(c.time - ts);
         if (diff < minD) { minD = diff; mc = c; }
       }
       return mc;
     };
+    const inRange = (ts) => ts >= firstTs - tfSec && ts <= lastTs + tfSec * 2;
+
+    // 1. Все сигналы (CV/Tradium/Anom/Conf/Cluster) — мелкие иконки
+    const byTime = new Map();
+    for (const s of allSigs) {
+      const ts = s.at_ts || 0;
+      if (!ts || !inRange(ts)) continue;
+      const mc = nearest(ts);
+      if (!mc) continue;
+      const isL = s.direction === 'LONG';
+      const key = mc.time + '_' + s.direction;
+      if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: isL, icons: new Set(), items: [] });
+      const g = byTime.get(key);
+      const _strong = window.isStrongSignal ? window.isStrongSignal(s) : false;
+      const icon = window.sigIcon(s.source, s.score, { is_top_pick: !!s.is_top_pick, strong: _strong });
+      g.icons.add(icon);
+      g.items.push(s);
+    }
+    for (const g of byTime.values()) {
+      const icons = [...g.icons].join('');
+      markers.push({
+        time: g.time,
+        position: g.isLong ? 'belowBar' : 'aboveBar',
+        color: g.isLong ? '#00e5a0' : '#ff4d6d',
+        shape: g.isLong ? 'arrowUp' : 'arrowDown',
+        text: icons + (g.items.length > 1 ? ` ×${g.items.length}` : ''),
+        size: 1,
+      });
+    }
+
+    // 2. Entry/Exit paper trade — ВЫДЕЛЕННЫЕ маркеры поверх
+    const openedTs = h.opened_at ? Math.floor(new Date(h.opened_at).getTime() / 1000) : null;
+    const closedTs = h.closed_at ? Math.floor(new Date(h.closed_at).getTime() / 1000) : null;
+    const inMc = openedTs && inRange(openedTs) ? nearest(openedTs) : null;
+    const outMc = closedTs && inRange(closedTs) ? nearest(closedTs) : null;
     const isL = h.direction === 'LONG';
-    const inMc = nearest(openedTs);
-    const outMc = nearest(closedTs);
     if (inMc) markers.push({
       time: inMc.time,
       position: isL ? 'belowBar' : 'aboveBar',
-      color: isL ? '#00e5a0' : '#ff4d6d',
+      color: '#ffd23e',
       shape: isL ? 'arrowUp' : 'arrowDown',
       text: `🤖 ${h.entry || ''}`,
-      size: 1,
+      size: 2,
     });
     if (outMc) markers.push({
       time: outMc.time,
@@ -2765,20 +2826,24 @@ async function openPaperHistChart(idx) {
       color: win ? '#00e5a0' : '#ff4d6d',
       shape: win ? 'circle' : 'square',
       text: win ? `✅ ${pnlStr}` : `❌ ${pnlStr}`,
-      size: 1,
+      size: 2,
     });
-    markers.sort((a,b) => a.time - b.time);
+    markers.sort((a, b) => a.time - b.time);
     series.setMarkers(markers);
 
-    // Линии Entry / TP / SL
+    // ── Линии Entry / TP / SL / Exit ──
     if (h.entry) series.createPriceLine({ price: +h.entry, color: '#ffd23e', lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' });
     if (h.tp1) series.createPriceLine({ price: +h.tp1, color: '#00e5a0', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP' });
     if (h.sl) series.createPriceLine({ price: +h.sl, color: '#ff4d6d', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
     if (h.exit_price) series.createPriceLine({ price: +h.exit_price, color: win ? '#00e5a0' : '#ff4d6d', lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: 'Exit' });
 
     chart.timeScale().fitContent();
+    // Resize listener
+    setTimeout(() => {
+      try { chart.applyOptions({ width: chartDiv.clientWidth }); } catch (_) {}
+    }, 200);
   } catch (e) {
-    container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">${e.message}</div>`;
+    chartDiv.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">${e.message}</div>`;
   }
 }
 
