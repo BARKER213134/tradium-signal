@@ -628,12 +628,18 @@
         if (src === 'anomaly') return score >= 70;
         if (src === 'cryptovizor') {
           if (!s.pattern) return false;
-          const ai = +(s.ai_score ?? (s.meta && s.meta.ai_score) ?? 0);
+          // В журнале /api/journal ai_score кладётся в поле "score" для CV.
+          // Во внешних контекстах (modal chart tooltips) может быть в s.ai_score или meta.
+          const ai = +(s.ai_score ?? (s.meta && s.meta.ai_score) ?? s.score ?? 0);
           return ai >= 50;
         }
         if (src === 'cluster') {
-          const strength = (s.strength || (s.meta && s.meta.strength) || '').toUpperCase();
-          return strength === 'MEGA' || strength === 'STRONG';
+          // /api/journal даёт cluster_strength; другие контексты — strength / meta.strength
+          const strength = (s.cluster_strength || s.strength || (s.meta && s.meta.strength) || '').toUpperCase();
+          if (strength === 'MEGA' || strength === 'STRONG') return true;
+          // Fallback: если strength не пришёл — top pick кластер считаем strong
+          if (!strength && (s.is_top_pick || (s.meta && s.meta.is_top_pick))) return true;
+          return false;
         }
         if (src === 'tradium') {
           // triggered обязателен — иначе это просто setup
