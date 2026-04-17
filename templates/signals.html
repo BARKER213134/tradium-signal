@@ -2531,6 +2531,7 @@ safeInterval(loadConflicts, 30000);
 .at-card-label { font-family:var(--font-mono); font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; }
 .at-card-value { font-family:var(--font-mono); font-size:22px; font-weight:800; margin-top:4px; }
 .at-pos { padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; font-size:12px; }
+.at-hist-row:hover { background:rgba(0,212,255,0.05); }
 .at-pos:last-child { border-bottom:none; }
 .at-tf-bar { display:flex; gap:4px; padding:8px 12px; background:rgba(0,0,0,0.3); border-bottom:1px solid var(--border); }
 .at-tf-btn {
@@ -2594,7 +2595,7 @@ async function loadPaperStatus() {
     document.getElementById('atBalance').className = 'at-card-value ' + (d.pnl_pct >= 0 ? 'text-buy' : 'text-sell');
     document.getElementById('atPnl').textContent = (d.pnl_pct >= 0 ? '+' : '') + d.pnl_pct + '%';
     document.getElementById('atPnl').className = 'at-card-value ' + (d.pnl_pct >= 0 ? 'text-buy' : 'text-sell');
-    document.getElementById('atOpen').textContent = d.positions.length + '/5';
+    document.getElementById('atOpen').textContent = d.positions.length + '/10';
     document.getElementById('atWR').textContent = d.stats.total ? d.stats.win_rate + '%' : '—';
     document.getElementById('atWR').className = 'at-card-value ' + (d.stats.win_rate >= 50 ? 'text-buy' : d.stats.total ? 'text-sell' : '');
     document.getElementById('atTotal').textContent = d.stats.total;
@@ -2633,26 +2634,152 @@ async function loadPaperStatus() {
 
   // История
   try {
-    const r2 = await fetch('/api/paper/history?limit=10');
+    const r2 = await fetch('/api/paper/history?limit=20');
     const d2 = await r2.json();
     const histDiv = document.getElementById('atHistory');
+    window._paperHistory = d2.items || [];
     if (d2.items && d2.items.length) {
-      histDiv.innerHTML = d2.items.map(h => {
+      histDiv.innerHTML = d2.items.map((h, idx) => {
         const win = (h.pnl_usdt || 0) > 0;
         const icon = win ? '✅' : '❌';
         const pair = h.symbol ? h.symbol.replace('USDT','') : '?';
         const pnlCls = win ? 'text-buy' : 'text-sell';
-        return `<div class="at-pos">
+        const closedAt = h.closed_at ? new Date(h.closed_at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+        return `<div class="at-pos at-hist-row" style="cursor:pointer;flex-wrap:wrap;" onclick="openPaperHistChart(${idx})" title="Клик — открыть график">
           <span>${icon}</span>
           <span class="mono fw-700" style="min-width:70px;">${pair}</span>
           <span>${h.direction}</span>
+          <span class="mono text-muted" style="font-size:10px;">${closedAt}</span>
           <span class="mono ${pnlCls} fw-700">${(h.pnl_pct||0) >= 0 ? '+' : ''}${(h.pnl_pct||0).toFixed(1)}%</span>
           <span class="mono ${pnlCls}">$${(h.pnl_usdt||0) >= 0 ? '+' : ''}${(h.pnl_usdt||0).toFixed(2)}</span>
           <span class="text-muted" style="font-size:10px;margin-left:auto;">${h.ai_review || h.ai_reasoning || ''}</span>
         </div>`;
       }).join('');
+    } else {
+      histDiv.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>';
     }
   } catch {}
+}
+
+// ─── Paper History Chart modal ────────────────────────────────────
+async function openPaperHistChart(idx) {
+  const h = (window._paperHistory || [])[idx];
+  if (!h) return;
+  // Переиспользуем journal modal если есть
+  let modal = document.getElementById('journalChartModal');
+  let container, title, counter;
+  if (modal) {
+    container = document.getElementById('jChartContainer');
+    title = document.getElementById('jChartTitle');
+    counter = document.getElementById('jChartCounter');
+  } else {
+    // Создаём свой модал (если пользователь не открывал журнал)
+    modal = document.createElement('div');
+    modal.id = 'paperHistModal';
+    modal.className = 'modal';
+    modal.innerHTML = `
+      <div class="modal-backdrop" onclick="document.getElementById('paperHistModal').remove()"></div>
+      <div class="modal-panel" style="width:92vw;max-width:1200px;height:78vh;display:flex;flex-direction:column;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border);">
+          <div id="phTitle" style="font-family:var(--font-mono);font-size:13px;color:var(--text);"></div>
+          <button onclick="document.getElementById('paperHistModal').remove()" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">×</button>
+        </div>
+        <div id="phChart" style="flex:1;padding:0;background:#0a0e14;"></div>
+      </div>`;
+      document.body.appendChild(modal);
+    container = document.getElementById('phChart');
+    title = document.getElementById('phTitle');
+  }
+  const pair = (h.symbol || '').replace('USDT','');
+  const sym = h.symbol || '';
+  const dirE = h.direction === 'LONG' ? '🟢' : '🔴';
+  const win = (h.pnl_usdt||0) > 0;
+  const status = win ? '✅ TP' : '❌ SL';
+  const pnlStr = `${(h.pnl_pct||0) >= 0 ? '+' : ''}${(h.pnl_pct||0).toFixed(2)}%`;
+  title.innerHTML = `🤖 Paper · <b>${pair}</b> · ${dirE} ${h.direction} · ${status} ${pnlStr}`;
+  if (counter) counter.textContent = `${idx + 1}/${(window._paperHistory||[]).length}`;
+  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Загрузка…</div>';
+  if (modal.classList && !modal.classList.contains('open')) modal.classList.add('open');
+
+  // Load LWC if needed
+  if (!window._lwcLoaded) {
+    await new Promise(resolve => {
+      const sc = document.createElement('script');
+      sc.src = 'https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
+      sc.onload = () => { window._lwcLoaded = true; resolve(); };
+      document.head.appendChild(sc);
+    });
+  }
+
+  try {
+    const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=1h&limit=200`);
+    const d = await r.json();
+    if (!d.ok || !d.candles || !d.candles.length) {
+      container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">Нет данных</div>';
+      return;
+    }
+    container.innerHTML = '';
+    const chart = LightweightCharts.createChart(container, {
+      layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
+      grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#1a1e2a' },
+      timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
+      width: container.clientWidth,
+      height: container.clientHeight,
+    });
+    const series = chart.addCandlestickSeries({
+      upColor: '#00e5a0', downColor: '#ff4d6d',
+      borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
+      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
+    });
+    series.setData(d.candles);
+
+    // Маркер входа/выхода
+    const markers = [];
+    const openedTs = h.opened_at ? Math.floor(new Date(h.opened_at).getTime()/1000) : null;
+    const closedTs = h.closed_at ? Math.floor(new Date(h.closed_at).getTime()/1000) : null;
+    const nearest = (ts) => {
+      if (!ts) return null;
+      let mc = d.candles[d.candles.length-1], minD = Infinity;
+      for (const c of d.candles) {
+        const diff = Math.abs(c.time - ts);
+        if (diff < minD) { minD = diff; mc = c; }
+      }
+      return mc;
+    };
+    const isL = h.direction === 'LONG';
+    const inMc = nearest(openedTs);
+    const outMc = nearest(closedTs);
+    if (inMc) markers.push({
+      time: inMc.time,
+      position: isL ? 'belowBar' : 'aboveBar',
+      color: isL ? '#00e5a0' : '#ff4d6d',
+      shape: isL ? 'arrowUp' : 'arrowDown',
+      text: `🤖 ${h.entry || ''}`,
+      size: 1,
+    });
+    if (outMc) markers.push({
+      time: outMc.time,
+      position: 'inBar',
+      color: win ? '#00e5a0' : '#ff4d6d',
+      shape: win ? 'circle' : 'square',
+      text: win ? `✅ ${pnlStr}` : `❌ ${pnlStr}`,
+      size: 1,
+    });
+    markers.sort((a,b) => a.time - b.time);
+    series.setMarkers(markers);
+
+    // Линии Entry / TP / SL
+    if (h.entry) series.createPriceLine({ price: +h.entry, color: '#ffd23e', lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' });
+    if (h.tp1) series.createPriceLine({ price: +h.tp1, color: '#00e5a0', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP' });
+    if (h.sl) series.createPriceLine({ price: +h.sl, color: '#ff4d6d', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'SL' });
+    if (h.exit_price) series.createPriceLine({ price: +h.exit_price, color: win ? '#00e5a0' : '#ff4d6d', lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: 'Exit' });
+
+    chart.timeScale().fitContent();
+  } catch (e) {
+    container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">${e.message}</div>`;
+  }
 }
 
 let _lwcPaperLoaded = false;
