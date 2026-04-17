@@ -954,22 +954,54 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     except Exception as e:
         logger.warning(f"[CV-ALERT] pump save fail #{signal.id}: {e}")
 
-    # ── Главная отправка ──
+    # ── Главная отправка (с timeout чтоб не висеть вечно) ──
     sent_ok = False
     err_info = None
+    tg_response = None
     try:
-        if chart_png:
-            from aiogram.types import BufferedInputFile
-            photo = BufferedInputFile(chart_png, filename=f"{pair}_1h.png")
-            await target_bot.send_photo(_admin_chat_id, photo=photo, caption=text, parse_mode="HTML")
-        else:
-            await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
+        async def _do_send():
+            if chart_png:
+                from aiogram.types import BufferedInputFile
+                photo = BufferedInputFile(chart_png, filename=f"{pair}_1h.png")
+                return await target_bot.send_photo(_admin_chat_id, photo=photo, caption=text, parse_mode="HTML")
+            else:
+                return await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
+        tg_response = await asyncio.wait_for(_do_send(), timeout=25.0)
         sent_ok = True
-        logger.info(f"[CV-ALERT] sent #{signal.id} {pair} {pattern}")
+        # Логируем успех с message_id (для подтверждения доставки)
+        try:
+            msg_id = getattr(tg_response, "message_id", None) if tg_response else None
+            from database import _events
+            _events().insert_one({
+                "at": utcnow(),
+                "type": "cv_alert_sent",
+                "data": {
+                    "signal_id": signal.id,
+                    "pair": pair,
+                    "pattern": pattern,
+                    "message_id": msg_id,
+                    "with_photo": bool(chart_png),
+                },
+            })
+        except Exception:
+            pass
+        logger.info(f"[CV-ALERT] sent #{signal.id} {pair} {pattern} → msg_id={getattr(tg_response, 'message_id', '?')}")
+    except asyncio.TimeoutError:
+        err_info = "TimeoutError: send_photo/send_message hung >25s"
+        logger.error(f"[CV-ALERT] TIMEOUT #{signal.id} {pair}: {err_info}")
+        try:
+            from database import _events
+            _events().insert_one({
+                "at": utcnow(),
+                "type": "cv_alert_timeout",
+                "data": {"signal_id": signal.id, "pair": pair, "pattern": pattern,
+                         "has_chart": bool(chart_png), "text_len": len(text)},
+            })
+        except Exception:
+            pass
     except Exception as e:
         err_info = f"{type(e).__name__}: {e}"
         logger.error(f"[CV-ALERT] SEND FAIL #{signal.id} {pair}: {err_info}\n{_tb.format_exc()[-600:]}")
-        # Записываем в events для дальнейшей диагностики через UI/API
         try:
             from database import _events
             _events().insert_one({
@@ -987,16 +1019,36 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
             })
         except Exception:
             pass
-        # Фоллбэк: пробуем без фото и без HTML (на случай если parse_mode подводит)
-        if chart_png:
+
+    # Фоллбэк: если не удалось или timeout — пробуем без фото и без HTML
+    if not sent_ok:
+        try:
+            fallback_text = (
+                f"⚠ CV fallback #{signal.id} {pair} {pattern}\n"
+                f"{dir_emoji} {dir_label}\n"
+                f"Entry={signal.entry} Now={current_price}\n"
+                f"AI={getattr(signal, 'ai_score', '-')}  Err={err_info}"
+            )
+            r = await asyncio.wait_for(
+                target_bot.send_message(_admin_chat_id, fallback_text),
+                timeout=15.0,
+            )
+            logger.info(f"[CV-ALERT] fallback sent #{signal.id} → msg_id={getattr(r, 'message_id', '?')}")
             try:
-                await target_bot.send_message(_admin_chat_id,
-                    f"⚠ CV alert (fallback no-photo) #{signal.id} {pair} {pattern}\n"
-                    f"Error: {err_info}\n"
-                    f"Entry={signal.entry} Now={current_price}")
-                logger.info(f"[CV-ALERT] fallback text sent #{signal.id}")
-            except Exception as e2:
-                logger.error(f"[CV-ALERT] fallback also failed #{signal.id}: {e2}")
+                from database import _events
+                _events().insert_one({"at": utcnow(), "type": "cv_alert_fallback_sent",
+                    "data": {"signal_id": signal.id, "pair": pair,
+                             "message_id": getattr(r, "message_id", None)}})
+            except Exception:
+                pass
+        except Exception as e2:
+            logger.error(f"[CV-ALERT] fallback also failed #{signal.id}: {e2}")
+            try:
+                from database import _events
+                _events().insert_one({"at": utcnow(), "type": "cv_alert_fallback_failed",
+                    "data": {"signal_id": signal.id, "pair": pair, "error": str(e2)[:200]}})
+            except Exception:
+                pass
 
     # Paper trading / cluster check — не зависят от успеха отправки
     try:
