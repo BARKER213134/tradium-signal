@@ -4,6 +4,39 @@
 
 {% block content %}
 <style>
+/* ── Strategy summary box (вверху каждой вкладки) ── */
+.strategy-box {
+  display: flex;
+  gap: 14px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  background: linear-gradient(135deg, rgba(0,212,255,0.04), rgba(123,92,255,0.03));
+  border: 1px solid rgba(0,212,255,0.18);
+  border-left: 3px solid var(--cyan);
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.strategy-box .strat-icon {
+  flex: 0 0 auto;
+  font-size: 16px;
+  opacity: 0.85;
+  padding-top: 1px;
+}
+.strategy-box .strat-body { flex: 1; min-width: 0; }
+.strategy-box .strat-title {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  margin-bottom: 2px;
+}
+.strategy-box b { color: var(--text); font-weight: 700; }
+.strategy-box code { color: #ffd23e; background: rgba(255,210,62,0.06); padding: 0 4px; border-radius: 3px; }
+
 /* ── Общие стили (таблица, вкладки, бейджи) доступные для всех bot ── */
 .tabs {
   display: inline-flex;
@@ -165,6 +198,18 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 
 {% if bot == 'anomaly' %}
 <!-- ── Anomaly tab ─────────────────────────────────────────────── -->
+<div class="strategy-box">
+  <div class="strat-icon">⚠</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · Anomaly Scanner</div>
+    Сканирует <b>все USDT фьючерсы Binance</b> каждые 5 мин на 5 типов аномалий:
+    <b>OI spike</b> (рост Open Interest ≥4%), <b>Volume spike</b> (vol ≥3× avg),
+    <b>Liquidations cluster</b>, <b>Funding rate extreme</b>, <b>LS ratio extreme</b>.
+    Score суммирует факторы — сигнал при <code>score ≥ 40</code>,
+    STRONG при <code>score ≥ 70</code>. Направление определяется по преобладающему
+    сигналу (long ликвидации → SHORT, и наоборот).
+  </div>
+</div>
 <style>
 .an-toolbar {
   display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
@@ -674,6 +719,17 @@ safeInterval(loadAnomalies, 60000);
 </script>
 
 {% elif bot == 'confluence' %}
+<div class="strategy-box">
+  <div class="strat-icon">🎯</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · Confluence Scanner</div>
+    Ищет <b>пересечение S/R уровней</b> с подтверждающими факторами: RSI divergence,
+    volume spike, EMA cross, pivot retest, round numbers. Каждый фактор даёт
+    баллы → итоговый score. <code>score ≥ 5</code> = <b>STRONG</b> (надёжный вход на
+    retest уровня), <code>3-4</code> = MEDIUM (наблюдение). Анти-фильтр: если рядом
+    срабатывает противоположная Anomaly — Confluence помечается <b>VETO</b>.
+  </div>
+</div>
 <!-- ── Confluence Scanner ────────────────────────────────────────── -->
 <style>
 .cf-hero {
@@ -1018,6 +1074,18 @@ setInterval(pollConfluenceStatus, 5000);
 </script>
 
 {% elif bot == 'clusters' %}
+<div class="strategy-box">
+  <div class="strat-icon">💠</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · Cluster Detector</div>
+    Когда на <b>одной паре в одном направлении за 4 часа</b> срабатывают
+    <b>≥3 сигнала от ≥2 разных источников</b> (Tradium, CV, Anomaly, Confluence) —
+    формируется кластер. Триггер входа на текущей цене,
+    TP <code>+3%</code> / SL <code>-2%</code> по умолчанию (настраивается).
+    Силы: <b>NORMAL</b> (3×2), <b>STRONG</b> (5×3+), <b>MEGA</b> (7×4+ или score ≥ 15).
+    Bactest: STRONG+ дают WR ~68%.
+  </div>
+</div>
 <!-- ── Кластеры ───────────────────────────────────────────────────── -->
 <style>
 .cl-hero { padding:16px 20px; margin-bottom:14px; background:linear-gradient(135deg, rgba(255,210,62,0.08), rgba(0,229,160,0.05)); border:1px solid rgba(255,210,62,0.25); border-radius:12px; }
@@ -1303,6 +1371,17 @@ safeInterval(loadPendingClusters, 30000);
 </script>
 
 {% elif bot == 'top_picks' %}
+<div class="strategy-box">
+  <div class="strat-icon">👑</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · Top Picks (Top-tier сигналы)</div>
+    Сигналы, которые получили <b>двойное подтверждение</b>: от Cluster / Tradium-triggered
+    / CV-pattern <b>И</b> STRONG Confluence (<code>score ≥ 5</code>) на той же паре+направлении
+    в окне <code>±48ч</code>. Retroactive tagging — флаг ставится и задним числом, если
+    подтверждение пришло позже. Backtest: WR <b>~75%</b> vs baseline 56%.
+    Самые надёжные сигналы платформы.
+  </div>
+</div>
 <!-- ── 👑 Top Picks ─────────────────────────────────────────────────── -->
 <style>
 .tp-hero {
@@ -1646,6 +1725,17 @@ safeInterval(loadTopPicks, 30000);
 </script>
 
 {% elif bot == 'coin_analysis' %}
+<div class="strategy-box">
+  <div class="strat-icon">🧠</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · AI Coin Analysis</div>
+    <b>Ручной разбор монеты</b> через Claude Sonnet. Анализирует: фундаментал
+    (проект, капа, ликвидность), паттерн, рыночный контекст (ETH/BTC),
+    S/R уровни, корреляции. Выдаёт <b>вердикт</b>: ENTER / SKIP, уровни TP/TP2/SL,
+    R:R, описание рисков. Результат сохраняется в БД — доступен из других
+    вкладок через клик на сигнале.
+  </div>
+</div>
 <!-- ── 🧠 AI Coin Analyzer ─────────────────────────────────────────── -->
 <style>
 .ai-hero {
@@ -2424,6 +2514,17 @@ safeInterval(loadConflicts, 30000);
 </script>
 
 {% elif bot == 'autotrading' %}
+<div class="strategy-box">
+  <div class="strat-icon">🤖</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · Paper Trader (Авто-торговля)</div>
+    <b>Симулированная торговля</b> на кластерных сигналах (MEGA/STRONG) и Top Picks.
+    Вход на trigger price, TP <code>+3%</code>, SL <code>-2%</code>, holding ≤72ч.
+    <b>Leverage boost</b>: при STRONG Confluence рядом — размер позиции ×1.5,
+    при MEGA ×2. Отслеживает live PnL, win-rate, streaks. Реальные сделки
+    не совершаются — инструмент для валидации стратегии перед ручным входом.
+  </div>
+</div>
 <!-- ── Авто-торговля ──────────────────────────────────────────────── -->
 <style>
 .at-card { background:var(--dark-2); border:1px solid var(--border); border-radius:10px; padding:16px 20px; text-align:center; }
@@ -2767,6 +2868,18 @@ safeInterval(loadPaperStatus, 15000);
 </script>
 
 {% elif bot == 'forex_fvg' %}
+<div class="strategy-box">
+  <div class="strat-icon">📈</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · Forex FVG (Fair Value Gap)</div>
+    Источник: <b>TradingView LuxAlgo FVG</b> webhook на 1H+4H для 32 инструментов
+    (forex, metals, indices, energy). Зона FVG эмулируется через <code>ATR × 0.5</code>.
+    <b>Entry</b> — лимит на границе FVG при retest, <b>SL</b> — противоположная граница
+    ±5% буфер. <b>Trailing stop</b> активируется после +1R, тянет SL на 1R сзади.
+    Expiry 30ч. Top Picks — Multi-TF (1H+4H) + Smart Level proximity
+    + Multi-Pair correlation = score ≥ 5.
+  </div>
+</div>
 <!-- ── Forex FVG (Active + Pending) ────────────────────────────────── -->
 <style>
 .fvg-hero { padding:16px 20px; margin-bottom:14px; background:linear-gradient(135deg,rgba(0,212,255,0.08),rgba(123,92,255,0.05)); border:1px solid rgba(0,212,255,0.25); border-radius:12px; }
@@ -3100,6 +3213,16 @@ safeInterval(loadFvgSignals, 30000);
 </script>
 
 {% elif bot == 'forex_journal' %}
+<div class="strategy-box">
+  <div class="strat-icon">📋</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · Forex Журнал</div>
+    Полная история всех FVG сигналов: <b>FORMED → WAITING_RETEST → ENTERED →
+    TP/SL/EXPIRED/TIMEOUT</b>. Фильтры по паре, направлению, статусу, окну времени.
+    Кликабельные графики с визуализацией зоны FVG, entry/SL/TP линий и свечей.
+    Используй для back-test стратегии: считай WR, Avg R, Sum R на реальных данных.
+  </div>
+</div>
 <!-- ── Forex Журнал (история FVG) ──────────────────────────────────── -->
 <style>
 /* Stat grid forced 6-col with fallback */
@@ -3490,6 +3613,17 @@ safeInterval(loadForexJournal, 30000);
 </script>
 
 {% elif bot == 'journal' %}
+<div class="strategy-box">
+  <div class="strat-icon">📓</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · Журнал (все источники)</div>
+    Единая лента сигналов из <b>6 источников</b>: Tradium, Cryptovizor, Anomaly,
+    Confluence, Cluster, Paper. Маркеры: <b>👑</b> = Top Pick (двойное подтверждение),
+    <b>⭐</b> = Strong (CV ai≥50, Cluster MEGA/STRONG, Tradium triggered, Conf≥5, Anom≥70).
+    Фильтры: только Strong, только Top Picks, по источнику, паре, направлению, KC/Pump.
+    Кликабельные графики с маркерами всех источников по монете.
+  </div>
+</div>
 <!-- ── Журнал ─────────────────────────────────────────────────────── -->
 <style>
 .journal-hero {
@@ -4440,6 +4574,17 @@ safeInterval(loadJournal, 30000);
 </script>
 
 {% elif bot == 'cryptovizor' %}
+<div class="strategy-box">
+  <div class="strat-icon">🚀</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · Cryptovizor</div>
+    Источник: <b>CV-канал Telegram</b> добавляет монеты в watchlist.
+    Watcher каждые 5 мин сканит 1H свечи на <b>разворотные + continuation паттерны</b>
+    (Бычье/Медвежье поглощение, Три солдата/вороны, Молот, Пинцет, Утренняя/Вечерняя звезда).
+    При срабатывании: <b>AI filter</b> через Claude решает AI Signal или Pattern;
+    фильтр <b>Keltner ETH</b> отрезает контртренд. Score ≥ 50 + pattern = ⭐ Strong.
+  </div>
+</div>
 <!-- ── Cryptovizor tabs ───────────────────────────────────────────── -->
 <div class="tabs">
   <a href="/signals?bot=cryptovizor&tab=watching" class="tab {% if cv_tab == 'watching' %}active{% endif %}">Следим <span class="tab-badge">{{ cv_stats.watching }}</span></a>
@@ -4932,6 +5077,21 @@ async function clearProcessed() {
   } catch(e) { alert('Ошибка: ' + e.message); }
 }
 </script>
+{% endif %}
+
+{% if bot == 'tradium' %}
+<div class="strategy-box">
+  <div class="strat-icon">📡</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · Tradium (Trade Setup Screener)</div>
+    Источник: <b>Tradium канал</b> (топик "Trade Setup Screener"), userbot ловит
+    setup-сигналы в реалтайме. Watcher каждые 30с проверяет состояние:
+    <b>СЛЕЖУ → DCA #4 hit</b> (цена пробила 4-й уровень DCA)
+    <b>или Entry + Reversal</b> (вход + разворотный паттерн на 1H).
+    <code>pattern_triggered</code> = реальный сигнал для входа.
+    Анти-фильтр: Keltner ETH отсекает контртренд.
+  </div>
+</div>
 {% endif %}
 
 {% if cv_tab not in ('backtest', 'ai_settings') %}
