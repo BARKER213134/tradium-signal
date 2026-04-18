@@ -784,8 +784,18 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     r1_line = f"\n🔴 <b>R1:</b> <code>{r1}</code>" if r1 else ""
 
     sym = (signal.pair or "").replace("/", "").upper()
-    _stp, _std = _check_keltner_filter(signal.direction)
-    _pump = await _pump_check(sym)
+    # Каждый хелпер с timeout — раньше без timeout виснули минутами на Binance/Mongo
+    try:
+        _stp, _std = await asyncio.wait_for(
+            asyncio.to_thread(_check_keltner_filter, signal.direction),
+            timeout=5.0,
+        )
+    except Exception:
+        _stp, _std = True, {}
+    try:
+        _pump = await asyncio.wait_for(_pump_check(sym), timeout=5.0)
+    except Exception:
+        _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
     hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
 
     lvl = ""
@@ -809,11 +819,20 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"\n"
         f"{_market_block(_pump, _stp, _std)}"
     )
-    text += await _reversal_block(signal.direction)
-    text += await _pending_cluster_block(pair, signal.direction)
+    try:
+        text += await asyncio.wait_for(_reversal_block(signal.direction), timeout=5.0)
+    except Exception:
+        pass
+    try:
+        text += await asyncio.wait_for(_pending_cluster_block(pair, signal.direction), timeout=5.0)
+    except Exception:
+        pass
     # Сохраняем pump в БД
-    from database import _signals as _sc
-    _sc().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
+    try:
+        from database import _signals as _sc
+        _sc().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
+    except Exception:
+        pass
 
     # BOT2 (@trendscryptobot) — text-only, фото никогда не поддерживало
     # (send_photo висит). Принудительно игнорируем chart_png и шлём send_message.
