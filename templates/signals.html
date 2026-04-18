@@ -3333,6 +3333,7 @@ function _fvgFilterTopPicks(items) {
 async function loadFvgSignals() {
   try {
     const r = await fetch('/api/fvg-signals');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     const s = d.stats || {};
     document.getElementById('fvgStatTotal').textContent = s.total || 0;
@@ -3344,9 +3345,25 @@ async function loadFvgSignals() {
     document.getElementById('fvgStatSumR').textContent = (sr >= 0 ? '+' : '') + sr + 'R';
     document.getElementById('fvgStatSumR').className = 'fvg-stat-val ' + (sr >= 0 ? 'text-buy' : 'text-sell');
     document.getElementById('fvgStatAvgR').textContent = (s.avg_r >= 0 ? '+' : '') + (s.avg_r || 0).toFixed(3) + 'R';
-    renderEntered(_fvgFilterTopPicks(d.entered || []));
-    renderWaiting(_fvgFilterTopPicks(d.waiting || []));
-  } catch (e) { }
+    try {
+      renderEntered(_fvgFilterTopPicks(d.entered || []));
+    } catch (e) {
+      console.error('[FVG] renderEntered fail:', e);
+      const tb = document.getElementById('fvgEnteredBody');
+      if (tb) tb.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--sell);">JS error: ${e.message}</td></tr>`;
+    }
+    try {
+      renderWaiting(_fvgFilterTopPicks(d.waiting || []));
+    } catch (e) {
+      console.error('[FVG] renderWaiting fail:', e);
+      const tb = document.getElementById('fvgWaitingBody');
+      if (tb) tb.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--sell);">JS error: ${e.message}</td></tr>`;
+    }
+  } catch (e) {
+    console.error('[FVG] loadFvgSignals fail:', e);
+    const tb = document.getElementById('fvgWaitingBody');
+    if (tb) tb.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--sell);">Ошибка загрузки: ${e.message}</td></tr>`;
+  }
 }
 
 async function fvgRescoreAll() {
