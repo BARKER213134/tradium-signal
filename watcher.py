@@ -819,14 +819,10 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"{ai_line}"
         f"⚡ Тренд: {_fmt_trend(signal.trend)}\n"
     )
-    # _pump нужен дальше для paper_on_signal — получаем с жёстким timeout 3s
-    # (раньше висело до 60s в _pump_check → Binance API)
-    try:
-        _pump = await asyncio.wait_for(_pump_check(sym), timeout=3.0)
-    except Exception:
-        _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
+    # _pump вынесен в background (после отправки). Раньше блокировал hot path.
+    _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
 
-    # ── Главная отправка (с timeout чтоб не висеть вечно) ──
+    # ── Главная отправка (timeout 10s — если Telegram лагает, быстрее в fallback) ──
     sent_ok = False
     err_info = None
     tg_response = None
@@ -838,7 +834,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
                 return await target_bot.send_photo(_admin_chat_id, photo=photo, caption=text, parse_mode="HTML")
             else:
                 return await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
-        tg_response = await asyncio.wait_for(_do_send(), timeout=25.0)
+        tg_response = await asyncio.wait_for(_do_send(), timeout=10.0)
         sent_ok = True
         # Логируем успех с message_id (для подтверждения доставки)
         try:
@@ -922,19 +918,45 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
             except Exception:
                 pass
 
-    # Paper trading / cluster check — не зависят от успеха отправки
+    # Всё тяжёлое — в background (не блокирует следующий сигнал)
+    asyncio.create_task(_cv_alert_background(signal, pair, sym, current_price, pattern))
+
+
+async def _cv_alert_background(signal, pair, sym, current_price, pattern):
+    """Фоновая аналитика после отправки CV-алерта: pump check, paper trade,
+    cluster check. Каждое — с timeout, не блокирует hot path."""
     try:
-        await _paper_on_signal({"symbol": sym, "direction": signal.direction, "entry": current_price,
-                                 "source": "cryptovizor", "pattern": pattern,
-                                 "score": getattr(signal, "ai_score", None),
-                                 "pump_vol": _pump.get("volume_spike", 0),
-                                 "pump_oi": _pump.get("oi_change", 0)})
+        try:
+            _pump = await asyncio.wait_for(_pump_check(sym), timeout=5.0)
+        except Exception:
+            _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
+        # Pump в БД
+        try:
+            from database import _signals as _sc
+            _sc().update_one({"id": signal.id}, {"$set": {
+                "pump_score": _pump.get("score", 0),
+                "pump_factors": _pump.get("factors", []),
+            }})
+        except Exception:
+            pass
+        # Paper trading
+        try:
+            await asyncio.wait_for(_paper_on_signal({
+                "symbol": sym, "direction": signal.direction, "entry": current_price,
+                "source": "cryptovizor", "pattern": pattern,
+                "score": getattr(signal, "ai_score", None),
+                "pump_vol": _pump.get("volume_spike", 0),
+                "pump_oi": _pump.get("oi_change", 0),
+            }), timeout=10.0)
+        except Exception as e:
+            logger.warning(f"[CV-BG] paper_on_signal fail #{signal.id}: {e}")
+        # Cluster check
+        try:
+            await asyncio.wait_for(_cluster_check_on_signal(pair, signal.direction), timeout=10.0)
+        except Exception as e:
+            logger.warning(f"[CV-BG] cluster_check fail #{signal.id}: {e}")
     except Exception as e:
-        logger.warning(f"[CV-ALERT] paper_on_signal fail #{signal.id}: {e}")
-    try:
-        await _cluster_check_on_signal(pair, signal.direction)
-    except Exception as e:
-        logger.warning(f"[CV-ALERT] cluster_check fail #{signal.id}: {e}")
+        logger.warning(f"[CV-BG] bg task fail #{signal.id}: {e}")
 
 
 async def _check_cryptovizor(db):
