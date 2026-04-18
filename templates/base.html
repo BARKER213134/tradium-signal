@@ -676,6 +676,16 @@
       window.sigIcon._version = 'v4-strong';
       console.log('[sigIcon] loaded', window.sigIcon._version);
 
+      // sigIconCompact — для маркеров НА ГРАФИКЕ (без 👑/⭐ префиксов,
+      // чтобы не загромождать). Top Pick визуализируется цветом через color param.
+      window.sigIconCompact = function(src, score) {
+        if (src === 'confluence') {
+          const s = +score || 0;
+          return s >= 6 ? '🔥' : s >= 5 ? '⭐' : '🎯';
+        }
+        return ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
+      };
+
       // ─── Market state markers (KC + Reversal changes) ─────────────
       // Рисует на графике смены Keltner ETH (🛡) и Reversal Meter (🎢)
       // поверх существующих сигнальных маркеров. Вызывать после setMarkers().
@@ -702,17 +712,16 @@
           if (!ts || ts < firstTs || ts > lastTs) continue;
           const mc = nearest(ts);
           if (ev.type === 'kc') {
-            // Keltner ETH: 🛡 сверху свечи (только эмоджи, без текста)
+            // Keltner ETH: только 🛡 (цвет = направление, без доп. эмоджи)
             const to = (ev.to || '').toUpperCase();
-            const icon = to === 'LONG' ? '🛡🟢' : to === 'SHORT' ? '🛡🔴' : '🛡⚪';
             const color = to === 'LONG' ? '#00e5a0' : to === 'SHORT' ? '#ff4d6d' : '#888';
             out.push({
               time: mc.time,
               position: 'aboveBar',
               color: color,
               shape: 'square',
-              text: icon,
-              size: 1,
+              text: '🛡',
+              size: 0,
             });
           }
           // Reversal Meter маркеры отключены — забивали график.
@@ -1529,17 +1538,8 @@ async function _renderLwcSignalChart(containerId, opts) {
       }
       const g = byTime.get(key);
       const mScore = m.meta?.score ?? m.score;
-      const _mkMeta = Object.assign({}, m.meta || {}, {
-        strong: window.isStrongSignal ? window.isStrongSignal({
-          source: m.source,
-          score: mScore,
-          pattern: m.pattern || m.meta?.pattern,
-        }) : false,
-      });
-      const iconResult = _sigIconLookup(m.source, mScore, _mkMeta);
-      if (m.meta && m.meta.is_top_pick) {
-        console.log('[TOP PICK marker]', m.source, 'meta:', m.meta, '→ icon:', iconResult);
-      }
+      // compact — только базовый эмоджи без 👑/⭐ префиксов (график чище)
+      const iconResult = window.sigIconCompact ? window.sigIconCompact(m.source, mScore) : _sigIconLookup(m.source, mScore, {});
       g.icons.add(iconResult);
       g.items.push(m);
       markerMap.set(mc.time, m);
@@ -1553,6 +1553,7 @@ async function _renderLwcSignalChart(containerId, opts) {
         color: g.isLong ? '#00e5a0' : '#ff4d6d',
         shape: g.isLong ? 'arrowUp' : 'arrowDown',
         text: icons + (g.items.length > 1 ? ` ×${g.items.length}` : price),
+        size: 0,
       });
     }
     markers.sort((a, b) => a.time - b.time);
@@ -1566,16 +1567,14 @@ async function _renderLwcSignalChart(containerId, opts) {
       score: opts.score,
       pattern: opts.pattern,
     }) : false;
-    const srcIcon = _sigIconLookup(opts.source, opts.score, {
-      is_top_pick: opts.is_top_pick,
-      strong: _optStrong,
-    });
+    const srcIcon = window.sigIconCompact ? window.sigIconCompact(opts.source, opts.score) : _sigIconLookup(opts.source, opts.score, {});
     markers = [{
       time: mc.time,
       position: isLong ? 'belowBar' : 'aboveBar',
       color: isLong ? '#00e5a0' : '#ff4d6d',
       shape: isLong ? 'arrowUp' : 'arrowDown',
       text: `${srcIcon} ${opts.entry || ''}`,
+      size: 0,
     }];
     markerMap.set(mc.time, {source: opts.source, direction: opts.direction, price: opts.entry, at: opts.at, pattern: opts.pattern, score: opts.score});
   }
