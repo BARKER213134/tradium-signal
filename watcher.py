@@ -748,33 +748,9 @@ async def _check_once():
 async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: float,
                                    s1: float | None, r1: float | None,
                                    chart_png: bytes | None):
-    """Алерт в отдельный бот BOT2 для Cryptovizor.
-
-    Hardened: каждый внешний вызов в try/except с None fallback,
-    при любой ошибке полный traceback пишется в events с type='cv_alert_error'.
-    """
-    import traceback as _tb
-    # ── Маячок: пишем event что вызов ДОШЁЛ до функции ──
-    try:
-        from database import _events
-        _events().insert_one({
-            "at": utcnow(),
-            "type": "cv_alert_called",
-            "data": {
-                "signal_id": signal.id,
-                "pair": signal.pair,
-                "pattern": pattern,
-                "has_chart": bool(chart_png),
-                "bot2_ready": bool(_bot2),
-                "bot_ready": bool(_bot),
-                "admin_chat_set": bool(_admin_chat_id),
-            },
-        })
-    except Exception:
-        pass
+    """Алерт в отдельный бот BOT2 для Cryptovizor."""
     target_bot = _bot2 or _bot
     if not target_bot or not _admin_chat_id:
-        logger.warning(f"[CV-ALERT] skip #{signal.id}: bot={bool(target_bot)} chat={bool(_admin_chat_id)}")
         return
     is_long = signal.direction in ("LONG", "BUY")
     dir_emoji = "🟢" if is_long else "🔴"
@@ -797,15 +773,16 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     r1_line = f"\n🔴 <b>R1:</b> <code>{r1}</code>" if r1 else ""
 
     sym = (signal.pair or "").replace("/", "").upper()
+    _stp, _std = _check_keltner_filter(signal.direction)
+    _pump = await _pump_check(sym)
+    hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
 
-    # FAST PATH (2026-04-17): убраны все тяжёлые helper'ы которые блокировали
-    # event loop. Формируем минимальный алерт за <1с, тяжёлая аналитика
-    # (pump_check, keltner, reversal, cluster block) идёт в background.
     lvl = ""
     if s1: lvl += f"🟢 S1: <code>{s1}</code> | "
     if r1: lvl += f"🔴 R1: <code>{r1}</code>"
 
     text = (
+        f"{hp}"
         f"🚀 <b>CRYPTOVIZOR · ПАТТЕРН</b>\n"
         f"\n"
         f"<b>{pair}/USDT</b> · 1h · {dir_emoji} <b>{dir_label}</b>\n"
@@ -818,145 +795,27 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"{lvl}\n"
         f"{ai_line}"
         f"⚡ Тренд: {_fmt_trend(signal.trend)}\n"
+        f"\n"
+        f"{_market_block(_pump, _stp, _std)}"
     )
-    # _pump вынесен в background (после отправки). Раньше блокировал hot path.
-    _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
+    text += await _reversal_block(signal.direction)
+    text += await _pending_cluster_block(pair, signal.direction)
+    # Сохраняем pump в БД
+    from database import _signals as _sc
+    _sc().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
 
-    # ── Главная отправка (timeout 10s — если Telegram лагает, быстрее в fallback) ──
-    sent_ok = False
-    err_info = None
-    tg_response = None
     try:
-        async def _do_send():
-            if chart_png:
-                from aiogram.types import BufferedInputFile
-                photo = BufferedInputFile(chart_png, filename=f"{pair}_1h.png")
-                return await target_bot.send_photo(_admin_chat_id, photo=photo, caption=text, parse_mode="HTML")
-            else:
-                return await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
-        tg_response = await asyncio.wait_for(_do_send(), timeout=10.0)
-        sent_ok = True
-        # Логируем успех с message_id (для подтверждения доставки)
-        try:
-            msg_id = getattr(tg_response, "message_id", None) if tg_response else None
-            from database import _events
-            _events().insert_one({
-                "at": utcnow(),
-                "type": "cv_alert_sent",
-                "data": {
-                    "signal_id": signal.id,
-                    "pair": pair,
-                    "pattern": pattern,
-                    "message_id": msg_id,
-                    "with_photo": bool(chart_png),
-                },
-            })
-        except Exception:
-            pass
-        logger.info(f"[CV-ALERT] sent #{signal.id} {pair} {pattern} → msg_id={getattr(tg_response, 'message_id', '?')}")
-    except asyncio.TimeoutError:
-        err_info = "TimeoutError: send_photo/send_message hung >25s"
-        logger.error(f"[CV-ALERT] TIMEOUT #{signal.id} {pair}: {err_info}")
-        try:
-            from database import _events
-            _events().insert_one({
-                "at": utcnow(),
-                "type": "cv_alert_timeout",
-                "data": {"signal_id": signal.id, "pair": pair, "pattern": pattern,
-                         "has_chart": bool(chart_png), "text_len": len(text)},
-            })
-        except Exception:
-            pass
+        if chart_png:
+            from aiogram.types import BufferedInputFile
+            photo = BufferedInputFile(chart_png, filename=f"{pair}_1h.png")
+            await target_bot.send_photo(_admin_chat_id, photo=photo, caption=text, parse_mode="HTML")
+        else:
+            await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
+        logger.info(f"Cryptovizor alert sent #{signal.id} {pair} {pattern}")
+        await _paper_on_signal({"symbol": sym, "direction": signal.direction, "entry": current_price, "source": "cryptovizor", "pattern": pattern, "score": getattr(signal, "ai_score", None), "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
+        await _cluster_check_on_signal(pair, signal.direction)
     except Exception as e:
-        err_info = f"{type(e).__name__}: {e}"
-        logger.error(f"[CV-ALERT] SEND FAIL #{signal.id} {pair}: {err_info}\n{_tb.format_exc()[-600:]}")
-        try:
-            from database import _events
-            _events().insert_one({
-                "at": utcnow(),
-                "type": "cv_alert_error",
-                "data": {
-                    "signal_id": signal.id,
-                    "pair": pair,
-                    "pattern": pattern,
-                    "error": err_info,
-                    "trace": _tb.format_exc()[-1500:],
-                    "has_chart": bool(chart_png),
-                    "text_len": len(text),
-                },
-            })
-        except Exception:
-            pass
-
-    # Фоллбэк: если не удалось или timeout — пробуем без фото и без HTML
-    if not sent_ok:
-        try:
-            fallback_text = (
-                f"⚠ CV fallback #{signal.id} {pair} {pattern}\n"
-                f"{dir_emoji} {dir_label}\n"
-                f"Entry={signal.entry} Now={current_price}\n"
-                f"AI={getattr(signal, 'ai_score', '-')}  Err={err_info}"
-            )
-            r = await asyncio.wait_for(
-                target_bot.send_message(_admin_chat_id, fallback_text),
-                timeout=15.0,
-            )
-            logger.info(f"[CV-ALERT] fallback sent #{signal.id} → msg_id={getattr(r, 'message_id', '?')}")
-            try:
-                from database import _events
-                _events().insert_one({"at": utcnow(), "type": "cv_alert_fallback_sent",
-                    "data": {"signal_id": signal.id, "pair": pair,
-                             "message_id": getattr(r, "message_id", None)}})
-            except Exception:
-                pass
-        except Exception as e2:
-            logger.error(f"[CV-ALERT] fallback also failed #{signal.id}: {e2}")
-            try:
-                from database import _events
-                _events().insert_one({"at": utcnow(), "type": "cv_alert_fallback_failed",
-                    "data": {"signal_id": signal.id, "pair": pair, "error": str(e2)[:200]}})
-            except Exception:
-                pass
-
-    # Всё тяжёлое — в background (не блокирует следующий сигнал)
-    asyncio.create_task(_cv_alert_background(signal, pair, sym, current_price, pattern))
-
-
-async def _cv_alert_background(signal, pair, sym, current_price, pattern):
-    """Фоновая аналитика после отправки CV-алерта: pump check, paper trade,
-    cluster check. Каждое — с timeout, не блокирует hot path."""
-    try:
-        try:
-            _pump = await asyncio.wait_for(_pump_check(sym), timeout=5.0)
-        except Exception:
-            _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
-        # Pump в БД
-        try:
-            from database import _signals as _sc
-            _sc().update_one({"id": signal.id}, {"$set": {
-                "pump_score": _pump.get("score", 0),
-                "pump_factors": _pump.get("factors", []),
-            }})
-        except Exception:
-            pass
-        # Paper trading
-        try:
-            await asyncio.wait_for(_paper_on_signal({
-                "symbol": sym, "direction": signal.direction, "entry": current_price,
-                "source": "cryptovizor", "pattern": pattern,
-                "score": getattr(signal, "ai_score", None),
-                "pump_vol": _pump.get("volume_spike", 0),
-                "pump_oi": _pump.get("oi_change", 0),
-            }), timeout=10.0)
-        except Exception as e:
-            logger.warning(f"[CV-BG] paper_on_signal fail #{signal.id}: {e}")
-        # Cluster check
-        try:
-            await asyncio.wait_for(_cluster_check_on_signal(pair, signal.direction), timeout=10.0)
-        except Exception as e:
-            logger.warning(f"[CV-BG] cluster_check fail #{signal.id}: {e}")
-    except Exception as e:
-        logger.warning(f"[CV-BG] bg task fail #{signal.id}: {e}")
+        logger.error(f"Cryptovizor alert fail #{signal.id}: {e}")
 
 
 async def _check_cryptovizor(db):
@@ -1019,60 +878,33 @@ async def _check_cryptovizor(db):
                 if s1 is not None: s.dca1 = s1
                 if r1 is not None: s.dca2 = r1
 
-                # AI score — Claude может упасть (budget/timeout), не критично для алерта
+                # AI score — сохраняет ai_score в БД (не влияет на роутинг)
                 try:
                     await _ai_score_and_alert_pattern(s, strongest, current_price, s1, r1, chart_png, candles, db)
                 except Exception as e:
-                    logger.warning(f"[CV] _ai_score_and_alert_pattern fail #{s.id}: {e}")
-                    try:
-                        from database import _events
-                        _events().insert_one({"at": utcnow(), "type": "cv_ai_score_error",
-                            "data": {"signal_id": s.id, "pair": s.pair, "error": f"{type(e).__name__}: {e}"}})
-                    except Exception:
-                        pass
+                    logger.warning(f"[CV] ai_score fail #{s.id}: {e}")
 
-                # SuperTrend ETH фильтр
+                # SuperTrend ETH фильтр — фильтрует контртренд
                 try:
                     st_passed, st_data = _check_keltner_filter(s.direction)
                 except Exception as e:
                     logger.warning(f"[CV] keltner fail #{s.id}: {e}")
-                    st_passed, st_data = True, {}  # default: пропускаем алерт если фильтр упал
+                    st_passed, st_data = True, {}
 
-                # AI filter решает: Сигнал AI или обычный Сигнал
-                try:
-                    ai_passed = await _run_ai_filter(s, current_price, db)
-                except Exception as e:
-                    logger.warning(f"[CV] _run_ai_filter fail #{s.id}: {e}")
-                    try:
-                        from database import _events
-                        _events().insert_one({"at": utcnow(), "type": "cv_ai_filter_error",
-                            "data": {"signal_id": s.id, "pair": s.pair, "error": f"{type(e).__name__}: {e}"}})
-                    except Exception:
-                        pass
-                    ai_passed = False  # fallback: обычный CV-алерт
-                if ai_passed:
-                    s.status = "ПАТТЕРН"
-                    s.filter_reason = f"AI_SIGNAL:score={s.ai_score or 0}"
-                    s.st_passed = st_passed
-                    db.commit()
-                    log_event(s.id, "ai_signal", price=current_price,
-                        message=f"AI отобрал: {strongest}, score {s.ai_score}, ST={'✅' if st_passed else '❌'}")
-                    _broadcast("signal_new", {"id": s.id, "status": "AI_SIGNAL", "source": "cryptovizor"})
-                    # Алерт только если ST подтверждён
-                    if st_passed:
-                        await _send_ai_signal_alert(s, {"score": s.ai_score or 0, "st": st_data}, current_price)
-                else:
-                    s.status = "ПАТТЕРН"
-                    s.result = f"AI:{s.ai_score or 0}"
-                    s.st_passed = st_passed
-                    db.commit()
-                    log_event(s.id, "cryptovizor_pattern", price=current_price,
-                        data={"pattern": strongest, "s1": s1, "r1": r1},
-                        message=f"Cryptovizor: {strongest}, ST={'✅' if st_passed else '❌'}")
-                    _broadcast("signal_new", {"id": s.id, "status": "ПАТТЕРН", "source": "cryptovizor"})
-                    # Алерт только если ST подтверждён
-                    if st_passed:
-                        await _send_cryptovizor_alert(s, strongest, current_price, s1, r1, chart_png)
+                # Все CV с паттерном идут в BOT2 через _send_cryptovizor_alert.
+                # AI_SIGNAL ветка удалена (2026-04-18) — был отдельный путь в
+                # BOT4 который ломал отправку, сейчас всё унифицировано.
+                s.status = "ПАТТЕРН"
+                s.result = f"AI:{s.ai_score or 0}"
+                s.st_passed = st_passed
+                db.commit()
+                log_event(s.id, "cryptovizor_pattern", price=current_price,
+                    data={"pattern": strongest, "s1": s1, "r1": r1},
+                    message=f"Cryptovizor: {strongest}, ST={'✅' if st_passed else '❌'}")
+                _broadcast("signal_new", {"id": s.id, "status": "ПАТТЕРН", "source": "cryptovizor"})
+                # Алерт только если ST подтверждён
+                if st_passed:
+                    await _send_cryptovizor_alert(s, strongest, current_price, s1, r1, chart_png)
                 # Top Pick check — CV pattern + STRONG Confluence ≤ 48h
                 try:
                     from top_picks import tag_signal
@@ -1280,18 +1112,17 @@ async def _check_ai_signals(db):
             db.commit()
 
             if result.get("send"):
-                # Не меняем status — сигнал остаётся в ПАТТЕРН (вкладка Сигнал)
-                # Добавляем метку ai_filtered для вкладки Сигнал AI
-                s.filter_reason = f"AI_SIGNAL:score={result['score']}"
+                # AI-filter passed — просто пометим в БД для UI статистики.
+                # Отдельный алерт НЕ отправляем — сигнал уже пришёл в BOT2
+                # через основной поток _check_cryptovizor → _send_cryptovizor_alert
+                # (AI_SIGNAL ветка удалена 2026-04-18).
+                s.filter_reason = f"AI_PASSED:score={result['score']}"
                 db.commit()
-                log_event(s.id, "ai_signal", price=current,
+                log_event(s.id, "ai_passed", price=current,
                     data={"score": result["score"], "reasoning": result.get("reasoning")},
-                    message=f"AI отобрал: score {result['score']}/10")
-                _broadcast("signal_update", {"id": s.id, "status": "AI_SIGNAL", "source": "cryptovizor"})
-
-                # Алерт в BOT4
-                await _send_ai_signal_alert(s, result, current)
-                logger.info(f"AI Signal #{s.id} {s.pair} score={result['score']}")
+                    message=f"AI отобрал: score {result['score']}/10 (без доп. алерта)")
+                _broadcast("signal_update", {"id": s.id, "status": "AI_PASSED", "source": "cryptovizor"})
+                logger.info(f"AI Passed #{s.id} {s.pair} score={result['score']} (no extra alert)")
             else:
                 log_event(s.id, "ai_skipped",
                     data={"score": result["score"], "reasoning": result.get("reasoning")},
