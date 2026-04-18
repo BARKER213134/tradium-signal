@@ -977,9 +977,27 @@ async def _check_cryptovizor(db):
                     data={"pattern": strongest, "s1": s1, "r1": r1},
                     message=f"Cryptovizor: {strongest}, ST={'✅' if st_passed else '❌'}")
                 _broadcast("signal_new", {"id": s.id, "status": "ПАТТЕРН", "source": "cryptovizor"})
-                # Алерт только если ST подтверждён
+                # Алерт только если ST подтверждён. Fire-and-forget — если
+                # функция виснет, следующие сигналы не ждут. Каждый вызов
+                # в отдельной задаче с глобальным timeout 45s.
                 if st_passed:
-                    await _send_cryptovizor_alert(s, strongest, current_price, s1, r1, chart_png)
+                    async def _fire_and_forget_alert(sig_obj, pat, cp, _s1, _r1, _png):
+                        try:
+                            await asyncio.wait_for(
+                                _send_cryptovizor_alert(sig_obj, pat, cp, _s1, _r1, _png),
+                                timeout=45.0,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.error(f"[CV] alert TIMEOUT 45s #{sig_obj.id} {sig_obj.pair}")
+                            try:
+                                from database import _events
+                                _events().insert_one({"at": utcnow(), "type": "cv_alert_timeout_global",
+                                    "data": {"signal_id": sig_obj.id, "pair": sig_obj.pair}})
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            logger.error(f"[CV] alert exception #{sig_obj.id}: {e}")
+                    asyncio.create_task(_fire_and_forget_alert(s, strongest, current_price, s1, r1, chart_png))
                 # Top Pick check — CV pattern + STRONG Confluence ≤ 48h
                 try:
                     from top_picks import tag_signal
