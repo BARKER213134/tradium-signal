@@ -5516,7 +5516,10 @@ async function clearProcessed() {
       {% for s in signals %}
       <tr class="signal-row{% if cv_tab in ('active', 'ai_signal') %} ai-clickable{% endif %}{% if cv_tab in ('active', 'ai_signal') and s.comment %} ai-done{% endif %}{% if s.pump_score is not none and s.pump_score >= 2 %} pump-high{% elif cv_tab in ('active', 'ai_signal') and s.st_passed is not none and not s.st_passed %} st-failed{% endif %}" data-id="{{ s.id }}" data-pair="{{ s.pair or '' }}" data-entry="{{ s.entry or '' }}" data-direction="{{ s.direction or '' }}" data-ts="{{ (s.pattern_triggered_at or s.received_at).timestamp()|int if (s.pattern_triggered_at or s.received_at) and (s.pattern_triggered_at or s.received_at) is not string else '' }}" data-tp1="{{ s.dca2 or '' }}" data-sl="{{ s.dca1 or '' }}" {% if cv_tab in ('active', 'ai_signal') %}onclick="toggleAiAnalysis({{ loop.index }}, '{{ s.pair|replace("'","") }}', '{{ s.direction }}', '{{ s.entry }}', '{{ s.pattern_name }}')" style="cursor:pointer;"{% endif %}>
         <td onclick="event.stopPropagation();"><input type="checkbox" class="row-check"></td>
-        <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ s.received_at.strftime('%d.%m, %H:%M') if s.received_at and s.received_at is not string else (s.received_at[:11] if s.received_at else '—') }}</td>
+        {# Для вкладок active/ai_signal показываем pattern_triggered_at (когда паттерн сработал),
+           для watching — received_at (когда монета добавлена в watchlist) #}
+        {% set _time_field = s.pattern_triggered_at if cv_tab in ('active','ai_signal') and s.pattern_triggered_at else s.received_at %}
+        <td class="mono text-muted" style="font-size:11px;white-space:nowrap;">{{ _time_field.strftime('%d.%m, %H:%M') if _time_field and _time_field is not string else (_time_field[:11] if _time_field else '—') }}</td>
         <td class="mono text-accent fw-700">{{ (s.pair or '—').replace('/USDT','') }}</td>
         <td>
           {% if s.direction == 'LONG' %}<span class="badge badge-buy">LONG</span>
