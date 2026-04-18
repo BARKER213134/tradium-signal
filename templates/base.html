@@ -1538,8 +1538,14 @@ async function _renderLwcSignalChart(containerId, opts) {
       }
       const g = byTime.get(key);
       const mScore = m.meta?.score ?? m.score;
-      // compact — только базовый эмоджи без 👑/⭐ префиксов (график чище)
-      const iconResult = window.sigIconCompact ? window.sigIconCompact(m.source, mScore) : _sigIconLookup(m.source, mScore, {});
+      const _mkMeta = Object.assign({}, m.meta || {}, {
+        strong: window.isStrongSignal ? window.isStrongSignal({
+          source: m.source,
+          score: mScore,
+          pattern: m.pattern || m.meta?.pattern,
+        }) : false,
+      });
+      const iconResult = _sigIconLookup(m.source, mScore, _mkMeta);
       g.icons.add(iconResult);
       g.items.push(m);
       markerMap.set(mc.time, m);
@@ -1567,7 +1573,10 @@ async function _renderLwcSignalChart(containerId, opts) {
       score: opts.score,
       pattern: opts.pattern,
     }) : false;
-    const srcIcon = window.sigIconCompact ? window.sigIconCompact(opts.source, opts.score) : _sigIconLookup(opts.source, opts.score, {});
+    const srcIcon = _sigIconLookup(opts.source, opts.score, {
+      is_top_pick: opts.is_top_pick,
+      strong: _optStrong,
+    });
     markers = [{
       time: mc.time,
       position: isLong ? 'belowBar' : 'aboveBar',

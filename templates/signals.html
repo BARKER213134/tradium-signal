@@ -2901,7 +2901,8 @@ async function _drawPaperHistChart(idx) {
       const key = mc.time + '_' + s.direction;
       if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: isL, icons: new Set(), items: [] });
       const g = byTime.get(key);
-      const icon = window.sigIconCompact ? window.sigIconCompact(s.source, s.score) : '•';
+      const _strong = window.isStrongSignal ? window.isStrongSignal(s) : false;
+      const icon = window.sigIcon(s.source, s.score, { is_top_pick: !!s.is_top_pick, strong: _strong });
       g.icons.add(icon);
       g.items.push(s);
     }
@@ -3135,7 +3136,10 @@ async function _renderPaperChart(idx, tf) {
       const key = mcc.time + '_' + m.direction;
       if (!byKey.has(key)) byKey.set(key, {time: mcc.time, isLong: isL, icons: new Set(), items: []});
       const g = byKey.get(key);
-      g.icons.add(window.sigIconCompact ? window.sigIconCompact(m.source, m.meta?.score ?? m.score) : '•');
+      const _pMeta = Object.assign({}, m.meta || {}, {
+        strong: window.isStrongSignal ? window.isStrongSignal(m) : false,
+      });
+      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, _pMeta));
       g.items.push(m);
       if (!paperMarkerMap.has(mcc.time)) paperMarkerMap.set(mcc.time, m);
     }
@@ -4325,7 +4329,8 @@ async function loadCoinChart(coin) {
         if (diff < minD) { minD = diff; mc = c; }
       }
       const isLong = s.direction === 'LONG';
-      const srcIcon = window.sigIconCompact ? window.sigIconCompact(s.source, s.score) : '•';
+      const _strongM = window.isStrongSignal ? window.isStrongSignal(s) : false;
+      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _strongM});
       markers.push({
         time: mc.time,
         direction: s.direction,
@@ -4854,7 +4859,10 @@ async function openJournalChart(idx, forceTF) {
       const key = mc.time + '_' + m.direction;
       if (!byKey.has(key)) byKey.set(key, {time: mc.time, isLong: isL, icons: new Set(), items: []});
       const g = byKey.get(key);
-      g.icons.add(window.sigIconCompact ? window.sigIconCompact(m.source, m.meta?.score ?? m.score) : '•');
+      const _mMeta = Object.assign({}, m.meta || {}, {
+        strong: window.isStrongSignal ? window.isStrongSignal(m) : false,
+      });
+      g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, _mMeta));
       g.items.push(m);
       modalMarkerMap.set(mc.time, m);
     }
