@@ -1807,14 +1807,18 @@ async function _renderLwcSignalChart(containerId, opts) {
   }
   series.setMarkers(markers);
 
+  // Накопительные маркеры: оба async callback'а (KC и KL) обновляют свою часть,
+  // а финальный setMarkers комбинирует base + ms + kl (иначе последний затирает предыдущий)
+  let _msM = [], _klM = [];
+  const _applyAll = () => {
+    series.setMarkers([...markers, ..._msM, ..._klM].sort((a,b) => a.time - b.time));
+  };
+
   // Market state markers (KC + Reversal) async
   if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
     window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
-      const msMarkers = window._addMarketStateMarkers(d.candles, events);
-      if (msMarkers.length) {
-        const combined = [...markers, ...msMarkers].sort((a,b) => a.time - b.time);
-        series.setMarkers(combined);
-      }
+      _msM = window._addMarketStateMarkers(d.candles, events) || [];
+      _applyAll();
     }).catch(() => {});
   }
 
@@ -1823,11 +1827,8 @@ async function _renderLwcSignalChart(containerId, opts) {
     window._fetchKeyLevels(opts.symbol, 48).then(klItems => {
       if (!klItems || !klItems.length) return;
       window._drawKeyLevelZones(chart, series, d.candles, klItems);
-      const klMarkers = window._addKeyLevelMarkers(d.candles, klItems, opts.direction);
-      if (klMarkers && klMarkers.length) {
-        const cur = series.setMarkers ? null : null;
-        series.setMarkers([...markers, ...klMarkers].sort((a,b) => a.time - b.time));
-      }
+      _klM = window._addKeyLevelMarkers(d.candles, klItems, opts.direction) || [];
+      _applyAll();
     }).catch(() => {});
   }
 

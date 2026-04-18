@@ -2943,11 +2943,14 @@ async function _drawPaperHistChart(idx) {
     });
     markers.sort((a, b) => a.time - b.time);
     series.setMarkers(markers);
+    // Накопительные маркеры: KC и KL не затирают друг друга
+    let _msM = [], _klM = [];
+    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM].sort((a,b) => a.time - b.time));
     // Market state overlay (KC + Reversal)
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
-        const ms = window._addMarketStateMarkers(d.candles, events);
-        if (ms.length) series.setMarkers([...markers, ...ms].sort((a,b) => a.time - b.time));
+        _msM = window._addMarketStateMarkers(d.candles, events) || [];
+        _applyAll();
       }).catch(() => {});
     }
     // Key Levels — зоны S/R + маркеры Entered событий
@@ -2955,8 +2958,8 @@ async function _drawPaperHistChart(idx) {
       window._fetchKeyLevels(h.symbol, 48).then(klItems => {
         if (!klItems || !klItems.length) return;
         window._drawKeyLevelZones(chart, series, d.candles, klItems);
-        const klM = window._addKeyLevelMarkers(d.candles, klItems, h.direction);
-        if (klM && klM.length) series.setMarkers([...markers, ...klM].sort((a,b) => a.time - b.time));
+        _klM = window._addKeyLevelMarkers(d.candles, klItems, h.direction) || [];
+        _applyAll();
       }).catch(() => {});
     }
 
@@ -3168,11 +3171,14 @@ async function _renderPaperChart(idx, tf) {
     }
     markers.sort((a,b) => a.time - b.time);
     series.setMarkers(markers);
+    // Накопительные маркеры: KC и KL не затирают друг друга
+    let _msM = [], _klM = [];
+    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM].sort((a,b) => a.time - b.time));
     // Market state overlay (KC + Reversal)
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
-        const ms = window._addMarketStateMarkers(d.candles, events);
-        if (ms.length) series.setMarkers([...markers, ...ms].sort((a,b) => a.time - b.time));
+        _msM = window._addMarketStateMarkers(d.candles, events) || [];
+        _applyAll();
       }).catch(() => {});
     }
     // Key Levels — зоны S/R
@@ -3180,8 +3186,8 @@ async function _renderPaperChart(idx, tf) {
       window._fetchKeyLevels(p.symbol, 48).then(klItems => {
         if (!klItems || !klItems.length) return;
         window._drawKeyLevelZones(chart, series, d.candles, klItems);
-        const klM = window._addKeyLevelMarkers(d.candles, klItems, p.direction);
-        if (klM && klM.length) series.setMarkers([...markers, ...klM].sort((a,b) => a.time - b.time));
+        _klM = window._addKeyLevelMarkers(d.candles, klItems, p.direction) || [];
+        _applyAll();
       }).catch(() => {});
     }
 
@@ -4419,11 +4425,14 @@ async function loadCoinChart(coin) {
     }
     unique.sort((a, b) => a.time - b.time);
     series.setMarkers(unique);
+    // Накопительные маркеры: KC и KL не затирают друг друга
+    let _msM = [], _klM = [];
+    const _applyAll = () => series.setMarkers([...unique, ..._msM, ..._klM].sort((a,b) => a.time - b.time));
     // Market state overlay (KC + Reversal)
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
-        const ms = window._addMarketStateMarkers(d.candles, events);
-        if (ms.length) series.setMarkers([...unique, ...ms].sort((a,b) => a.time - b.time));
+        _msM = window._addMarketStateMarkers(d.candles, events) || [];
+        _applyAll();
       }).catch(() => {});
     }
     // Key Levels — зоны S/R + маркеры
@@ -4431,8 +4440,8 @@ async function loadCoinChart(coin) {
       window._fetchKeyLevels(sym, 48).then(klItems => {
         if (!klItems || !klItems.length) return;
         window._drawKeyLevelZones(chart, series, d.candles, klItems);
-        const klM = window._addKeyLevelMarkers(d.candles, klItems, null);
-        if (klM && klM.length) series.setMarkers([...unique, ...klM].sort((a,b) => a.time - b.time));
+        _klM = window._addKeyLevelMarkers(d.candles, klItems, null) || [];
+        _applyAll();
       }).catch(() => {});
     }
 
@@ -4961,11 +4970,14 @@ async function openJournalChart(idx, forceTF) {
     }
     markers.sort((a,b) => a.time - b.time);
     series.setMarkers(markers);
+    // Накопительные маркеры: KC и KL не затирают друг друга
+    let _msM = [], _klM = [];
+    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM].sort((a,b) => a.time - b.time));
     // Market state overlay (KC + Reversal)
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
-        const ms = window._addMarketStateMarkers(d.candles, events);
-        if (ms.length) series.setMarkers([...markers, ...ms].sort((a,b) => a.time - b.time));
+        _msM = window._addMarketStateMarkers(d.candles, events) || [];
+        _applyAll();
       }).catch(() => {});
     }
     // Key Levels — зоны S/R + маркеры событий
@@ -4973,8 +4985,8 @@ async function openJournalChart(idx, forceTF) {
       window._fetchKeyLevels(sym, 48).then(klItems => {
         if (!klItems || !klItems.length) return;
         window._drawKeyLevelZones(chart, series, d.candles, klItems);
-        const klM = window._addKeyLevelMarkers(d.candles, klItems, s.direction);
-        if (klM && klM.length) series.setMarkers([...markers, ...klM].sort((a,b) => a.time - b.time));
+        _klM = window._addKeyLevelMarkers(d.candles, klItems, s.direction) || [];
+        _applyAll();
       }).catch(() => {});
     }
 
