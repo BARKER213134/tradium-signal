@@ -598,27 +598,48 @@ async def api_peek_tradium(limit: int = 10):
         return {"ok": False, "error": str(e)}
 
 
+# Серверный кеш для /api/key-levels/recent (TTL 30с)
+_kl_recent_cache: dict = {}
+_KL_RECENT_TTL = 30.0
+
+
 @app.get("/api/key-levels/recent")
 async def api_key_levels_recent(pair: str, hours: int = 48):
-    """Список активных Key Levels по паре для отрисовки зон на графиках."""
+    """Список активных Key Levels по паре для отрисовки зон на графиках.
+    Кеширование: 30с на сервере (много графиков на странице → один запрос)."""
     from key_levels import get_recent_levels
+    key = f"{pair}_{hours}"
+    now = time.time()
+    hit = _kl_recent_cache.get(key)
+    if hit and (now - hit[0]) < _KL_RECENT_TTL:
+        return {"pair": pair, "hours": hours, "count": len(hit[1]), "items": hit[1], "cached": True}
     items = await asyncio.to_thread(get_recent_levels, pair, hours)
+    _kl_recent_cache[key] = (now, items)
+    # Чистим старые записи (lazy eviction)
+    if len(_kl_recent_cache) > 500:
+        for k in [k for k, v in _kl_recent_cache.items() if (now - v[0]) > _KL_RECENT_TTL * 2]:
+            _kl_recent_cache.pop(k, None)
     return {"pair": pair, "hours": hours, "count": len(items), "items": items}
 
 
 @app.post("/api/key-levels/enrich")
 async def api_key_levels_enrich(payload: dict):
     """Батч-обогащение списка сигналов — для таблиц UI.
+    Оптимизация: ОДИН mongo-запрос на уникальную пару (вместо N запросов),
+    потом для каждого сигнала фильтруем in-memory по ±2h окну.
     payload: {"signals": [{id, pair, direction, at}, ...]}
     Возвращает: {"enrich": {id1: {emoji, label, ...}, id2: null}}"""
-    from key_levels import get_signal_emoji
-    from datetime import datetime as _dt
+    from key_levels import _tf_power, ENRICH_WINDOW_H
+    from database import _key_levels
+    from datetime import datetime as _dt, timedelta as _td
     signals = (payload or {}).get("signals", [])
-    out = {}
-    def _process(s):
+    # 1) Парсим входные сигналы в нормализованную форму
+    norm = []
+    pair_times: dict[str, list[_dt]] = {}
+    for s in signals:
         sig_id = s.get("id")
-        pair = s.get("pair") or s.get("symbol") or ""
-        direction = s.get("direction") or ""
+        pair_raw = s.get("pair") or s.get("symbol") or ""
+        direction = (s.get("direction") or "").upper()
         at_raw = s.get("at")
         at = None
         if at_raw:
@@ -631,18 +652,105 @@ async def api_key_levels_enrich(payload: dict):
                         at = at.replace(tzinfo=None)
             except Exception:
                 at = None
-        enrich = get_signal_emoji(pair, direction, at) if at else None
-        # datetime → isoformat для JSON
-        if enrich:
-            kl_time = enrich.get("kl_time")
-            if kl_time and hasattr(kl_time, "isoformat"):
-                enrich["kl_time"] = kl_time.isoformat()
-        return sig_id, enrich
-    for s in signals:
-        sig_id, enrich = await asyncio.to_thread(_process, s) if False else _process(s)
-        if sig_id is not None:
-            out[str(sig_id)] = enrich
-    return {"enrich": out, "count": len(out)}
+        pair_norm = pair_raw.replace("/", "").upper()
+        if pair_norm and not pair_norm.endswith("USDT"):
+            pair_norm = pair_norm + "USDT"
+        norm.append((sig_id, pair_norm, direction, at))
+        if pair_norm and at:
+            pair_times.setdefault(pair_norm, []).append(at)
+
+    # 2) По каждой паре — один запрос: все KL в широком окне [min(at)-W, max(at)+W]
+    def _fetch_pair(pair_norm: str, times: list[_dt]):
+        start = min(times) - _td(hours=ENRICH_WINDOW_H)
+        end = max(times) + _td(hours=ENRICH_WINDOW_H)
+        return pair_norm, list(_key_levels().find({
+            "pair_norm": pair_norm,
+            "detected_at": {"$gte": start, "$lte": end},
+        }, {"event": 1, "tf": 1, "age_days": 1, "zone_low": 1,
+            "zone_high": 1, "detected_at": 1, "current_price": 1}))
+
+    pair_cache: dict[str, list[dict]] = {}
+    if pair_times:
+        # Параллельно через thread-пул (MongoDB driver синхронный, но IO-bound)
+        results = await asyncio.gather(*[
+            asyncio.to_thread(_fetch_pair, p, times) for p, times in pair_times.items()
+        ])
+        for pair_norm, items in results:
+            pair_cache[pair_norm] = items
+
+    # 3) Для каждого сигнала — выбираем лучший KL из pair_cache по ±2h окну
+    def _pick_best(pair_norm: str, direction: str, at: _dt):
+        cands = pair_cache.get(pair_norm, [])
+        if not cands:
+            return None
+        lo = at - _td(hours=ENRICH_WINDOW_H)
+        hi = at + _td(hours=ENRICH_WINDOW_H)
+        filtered = [k for k in cands if k.get("detected_at")
+                    and lo <= k["detected_at"] <= hi]
+        if not filtered:
+            return None
+        is_long = direction in ("LONG", "BUY", "BULLISH")
+        strong, warning, confirming, range_ev = [], [], [], []
+        for kl in filtered:
+            ev = kl.get("event", "")
+            if is_long:
+                if ev == "entered_resistance":
+                    strong.append((kl, "🎢", "Breakout UP", "strong"))
+                elif ev == "entered_support":
+                    warning.append((kl, "🔪", "Falling knife через SUPPORT", "warning"))
+                elif ev == "new_support":
+                    confirming.append((kl, "⚓", "Новая SUPPORT снизу", "confirming"))
+                elif ev == "new_resistance":
+                    warning.append((kl, "🔪", "Новая RESISTANCE сверху (риск)", "warning"))
+                elif ev.startswith("range_"):
+                    range_ev.append((kl, "〰️", f"In range ({ev.replace('range_', '')})", "neutral"))
+            else:
+                if ev == "entered_support":
+                    strong.append((kl, "🧨", "Breakdown DOWN", "strong"))
+                elif ev == "entered_resistance":
+                    warning.append((kl, "🔪", "Против тренда через RESISTANCE", "warning"))
+                elif ev == "new_resistance":
+                    confirming.append((kl, "⚓", "Новая RESISTANCE сверху", "confirming"))
+                elif ev == "new_support":
+                    warning.append((kl, "🔪", "Новая SUPPORT снизу (риск)", "warning"))
+                elif ev.startswith("range_"):
+                    range_ev.append((kl, "〰️", f"In range ({ev.replace('range_', '')})", "neutral"))
+
+        def best_of(lst):
+            if not lst:
+                return None
+            rank = {"strong": 4, "warning": 3, "confirming": 2, "neutral": 1}
+            lst.sort(key=lambda x: (rank.get(x[3], 0), _tf_power(x[0].get("tf", "")), x[0].get("detected_at")), reverse=True)
+            return lst[0]
+
+        chosen = best_of(strong) or best_of(warning) or best_of(confirming) or best_of(range_ev)
+        if not chosen:
+            return None
+        kl, emoji, label_prefix, strength = chosen
+        tf = kl.get("tf", "?")
+        age = kl.get("age_days")
+        age_str = f", age {age}d" if age else ""
+        kt = kl.get("detected_at")
+        return {
+            "emoji": emoji,
+            "label": f"{label_prefix} {tf}{age_str}",
+            "strength": strength,
+            "event": kl.get("event"),
+            "tf": tf,
+            "age_days": age,
+            "zone_low": kl.get("zone_low"),
+            "zone_high": kl.get("zone_high"),
+            "kl_time": kt.isoformat() if hasattr(kt, "isoformat") else None,
+            "current_price_at_kl": kl.get("current_price"),
+        }
+
+    out = {}
+    for sig_id, pair_norm, direction, at in norm:
+        if sig_id is None:
+            continue
+        enrich = _pick_best(pair_norm, direction, at) if (pair_norm and at) else None
+        out[str(sig_id)] = enrich
+    return {"enrich": out, "count": len(out), "pairs": len(pair_cache)}
 
 
 @app.get("/api/key-levels/stats")
