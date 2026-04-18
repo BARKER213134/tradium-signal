@@ -798,43 +798,14 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
 
     sym = (signal.pair or "").replace("/", "").upper()
 
-    # ── Hardened helpers: sync функции через asyncio.to_thread + wait_for ──
-    # Без этого синхронный httpx (_check_keltner_filter → Binance API)
-    # блокирует весь event loop, и даже timeout на async не срабатывает.
-    try:
-        _stp, _std = await asyncio.wait_for(
-            asyncio.to_thread(_check_keltner_filter, signal.direction),
-            timeout=5.0,
-        )
-    except asyncio.TimeoutError:
-        logger.warning(f"[CV-ALERT] keltner TIMEOUT #{signal.id}")
-        _stp, _std = None, {}
-    except Exception as e:
-        logger.warning(f"[CV-ALERT] keltner fail #{signal.id}: {e}")
-        _stp, _std = None, {}
-    try:
-        _pump = await asyncio.wait_for(_pump_check(sym), timeout=5.0)
-    except asyncio.TimeoutError:
-        logger.warning(f"[CV-ALERT] pump_check TIMEOUT #{signal.id}")
-        _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
-    except Exception as e:
-        logger.warning(f"[CV-ALERT] pump_check fail #{signal.id}: {e}")
-        _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
-
-    hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
-
+    # FAST PATH (2026-04-17): убраны все тяжёлые helper'ы которые блокировали
+    # event loop. Формируем минимальный алерт за <1с, тяжёлая аналитика
+    # (pump_check, keltner, reversal, cluster block) идёт в background.
     lvl = ""
     if s1: lvl += f"🟢 S1: <code>{s1}</code> | "
     if r1: lvl += f"🔴 R1: <code>{r1}</code>"
 
-    try:
-        mkt_block = _market_block(_pump, _stp, _std)
-    except Exception as e:
-        logger.warning(f"[CV-ALERT] market_block fail #{signal.id}: {e}")
-        mkt_block = ""
-
     text = (
-        f"{hp}"
         f"🚀 <b>CRYPTOVIZOR · ПАТТЕРН</b>\n"
         f"\n"
         f"<b>{pair}/USDT</b> · 1h · {dir_emoji} <b>{dir_label}</b>\n"
@@ -847,31 +818,13 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"{lvl}\n"
         f"{ai_line}"
         f"⚡ Тренд: {_fmt_trend(signal.trend)}\n"
-        f"\n"
-        f"{mkt_block}"
     )
+    # _pump нужен дальше для paper_on_signal — получаем с жёстким timeout 3s
+    # (раньше висело до 60s в _pump_check → Binance API)
     try:
-        text += await asyncio.wait_for(_reversal_block(signal.direction), timeout=5.0)
-    except asyncio.TimeoutError:
-        logger.warning(f"[CV-ALERT] reversal_block TIMEOUT #{signal.id}")
-    except Exception as e:
-        logger.warning(f"[CV-ALERT] reversal_block fail #{signal.id}: {e}")
-    try:
-        text += await asyncio.wait_for(_pending_cluster_block(pair, signal.direction), timeout=5.0)
-    except asyncio.TimeoutError:
-        logger.warning(f"[CV-ALERT] cluster_block TIMEOUT #{signal.id}")
-    except Exception as e:
-        logger.warning(f"[CV-ALERT] cluster_block fail #{signal.id}: {e}")
-
-    # Сохраняем pump в БД (не критично, оборачиваем)
-    try:
-        from database import _signals as _sc
-        _sc().update_one({"id": signal.id}, {"$set": {
-            "pump_score": _pump.get("score", 0),
-            "pump_factors": _pump.get("factors", []),
-        }})
-    except Exception as e:
-        logger.warning(f"[CV-ALERT] pump save fail #{signal.id}: {e}")
+        _pump = await asyncio.wait_for(_pump_check(sym), timeout=3.0)
+    except Exception:
+        _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
 
     # ── Главная отправка (с timeout чтоб не висеть вечно) ──
     sent_ok = False

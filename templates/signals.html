@@ -6000,7 +6000,10 @@ setInterval(updatePricesAndPnl, 10000);
 
 /* ── Tradium-only styles (shared styles in base.html) ── */
 .signal-row { cursor: pointer; }
-.st-failed { background: rgba(255,77,109,0.06) !important; border-left: 3px solid var(--sell) !important; }
+.st-failed { background: rgba(255,77,109,0.14) !important; border-left: 3px solid var(--sell) !important; }
+.st-failed td { color: rgba(255,255,255,0.55) !important; }
+.st-failed td:first-child { position: relative; }
+.st-failed td:first-child::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--sell); }
 .ai-clickable { border-left: 3px solid transparent; transition: border-color 0.2s, background 0.2s; }
 .ai-clickable:hover { background: rgba(255,255,255,0.03); }
 .ai-done { border-left: 3px solid var(--buy); }
