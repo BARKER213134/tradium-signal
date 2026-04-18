@@ -815,18 +815,16 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     from database import _signals as _sc
     _sc().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
 
-    # Главная отправка — с timeout 12с чтобы не висеть вечно если Telegram лагает
+    # BOT2 (@trendscryptobot) — text-only, фото никогда не поддерживало
+    # (send_photo висит). Принудительно игнорируем chart_png и шлём send_message.
+    # Timeout 12с на случай если Telegram лагает.
     sent_ok = False
     tg_response = None
     try:
-        async def _do_send():
-            if chart_png:
-                from aiogram.types import BufferedInputFile
-                photo = BufferedInputFile(chart_png, filename=f"{pair}_1h.png")
-                return await target_bot.send_photo(_admin_chat_id, photo=photo, caption=text, parse_mode="HTML")
-            else:
-                return await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
-        tg_response = await asyncio.wait_for(_do_send(), timeout=12.0)
+        tg_response = await asyncio.wait_for(
+            target_bot.send_message(_admin_chat_id, text, parse_mode="HTML"),
+            timeout=12.0,
+        )
         sent_ok = True
         # Логируем успех с message_id
         try:
@@ -844,32 +842,13 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
             pass
         logger.info(f"[CV-ALERT] sent #{signal.id} {pair} {pattern} → msg_id={getattr(tg_response, 'message_id', '?')}")
     except asyncio.TimeoutError:
-        logger.error(f"[CV-ALERT] TIMEOUT #{signal.id} {pair}")
+        logger.error(f"[CV-ALERT] TIMEOUT #{signal.id} {pair} — Telegram не ответил за 12с")
         try:
             from database import _events
             _events().insert_one({"at": utcnow(), "type": "cv_alert_timeout",
-                "data": {"signal_id": signal.id, "pair": pair, "has_chart": bool(chart_png)}})
+                "data": {"signal_id": signal.id, "pair": pair}})
         except Exception:
             pass
-        # Fallback — text only, без фото (часто виснет именно send_photo)
-        if chart_png:
-            try:
-                tg_response = await asyncio.wait_for(
-                    target_bot.send_message(_admin_chat_id, text, parse_mode="HTML"),
-                    timeout=10.0,
-                )
-                sent_ok = True
-                try:
-                    from database import _events
-                    _events().insert_one({"at": utcnow(), "type": "cv_alert_sent",
-                        "data": {"signal_id": signal.id, "pair": pair, "pattern": pattern,
-                                 "message_id": getattr(tg_response, "message_id", None),
-                                 "with_photo": False, "fallback": True}})
-                except Exception:
-                    pass
-                logger.info(f"[CV-ALERT] fallback sent (no photo) #{signal.id}")
-            except Exception as e2:
-                logger.error(f"[CV-ALERT] fallback fail #{signal.id}: {e2}")
     except Exception as e:
         logger.error(f"[CV-ALERT] FAIL #{signal.id} {pair}: {e}")
         try:
