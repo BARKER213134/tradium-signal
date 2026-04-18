@@ -4674,24 +4674,30 @@ function renderJournal(items, startIdx) {
          ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠', confluence:'🎯'}[s.source] || '•'));
     const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐' : 'Confluence') : s.source === 'paper' ? 'Paper' : s.source === 'cluster' ? 'Cluster' : 'CV';
     const stFail = s.st_passed === false;
+    const stPass = s.st_passed === true;
     const pumpHigh = (s.pump_score || 0) >= 2;
     const rowCls = pumpHigh ? 'pump-high' : (stFail ? 'st-failed' : '');
-    const kcMark = s.st_passed === true ? '✅' : s.st_passed === false ? '❌' : '—';
+    const kcMark = stPass ? '✅' : stFail ? '❌' : '—';
     const pumpMark = pumpHigh ? '🔥' : '—';
     const sym = s.symbol || (s.pair || '').replace('/','');
 
     const isNew = window._newSignalKeys && window._newSignalKeys.has(_signalKey(s));
     const newCls = isNew ? ' j-new-row' : '';
 
-    // Fallback inline-style для st_passed=False — если где-то CSS перекрывается
-    const rowStyle = stFail
-      ? 'cursor:pointer;background:rgba(255,77,109,0.18);border-left:3px solid #ff4d6d;'
-      : 'cursor:pointer;';
-    const kcCellStyle = stFail ? 'color:#ff4d6d;font-weight:700;font-size:14px;' : '';
+    // Inline-style: зелёный для KC-passed, красный для KC-failed, нейтральный если нет данных
+    let rowStyle = 'cursor:pointer;';
+    let kcCellStyle = '';
+    if (stFail) {
+      rowStyle = 'cursor:pointer;background:rgba(255,77,109,0.18) !important;border-left:3px solid #ff4d6d;';
+      kcCellStyle = 'color:#ff4d6d;font-weight:700;font-size:14px;';
+    } else if (stPass) {
+      rowStyle = 'cursor:pointer;background:rgba(0,229,160,0.10) !important;border-left:3px solid #00e5a0;';
+      kcCellStyle = 'color:#00e5a0;font-weight:700;font-size:14px;';
+    }
 
     const globalIdx = startIdx + i;
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
-      <td class="mono text-muted" style="font-size:11px;${stFail?'color:rgba(255,77,109,0.7);':''}">${time}</td>
+      <td class="mono text-muted" style="font-size:11px;">${time}</td>
       <td style="font-size:11px;">${srcBadge} ${srcName}</td>
       <td class="mono text-accent fw-700">${pair}</td>
       <td>${dir}</td>
