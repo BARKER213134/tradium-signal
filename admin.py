@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -666,21 +666,32 @@ async def api_key_levels_stats():
     }
 
 
-@app.post("/api/key-levels/backfill")
-async def api_key_levels_backfill(payload: dict | None = None):
-    """Бэкфилл: тянет N последних сообщений из 3 KL-топиков, парсит и сохраняет.
-    payload: {"limit_per_topic": 2000}"""
-    from key_levels import parse_key_level, save_key_level
-    limit = int((payload or {}).get("limit_per_topic", 2000))
+# Глобальный стейт прогресса KL backfill (не блокирует контейнер)
+_kl_backfill_state: dict = {"running": False, "started_at": None, "finished_at": None, "stats": None, "error": None}
+
+
+async def _run_kl_backfill(limit: int):
+    """Фоновая задача: тянет KL-сообщения из Telegram, парсит и пишет в MongoDB.
+    Прогресс пишется в _kl_backfill_state."""
+    from key_levels import parse_key_level
+    from database import _key_levels, utcnow as _unow
+    from datetime import datetime as _dt
     TOPICS = {3086: "SUPPORT", 3088: "RANGES", 3091: "RESISTANCE"}
     try:
         from userbot import _tg_client
         from config import SOURCE_GROUP_ID
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        _kl_backfill_state["error"] = f"import: {e}"
+        _kl_backfill_state["running"] = False
+        _kl_backfill_state["finished_at"] = _dt.utcnow().isoformat()
+        return
     if _tg_client is None or not _tg_client.is_connected():
-        return {"ok": False, "error": "Telethon not connected"}
-    stats = {"fetched": 0, "parsed": 0, "saved": 0, "by_event": {}}
+        _kl_backfill_state["error"] = "Telethon not connected"
+        _kl_backfill_state["running"] = False
+        _kl_backfill_state["finished_at"] = _dt.utcnow().isoformat()
+        return
+    stats = {"fetched": 0, "parsed": 0, "saved": 0, "by_event": {}, "by_topic": {}}
+    _kl_backfill_state["stats"] = stats
     try:
         for tid, name in TOPICS.items():
             count = 0
@@ -695,13 +706,10 @@ async def api_key_levels_backfill(payload: dict | None = None):
                 stats["parsed"] += 1
                 ev = parsed["event"]
                 stats["by_event"][ev] = stats["by_event"].get(ev, 0) + 1
-                # Для бэкфилла не проверяем дедуп 1ч — используем message_id
                 try:
-                    from database import _key_levels
                     existing = _key_levels().find_one({"message_id": m.id})
                     if existing:
                         continue
-                    from database import utcnow as _unow
                     _key_levels().insert_one({
                         **parsed,
                         "detected_at": m.date.replace(tzinfo=None) if m.date else _unow(),
@@ -709,13 +717,45 @@ async def api_key_levels_backfill(payload: dict | None = None):
                         "backfilled": True,
                     })
                     stats["saved"] += 1
-                except Exception as e:
+                except Exception:
                     pass
-            stats[f"topic_{tid}_{name}"] = count
+                # Кооперативная уступка event-loop'у каждые 50 сообщений,
+                # чтобы /healthz и другие эндпоинты отвечали
+                if stats["fetched"] % 50 == 0:
+                    await asyncio.sleep(0)
+            stats["by_topic"][f"{tid}_{name}"] = count
     except Exception as e:
         import traceback
-        stats["error"] = f"{e}\n{traceback.format_exc()[-500:]}"
-    return {"ok": True, "stats": stats}
+        _kl_backfill_state["error"] = f"{e}\n{traceback.format_exc()[-500:]}"
+    finally:
+        _kl_backfill_state["running"] = False
+        _kl_backfill_state["finished_at"] = _dt.utcnow().isoformat()
+
+
+@app.post("/api/key-levels/backfill")
+async def api_key_levels_backfill(payload: dict | None = None):
+    """Запускает фоновый бэкфилл KL. Возвращает сразу — прогресс смотреть через
+    /api/key-levels/backfill-status.
+    payload: {"limit_per_topic": 2000}"""
+    from datetime import datetime as _dt
+    if _kl_backfill_state.get("running"):
+        return {"ok": False, "error": "already running", "state": _kl_backfill_state}
+    limit = int((payload or {}).get("limit_per_topic", 2000))
+    _kl_backfill_state.update({
+        "running": True,
+        "started_at": _dt.utcnow().isoformat(),
+        "finished_at": None,
+        "stats": {"fetched": 0, "parsed": 0, "saved": 0, "by_event": {}, "by_topic": {}},
+        "error": None,
+        "limit_per_topic": limit,
+    })
+    asyncio.create_task(_run_kl_backfill(limit))
+    return {"ok": True, "started": True, "limit_per_topic": limit}
+
+
+@app.get("/api/key-levels/backfill-status")
+async def api_key_levels_backfill_status():
+    return _kl_backfill_state
 
 
 @app.get("/api/peek-tradium-topic")
