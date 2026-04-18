@@ -241,6 +241,21 @@
             border-color: rgba(0,255,255,0.35);
         }
 
+        /* ── Key Level badges ── */
+        .kl-badge {
+            display: inline-block;
+            margin-left: 4px;
+            padding: 1px 5px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: help;
+            vertical-align: middle;
+        }
+        .kl-badge.kl-strong    { background: rgba(255,210,62,0.18); border: 1px solid rgba(255,210,62,0.5); }
+        .kl-badge.kl-warning   { background: rgba(255,77,109,0.18); border: 1px solid rgba(255,77,109,0.5); }
+        .kl-badge.kl-confirming{ background: rgba(255,159,67,0.16); border: 1px solid rgba(255,159,67,0.45); }
+        .kl-badge.kl-neutral   { background: rgba(100,116,139,0.16); border: 1px solid rgba(100,116,139,0.4); }
+
         /* ── Sync button ── */
         .sync-btn {
             display: inline-flex;
@@ -684,6 +699,208 @@
           return s >= 6 ? '🔥' : s >= 5 ? '⭐' : '🎯';
         }
         return ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
+      };
+
+      // ─── Key Levels zones на графике (Вариант 3) ───────────────────
+      // Рисует полупрозрачные зоны SUPPORT (зелёная) и RESISTANCE (красная)
+      // поверх свечей через baselineSeries. Плюс маркеры 🎢🧨🔪⚓〰️ для
+      // Price Entered / New Level / Range событий.
+      //
+      // Usage:
+      //   const kl = await fetch(`/api/key-levels/recent?pair=BNBUSDT&hours=48`).then(r=>r.json());
+      //   window._drawKeyLevelZones(chart, series, candles, kl.items);
+      window._drawKeyLevelZones = function(chart, series, candles, klItems) {
+        if (!chart || !series || !candles || !candles.length || !klItems || !klItems.length) return [];
+        const firstTs = candles[0].time;
+        const lastTs = candles[candles.length-1].time;
+        // Выбираем самые актуальные зоны: последний SUPPORT и последний RESISTANCE
+        // среди "entered"/"new" событий. Не рисуем range (они временные).
+        let lastSupport = null, lastResistance = null;
+        for (const kl of klItems) {
+          const ev = kl.event || '';
+          if (ev.includes('support') && kl.zone_low && kl.zone_high) {
+            if (!lastSupport) lastSupport = kl;
+          } else if (ev.includes('resistance') && kl.zone_low && kl.zone_high) {
+            if (!lastResistance) lastResistance = kl;
+          }
+        }
+        const overlays = [];
+        // RESISTANCE zone — красная полупрозрачная
+        if (lastResistance) {
+          try {
+            const rLine = chart.addBaselineSeries({
+              baseValue: {type:'price', price: +lastResistance.zone_low},
+              topLineColor: 'rgba(255,77,109,0.8)',
+              topFillColor1: 'rgba(255,77,109,0.18)',
+              topFillColor2: 'rgba(255,77,109,0.18)',
+              bottomLineColor: 'transparent',
+              bottomFillColor1: 'transparent',
+              bottomFillColor2: 'transparent',
+              lineWidth: 1,
+              lastValueVisible: false,
+              priceLineVisible: false,
+            });
+            rLine.setData(candles.map(c => ({time: c.time, value: +lastResistance.zone_high})));
+            overlays.push(rLine);
+            // Label справа
+            series.createPriceLine({
+              price: (+lastResistance.zone_high + +lastResistance.zone_low)/2,
+              color:'transparent', lineWidth:0, axisLabelVisible:true,
+              title:`R ${lastResistance.tf||''}`,
+            });
+          } catch(e) { console.warn('[KL] resistance zone draw fail:', e); }
+        }
+        // SUPPORT zone — зелёная
+        if (lastSupport) {
+          try {
+            const sLine = chart.addBaselineSeries({
+              baseValue: {type:'price', price: +lastSupport.zone_high},
+              topLineColor: 'transparent',
+              topFillColor1: 'transparent',
+              topFillColor2: 'transparent',
+              bottomLineColor: 'rgba(0,229,160,0.8)',
+              bottomFillColor1: 'rgba(0,229,160,0.18)',
+              bottomFillColor2: 'rgba(0,229,160,0.18)',
+              lineWidth: 1,
+              lastValueVisible: false,
+              priceLineVisible: false,
+            });
+            sLine.setData(candles.map(c => ({time: c.time, value: +lastSupport.zone_low})));
+            overlays.push(sLine);
+            series.createPriceLine({
+              price: (+lastSupport.zone_high + +lastSupport.zone_low)/2,
+              color:'transparent', lineWidth:0, axisLabelVisible:true,
+              title:`S ${lastSupport.tf||''}`,
+            });
+          } catch(e) { console.warn('[KL] support zone draw fail:', e); }
+        }
+        return overlays;
+      };
+
+      // Key Level markers на свечах (🎢🧨🔪⚓〰️ на момент Entered/New event)
+      window._addKeyLevelMarkers = function(candles, klItems, sigDirection) {
+        if (!candles || !candles.length || !klItems || !klItems.length) return [];
+        const firstTs = candles[0].time;
+        const lastTs = candles[candles.length-1].time;
+        const nearest = (ts) => {
+          let mc = candles[candles.length-1], minD = Infinity;
+          for (const c of candles) {
+            const diff = Math.abs(c.time - ts);
+            if (diff < minD) { minD = diff; mc = c; }
+          }
+          return mc;
+        };
+        const out = [];
+        for (const kl of klItems) {
+          const dtIso = kl.detected_at;
+          if (!dtIso) continue;
+          const ts = Math.floor(new Date(dtIso).getTime()/1000);
+          if (ts < firstTs || ts > lastTs) continue;
+          const mc = nearest(ts);
+          const ev = kl.event || '';
+          let emoji = '', color = '#888', pos = 'aboveBar';
+          if (ev === 'entered_resistance') { emoji = '🔴'; color = '#ff4d6d'; pos = 'aboveBar'; }
+          else if (ev === 'entered_support') { emoji = '🟢'; color = '#00e5a0'; pos = 'belowBar'; }
+          else if (ev === 'new_resistance') { emoji = '⚓'; color = '#ff9f43'; pos = 'aboveBar'; }
+          else if (ev === 'new_support') { emoji = '⚓'; color = '#ff9f43'; pos = 'belowBar'; }
+          else if (ev.startsWith('range_')) { emoji = '〰️'; color = '#888'; pos = 'aboveBar'; }
+          else continue;
+          out.push({
+            time: mc.time, position: pos, color: color, shape: 'circle',
+            text: emoji, size: 0,
+          });
+        }
+        return out;
+      };
+
+      // ─── Volume histogram (дневной объём) ────────────────────────
+      // Рисует объёмы под свечами (как в TradingView). Для интрадей
+      // таймфреймов агрегируем в дневной объём (суммируем по UTC-дню),
+      // для 1d — берём как есть. Bar красится в цвет свечи (up/down).
+      //
+      // Usage:
+      //   window._addVolumeSeries(chart, candles, tf)  // tf опционален, по умолчанию 'per-bar'
+      window._addVolumeSeries = function(chart, candles, tf) {
+        if (!chart || !candles || !candles.length) return null;
+        try {
+          const volSeries = chart.addHistogramSeries({
+            priceFormat: { type: 'volume' },
+            priceScaleId: 'volume',
+            color: 'rgba(120,120,140,0.5)',
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+          // Scale: объём занимает нижние 18% графика
+          chart.priceScale('volume').applyOptions({
+            scaleMargins: { top: 0.82, bottom: 0 },
+          });
+          const data = [];
+          const isDaily = (tf || '').toLowerCase() === '1d' || (tf || '').toLowerCase() === 'd';
+          if (isDaily) {
+            for (const c of candles) {
+              if (c.volume == null) continue;
+              const up = (c.close >= c.open);
+              data.push({
+                time: c.time,
+                value: c.volume,
+                color: up ? 'rgba(0,229,160,0.5)' : 'rgba(255,77,109,0.5)',
+              });
+            }
+          } else {
+            // Интрадей → агрегируем в дневной объём (UTC)
+            // Каждому бару назначаем кумулятивный дневной объём на данный момент дня.
+            // Так график показывает "сколько наторговано за сегодня к этому бару".
+            let curDay = null, curSum = 0, firstOpen = null;
+            for (const c of candles) {
+              const d = new Date(c.time * 1000);
+              const dayKey = d.getUTCFullYear() * 10000 + (d.getUTCMonth()+1) * 100 + d.getUTCDate();
+              if (dayKey !== curDay) {
+                curDay = dayKey; curSum = 0; firstOpen = c.open;
+              }
+              curSum += (c.volume || 0);
+              const dayClose = c.close;
+              const up = (dayClose >= firstOpen);
+              data.push({
+                time: c.time,
+                value: curSum,
+                color: up ? 'rgba(0,229,160,0.45)' : 'rgba(255,77,109,0.45)',
+              });
+            }
+          }
+          volSeries.setData(data);
+          return volSeries;
+        } catch (e) {
+          console.warn('[volume] failed', e);
+          return null;
+        }
+      };
+
+      // Fetch KL для конкретной пары (с кешем 30с)
+      window._klCache = window._klCache || {};
+      window._fetchKeyLevels = async function(pair, hours = 48) {
+        if (!pair) return [];
+        const key = `${pair}_${hours}`;
+        const c = window._klCache[key];
+        if (c && (Date.now() - c.at) < 30000) return c.items;
+        try {
+          const r = await fetch(`/api/key-levels/recent?pair=${encodeURIComponent(pair)}&hours=${hours}`);
+          const d = await r.json();
+          window._klCache[key] = { at: Date.now(), items: d.items || [] };
+          return d.items || [];
+        } catch(e) {
+          return [];
+        }
+      };
+
+      // KL badge для UI таблиц (маленький emoji + tooltip)
+      window._klBadge = function(enrich) {
+        if (!enrich || !enrich.emoji) return '';
+        const label = enrich.label || '';
+        const tf = enrich.tf || '';
+        const strength = enrich.strength || '';
+        const strCls = strength === 'strong' ? 'kl-strong' : strength === 'warning' ? 'kl-warning'
+                      : strength === 'confirming' ? 'kl-confirming' : 'kl-neutral';
+        return `<span class="kl-badge ${strCls}" title="${label}">${enrich.emoji}</span>`;
       };
 
       // ─── Market state markers (KC + Reversal changes) ─────────────
@@ -1506,6 +1723,7 @@ async function _renderLwcSignalChart(containerId, opts) {
     wickUpColor:'#00e5a0', wickDownColor:'#ff4d6d',
   });
   series.setData(d.candles);
+  if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
 
   // Markers:
   //   opts.markers = [{at, direction, source, price, meta}] — для cluster, где много сигналов
@@ -1596,6 +1814,19 @@ async function _renderLwcSignalChart(containerId, opts) {
       if (msMarkers.length) {
         const combined = [...markers, ...msMarkers].sort((a,b) => a.time - b.time);
         series.setMarkers(combined);
+      }
+    }).catch(() => {});
+  }
+
+  // Key Levels — зоны S/R + маркеры событий (async)
+  if (window._fetchKeyLevels && window._drawKeyLevelZones && opts.symbol && d.candles.length) {
+    window._fetchKeyLevels(opts.symbol, 48).then(klItems => {
+      if (!klItems || !klItems.length) return;
+      window._drawKeyLevelZones(chart, series, d.candles, klItems);
+      const klMarkers = window._addKeyLevelMarkers(d.candles, klItems, opts.direction);
+      if (klMarkers && klMarkers.length) {
+        const cur = series.setMarkers ? null : null;
+        series.setMarkers([...markers, ...klMarkers].sort((a,b) => a.time - b.time));
       }
     }).catch(() => {});
   }
@@ -1888,6 +2119,7 @@ async function _renderFvgChart(area, sig, tf) {
     wickUpColor:'#00e5a0', wickDownColor:'#ff4d6d',
   });
   series.setData(d.candles);
+  if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
 
   // FVG zone
   const fvgColor = sig.direction === 'bullish' ? 'rgba(0,229,160,0.75)' : 'rgba(255,77,109,0.75)';

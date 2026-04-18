@@ -425,6 +425,33 @@ async def _setup_telethon_client():
 
     logger.info(f"👂 Слушаем Tradium группу: {SOURCE_GROUP_ID} (topic {TRADIUM_SETUP_TOPIC_ID})")
 
+    # ── Handler Key Levels (топики 3086 SUPPORT / 3088 RANGES / 3091 RESISTANCE) ──
+    KL_TOPICS = {3086, 3088, 3091}
+
+    @client.on(events.NewMessage(chats=SOURCE_GROUP_ID))
+    async def kl_handler(event):
+        try:
+            msg = event.message
+            if not msg.raw_text:
+                return
+            if not msg.reply_to:
+                return
+            top_id = getattr(msg.reply_to, "reply_to_top_id", None) or msg.reply_to.reply_to_msg_id
+            if top_id not in KL_TOPICS:
+                return
+            # Парсим и сохраняем
+            try:
+                from key_levels import parse_key_level, save_key_level
+                parsed = parse_key_level(msg.raw_text, topic_id=top_id)
+                if parsed:
+                    save_key_level(parsed, message_id=msg.id)
+            except Exception as e:
+                logger.warning(f"[userbot] KL parse/save fail: {e}")
+        except Exception:
+            logger.exception("[userbot] KL handler crashed")
+
+    logger.info(f"👂 Слушаем Key Levels топики: {KL_TOPICS}")
+
     # ── Handler Cryptovizor ───────────────────────────────────────
     if cryptovizor_id is not None:
         @client.on(events.NewMessage(chats=cryptovizor_id))

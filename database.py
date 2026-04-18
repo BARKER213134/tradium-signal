@@ -93,6 +93,12 @@ def _market_events() -> Collection:
     return _get_db().market_events
 
 
+def _key_levels() -> Collection:
+    """Key Levels от Tradium (Support/Resistance/Ranges boots в topics 3086/3088/3091).
+    Используются для обогащения сигналов emoji-маркерами и зонами на графиках."""
+    return _get_db().key_levels
+
+
 
 
 def _counters() -> Collection:
@@ -639,6 +645,11 @@ def init_db():
         me.create_index("at", expireAfterSeconds=30*86400, name="ttl_30d")
         me.create_index([("at", DESCENDING)])
         me.create_index([("type", ASCENDING), ("at", DESCENDING)])
+        # Key Levels: 14 дней (уровни теряют актуальность)
+        kl = _key_levels()
+        kl.create_index("detected_at", expireAfterSeconds=14*86400, name="ttl_14d")
+        kl.create_index([("pair_norm", ASCENDING), ("detected_at", DESCENDING)])
+        kl.create_index([("pair_norm", ASCENDING), ("event", ASCENDING), ("tf", ASCENDING), ("zone_low", ASCENDING)], unique=False)
     except Exception:
         pass  # idempotent — если TTL индексы уже есть, ok
 

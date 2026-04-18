@@ -2873,6 +2873,7 @@ async function _drawPaperHistChart(idx) {
       wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
     });
     series.setData(d.candles);
+    if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
 
     // ── Маркеры ──
     const markers = [];
@@ -2947,6 +2948,15 @@ async function _drawPaperHistChart(idx) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
         const ms = window._addMarketStateMarkers(d.candles, events);
         if (ms.length) series.setMarkers([...markers, ...ms].sort((a,b) => a.time - b.time));
+      }).catch(() => {});
+    }
+    // Key Levels — зоны S/R + маркеры Entered событий
+    if (window._fetchKeyLevels && window._drawKeyLevelZones && h.symbol && d.candles.length) {
+      window._fetchKeyLevels(h.symbol, 48).then(klItems => {
+        if (!klItems || !klItems.length) return;
+        window._drawKeyLevelZones(chart, series, d.candles, klItems);
+        const klM = window._addKeyLevelMarkers(d.candles, klItems, h.direction);
+        if (klM && klM.length) series.setMarkers([...markers, ...klM].sort((a,b) => a.time - b.time));
       }).catch(() => {});
     }
 
@@ -3100,6 +3110,7 @@ async function _renderPaperChart(idx, tf) {
       wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
     });
     series.setData(d.candles);
+    if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
 
     // Маркеры: entry позиции + все сигналы по паре за 48ч (все источники)
     const nearestP = (ts) => {
@@ -3162,6 +3173,15 @@ async function _renderPaperChart(idx, tf) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
         const ms = window._addMarketStateMarkers(d.candles, events);
         if (ms.length) series.setMarkers([...markers, ...ms].sort((a,b) => a.time - b.time));
+      }).catch(() => {});
+    }
+    // Key Levels — зоны S/R
+    if (window._fetchKeyLevels && window._drawKeyLevelZones && p.symbol && d.candles.length) {
+      window._fetchKeyLevels(p.symbol, 48).then(klItems => {
+        if (!klItems || !klItems.length) return;
+        window._drawKeyLevelZones(chart, series, d.candles, klItems);
+        const klM = window._addKeyLevelMarkers(d.candles, klItems, p.direction);
+        if (klM && klM.length) series.setMarkers([...markers, ...klM].sort((a,b) => a.time - b.time));
       }).catch(() => {});
     }
 
@@ -4321,6 +4341,7 @@ async function loadCoinChart(coin) {
       wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
     });
     series.setData(d.candles);
+    if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _coinTF);
 
     // Все маркеры + tooltip map
     // Пропускаем сигналы ВНЕ окна свечей (чтоб не лепить фантомы к первой/последней свече).
@@ -4403,6 +4424,15 @@ async function loadCoinChart(coin) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
         const ms = window._addMarketStateMarkers(d.candles, events);
         if (ms.length) series.setMarkers([...unique, ...ms].sort((a,b) => a.time - b.time));
+      }).catch(() => {});
+    }
+    // Key Levels — зоны S/R + маркеры
+    if (window._fetchKeyLevels && window._drawKeyLevelZones && sym && d.candles.length) {
+      window._fetchKeyLevels(sym, 48).then(klItems => {
+        if (!klItems || !klItems.length) return;
+        window._drawKeyLevelZones(chart, series, d.candles, klItems);
+        const klM = window._addKeyLevelMarkers(d.candles, klItems, null);
+        if (klM && klM.length) series.setMarkers([...unique, ...klM].sort((a,b) => a.time - b.time));
       }).catch(() => {});
     }
 
@@ -4507,6 +4537,27 @@ async function loadJournal() {
     _journalFirstLoad = false;
     _journalData = items;
     filterJournal();
+
+    // Key Levels enrich (batch) — подтягиваем эмоджи для каждой строки, потом перерисовываем
+    try {
+      const batch = items.slice(0, 300).map((s, i) => ({
+        id: `j_${i}`,
+        pair: s.pair || s.symbol,
+        direction: s.direction,
+        at: s.at,
+      }));
+      const er = await fetch('/api/key-levels/enrich', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({signals: batch}),
+      });
+      const ed = await er.json();
+      const enrich = ed.enrich || {};
+      items.forEach((s, i) => { s._kl = enrich[`j_${i}`] || null; });
+      filterJournal();  // перерисовать с KL badge
+    } catch (e) {
+      console.warn('[KL] journal enrich fail:', e);
+    }
   } catch {}
 }
 
@@ -4719,7 +4770,7 @@ function renderJournal(items, startIdx) {
       <td class="mono text-accent fw-700">${pair}</td>
       <td>${dir}</td>
       <td class="mono">${s.entry || '—'}</td>
-      <td class="mono" style="font-size:11px;">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}</td>
+      <td class="mono" style="font-size:11px;">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}${window._klBadge ? window._klBadge(s._kl) : ''}</td>
       <td style="${kcCellStyle}">${kcMark}</td>
       <td>${pumpMark}</td>
     </tr>`;
@@ -4825,6 +4876,7 @@ async function openJournalChart(idx, forceTF) {
       wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
     });
     series.setData(d.candles);
+    if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _modalTF);
 
     // Маркеры: все сигналы по монете из _journalData (уже включают cluster/paper/все)
     // + дополнительно из /api/pair-signals для покрытия старых, что могли не попасть в журнал
@@ -4914,6 +4966,15 @@ async function openJournalChart(idx, forceTF) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
         const ms = window._addMarketStateMarkers(d.candles, events);
         if (ms.length) series.setMarkers([...markers, ...ms].sort((a,b) => a.time - b.time));
+      }).catch(() => {});
+    }
+    // Key Levels — зоны S/R + маркеры событий
+    if (window._fetchKeyLevels && window._drawKeyLevelZones && sym && d.candles.length) {
+      window._fetchKeyLevels(sym, 48).then(klItems => {
+        if (!klItems || !klItems.length) return;
+        window._drawKeyLevelZones(chart, series, d.candles, klItems);
+        const klM = window._addKeyLevelMarkers(d.candles, klItems, s.direction);
+        if (klM && klM.length) series.setMarkers([...markers, ...klM].sort((a,b) => a.time - b.time));
       }).catch(() => {});
     }
 

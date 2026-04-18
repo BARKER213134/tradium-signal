@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -596,6 +596,126 @@ async def api_peek_tradium(limit: int = 10):
         return {"ok": True, "source_group_id": SOURCE_GROUP_ID, "count": len(out), "messages": out}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/key-levels/recent")
+async def api_key_levels_recent(pair: str, hours: int = 48):
+    """Список активных Key Levels по паре для отрисовки зон на графиках."""
+    from key_levels import get_recent_levels
+    items = await asyncio.to_thread(get_recent_levels, pair, hours)
+    return {"pair": pair, "hours": hours, "count": len(items), "items": items}
+
+
+@app.post("/api/key-levels/enrich")
+async def api_key_levels_enrich(payload: dict):
+    """Батч-обогащение списка сигналов — для таблиц UI.
+    payload: {"signals": [{id, pair, direction, at}, ...]}
+    Возвращает: {"enrich": {id1: {emoji, label, ...}, id2: null}}"""
+    from key_levels import get_signal_emoji
+    from datetime import datetime as _dt
+    signals = (payload or {}).get("signals", [])
+    out = {}
+    def _process(s):
+        sig_id = s.get("id")
+        pair = s.get("pair") or s.get("symbol") or ""
+        direction = s.get("direction") or ""
+        at_raw = s.get("at")
+        at = None
+        if at_raw:
+            try:
+                if isinstance(at_raw, (int, float)):
+                    at = _dt.utcfromtimestamp(at_raw)
+                else:
+                    at = _dt.fromisoformat(str(at_raw).replace("Z", "+00:00"))
+                    if at.tzinfo:
+                        at = at.replace(tzinfo=None)
+            except Exception:
+                at = None
+        enrich = get_signal_emoji(pair, direction, at) if at else None
+        # datetime → isoformat для JSON
+        if enrich:
+            kl_time = enrich.get("kl_time")
+            if kl_time and hasattr(kl_time, "isoformat"):
+                enrich["kl_time"] = kl_time.isoformat()
+        return sig_id, enrich
+    for s in signals:
+        sig_id, enrich = await asyncio.to_thread(_process, s) if False else _process(s)
+        if sig_id is not None:
+            out[str(sig_id)] = enrich
+    return {"enrich": out, "count": len(out)}
+
+
+@app.get("/api/key-levels/stats")
+async def api_key_levels_stats():
+    """Количество записей в БД по типам."""
+    from database import _key_levels, utcnow as _unow
+    from datetime import timedelta as _td
+    from collections import Counter
+    col = _key_levels()
+    total = col.count_documents({})
+    since24h = _unow() - _td(hours=24)
+    since7d = _unow() - _td(days=7)
+    by_event = Counter()
+    for kl in col.find({}, {"event": 1}):
+        by_event[kl.get("event", "?")] += 1
+    return {
+        "total": total,
+        "last_24h": col.count_documents({"detected_at": {"$gte": since24h}}),
+        "last_7d": col.count_documents({"detected_at": {"$gte": since7d}}),
+        "by_event": dict(by_event.most_common()),
+    }
+
+
+@app.post("/api/key-levels/backfill")
+async def api_key_levels_backfill(payload: dict | None = None):
+    """Бэкфилл: тянет N последних сообщений из 3 KL-топиков, парсит и сохраняет.
+    payload: {"limit_per_topic": 2000}"""
+    from key_levels import parse_key_level, save_key_level
+    limit = int((payload or {}).get("limit_per_topic", 2000))
+    TOPICS = {3086: "SUPPORT", 3088: "RANGES", 3091: "RESISTANCE"}
+    try:
+        from userbot import _tg_client
+        from config import SOURCE_GROUP_ID
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    if _tg_client is None or not _tg_client.is_connected():
+        return {"ok": False, "error": "Telethon not connected"}
+    stats = {"fetched": 0, "parsed": 0, "saved": 0, "by_event": {}}
+    try:
+        for tid, name in TOPICS.items():
+            count = 0
+            async for m in _tg_client.iter_messages(SOURCE_GROUP_ID, limit=limit, reply_to=tid):
+                stats["fetched"] += 1
+                count += 1
+                if not m.raw_text:
+                    continue
+                parsed = parse_key_level(m.raw_text, topic_id=tid)
+                if not parsed:
+                    continue
+                stats["parsed"] += 1
+                ev = parsed["event"]
+                stats["by_event"][ev] = stats["by_event"].get(ev, 0) + 1
+                # Для бэкфилла не проверяем дедуп 1ч — используем message_id
+                try:
+                    from database import _key_levels
+                    existing = _key_levels().find_one({"message_id": m.id})
+                    if existing:
+                        continue
+                    from database import utcnow as _unow
+                    _key_levels().insert_one({
+                        **parsed,
+                        "detected_at": m.date.replace(tzinfo=None) if m.date else _unow(),
+                        "message_id": m.id,
+                        "backfilled": True,
+                    })
+                    stats["saved"] += 1
+                except Exception as e:
+                    pass
+            stats[f"topic_{tid}_{name}"] = count
+    except Exception as e:
+        import traceback
+        stats["error"] = f"{e}\n{traceback.format_exc()[-500:]}"
+    return {"ok": True, "stats": stats}
 
 
 @app.get("/api/peek-tradium-topic")
@@ -1646,7 +1766,8 @@ async def api_fvg_candles(instrument: str, tf: str = "1h", limit: int = 150):
     if not candles:
         return {"ok": False, "error": f"no data (all sources failed for {key} {tf})"}
     data = [{"time": c["t"], "open": c["o"], "high": c["h"],
-             "low": c["l"], "close": c["c"]} for c in candles[-limit:]]
+             "low": c["l"], "close": c["c"],
+             "volume": c.get("v", 0)} for c in candles[-limit:]]
     return {"ok": True, "candles": data, "ticker": ticker, "instrument": key, "source": source}
 
 
@@ -3351,6 +3472,7 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
             "high": c["h"],
             "low": c["l"],
             "close": c["c"],
+            "volume": c.get("v", 0),
         })
     return {"ok": True, "candles": data}
 
