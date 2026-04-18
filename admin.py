@@ -1703,7 +1703,9 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
     pass  # endpoints ниже
 
     if bot == "cryptovizor":
-        cv_tab = tab if tab in ("watching", "active", "ai_signal", "backtest", "ai_settings") else "watching"
+        # Default вкладка = 'active' (Сигнал с паттернами) — самое полезное.
+        # Раньше было 'watching' что показывало просто watchlist без сигналов.
+        cv_tab = tab if tab in ("watching", "active", "ai_signal", "backtest", "ai_settings") else "active"
         if cv_tab == "watching":
             query = query.filter(Signal.status == "СЛЕЖУ")
         elif cv_tab == "active":
