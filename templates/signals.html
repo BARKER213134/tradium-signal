@@ -4683,15 +4683,21 @@ function renderJournal(items, startIdx) {
     const isNew = window._newSignalKeys && window._newSignalKeys.has(_signalKey(s));
     const newCls = isNew ? ' j-new-row' : '';
 
+    // Fallback inline-style для st_passed=False — если где-то CSS перекрывается
+    const rowStyle = stFail
+      ? 'cursor:pointer;background:rgba(255,77,109,0.18);border-left:3px solid #ff4d6d;'
+      : 'cursor:pointer;';
+    const kcCellStyle = stFail ? 'color:#ff4d6d;font-weight:700;font-size:14px;' : '';
+
     const globalIdx = startIdx + i;
-    return `<tr class="${rowCls}${newCls}" style="cursor:pointer;" onclick="openJournalChart(${globalIdx})">
-      <td class="mono text-muted" style="font-size:11px;">${time}</td>
+    return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
+      <td class="mono text-muted" style="font-size:11px;${stFail?'color:rgba(255,77,109,0.7);':''}">${time}</td>
       <td style="font-size:11px;">${srcBadge} ${srcName}</td>
       <td class="mono text-accent fw-700">${pair}</td>
       <td>${dir}</td>
       <td class="mono">${s.entry || '—'}</td>
       <td class="mono" style="font-size:11px;">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}</td>
-      <td>${kcMark}</td>
+      <td style="${kcCellStyle}">${kcMark}</td>
       <td>${pumpMark}</td>
     </tr>`;
   }).join('');
