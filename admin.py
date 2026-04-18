@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -596,6 +596,36 @@ async def api_peek_tradium(limit: int = 10):
         return {"ok": True, "source_group_id": SOURCE_GROUP_ID, "count": len(out), "messages": out}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/peek-tradium-topic")
+async def api_peek_tradium_topic(topic_id: int, limit: int = 5):
+    """Показывает последние N сообщений из конкретного топика Tradium группы.
+    Используется чтобы посмотреть формат Key Levels / других форум-топиков."""
+    try:
+        from userbot import _tg_client
+        from config import SOURCE_GROUP_ID
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    if _tg_client is None or not _tg_client.is_connected():
+        return {"ok": False, "error": "Telethon not connected"}
+    try:
+        out = []
+        # reply_to=topic_id — фильтр по топику
+        async for m in _tg_client.iter_messages(SOURCE_GROUP_ID, limit=limit, reply_to=topic_id):
+            text = (m.raw_text or "")[:800]
+            out.append({
+                "id": m.id,
+                "date": m.date.isoformat() if m.date else None,
+                "reply_to_top_id": getattr(getattr(m, "reply_to", None), "reply_to_top_id", None)
+                                    or getattr(getattr(m, "reply_to", None), "reply_to_msg_id", None),
+                "has_media": m.media is not None,
+                "text": text,
+            })
+        return {"ok": True, "topic_id": topic_id, "count": len(out), "messages": out}
+    except Exception as e:
+        import traceback
+        return {"ok": False, "error": str(e), "trace": traceback.format_exc()[-500:]}
 
 
 @app.post("/api/debug-fetch-chart")
