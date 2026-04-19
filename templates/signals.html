@@ -4221,7 +4221,15 @@ function _buildTooltipHTML(s) {
   const kcText = s.st_passed === true ? '✅ Прошёл' : s.st_passed === false ? '❌ Не прошёл' : '—';
   const pumpText = (s.pump_score || 0) >= 2 ? '🔥 HIGH' : (s.pump_score || 0) === 1 ? '⚡ MED' : '—';
   const time = s.at ? new Date(s.at).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-  let html = `<div class="tt-header" style="color:${dirC}">${dirE} ${_srcLabel(s.source)}</div>`;
+  // Top Pick в заголовке — если is_top_pick (на верхнем уровне или в meta)
+  const isTP = !!(s.is_top_pick || (s.meta && s.meta.is_top_pick));
+  const tpBadge = isTP ? '👑 ' : '';
+  let html = `<div class="tt-header" style="color:${dirC}">${dirE} ${tpBadge}${_srcLabel(s.source)}</div>`;
+  if (isTP) {
+    const tpCnt = s.top_pick_confirmations_count || (s.meta && s.meta.top_pick_confirmations_count) || 0;
+    const tpTxt = tpCnt > 0 ? `👑 Top Pick · ${tpCnt} подтв.` : '👑 Top Pick';
+    html += `<div class="tt-row"><span class="tt-label">Статус</span><span class="tt-val" style="color:#ffd23e;font-weight:700">${tpTxt}</span></div>`;
+  }
   html += `<div class="tt-row"><span class="tt-label">Пара</span><span class="tt-val">${s.symbol || s.pair || ''}</span></div>`;
   html += `<div class="tt-row"><span class="tt-label">Направление</span><span class="tt-val" style="color:${dirC}">${s.direction}</span></div>`;
   html += `<div class="tt-row"><span class="tt-label">Entry</span><span class="tt-val">${_fmtPrice(s.entry)}</span></div>`;

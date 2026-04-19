@@ -3394,6 +3394,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
     for a in _anomalies().find({"detected_at": {"$gte": since}, **pair_or}, {
         "symbol":1, "pair":1, "direction":1, "price":1, "anomalies":1,
         "score":1, "st_passed":1, "pump_score":1, "detected_at":1,
+        "is_top_pick":1, "top_pick_confirmations_count":1,
     }).sort("detected_at", -1):
         types = [x["type"] for x in a.get("anomalies", [])]
         items.append({
@@ -3407,6 +3408,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "score": a.get("score"),
             "st_passed": a.get("st_passed"),
             "pump_score": a.get("pump_score", 0),
+            "is_top_pick": bool(a.get("is_top_pick")),
+            "top_pick_confirmations_count": a.get("top_pick_confirmations_count", 0),
             "at": a["detected_at"].isoformat() if hasattr(a.get("detected_at"), "isoformat") else None,
             "at_ts": int(a["detected_at"].timestamp()) if hasattr(a.get("detected_at"), "timestamp") else 0,
         })
@@ -3538,6 +3541,7 @@ async def _compute_journal():
     for a in _anomalies().find({"detected_at": {"$gte": since_14d}}, {
         "symbol":1, "pair":1, "direction":1, "price":1, "anomalies":1,
         "score":1, "st_passed":1, "pump_score":1, "detected_at":1,
+        "is_top_pick":1, "top_pick_confirmations_count":1,
     }).sort("detected_at", -1).limit(800):
         types = [x["type"] for x in a.get("anomalies", [])]
         items.append({
@@ -3552,6 +3556,8 @@ async def _compute_journal():
             "score": a.get("score"),
             "st_passed": a.get("st_passed"),
             "pump_score": a.get("pump_score", 0),
+            "is_top_pick": bool(a.get("is_top_pick")),
+            "top_pick_confirmations_count": a.get("top_pick_confirmations_count", 0),
             "at": a["detected_at"].isoformat() if hasattr(a.get("detected_at"), "isoformat") else str(a.get("detected_at", "")),
             "at_ts": int(a["detected_at"].timestamp()) if hasattr(a.get("detected_at"), "timestamp") else 0,
         })
