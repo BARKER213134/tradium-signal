@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -864,6 +864,66 @@ async def api_key_levels_backfill(payload: dict | None = None):
 @app.get("/api/key-levels/backfill-status")
 async def api_key_levels_backfill_status():
     return _kl_backfill_state
+
+
+# ─── Бектест SuperTrend стратегий ───────────────────────────────
+_st_backtest_state: dict = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "progress": None,  # {processed, total, current_pair}
+    "result": None,
+    "error": None,
+}
+
+
+async def _run_st_backtest(days: int, top_n: int):
+    from datetime import datetime as _dt
+    from backtest_supertrend import run_backtest
+
+    def _on_progress(i, total, pair):
+        _st_backtest_state["progress"] = {
+            "processed": i, "total": total, "current_pair": pair,
+        }
+
+    try:
+        result = await asyncio.to_thread(run_backtest, days, top_n, _on_progress)
+        _st_backtest_state["result"] = result
+    except Exception as e:
+        import traceback
+        _st_backtest_state["error"] = f"{e}\n{traceback.format_exc()[-800:]}"
+    finally:
+        _st_backtest_state["running"] = False
+        _st_backtest_state["finished_at"] = _dt.utcnow().isoformat()
+
+
+@app.post("/api/backtest-st")
+async def api_backtest_st(payload: dict | None = None):
+    """Запускает фоновый бектест ST-стратегий.
+    payload: {"days": 14, "top_n": 200}
+    Прогресс через /api/backtest-st/status"""
+    from datetime import datetime as _dt
+    if _st_backtest_state.get("running"):
+        return {"ok": False, "error": "already running", "state": _st_backtest_state}
+    days = int((payload or {}).get("days", 14))
+    top_n = int((payload or {}).get("top_n", 200))
+    _st_backtest_state.update({
+        "running": True,
+        "started_at": _dt.utcnow().isoformat(),
+        "finished_at": None,
+        "progress": {"processed": 0, "total": 0, "current_pair": None},
+        "result": None,
+        "error": None,
+        "days": days,
+        "top_n": top_n,
+    })
+    asyncio.create_task(_run_st_backtest(days, top_n))
+    return {"ok": True, "started": True, "days": days, "top_n": top_n}
+
+
+@app.get("/api/backtest-st/status")
+async def api_backtest_st_status():
+    return _st_backtest_state
 
 
 @app.get("/api/key-levels/coverage")
