@@ -899,13 +899,20 @@
 
         try {
           // Две LineSeries — up (зелёная) и down (красная)
+          // lineType: WithSteps (=1) — классический TV-style step-line вместо
+          // плавной диагонали. Иначе при трендовом движении ST-линия рисуется
+          // наклонной интерполяцией между точками, что выглядит некорректно.
+          const LT = (window.LightweightCharts && window.LightweightCharts.LineType) || {};
+          const stepType = (typeof LT.WithSteps !== 'undefined') ? LT.WithSteps : 1;
           const upSeries = chart.addLineSeries({
             color: '#00e5a0', lineWidth: 2, priceLineVisible: false,
             lastValueVisible: false, crosshairMarkerVisible: false,
+            lineType: stepType,
           });
           const dnSeries = chart.addLineSeries({
             color: '#ff4d6d', lineWidth: 2, priceLineVisible: false,
             lastValueVisible: false, crosshairMarkerVisible: false,
+            lineType: stepType,
           });
           const upData = [], dnData = [];
           for (let i = 0; i < candles.length; i++) {
