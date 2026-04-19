@@ -813,67 +813,11 @@
         return out;
       };
 
-      // ─── Volume histogram (дневной объём) ────────────────────────
-      // Рисует объёмы под свечами (как в TradingView). Для интрадей
-      // таймфреймов агрегируем в дневной объём (суммируем по UTC-дню),
-      // для 1d — берём как есть. Bar красится в цвет свечи (up/down).
-      //
-      // Usage:
-      //   window._addVolumeSeries(chart, candles, tf)  // tf опционален, по умолчанию 'per-bar'
-      window._addVolumeSeries = function(chart, candles, tf) {
-        if (!chart || !candles || !candles.length) return null;
-        try {
-          const volSeries = chart.addHistogramSeries({
-            priceFormat: { type: 'volume' },
-            priceScaleId: 'volume',
-            color: 'rgba(120,120,140,0.5)',
-            lastValueVisible: false,
-            priceLineVisible: false,
-          });
-          // Scale: объём занимает нижние 18% графика
-          chart.priceScale('volume').applyOptions({
-            scaleMargins: { top: 0.82, bottom: 0 },
-          });
-          const data = [];
-          const isDaily = (tf || '').toLowerCase() === '1d' || (tf || '').toLowerCase() === 'd';
-          if (isDaily) {
-            for (const c of candles) {
-              if (c.volume == null) continue;
-              const up = (c.close >= c.open);
-              data.push({
-                time: c.time,
-                value: c.volume,
-                color: up ? 'rgba(0,229,160,0.5)' : 'rgba(255,77,109,0.5)',
-              });
-            }
-          } else {
-            // Интрадей → агрегируем в дневной объём (UTC)
-            // Каждому бару назначаем кумулятивный дневной объём на данный момент дня.
-            // Так график показывает "сколько наторговано за сегодня к этому бару".
-            let curDay = null, curSum = 0, firstOpen = null;
-            for (const c of candles) {
-              const d = new Date(c.time * 1000);
-              const dayKey = d.getUTCFullYear() * 10000 + (d.getUTCMonth()+1) * 100 + d.getUTCDate();
-              if (dayKey !== curDay) {
-                curDay = dayKey; curSum = 0; firstOpen = c.open;
-              }
-              curSum += (c.volume || 0);
-              const dayClose = c.close;
-              const up = (dayClose >= firstOpen);
-              data.push({
-                time: c.time,
-                value: curSum,
-                color: up ? 'rgba(0,229,160,0.45)' : 'rgba(255,77,109,0.45)',
-              });
-            }
-          }
-          volSeries.setData(data);
-          return volSeries;
-        } catch (e) {
-          console.warn('[volume] failed', e);
-          return null;
-        }
-      };
+      // ─── Volume histogram — ОТКЛЮЧЕНО ────────────────────────────
+      // Ранее рисовали кумулятивный дневной объём под свечами, но он
+      // визуально мешал зонам/маркерам. Оставляем no-op заглушку, чтобы
+      // все 6 мест вызова (base.html×2, signals.html×4) продолжали работать.
+      window._addVolumeSeries = function(_chart, _candles, _tf) { return null; };
 
       // Fetch KL для конкретной пары (с кешем 30с)
       window._klCache = window._klCache || {};
