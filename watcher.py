@@ -2683,6 +2683,15 @@ async def start_watcher():
     _watcher_running = True
     print(f"[WATCHER] Started (interval={POLL_INTERVAL}s)", flush=True)
     logger.info(f"Price watcher запущен (интервал {POLL_INTERVAL}s)")
+    # Прогрев ВСЕХ ботов сразу на старте (раньше была ленивая init только при первом алерте —
+    # если init падал молча, алерты терялись тихо до рестарта)
+    for name, fn in [("bot5", _setup_bot5), ("bot7", _setup_bot7),
+                     ("bot8", _setup_bot8), ("bot9", _setup_bot9),
+                     ("bot10", _setup_bot10)]:
+        try:
+            fn()
+        except Exception as e:
+            logger.error(f"[{name}] init fail: {e}")
     # Запускаем параллельный ST-tracker loop (check_all_pairs каждые 5 мин)
     try:
         asyncio.create_task(_st_tracker_loop())
