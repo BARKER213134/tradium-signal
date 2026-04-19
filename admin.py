@@ -148,7 +148,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
-            "/api/supertrend/backfill", "/api/supertrend/backfill-status", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+            "/api/supertrend/backfill", "/api/supertrend/backfill-status", "/api/bots-status", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1195,6 +1195,79 @@ async def api_supertrend_backfill(payload: dict | None = None):
 @app.get("/api/supertrend/backfill-status")
 async def api_supertrend_backfill_status():
     return _st_backfill_state
+
+
+@app.get("/api/bots-status")
+async def api_bots_status():
+    """Диагностика: показывает какие Telegram-боты инициализированы + счётчик
+    недавних Confluence алертов за последние 24 часа (для отладки когда
+    `в бота X не приходят сигналы`)."""
+    from database import _confluence, _signals, _anomalies, _clusters, utcnow
+    from datetime import timedelta
+    since_24h = utcnow() - timedelta(hours=24)
+    since_6h = utcnow() - timedelta(hours=6)
+
+    # Проверка bot instances в watcher
+    import watcher as _w
+    bots = {
+        "bot (tradium)": bool(getattr(_w, "_bot", None)),
+        "bot2 (cryptovizor)": bool(getattr(_w, "_bot2", None)),
+        "bot4 (ai)": bool(getattr(_w, "_bot4", None)),
+        "bot5 (confluence)": bool(getattr(_w, "_bot5", None)),
+        "bot7 (cluster)": bool(getattr(_w, "_bot7", None)),
+        "bot9 (top picks)": bool(getattr(_w, "_bot9", None)),
+        "bot10 (supertrend)": bool(getattr(_w, "_bot10", None)),
+    }
+    # Tokens present in env
+    from config import (BOT_TOKEN, BOT2_BOT_TOKEN, BOT4_BOT_TOKEN,
+                        BOT5_BOT_TOKEN, BOT7_BOT_TOKEN, BOT9_BOT_TOKEN,
+                        BOT10_BOT_TOKEN)
+    tokens = {
+        "BOT_TOKEN":        bool(BOT_TOKEN),
+        "BOT2_BOT_TOKEN":   bool(BOT2_BOT_TOKEN),
+        "BOT4_BOT_TOKEN":   bool(BOT4_BOT_TOKEN),
+        "BOT5_BOT_TOKEN":   bool(BOT5_BOT_TOKEN),
+        "BOT7_BOT_TOKEN":   bool(BOT7_BOT_TOKEN),
+        "BOT9_BOT_TOKEN":   bool(BOT9_BOT_TOKEN),
+        "BOT10_BOT_TOKEN":  bool(BOT10_BOT_TOKEN),
+    }
+    # Recent DB activity
+    conf_all = _confluence().count_documents({"detected_at": {"$gte": since_24h}})
+    conf_alertable_24h = _confluence().count_documents({
+        "detected_at": {"$gte": since_24h}, "score": {"$gte": 5}, "st_passed": True,
+    })
+    conf_alertable_6h = _confluence().count_documents({
+        "detected_at": {"$gte": since_6h}, "score": {"$gte": 5}, "st_passed": True,
+    })
+    anomaly_24h = _anomalies().count_documents({"detected_at": {"$gte": since_24h}})
+    tradium_24h = _signals().count_documents({
+        "source": "tradium", "received_at": {"$gte": since_24h},
+    })
+    cv_24h = _signals().count_documents({
+        "source": "cryptovizor", "pattern_triggered": True,
+        "pattern_triggered_at": {"$gte": since_24h},
+    })
+    cluster_24h = _clusters().count_documents({"trigger_at": {"$gte": since_24h}})
+    try:
+        from database import _supertrend_signals
+        st_24h = _supertrend_signals().count_documents({"flip_at": {"$gte": since_24h}})
+    except Exception:
+        st_24h = 0
+    return {
+        "bots_initialized": bots,
+        "tokens_in_env": tokens,
+        "signals_last_24h": {
+            "confluence_all": conf_all,
+            "confluence_alertable_score>=5_st_passed": conf_alertable_24h,
+            "confluence_alertable_6h": conf_alertable_6h,
+            "anomaly": anomaly_24h,
+            "tradium": tradium_24h,
+            "cryptovizor_pattern": cv_24h,
+            "cluster": cluster_24h,
+            "supertrend": st_24h,
+        },
+        "note": "Confluence alerts отправляются только при score>=5 AND st_passed=True",
+    }
 
 
 @app.get("/api/key-levels/coverage")
@@ -3796,6 +3869,40 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
 
+    # SuperTrend signals для этой монеты
+    try:
+        from database import _supertrend_signals as _sts
+        for s in _sts().find({"pair_norm": sym_clean, "flip_at": {"$gte": since}}).sort("flip_at", -1):
+            at_dt = s.get("flip_at")
+            tier = s.get("tier", "daily")
+            tier_emoji = {"vip": "🏆", "mtf": "🔱", "daily": "🧭"}.get(tier, "🌀")
+            tier_label = {"vip": "VIP", "mtf": "Triple MTF", "daily": "Daily"}.get(tier, tier.upper())
+            aligned_bots = s.get("aligned_bots", [])
+            aligned_tfs = s.get("aligned_tfs", [])
+            if tier == "vip" and aligned_bots:
+                src_names = list({ab.get("source", "?") for ab in aligned_bots})[:3]
+                pattern = f"{tier_emoji} ST {tier_label} + {'+'.join(src_names)}"
+            else:
+                pattern = f"{tier_emoji} ST {tier_label} ({'+'.join(aligned_tfs)})"
+            items.append({
+                "source": "supertrend",
+                "symbol": s.get("pair_norm", ""),
+                "pair": s.get("pair", ""),
+                "direction": s.get("direction", ""),
+                "entry": s.get("entry_price"),
+                "tp1": None, "sl": s.get("sl_price"),
+                "pattern": pattern,
+                "score": None, "st_passed": None, "pump_score": 0,
+                "is_top_pick": tier == "vip",
+                "top_pick_confirmations_count": len(aligned_bots),
+                "st_tier": tier,
+                "aligned_tfs": aligned_tfs,
+                "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else None,
+                "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+            })
+    except Exception:
+        pass
+
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
     return {"items": items, "symbol": sym_clean, "days": days, "count": len(items)}
 
@@ -3980,6 +4087,45 @@ async def _compute_journal():
             "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
             "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
+
+    # SuperTrend signals (14 дней) — источник 'supertrend' с tier в pattern
+    try:
+        from database import _supertrend_signals as _sts
+        for s in _sts().find({"flip_at": {"$gte": since_14d}}).sort("flip_at", -1).limit(1500):
+            at_dt = s.get("flip_at")
+            tier = s.get("tier", "daily")
+            tier_emoji = {"vip": "🏆", "mtf": "🔱", "daily": "🧭"}.get(tier, "🌀")
+            tier_label = {"vip": "VIP", "mtf": "Triple MTF", "daily": "Daily"}.get(tier, tier.upper())
+            aligned_bots = s.get("aligned_bots", [])
+            aligned_tfs = s.get("aligned_tfs", [])
+            # Pattern column: emoji + tier + aligned info
+            if tier == "vip" and aligned_bots:
+                src_names = list({ab.get("source", "?") for ab in aligned_bots})[:3]
+                pattern = f"{tier_emoji} ST {tier_label} + {'+'.join(src_names)}"
+            else:
+                pattern = f"{tier_emoji} ST {tier_label} ({'+'.join(aligned_tfs)})"
+            items.append({
+                "source": "supertrend",
+                "symbol": s.get("pair_norm", ""),
+                "pair": s.get("pair", ""),
+                "direction": s.get("direction", ""),
+                "entry": s.get("entry_price"),
+                "tp1": None,
+                "sl": s.get("sl_price"),
+                "pattern": pattern,
+                "score": None,
+                "st_passed": None,
+                "pump_score": 0,
+                "is_top_pick": tier == "vip",  # VIP = top pick для фильтрации
+                "top_pick_confirmations_count": len(aligned_bots),
+                "st_tier": tier,
+                "aligned_tfs": aligned_tfs,
+                "aligned_bots_count": len(aligned_bots),
+                "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
+                "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+            })
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] supertrend fetch fail: {e}")
 
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
