@@ -99,6 +99,14 @@ def _key_levels() -> Collection:
     return _get_db().key_levels
 
 
+def _supertrend_signals() -> Collection:
+    """SuperTrend сигналы — VIP / Triple MTF / Daily Filter.
+    Генерируются tracker'ом каждые 5 мин при флипе ST на 1h + условия по tier.
+    Отправляются в BOT10. Используются в отдельной вкладке UI + маркеры на графиках +
+    бейджи в журнале для совпадающих сигналов."""
+    return _get_db().supertrend_signals
+
+
 
 
 def _counters() -> Collection:
@@ -650,6 +658,14 @@ def init_db():
         kl.create_index("detected_at", expireAfterSeconds=14*86400, name="ttl_14d")
         kl.create_index([("pair_norm", ASCENDING), ("detected_at", DESCENDING)])
         kl.create_index([("pair_norm", ASCENDING), ("event", ASCENDING), ("tf", ASCENDING), ("zone_low", ASCENDING)], unique=False)
+
+        # SuperTrend signals
+        sts = _supertrend_signals()
+        sts.create_index("created_at", expireAfterSeconds=30*86400, name="ttl_30d")
+        sts.create_index([("tier", ASCENDING), ("flip_at", DESCENDING)])
+        sts.create_index([("pair_norm", ASCENDING), ("flip_at", DESCENDING)])
+        sts.create_index([("pair_norm", ASCENDING), ("tier", ASCENDING), ("flip_at", ASCENDING)], unique=True, name="uniq_flip")
+        sts.create_index("id", unique=True, sparse=True)
     except Exception:
         pass  # idempotent — если TTL индексы уже есть, ok
 

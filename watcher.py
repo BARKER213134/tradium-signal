@@ -42,15 +42,35 @@ POLL_INTERVAL = 30  # секунд (было 15, снижаем нагрузку
 _bot = None
 _bot2 = None
 _bot4 = None
+_bot10 = None   # SuperTrend signals (VIP/MTF/Daily)
 _admin_chat_id = None
 
 
-def setup(bot, admin_chat_id: int, bot2=None, bot3=None, bot4=None):
-    global _bot, _bot2, _bot4, _admin_chat_id
+def setup(bot, admin_chat_id: int, bot2=None, bot3=None, bot4=None, bot10=None):
+    global _bot, _bot2, _bot4, _bot10, _admin_chat_id
     _bot = bot
     _bot2 = bot2
     _bot4 = bot4
+    _bot10 = bot10
     _admin_chat_id = admin_chat_id
+
+
+async def _st_tracker_loop():
+    """Фоновая задача: каждые 5 мин запускает check_all_pairs у SuperTrend tracker.
+    Генерирует 3 типа сигналов (VIP/MTF/Daily) и шлёт алерты в BOT10.
+    """
+    import asyncio as _asyncio
+    # Ленивая инициализация BOT10
+    if not _bot10:
+        try: _setup_bot10()
+        except Exception: pass
+    while True:
+        try:
+            from supertrend_tracker import check_all_pairs
+            await check_all_pairs(alert_enabled=True)
+        except Exception:
+            logger.exception("[st-tracker] loop crashed, retry in 5 min")
+        await _asyncio.sleep(300)
 
 
 def _resolve_chart(p: str) -> str | None:
@@ -1970,6 +1990,23 @@ def _setup_bot9():
         logger.error(f"BOT9 init fail: {e}")
 
 
+def _setup_bot10():
+    """BOT10 — SuperTrend signals (VIP / Triple MTF / Daily)."""
+    global _bot10
+    from config import BOT10_BOT_TOKEN
+    if not BOT10_BOT_TOKEN:
+        logger.info("BOT10_BOT_TOKEN не задан — SuperTrend алерты отключены")
+        return
+    try:
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        _bot10 = Bot(token=BOT10_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        logger.info("BOT10 (SuperTrend) initialized")
+    except Exception as e:
+        logger.error(f"BOT10 init fail: {e}")
+
+
 def _fmt_price(v):
     """Округление цены под magnitude — без ужасных хвостов."""
     if v is None:
@@ -2646,6 +2683,12 @@ async def start_watcher():
     _watcher_running = True
     print(f"[WATCHER] Started (interval={POLL_INTERVAL}s)", flush=True)
     logger.info(f"Price watcher запущен (интервал {POLL_INTERVAL}s)")
+    # Запускаем параллельный ST-tracker loop (check_all_pairs каждые 5 мин)
+    try:
+        asyncio.create_task(_st_tracker_loop())
+        logger.info("[st-tracker] background loop started")
+    except Exception:
+        logger.exception("[st-tracker] failed to start loop")
     tick = 0
     while True:
         tick += 1

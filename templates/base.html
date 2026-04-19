@@ -256,6 +256,21 @@
         .kl-badge.kl-confirming{ background: rgba(255,159,67,0.16); border: 1px solid rgba(255,159,67,0.45); }
         .kl-badge.kl-neutral   { background: rgba(100,116,139,0.16); border: 1px solid rgba(100,116,139,0.4); }
 
+        /* ── SuperTrend badges (журнал) ── */
+        .st-badge {
+            display: inline-block;
+            margin-left: 4px;
+            padding: 1px 5px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: help;
+            vertical-align: middle;
+            background: rgba(122,204,255,0.14);
+            border: 1px solid rgba(122,204,255,0.38);
+        }
+        .st-badge.st-vip { background: rgba(255,215,0,0.18); border: 1px solid rgba(255,215,0,0.55); }
+        .st-badge.st-fresh { background: rgba(255,107,53,0.16); border: 1px solid rgba(255,107,53,0.5); }
+
         /* ── Sync button ── */
         .sync-btn {
             display: inline-flex;
@@ -1005,6 +1020,94 @@
           console.warn('[SuperTrend] failed', e);
           return null;
         }
+      };
+
+      // ─── SuperTrend enrich badge для журнала ─────────────────────
+      // Получает массив flags и возвращает HTML <span> с эмоджи
+      //   aligned_1h/4h/d → 🌀 N раз
+      //   fresh_flip + aligned_1h → префикс 🔥
+      //   vip_match → суффикс 🏆
+      window._stBadge = function(flags) {
+        if (!flags || !flags.length) return '';
+        const has = (f) => flags.indexOf(f) !== -1;
+        let n = 0;
+        if (has('aligned_1h')) n++;
+        if (has('aligned_4h')) n++;
+        if (has('aligned_d')) n++;
+        let s = '';
+        if (has('fresh_flip') && n > 0) s += '🔥';
+        s += '🌀'.repeat(n);
+        const isVip = has('vip_match');
+        if (isVip) s += ' 🏆';
+        if (!s) return '';
+        const cls = isVip ? 'st-badge st-vip' : (has('fresh_flip') ? 'st-badge st-fresh' : 'st-badge');
+        const tips = [];
+        if (has('aligned_1h')) tips.push('ST(1h) aligned');
+        if (has('aligned_4h')) tips.push('ST(4h) aligned');
+        if (has('aligned_d'))  tips.push('ST(1d) aligned');
+        if (has('fresh_flip')) tips.push('Fresh flip (≤3 bars)');
+        if (isVip) tips.push('VIP match (ST flip ±2h)');
+        const tip = tips.join(' · ');
+        return `<span class="${cls}" title="${tip}">${s}</span>`;
+      };
+
+      // ─── SuperTrend signals (VIP/MTF/Daily) — markers на графиках ─────
+      // Fetch с 30с кешем per (pair, hours)
+      window._stSigCache = window._stSigCache || {};
+      window._fetchStSignals = async function(pair, hours = 336) {
+        if (!pair) return [];
+        const key = `${pair}_${hours}`;
+        const c = window._stSigCache[key];
+        if (c && (Date.now() - c.at) < 30000) return c.items;
+        try {
+          const r = await fetch(`/api/supertrend-signals/by-pair?pair=${encodeURIComponent(pair)}&hours=${hours}`);
+          const d = await r.json();
+          const items = (d && d.items) ? d.items : [];
+          window._stSigCache[key] = { at: Date.now(), items };
+          return items;
+        } catch (e) {
+          console.warn('[st-sig] fetch fail', e);
+          return [];
+        }
+      };
+
+      // Build markers array для LWC из списка ST-сигналов
+      window._addStSignalMarkers = function(candles, items) {
+        if (!candles || !candles.length || !items || !items.length) return [];
+        const firstTs = candles[0].time;
+        const lastTs = candles[candles.length - 1].time;
+        const tierCfg = {
+          vip:   { emoji: '🏆', color: '#ffd700', size: 2, label: 'VIP' },
+          mtf:   { emoji: '🔱', color: '#00e5a0', size: 2, label: 'Triple MTF' },
+          daily: { emoji: '🧭', color: '#3aa0ff', size: 1, label: 'Daily' },
+        };
+        const nearest = (ts) => {
+          let mc = null, minD = Infinity;
+          for (const c of candles) {
+            const diff = Math.abs(c.time - ts);
+            if (diff < minD) { minD = diff; mc = c; }
+          }
+          return mc;
+        };
+        const out = [];
+        for (const s of items) {
+          if (!s.flip_at) continue;
+          const ts = Math.floor(new Date(s.flip_at).getTime() / 1000);
+          if (ts < firstTs - 3600 || ts > lastTs + 3600 * 2) continue;
+          const mc = nearest(ts);
+          if (!mc) continue;
+          const cfg = tierCfg[s.tier] || tierCfg.daily;
+          const isLong = s.direction === 'LONG';
+          out.push({
+            time: mc.time,
+            position: isLong ? 'belowBar' : 'aboveBar',
+            color: cfg.color,
+            shape: isLong ? 'arrowUp' : 'arrowDown',
+            text: cfg.emoji,
+            size: cfg.size,
+          });
+        }
+        return out;
       };
 
       // Fetch KL для конкретной пары (с кешем 30с)
@@ -1941,14 +2044,22 @@ async function _renderLwcSignalChart(containerId, opts) {
   }
   series.setMarkers(markers);
 
-  // Накопительные маркеры: KC и KL async + ST sync flip-стрелки
-  let _msM = [], _klM = [];
+  // Накопительные маркеры: KC и KL async + ST sync flip-стрелки + ST-signals
+  let _msM = [], _klM = [], _stSigM = [];
   const _stFlips = (_stResult && _stResult.flipMarkers) ? _stResult.flipMarkers : [];
   const _applyAll = () => {
-    series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlips].sort((a,b) => a.time - b.time));
+    series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlips, ..._stSigM].sort((a,b) => a.time - b.time));
   };
   // Сразу применяем ST-стрелки (они уже посчитаны синхронно)
   if (_stFlips.length) _applyAll();
+  // Async: ST-signals (VIP/MTF/Daily) → 🏆/🔱/🧭 маркеры
+  if (window._fetchStSignals && window._addStSignalMarkers && opts.symbol && d.candles.length) {
+    window._fetchStSignals(opts.symbol, 336).then(stSigs => {
+      if (!stSigs || !stSigs.length) return;
+      _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
+      _applyAll();
+    }).catch(() => {});
+  }
 
   // Market state markers (KC + Reversal) async
   if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
@@ -2304,14 +2415,16 @@ async function _renderFvgChart(area, sig, tf) {
     });
   }
   markers.sort((a,b)=>a.time-b.time);
-  // ST flip-стрелки сразу к базовому набору
+  // ST flip-стрелки сразу к базовому набору (FVG график — без KL)
   const _stFlipsFvg = (_stResFvg && _stResFvg.flipMarkers) ? _stResFvg.flipMarkers : [];
-  series.setMarkers([...markers, ..._stFlipsFvg].sort((a,b) => a.time - b.time));
+  let _msMFvg = [], _stSigMFvg = [];
+  const _applyAllFvg = () => series.setMarkers([...markers, ..._stFlipsFvg, ..._msMFvg, ..._stSigMFvg].sort((a,b) => a.time - b.time));
+  _applyAllFvg();
   // Market state overlay (KC + Reversal) — работает и для FVG/forex графиков
   if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
     window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
-      const ms = window._addMarketStateMarkers(d.candles, events);
-      if (ms.length) series.setMarkers([...markers, ..._stFlipsFvg, ...ms].sort((a,b) => a.time - b.time));
+      _msMFvg = window._addMarketStateMarkers(d.candles, events) || [];
+      _applyAllFvg();
     }).catch(() => {});
   }
   chart.timeScale().fitContent();

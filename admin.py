@@ -145,7 +145,10 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
+            "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
+            "/api/supertrend-stats", "/api/st-enrich",
+            "/api/supertrend/backfill", "/api/supertrend/backfill-status", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -924,6 +927,274 @@ async def api_backtest_st(payload: dict | None = None):
 @app.get("/api/backtest-st/status")
 async def api_backtest_st_status():
     return _st_backtest_state
+
+
+# ─── SuperTrend Signals (VIP / Triple MTF / Daily) ───────────────
+@app.get("/api/supertrend-signals")
+async def api_supertrend_signals(tier: str = "", pair: str = "",
+                                 hours: int = 336, limit: int = 300):
+    """Список ST-сигналов для UI-таблиц.
+    Фильтры: tier (vip/mtf/daily), pair, hours (окно от текущего времени)."""
+    from database import _supertrend_signals, utcnow
+    from datetime import timedelta
+    since = utcnow() - timedelta(hours=hours)
+    query: dict = {"flip_at": {"$gte": since}}
+    if tier:
+        query["tier"] = tier
+    if pair:
+        p = pair.replace("/", "").upper()
+        if not p.endswith("USDT"): p = p + "USDT"
+        query["pair_norm"] = p
+    items = []
+    for doc in _supertrend_signals().find(query).sort("flip_at", -1).limit(limit):
+        doc.pop("_id", None)
+        for k in ("flip_at", "created_at"):
+            v = doc.get(k)
+            if hasattr(v, "isoformat"):
+                doc[k] = v.isoformat()
+        # aligned_bots may have datetime inside
+        for ab in doc.get("aligned_bots", []):
+            v = ab.get("at")
+            if hasattr(v, "isoformat"):
+                ab["at"] = v.isoformat()
+        items.append(doc)
+    return {"ok": True, "count": len(items), "items": items,
+            "tier": tier, "pair": pair, "hours": hours}
+
+
+@app.get("/api/supertrend-signals/by-pair")
+async def api_supertrend_signals_by_pair(pair: str, hours: int = 336):
+    """Сигналы по одной паре — для рисования маркеров на графиках."""
+    return await api_supertrend_signals(tier="", pair=pair, hours=hours, limit=100)
+
+
+@app.get("/api/supertrend-stats")
+async def api_supertrend_stats(days: int = 14):
+    """Агрегированная статистика по tiers (count + распределение по LONG/SHORT)."""
+    from database import _supertrend_signals, utcnow
+    from datetime import timedelta
+    since = utcnow() - timedelta(days=days)
+    pipeline = [
+        {"$match": {"flip_at": {"$gte": since}}},
+        {"$group": {
+            "_id": {"tier": "$tier", "direction": "$direction"},
+            "n": {"$sum": 1},
+        }},
+    ]
+    by_tier: dict = {"vip": {"LONG": 0, "SHORT": 0, "total": 0},
+                     "mtf": {"LONG": 0, "SHORT": 0, "total": 0},
+                     "daily": {"LONG": 0, "SHORT": 0, "total": 0}}
+    try:
+        for row in _supertrend_signals().aggregate(pipeline):
+            k = row["_id"]
+            t, d, n = k.get("tier"), k.get("direction"), row["n"]
+            if t in by_tier and d in ("LONG", "SHORT"):
+                by_tier[t][d] = n
+                by_tier[t]["total"] += n
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "days": days, "by_tier": by_tier}
+
+
+@app.post("/api/st-enrich")
+async def api_st_enrich(payload: dict):
+    """Батч-обогащение списка сигналов ST-флагами (для badges в журнале).
+    payload: {"signals": [{id, pair, direction, at}, ...]}
+    Возвращает: {enrich: {id: {flags: [...]}}}
+
+    Флаги:
+      aligned_1h: ST(1h) aligned с направлением
+      aligned_4h: ST(4h) aligned
+      aligned_d:  ST(1d) aligned
+      fresh_flip: ST(1h) flipped ≤3 bars назад от сигнала
+      vip_match:  в БД supertrend_signals есть VIP сигнал ±2ч на этой паре и направлении
+    """
+    from database import _supertrend_signals
+    from datetime import datetime as _dt, timedelta as _td
+    from collections import defaultdict
+
+    signals = (payload or {}).get("signals", [])
+    # Группируем по паре для эффективного расчёта ST (один раз на пару)
+    by_pair: dict[str, list[dict]] = defaultdict(list)
+    for s in signals:
+        sig_id = s.get("id")
+        if sig_id is None:
+            continue
+        pair = s.get("pair") or s.get("symbol") or ""
+        pair_norm = pair.replace("/", "").upper()
+        if not pair_norm.endswith("USDT"):
+            pair_norm = pair_norm + "USDT"
+        direction = (s.get("direction") or "").upper()
+        at_raw = s.get("at")
+        at_dt = None
+        if at_raw:
+            try:
+                if isinstance(at_raw, (int, float)):
+                    at_dt = _dt.utcfromtimestamp(at_raw)
+                else:
+                    at_dt = _dt.fromisoformat(str(at_raw).replace("Z", "+00:00"))
+                    if at_dt.tzinfo:
+                        at_dt = at_dt.replace(tzinfo=None)
+            except Exception:
+                at_dt = None
+        if not pair_norm or not at_dt or direction not in ("LONG", "SHORT"):
+            continue
+        by_pair[pair_norm].append({"id": sig_id, "direction": direction, "at": at_dt})
+
+    # Для каждой пары: считаем ST 1h/4h/1d + грузим VIP ST-сигналы в окне ±2ч
+    out: dict[str, dict] = {}
+
+    def _process_pair_sync(pair_norm: str, sigs: list[dict]) -> dict:
+        local: dict[str, dict] = {}
+        from exchange import get_klines_any
+        from backtest_supertrend import compute_st_series, find_flips
+        pair_slash = pair_norm[:-4] + "/USDT"
+        try:
+            c1h = get_klines_any(pair_slash, "1h", 400)
+        except Exception:
+            c1h = None
+        st_1h = compute_st_series(c1h, 10, 3.0) if c1h else []
+        if not st_1h:
+            for s in sigs:
+                local[str(s["id"])] = {"flags": []}
+            return local
+
+        try: c4h = get_klines_any(pair_slash, "4h", 150)
+        except Exception: c4h = None
+        try: c1d = get_klines_any(pair_slash, "1d", 40)
+        except Exception: c1d = None
+        st_4h = compute_st_series(c4h or [], 10, 3.0)
+        st_1d = compute_st_series(c1d or [], 14, 3.0)
+
+        def _state_at(series: list[dict], ts_ms: int):
+            if not series: return None
+            lo, hi = 0, len(series) - 1
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if series[mid]["t"] <= ts_ms:
+                    lo = mid
+                else: hi = mid - 1
+            return series[lo] if series[lo]["t"] <= ts_ms else None
+
+        def _bar_idx(series: list[dict], ts_ms: int):
+            r = _state_at(series, ts_ms)
+            if not r: return None
+            # Ищем индекс
+            for i in range(len(series)-1, -1, -1):
+                if series[i]["t"] == r["t"]:
+                    return i
+            return None
+
+        # VIP matches: читаем из supertrend_signals collection
+        vip_window_ms = 2 * 3600 * 1000
+        vip_min_ts = min(int(s["at"].timestamp()*1000) for s in sigs) - vip_window_ms
+        vip_max_ts = max(int(s["at"].timestamp()*1000) for s in sigs) + vip_window_ms
+        vip_min_dt = _dt.utcfromtimestamp(vip_min_ts / 1000)
+        vip_max_dt = _dt.utcfromtimestamp(vip_max_ts / 1000)
+        vip_sigs = list(_supertrend_signals().find({
+            "pair_norm": pair_norm,
+            "tier": "vip",
+            "flip_at": {"$gte": vip_min_dt, "$lte": vip_max_dt},
+        }, {"direction": 1, "flip_at": 1}))
+
+        for s in sigs:
+            sid = str(s["id"])
+            flags = []
+            ts_ms = int(s["at"].timestamp() * 1000)
+            is_long = s["direction"] == "LONG"
+            # 1h alignment
+            b1 = _state_at(st_1h, ts_ms)
+            if b1 and b1["trend"] != 0:
+                if (b1["trend"] == 1) == is_long:
+                    flags.append("aligned_1h")
+                    # Fresh flip check (within ≤3 bars)
+                    idx = _bar_idx(st_1h, ts_ms)
+                    if idx is not None and idx > 0:
+                        age = 0
+                        cur_trend = b1["trend"]
+                        for j in range(idx-1, -1, -1):
+                            if st_1h[j]["trend"] != 0 and st_1h[j]["trend"] != cur_trend:
+                                break
+                            age += 1
+                        if age <= 3:
+                            flags.append("fresh_flip")
+            # 4h
+            b4 = _state_at(st_4h, ts_ms)
+            if b4 and b4["trend"] != 0 and ((b4["trend"] == 1) == is_long):
+                flags.append("aligned_4h")
+            # 1d
+            bd = _state_at(st_1d, ts_ms)
+            if bd and bd["trend"] != 0 and ((bd["trend"] == 1) == is_long):
+                flags.append("aligned_d")
+            # VIP match
+            for v in vip_sigs:
+                if v.get("direction") != s["direction"]:
+                    continue
+                v_ts_ms = int(v["flip_at"].timestamp() * 1000) if v.get("flip_at") else 0
+                if abs(v_ts_ms - ts_ms) <= vip_window_ms:
+                    flags.append("vip_match")
+                    break
+            local[sid] = {"flags": flags}
+        return local
+
+    # Параллелим по парам
+    results = await asyncio.gather(*[
+        asyncio.to_thread(_process_pair_sync, p, sigs) for p, sigs in by_pair.items()
+    ]) if by_pair else []
+    for d in results:
+        out.update(d)
+    return {"enrich": out, "count": len(out)}
+
+
+# Фоновый бэкфилл ST-сигналов
+_st_backfill_state: dict = {
+    "running": False, "started_at": None, "finished_at": None,
+    "progress": None, "stats": None, "error": None,
+}
+
+
+async def _run_st_backfill(days: int, alert: bool):
+    from datetime import datetime as _dt
+    from supertrend_tracker import backfill
+    def _on_progress(i, total, pair):
+        _st_backfill_state["progress"] = {"processed": i, "total": total, "current_pair": pair}
+    try:
+        stats = await backfill(days=days, alert_enabled=alert, on_progress=_on_progress)
+        _st_backfill_state["stats"] = stats
+    except Exception as e:
+        import traceback
+        _st_backfill_state["error"] = f"{e}\n{traceback.format_exc()[-800:]}"
+    finally:
+        _st_backfill_state["running"] = False
+        _st_backfill_state["finished_at"] = _dt.utcnow().isoformat()
+
+
+@app.post("/api/supertrend/backfill")
+async def api_supertrend_backfill(payload: dict | None = None):
+    """Фоновый backfill ST-сигналов за N дней.
+    payload: {"days": 14, "alert": false}
+    По умолчанию без Telegram — только заполняет БД."""
+    from datetime import datetime as _dt
+    if _st_backfill_state.get("running"):
+        return {"ok": False, "error": "already running", "state": _st_backfill_state}
+    days = int((payload or {}).get("days", 14))
+    alert = bool((payload or {}).get("alert", False))
+    _st_backfill_state.update({
+        "running": True,
+        "started_at": _dt.utcnow().isoformat(),
+        "finished_at": None,
+        "progress": {"processed": 0, "total": 0, "current_pair": None},
+        "stats": None,
+        "error": None,
+        "days": days, "alert": alert,
+    })
+    asyncio.create_task(_run_st_backfill(days, alert))
+    return {"ok": True, "started": True, "days": days, "alert": alert}
+
+
+@app.get("/api/supertrend/backfill-status")
+async def api_supertrend_backfill_status():
+    return _st_backfill_state
 
 
 @app.get("/api/key-levels/coverage")

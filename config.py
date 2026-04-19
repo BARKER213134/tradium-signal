@@ -62,6 +62,10 @@ BOT8_BOT_TOKEN = os.getenv("BOT8_BOT_TOKEN", "")
 # BOT9 — Top Picks alerts (сигналы подтверждённые STRONG Confluence)
 BOT9_BOT_TOKEN = os.getenv("BOT9_BOT_TOKEN", "")
 
+# BOT10 — SuperTrend signals (VIP / Triple MTF / Daily Filter)
+# Токен выдан пользователем, хранить в Railway Variables
+BOT10_BOT_TOKEN = os.getenv("BOT10_BOT_TOKEN", "")
+
 # TwelveData API — для форекс-данных (надёжнее чем yfinance для форекса)
 # Free tier: 800 req/day, 8 req/min
 # Регистрация: https://twelvedata.com/
@@ -80,6 +84,7 @@ BOTS = [
     {"id": "confluence", "label": "Confluence", "category": "crypto"},
     {"id": "clusters", "label": "Кластеры", "category": "crypto"},
     {"id": "top_picks", "label": "👑 Top Picks", "category": "crypto"},
+    {"id": "supertrend", "label": "🌀 SuperTrend", "category": "crypto"},
     # {"id": "conflicts", "label": "⚠ Conflicts", "category": "crypto"},  # кнопка скрыта
     # — функционал остаётся: endpoint /api/conflicts, вкладка по прямому URL
     # /signals?bot=conflicts работает, данные детектируются в фоне через
