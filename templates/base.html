@@ -898,38 +898,43 @@
         const { trend, st } = calc;
 
         try {
-          // Две LineSeries — up (зелёная) и down (красная)
-          // lineType: WithSteps (=1) — классический TV-style step-line вместо
-          // плавной диагонали. Иначе при трендовом движении ST-линия рисуется
-          // наклонной интерполяцией между точками, что выглядит некорректно.
+          // Каждый сегмент тренда = отдельная LineSeries. Так избегаем
+          // whitespace-артефактов (LWC иногда рисует горизонтальные
+          // тени или соединяет через gap при WithSteps).
+          // Результат: чистый stepped line, без ложных соединений,
+          // флип = просто конец одной серии и начало другой в том же баре.
           const LT = (window.LightweightCharts && window.LightweightCharts.LineType) || {};
           const stepType = (typeof LT.WithSteps !== 'undefined') ? LT.WithSteps : 1;
-          const upSeries = chart.addLineSeries({
-            color: '#00e5a0', lineWidth: 2, priceLineVisible: false,
-            lastValueVisible: false, crosshairMarkerVisible: false,
-            lineType: stepType,
-          });
-          const dnSeries = chart.addLineSeries({
-            color: '#ff4d6d', lineWidth: 2, priceLineVisible: false,
-            lastValueVisible: false, crosshairMarkerVisible: false,
-            lineType: stepType,
-          });
-          const upData = [], dnData = [];
+          const segments = [];
+          let cur = null;
           for (let i = 0; i < candles.length; i++) {
-            const t = candles[i].time;
-            if (trend[i] === 1 && st[i] != null) {
-              upData.push({ time: t, value: st[i] });
-              dnData.push({ time: t });    // whitespace — разрыв
-            } else if (trend[i] === -1 && st[i] != null) {
-              dnData.push({ time: t, value: st[i] });
-              upData.push({ time: t });
-            } else {
-              upData.push({ time: t });
-              dnData.push({ time: t });
+            if (trend[i] === 0 || st[i] == null) {
+              cur = null;  // gap
+              continue;
             }
+            if (!cur || cur.trend !== trend[i]) {
+              cur = { trend: trend[i], data: [] };
+              segments.push(cur);
+            }
+            cur.data.push({ time: candles[i].time, value: st[i] });
           }
-          upSeries.setData(upData);
-          dnSeries.setData(dnData);
+          const createdSeries = [];
+          for (const seg of segments) {
+            if (seg.data.length < 1) continue;
+            const s = chart.addLineSeries({
+              color: seg.trend === 1 ? '#00e5a0' : '#ff4d6d',
+              lineWidth: 2,
+              lineType: stepType,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+            });
+            s.setData(seg.data);
+            createdSeries.push(s);
+          }
+          // Для совместимости с cleanup() сохраняем общие ссылки
+          const upSeries = createdSeries[0] || null;
+          const dnSeries = null;
 
           // Маркеры-стрелки на флипах
           const flipMarkers = [];
@@ -985,12 +990,14 @@
           }
 
           return {
+            series: createdSeries,
             upSeries, dnSeries, flipMarkers, badgeEl,
             state: trend[trend.length-1] === 1 ? 'UP' : (trend[trend.length-1] === -1 ? 'DOWN' : null),
             value: st[st.length-1],
             cleanup: () => {
-              try { chart.removeSeries(upSeries); } catch (_) {}
-              try { chart.removeSeries(dnSeries); } catch (_) {}
+              for (const s of createdSeries) {
+                try { chart.removeSeries(s); } catch (_) {}
+              }
               if (badgeEl) badgeEl.remove();
             },
           };
