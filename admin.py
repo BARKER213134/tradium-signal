@@ -3649,10 +3649,33 @@ async def _compute_journal():
     return {"items": items}
 
 
+# Серверный кеш для /api/journal-candles (TTL per TF)
+# Самая медленная часть открытия графика — HTTP к Binance (до 6с cold).
+# Повторные запросы в одной сессии → мгновенно из кеша.
+_candles_cache: dict = {}
+_CANDLES_TTL_BY_TF = {
+    "15m": 45.0,   # 15m обновляется каждые 15 мин, 45с кеш OK
+    "30m": 90.0,
+    "1h":  180.0,  # 3 минуты
+    "2h":  300.0,
+    "4h":  600.0,  # 10 минут
+    "12h": 1800.0,
+    "1d":  3600.0, # 1 час
+}
+_CANDLES_TTL_DEFAULT = 120.0
+
+
 @app.get("/api/journal-candles")
 async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
-    """Свечи для Lightweight Charts."""
+    """Свечи для Lightweight Charts. Сервер-кеш по TTL per TF."""
     from exchange import get_klines_any
+    key = f"{symbol}|{tf}|{limit}"
+    now = time.time()
+    ttl = _CANDLES_TTL_BY_TF.get((tf or "").lower(), _CANDLES_TTL_DEFAULT)
+    hit = _candles_cache.get(key)
+    if hit and (now - hit[0]) < ttl:
+        return {"ok": True, "candles": hit[1], "cached": True}
+
     pair = symbol.replace("USDT", "/USDT") if "USDT" in symbol else symbol
     candles = await asyncio.to_thread(get_klines_any, pair, tf, limit)
     if not candles:
@@ -3667,6 +3690,11 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
             "close": c["c"],
             "volume": c.get("v", 0),
         })
+    _candles_cache[key] = (now, data)
+    # Lazy eviction старых записей
+    if len(_candles_cache) > 500:
+        for k in [k for k, v in _candles_cache.items() if (now - v[0]) > ttl * 2]:
+            _candles_cache.pop(k, None)
     return {"ok": True, "candles": data}
 
 
