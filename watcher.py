@@ -96,12 +96,24 @@ def _kl_block(pair: str, direction: str, at=None,
 
 def _st_block(pair: str, direction: str, tf: str = "1h") -> str:
     """Возвращает строку SuperTrend для вставки в TG алерт ('' при любой ошибке).
-    Показывает направление ST и aligned/contrarian к сигналу."""
+    Использует cache_only=True чтобы НЕ блокировать async event loop
+    синхронным HTTP запросом к Binance. Кеш прогревается фоном (prewarm_cache).
+    """
     try:
         from supertrend import format_tg_block as _st_fmt
-        return _st_fmt(pair or "", direction or "", tf or "1h")
+        return _st_fmt(pair or "", direction or "", tf or "1h", cache_only=True)
     except Exception:
         return ""
+
+
+async def _st_prewarm_async(pair: str, tf: str = "1h") -> None:
+    """Фоновый прогрев ST-кеша. Вызывается fire-and-forget перед алертом,
+    чтобы к моменту build_message ST был в кеше. Не блокирует caller."""
+    try:
+        from supertrend import prewarm_cache
+        await asyncio.to_thread(prewarm_cache, pair, tf)
+    except Exception:
+        pass
 
 
 def _check_keltner_filter(direction: str) -> tuple[bool, dict]:

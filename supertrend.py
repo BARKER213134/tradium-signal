@@ -136,13 +136,19 @@ def _calc_supertrend(candles: list[dict], period: int, mult: float) -> Optional[
 
 def supertrend_state(pair: str, tf: str = "1h",
                      period: Optional[int] = None,
-                     mult: Optional[float] = None) -> Optional[dict]:
+                     mult: Optional[float] = None,
+                     cache_only: bool = False) -> Optional[dict]:
     """Возвращает состояние SuperTrend для pair/tf. Кеш 2 мин.
+
+    Args:
+        cache_only: если True и в кеше ничего нет → возвращает None мгновенно
+            (не делает HTTP запрос к Binance). Используется из async Telegram
+            алертов чтобы не блокировать event loop на 1-3 сек.
+            Отдельный background-прогрев заполняет кеш заранее.
 
     Example:
       >>> supertrend_state("BTC/USDT", "1h")
-      {"state": "UP", "value": 67800.5, "tf": "1h", "period": 10, "mult": 3.0,
-       "last_flip_at": 1708123456000, "prev_state": "UP"}
+      {"state": "UP", "value": 67800.5, ...}
     """
     if not pair:
         return None
@@ -154,6 +160,9 @@ def supertrend_state(pair: str, tf: str = "1h",
     hit = _cache.get(key)
     if hit and (now - hit[0]) < _CACHE_TTL:
         return hit[1]
+
+    if cache_only:
+        return None
 
     try:
         from exchange import get_klines_any
@@ -176,16 +185,32 @@ def supertrend_state(pair: str, tf: str = "1h",
         return None
 
 
-def format_tg_block(pair: str, direction: str, tf: str = "1h") -> str:
+def prewarm_cache(pair: str, tf: str = "1h") -> None:
+    """Фоновый прогрев кеша. Вызывается из async через asyncio.to_thread
+    чтоб не блокировать event loop."""
+    try:
+        supertrend_state(pair, tf, cache_only=False)
+    except Exception:
+        pass
+
+
+def format_tg_block(pair: str, direction: str, tf: str = "1h",
+                    cache_only: bool = True) -> str:
     """Формирует HTML-строку для Telegram алерта.
     Возвращает '' если ST недоступен.
+
+    Args:
+        cache_only: True (default) — не делает HTTP запрос к Binance,
+            берёт только из кеша. Нужно чтобы не блокировать async event
+            loop из Telegram алертов. Cache прогревается при первом
+            рендере графика в UI или через prewarm_cache.
 
     Example:
       '🟢 <b>ST(1h):</b> UP · по тренду\n'
       '🔴 <b>ST(1h):</b> DOWN · ⚠️ ПРОТИВ тренда\n'
     """
     try:
-        st = supertrend_state(pair, tf)
+        st = supertrend_state(pair, tf, cache_only=cache_only)
         if not st or not st.get("state"):
             return ""
         is_long = (direction or "").upper() in ("LONG", "BUY", "BULLISH")
