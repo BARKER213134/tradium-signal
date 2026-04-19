@@ -348,3 +348,264 @@ def format_tg_block(enrich: dict) -> str:
     if enrich.get("zone_low") and enrich.get("zone_high"):
         zone = f" · zone {enrich['zone_low']}-{enrich['zone_high']}"
     return f"\n{emoji} <b>KEY LEVEL:</b> {label}{zone}\n"
+
+
+# ════════════════════════════════════════════════════════════════════
+# Tier 1 + Tier 2: расширенный блок уровней в Telegram алертах
+# ════════════════════════════════════════════════════════════════════
+
+def _zone_mid(kl: dict) -> Optional[float]:
+    """Средняя точка зоны уровня."""
+    lo, hi = kl.get("zone_low"), kl.get("zone_high")
+    if lo is None or hi is None:
+        return None
+    try:
+        return (float(lo) + float(hi)) / 2
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_resistance(kl: dict) -> bool:
+    ev = kl.get("event", "")
+    return "resistance" in ev
+
+
+def _is_support(kl: dict) -> bool:
+    ev = kl.get("event", "")
+    return "support" in ev
+
+
+def _format_price(x: float) -> str:
+    if x is None:
+        return "—"
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    if x >= 1000:  return f"{x:.2f}"
+    if x >= 10:    return f"{x:.3f}"
+    if x >= 1:     return f"{x:.4f}"
+    if x >= 0.01:  return f"{x:.5f}"
+    return f"{x:.7f}"
+
+
+def build_levels_alert_block(pair: str, direction: str,
+                              entry: Optional[float] = None,
+                              tp: Optional[float] = None,
+                              sl: Optional[float] = None,
+                              at: Optional[datetime] = None,
+                              hours: int = 48) -> str:
+    """Строит подробный блок Key Levels для Telegram алерта.
+
+    Tier 1 (видимая часть):
+      1. Расстояние до ближайшего R/S (вверх/вниз от entry)
+      2. TP/SL валидация (TP за R? SL под S?)
+      3. Multi-TF confluence (сколько TF подтверждают ближайший уровень)
+
+    Tier 2 (фильтры качества):
+      4. Breakout/Retest — был ли недавно пробой этого уровня
+      5. Age/strength (возраст + кол-во retest'ов)
+      6. Obstacle warning — сильный уровень против сделки в пределах ±5%
+
+    Возвращает HTML-строку (с ведущим \\n) или '' если данных нет.
+    """
+    if not pair:
+        return ""
+    pair_norm = pair.replace("/", "").upper()
+    if not pair_norm.endswith("USDT"):
+        pair_norm = pair_norm + "USDT"
+
+    # Тянем все KL за окно
+    since = utcnow() - timedelta(hours=hours)
+    all_kls = list(_key_levels().find({
+        "pair_norm": pair_norm,
+        "detected_at": {"$gte": since},
+    }).sort("detected_at", -1).limit(200))
+
+    if not all_kls:
+        return ""
+
+    is_long = (direction or "").upper() in ("LONG", "BUY", "BULLISH")
+    try:
+        cur_price = float(entry) if entry is not None else None
+    except (TypeError, ValueError):
+        cur_price = None
+    # Если entry не передан — пробуем текущую цену из самого свежего KL
+    if cur_price is None:
+        for kl in all_kls:
+            cp = kl.get("current_price")
+            if cp is not None:
+                try: cur_price = float(cp); break
+                except (TypeError, ValueError): pass
+    if cur_price is None:
+        return ""
+
+    # Собираем уникальные уровни R и S (группировка по близости zone_mid в пределах 0.5%)
+    # В каждой группе считаем: multi-TF (кол-во разных TF), возраст (самого старого),
+    # retest count (кол-во 'entered' событий рядом), самую свежую детекцию.
+    def _group_levels(kls: list[dict], kind: str) -> list[dict]:
+        """kind: 'R' or 'S'. Возвращает список групп, отсортированных по расстоянию до цены."""
+        filtered = [k for k in kls if (
+            (kind == 'R' and _is_resistance(k)) or (kind == 'S' and _is_support(k))
+        ) and _zone_mid(k) is not None]
+        groups: list[dict] = []
+        for kl in filtered:
+            mid = _zone_mid(kl)
+            tf = kl.get("tf", "?")
+            det = kl.get("detected_at")
+            ev = kl.get("event", "")
+            # Ищем существующую группу (zone_mid в пределах ±0.5%)
+            placed = False
+            for g in groups:
+                if abs(mid - g["mid"]) / g["mid"] <= 0.005:
+                    g["tfs"].add(tf)
+                    if ev.startswith("entered_"):
+                        g["retests"] += 1
+                    if g["latest"] is None or (det and det > g["latest"]):
+                        g["latest"] = det
+                    # Возраст = самая ранняя детекция (minimum)
+                    if det and (g["oldest"] is None or det < g["oldest"]):
+                        g["oldest"] = det
+                    g["zone_low"] = min(g["zone_low"], kl.get("zone_low") or g["zone_low"])
+                    g["zone_high"] = max(g["zone_high"], kl.get("zone_high") or g["zone_high"])
+                    g["count"] += 1
+                    placed = True
+                    break
+            if not placed:
+                groups.append({
+                    "mid": mid,
+                    "tfs": {tf},
+                    "retests": 1 if ev.startswith("entered_") else 0,
+                    "latest": det,
+                    "oldest": det,
+                    "zone_low": kl.get("zone_low"),
+                    "zone_high": kl.get("zone_high"),
+                    "count": 1,
+                    "kind": kind,
+                })
+        # Сортируем: сверху те что ближе к цене
+        groups.sort(key=lambda g: abs(g["mid"] - cur_price))
+        return groups
+
+    r_groups = _group_levels(all_kls, 'R')
+    s_groups = _group_levels(all_kls, 'S')
+    nearest_r_above = next((g for g in r_groups if g["mid"] > cur_price), None)
+    nearest_s_below = next((g for g in s_groups if g["mid"] < cur_price), None)
+
+    if not nearest_r_above and not nearest_s_below:
+        return ""
+
+    # ── Форматирование строки уровня ─────────────────────────────
+    def _fmt_group(g: dict) -> str:
+        mid = g["mid"]
+        pct = (mid - cur_price) / cur_price * 100
+        arrow = "↑" if pct > 0 else "↓"
+        sign = "+" if pct > 0 else ""
+        tf_str = "/".join(sorted(g["tfs"], key=_tf_power))
+        multi = f"{len(g['tfs'])}TF" if len(g["tfs"]) > 1 else tf_str
+        parts = [f"{_format_price(mid)} ({sign}{pct:.1f}% {arrow})"]
+        # Multi-TF confluence
+        if len(g["tfs"]) >= 2:
+            parts.append(f"<b>{multi}</b>")
+        else:
+            parts.append(tf_str)
+        # Возраст
+        if g["oldest"]:
+            age_days = max(0, (utcnow() - g["oldest"]).total_seconds() / 86400)
+            if age_days >= 1:
+                parts.append(f"{age_days:.0f}д")
+            else:
+                parts.append(f"{age_days*24:.0f}ч")
+        # Retest count (считаем 'entered_*' события как retest)
+        if g["retests"] >= 1:
+            stars = "🔥" if g["retests"] >= 3 else ""
+            parts.append(f"{g['retests']}× retest {stars}".strip())
+        return " · ".join(parts)
+
+    lines = ["\n─── 📐 <b>Key Levels</b> ───"]
+
+    # Уровни выше и ниже цены
+    if nearest_r_above:
+        tp_tag = ""
+        if tp is not None:
+            try:
+                tp_f = float(tp)
+                if tp_f >= nearest_r_above["mid"]:
+                    tp_tag = "   ⚠️ <b>TP за уровнем</b>"
+                elif tp_f > cur_price:
+                    # TP между ценой и R — ок
+                    room_pct = (nearest_r_above["mid"] - tp_f) / cur_price * 100
+                    tp_tag = f"   ✅ TP до R (−{room_pct:.1f}% запас)"
+            except (TypeError, ValueError):
+                pass
+        lines.append(f"🔴 R · {_fmt_group(nearest_r_above)}{tp_tag}")
+
+    if nearest_s_below:
+        sl_tag = ""
+        if sl is not None:
+            try:
+                sl_f = float(sl)
+                if is_long:
+                    if sl_f <= nearest_s_below["mid"]:
+                        sl_tag = "   ✅ <b>SL защищён</b> (ниже S)"
+                    else:
+                        # SL выше S — S не защищает
+                        sl_tag = "   ⚠️ SL выше S"
+            except (TypeError, ValueError):
+                pass
+        lines.append(f"🟢 S · {_fmt_group(nearest_s_below)}{sl_tag}")
+
+    # ── Tier 2.4: Breakout/Retest детектор ─────────────────────
+    # Был ли недавний breakout уровня который совпадает с направлением?
+    recent_breakout = None
+    since_6h = utcnow() - timedelta(hours=6)
+    for kl in all_kls:
+        ev = kl.get("event", "")
+        det = kl.get("detected_at")
+        if not det or det < since_6h:
+            continue
+        if is_long and ev == "entered_resistance":
+            recent_breakout = kl
+            break
+        if not is_long and ev == "entered_support":
+            recent_breakout = kl
+            break
+    if recent_breakout:
+        ago_h = (utcnow() - recent_breakout["detected_at"]).total_seconds() / 3600
+        rb_tf = recent_breakout.get("tf", "?")
+        rb_mid = _zone_mid(recent_breakout)
+        emoji = "🎢" if is_long else "🧨"
+        side = "R" if is_long else "S"
+        kind_label = "Breakout" if is_long else "Breakdown"
+        px = _format_price(rb_mid) if rb_mid else "?"
+        lines.append(f"{emoji} {kind_label} {side} {rb_tf} ({px}) · {ago_h:.0f}ч назад → retest?")
+
+    # ── Tier 2.6: Obstacle warning — сильный уровень против сделки в ±5% ──
+    # Для LONG — сильная RESISTANCE в пределах +5% выше
+    # Для SHORT — сильная SUPPORT в пределах −5% ниже
+    obstacle_groups = r_groups if is_long else s_groups
+    for g in obstacle_groups:
+        pct = (g["mid"] - cur_price) / cur_price * 100
+        # Подходит только по направлению
+        if is_long and pct <= 0:
+            continue
+        if not is_long and pct >= 0:
+            continue
+        # В пределах 5%
+        if abs(pct) > 5:
+            continue
+        # Уже показан как "ближайший" — не дублируем
+        if (is_long and g is nearest_r_above) or ((not is_long) and g is nearest_s_below):
+            continue
+        # "Сильный" = ≥2 TF или TF ≥ 4h
+        has_strong_tf = any(_tf_power(tf) >= _tf_power("4h") for tf in g["tfs"])
+        if len(g["tfs"]) < 2 and not has_strong_tf:
+            continue
+        mid = g["mid"]
+        sign = "+" if pct > 0 else ""
+        tfs = "/".join(sorted(g["tfs"], key=_tf_power))
+        lines.append(f"🚨 Сильный {'R' if is_long else 'S'} {tfs} ({_format_price(mid)}, {sign}{pct:.1f}%) на пути")
+        break  # Один warning достаточно
+
+    lines.append("")  # Пустая строка в конце
+    return "\n".join(lines)

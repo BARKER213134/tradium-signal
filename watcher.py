@@ -63,13 +63,25 @@ def _resolve_chart(p: str) -> str | None:
     return cand if os.path.exists(cand) else None
 
 
-def _kl_block(pair: str, direction: str, at=None) -> str:
-    """Возвращает строку Key Level для вставки в TG алерт (или '' если ничего).
-    Безопасная обёртка — любой fail возвращает пустую строку."""
+def _kl_block(pair: str, direction: str, at=None,
+              entry=None, tp=None, sl=None) -> str:
+    """Возвращает расширенный блок Key Levels для TG алерта (Tier 1+2):
+      — ближайший R выше и S ниже (с % и возрастом)
+      — multi-TF confluence (если 2+ TF совпадают)
+      — retest count
+      — TP/SL валидация
+      — Breakout/Retest детектор (если был недавний пробой по направлению)
+      — Obstacle warning (сильный уровень против сделки в ±5%)
+
+    Возвращает '' при любой ошибке или если нет KL за 48h.
+    """
     try:
-        from key_levels import get_signal_emoji, format_tg_block
-        enrich = get_signal_emoji(pair or "", direction or "", at or utcnow())
-        return format_tg_block(enrich) if enrich else ""
+        from key_levels import build_levels_alert_block
+        return build_levels_alert_block(
+            pair or "", direction or "",
+            entry=entry, tp=tp, sl=sl,
+            at=at or utcnow(),
+        )
     except Exception:
         return ""
 
@@ -322,7 +334,8 @@ async def _send_dca4_alert(signal: Signal, current_price: float):
     if signal.sl_percent:
         sl_disp += f" (-{signal.sl_percent}%)"
 
-    _kl = _kl_block(signal.pair, signal.direction, utcnow())
+    _kl = _kl_block(signal.pair, signal.direction, utcnow(),
+                    entry=current_price or signal.entry, tp=signal.tp1, sl=signal.sl)
     _stb = _st_block(signal.pair, signal.direction, signal.timeframe or "1h")
     text = (
         f"{dir_emoji} <b>DCA #4 ДОСТИГНУТ</b>\n"
@@ -373,7 +386,8 @@ async def _send_pattern_alert(signal: Signal, pattern: str, current_price: float
     if signal.sl_percent:
         sl_line += f"  <code>-{signal.sl_percent}%</code>"
 
-    _kl = _kl_block(signal.pair, signal.direction, utcnow())
+    _kl = _kl_block(signal.pair, signal.direction, utcnow(),
+                    entry=current_price or signal.entry, tp=signal.tp1, sl=signal.sl)
     _stb = _st_block(signal.pair, signal.direction, signal.timeframe or "1h")
     text = (
         f"🚀 <b>ВХОД ПОДТВЕРЖДЁН</b>\n"
@@ -829,7 +843,9 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     if s1: lvl += f"🟢 S1: <code>{s1}</code> | "
     if r1: lvl += f"🔴 R1: <code>{r1}</code>"
 
-    _kl = _kl_block(signal.pair, signal.direction, getattr(signal, "pattern_triggered_at", None) or utcnow())
+    _kl = _kl_block(signal.pair, signal.direction,
+                    getattr(signal, "pattern_triggered_at", None) or utcnow(),
+                    entry=current_price or signal.entry, tp=signal.tp1, sl=signal.sl)
     _stb = _st_block(signal.pair, signal.direction, "1h")
     text = (
         f"{hp}"
@@ -1407,7 +1423,8 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     if s1: lvl += f"🟢 S1: <code>{s1}</code> | "
     if r1: lvl += f"🔴 R1: <code>{r1}</code>"
 
-    _kl = _kl_block(signal.pair, signal.direction, utcnow())
+    _kl = _kl_block(signal.pair, signal.direction, utcnow(),
+                    entry=current_price or signal.entry, tp=signal.tp1, sl=signal.sl)
     _stb = _st_block(signal.pair, signal.direction, "1h")
     text = (
         f"{hp}"
@@ -1711,7 +1728,8 @@ async def _send_anomaly_alert(r: dict):
     _pump = await _pump_check(sym)
     hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
 
-    _kl = _kl_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), utcnow())
+    _kl = _kl_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), utcnow(),
+                    entry=r.get("price") or r.get("entry"), tp=r.get("tp") or r.get("tp1"), sl=r.get("sl"))
     _stb = _st_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), "1h")
     text = (
         f"{hp}"
@@ -2044,7 +2062,8 @@ async def _send_top_pick_alert(sig: dict):
             sign = "+" if pct >= 0 else ""
             return f" <b>({sign}{pct:.2f}%)</b>"
 
-        _kl = _kl_block(sig.get("pair") or (pair + "/USDT"), direction, utcnow())
+        _kl = _kl_block(sig.get("pair") or (pair + "/USDT"), direction, utcnow(),
+                        entry=entry, tp=tp, sl=sl)
         _stb = _st_block(sig.get("pair") or (pair + "/USDT"), direction, "1h")
         text = (
             f"👑 <b>TOP PICK</b> · {type_emoji} {type_label}\n"
@@ -2529,7 +2548,8 @@ async def _send_confluence_alert(r: dict):
     else:
         strong_header = ""
 
-    _kl = _kl_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), utcnow())
+    _kl = _kl_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), utcnow(),
+                    entry=r.get("price") or r.get("entry"), tp=r.get("tp") or r.get("tp1"), sl=r.get("sl"))
     _stb = _st_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), "1h")
     text = (
         f"{hp}"
