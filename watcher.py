@@ -74,6 +74,16 @@ def _kl_block(pair: str, direction: str, at=None) -> str:
         return ""
 
 
+def _st_block(pair: str, direction: str, tf: str = "1h") -> str:
+    """Возвращает строку SuperTrend для вставки в TG алерт ('' при любой ошибке).
+    Показывает направление ST и aligned/contrarian к сигналу."""
+    try:
+        from supertrend import format_tg_block as _st_fmt
+        return _st_fmt(pair or "", direction or "", tf or "1h")
+    except Exception:
+        return ""
+
+
 def _check_keltner_filter(direction: str) -> tuple[bool, dict]:
     """Проверяет Keltner Channel ETH фильтр. Возвращает (passed, kc_data).
     NEUTRAL = все сигналы проходят."""
@@ -313,11 +323,12 @@ async def _send_dca4_alert(signal: Signal, current_price: float):
         sl_disp += f" (-{signal.sl_percent}%)"
 
     _kl = _kl_block(signal.pair, signal.direction, utcnow())
+    _stb = _st_block(signal.pair, signal.direction, signal.timeframe or "1h")
     text = (
         f"{dir_emoji} <b>DCA #4 ДОСТИГНУТ</b>\n"
         f"\n"
         f"<b>{pair}/USDT</b> · {signal.timeframe or '—'} · {dir_label}\n"
-        f"{_kl}"
+        f"{_kl}{_stb}"
         f"\n"
         f"Entry: <code>{signal.entry}</code>\n"
         f"DCA #4: <code>{signal.dca4}</code> ⚡\n"
@@ -363,11 +374,12 @@ async def _send_pattern_alert(signal: Signal, pattern: str, current_price: float
         sl_line += f"  <code>-{signal.sl_percent}%</code>"
 
     _kl = _kl_block(signal.pair, signal.direction, utcnow())
+    _stb = _st_block(signal.pair, signal.direction, signal.timeframe or "1h")
     text = (
         f"🚀 <b>ВХОД ПОДТВЕРЖДЁН</b>\n"
         f"\n"
         f"<b>{pair}/USDT</b> · {signal.timeframe or '—'} · {dir_emoji} {dir_label}\n"
-        f"{_kl}"
+        f"{_kl}{_stb}"
         f"\n"
         f"Паттерн: <b>{pattern}</b>\n"
         f"Вход: <code>{current_price}</code>\n"
@@ -818,13 +830,14 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     if r1: lvl += f"🔴 R1: <code>{r1}</code>"
 
     _kl = _kl_block(signal.pair, signal.direction, getattr(signal, "pattern_triggered_at", None) or utcnow())
+    _stb = _st_block(signal.pair, signal.direction, "1h")
     text = (
         f"{hp}"
         f"🚀 <b>CRYPTOVIZOR · ПАТТЕРН</b>\n"
         f"\n"
         f"<b>{pair}/USDT</b> · 1h · {dir_emoji} <b>{dir_label}</b>\n"
         f"<code>{sym}</code>\n"
-        f"{_kl}"
+        f"{_kl}{_stb}"
         f"\n"
         f"─── Сигнал ───\n"
         f"🕯 Паттерн: <b>{pattern}</b>\n"
@@ -1395,13 +1408,14 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     if r1: lvl += f"🔴 R1: <code>{r1}</code>"
 
     _kl = _kl_block(signal.pair, signal.direction, utcnow())
+    _stb = _st_block(signal.pair, signal.direction, "1h")
     text = (
         f"{hp}"
         f"🤖 <b>AI SIGNAL · TOP PICK</b>\n"
         f"\n"
         f"<b>{pair}/USDT</b> · 1h · {dir_emoji} <b>{signal.direction}</b>\n"
         f"<code>{sym}</code>\n"
-        f"{_kl}"
+        f"{_kl}{_stb}"
         f"\n"
         f"─── Сигнал ───\n"
         f"🕯 Паттерн: <b>{signal.pattern_name}</b>\n"
@@ -1698,6 +1712,7 @@ async def _send_anomaly_alert(r: dict):
     hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
 
     _kl = _kl_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), utcnow())
+    _stb = _st_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), "1h")
     text = (
         f"{hp}"
         f"⚠️ <b>АНОМАЛИЯ · {pair}/USDT</b>\n"
@@ -1705,7 +1720,7 @@ async def _send_anomaly_alert(r: dict):
         f"{dir_emoji} <b>{r['direction']}</b> · Цена: <code>{price}</code>\n"
         f"<code>{sym}</code>\n"
         f"Score: <b>{ws}</b>/15 {score_bar} · {count} индикаторов\n"
-        f"{_kl}"
+        f"{_kl}{_stb}"
         f"\n"
         f"─── Аномалии ───"
     )
@@ -2030,6 +2045,7 @@ async def _send_top_pick_alert(sig: dict):
             return f" <b>({sign}{pct:.2f}%)</b>"
 
         _kl = _kl_block(sig.get("pair") or (pair + "/USDT"), direction, utcnow())
+        _stb = _st_block(sig.get("pair") or (pair + "/USDT"), direction, "1h")
         text = (
             f"👑 <b>TOP PICK</b> · {type_emoji} {type_label}\n"
             f"\n"
@@ -2037,6 +2053,7 @@ async def _send_top_pick_alert(sig: dict):
             + (f" · R:R <b>1:{rr:.1f}</b>" if rr else "")
             + cluster_info
             + _kl
+            + _stb
             + "\n\n"
         )
         text += f"✨ {conf_header}:\n{confs_block}\n\n"
@@ -2513,6 +2530,7 @@ async def _send_confluence_alert(r: dict):
         strong_header = ""
 
     _kl = _kl_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), utcnow())
+    _stb = _st_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), "1h")
     text = (
         f"{hp}"
         f"{strong_header}"
@@ -2524,7 +2542,7 @@ async def _send_confluence_alert(r: dict):
         f"{lvl}\n"
         f"Score: <b>{score}/6</b> {filled}\n"
         f"Тренд: {tf_line}\n"
-        f"{_kl}"
+        f"{_kl}{_stb}"
         f"\n"
         f"─── Факторы ───\n"
     )
