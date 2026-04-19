@@ -145,7 +145,7 @@ _OPEN_PATHS = {"/login", "/static"}
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -864,6 +864,51 @@ async def api_key_levels_backfill(payload: dict | None = None):
 @app.get("/api/key-levels/backfill-status")
 async def api_key_levels_backfill_status():
     return _kl_backfill_state
+
+
+@app.get("/api/key-levels/coverage")
+async def api_key_levels_coverage(days: int = 14):
+    """Сравнивает множество уникальных пар из signals с множеством пар в key_levels
+    за окно N дней. Возвращает:
+      {
+        "signals_pairs": 380,     # сколько уникальных пар с сигналами
+        "kl_pairs": 340,          # сколько уникальных пар в KL
+        "covered": 320,           # пересечение
+        "missing": ["ABCUSDT", ...],  # пары с сигналами но БЕЗ KL
+        "orphan_kl": ["XYZUSDT"]  # пары в KL но без сигналов (информативно)
+      }
+    """
+    from database import _signals, _key_levels, utcnow as _unow
+    from datetime import timedelta as _td
+    since = _unow() - _td(days=days)
+    # Уникальные пары из signals за окно (все источники)
+    sig_pairs = set()
+    for s in _signals().find({"received_at": {"$gte": since}}, {"pair": 1}):
+        p = (s.get("pair") or "").replace("/", "").upper()
+        if not p:
+            continue
+        if not p.endswith("USDT"):
+            p = p + "USDT"
+        sig_pairs.add(p)
+    # Уникальные пары из key_levels за окно
+    kl_pairs = set()
+    for k in _key_levels().find({"detected_at": {"$gte": since}}, {"pair_norm": 1}):
+        p = (k.get("pair_norm") or "").upper()
+        if p:
+            kl_pairs.add(p)
+    covered = sig_pairs & kl_pairs
+    missing = sorted(sig_pairs - kl_pairs)
+    orphan = sorted(kl_pairs - sig_pairs)
+    return {
+        "days": days,
+        "signals_pairs": len(sig_pairs),
+        "kl_pairs": len(kl_pairs),
+        "covered": len(covered),
+        "missing_count": len(missing),
+        "missing": missing[:200],  # top 200
+        "orphan_count": len(orphan),
+        "orphan_sample": orphan[:30],
+    }
 
 
 @app.get("/api/peek-tradium-topic")
