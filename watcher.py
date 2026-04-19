@@ -65,23 +65,31 @@ def _resolve_chart(p: str) -> str | None:
 
 def _kl_block(pair: str, direction: str, at=None,
               entry=None, tp=None, sl=None) -> str:
-    """Возвращает расширенный блок Key Levels для TG алерта (Tier 1+2):
-      — ближайший R выше и S ниже (с % и возрастом)
-      — multi-TF confluence (если 2+ TF совпадают)
-      — retest count
-      — TP/SL валидация
-      — Breakout/Retest детектор (если был недавний пробой по направлению)
-      — Obstacle warning (сильный уровень против сделки в ±5%)
+    """Возвращает КОМПАКТНЫЙ блок Key Levels (1-2 строки, ≤250 chars)
+    чтобы не переполнять Telegram photo caption (лимит 1024 символа).
 
-    Возвращает '' при любой ошибке или если нет KL за 48h.
+    Формат:
+      📐 R 1h 0.03450 (+2.4%) · S 4h 0.03320 (-1.6%) · TP⚠️ SL✅
+
+    Fallback к get_signal_emoji если build_levels_alert_block крашится
+    или возвращает пустое.
     """
     try:
-        from key_levels import build_levels_alert_block
-        return build_levels_alert_block(
+        from key_levels import build_levels_compact
+        res = build_levels_compact(
             pair or "", direction or "",
             entry=entry, tp=tp, sl=sl,
             at=at or utcnow(),
         )
+        if res:
+            return res
+    except Exception:
+        pass
+    # Fallback на старый однострочный блок при KL-событии ±2h
+    try:
+        from key_levels import get_signal_emoji, format_tg_block
+        enrich = get_signal_emoji(pair or "", direction or "", at or utcnow())
+        return format_tg_block(enrich) if enrich else ""
     except Exception:
         return ""
 

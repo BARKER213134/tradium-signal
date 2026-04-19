@@ -389,6 +389,129 @@ def _format_price(x: float) -> str:
     return f"{x:.7f}"
 
 
+def build_levels_compact(pair: str, direction: str,
+                          entry: Optional[float] = None,
+                          tp: Optional[float] = None,
+                          sl: Optional[float] = None,
+                          at: Optional[datetime] = None,
+                          hours: int = 48) -> str:
+    """Компактная 1-2 строчная версия — для Telegram photo caption (лимит 1024).
+
+    Формат (<=250 chars):
+      '\n📐 R 1h 0.03450 (+2.4%, 3TF) · S 4h 0.03320 (-1.6%) · TP⚠️ SL✅\n'
+    """
+    if not pair:
+        return ""
+    try:
+        pair_norm = pair.replace("/", "").upper()
+        if not pair_norm.endswith("USDT"):
+            pair_norm = pair_norm + "USDT"
+        since = utcnow() - timedelta(hours=hours)
+        all_kls = list(_key_levels().find({
+            "pair_norm": pair_norm,
+            "detected_at": {"$gte": since},
+        }).sort("detected_at", -1).limit(100))
+        if not all_kls:
+            return ""
+
+        is_long = (direction or "").upper() in ("LONG", "BUY", "BULLISH")
+        try:
+            cur_price = float(entry) if entry is not None else None
+        except (TypeError, ValueError):
+            cur_price = None
+        if cur_price is None:
+            for kl in all_kls:
+                cp = kl.get("current_price")
+                if cp is not None:
+                    try: cur_price = float(cp); break
+                    except (TypeError, ValueError): pass
+        if cur_price is None:
+            return ""
+
+        # Группируем уровни R/S по близости (±0.5%)
+        def _group(kind: str) -> list[dict]:
+            filt = [k for k in all_kls if (
+                (kind == 'R' and _is_resistance(k)) or
+                (kind == 'S' and _is_support(k))
+            ) and _zone_mid(k) is not None]
+            groups: list[dict] = []
+            for kl in filt:
+                mid = _zone_mid(kl)
+                placed = False
+                for g in groups:
+                    if abs(mid - g["mid"]) / max(g["mid"], 1e-9) <= 0.005:
+                        g["tfs"].add(kl.get("tf", "?"))
+                        placed = True
+                        break
+                if not placed:
+                    groups.append({"mid": mid, "tfs": {kl.get("tf", "?")}})
+            groups.sort(key=lambda g: abs(g["mid"] - cur_price))
+            return groups
+
+        r_above = next((g for g in _group('R') if g["mid"] > cur_price), None)
+        s_below = next((g for g in _group('S') if g["mid"] < cur_price), None)
+
+        if not r_above and not s_below:
+            return ""
+
+        parts = []
+        if r_above:
+            pct = (r_above["mid"] - cur_price) / cur_price * 100
+            tfs = "/".join(sorted(r_above["tfs"], key=_tf_power))
+            multi = f", {len(r_above['tfs'])}TF" if len(r_above["tfs"]) >= 2 else ""
+            tp_tag = ""
+            if tp is not None:
+                try:
+                    if float(tp) >= r_above["mid"]:
+                        tp_tag = " TP⚠️"
+                    elif float(tp) > cur_price:
+                        tp_tag = " TP✅"
+                except (TypeError, ValueError): pass
+            parts.append(f"🔴{tfs} {_format_price(r_above['mid'])} (+{pct:.1f}%{multi}){tp_tag}")
+        if s_below:
+            pct = (s_below["mid"] - cur_price) / cur_price * 100
+            tfs = "/".join(sorted(s_below["tfs"], key=_tf_power))
+            multi = f", {len(s_below['tfs'])}TF" if len(s_below["tfs"]) >= 2 else ""
+            sl_tag = ""
+            if sl is not None and is_long:
+                try:
+                    if float(sl) <= s_below["mid"]:
+                        sl_tag = " SL✅"
+                    else:
+                        sl_tag = " SL⚠️"
+                except (TypeError, ValueError): pass
+            parts.append(f"🟢{tfs} {_format_price(s_below['mid'])} ({pct:.1f}%{multi}){sl_tag}")
+
+        if not parts:
+            return ""
+
+        line = "📐 " + " · ".join(parts)
+
+        # Breakout/Retest — только если произошёл в последние 3ч по направлению
+        try:
+            since_3h = utcnow() - timedelta(hours=3)
+            for kl in all_kls:
+                ev = kl.get("event", "")
+                det = kl.get("detected_at")
+                if not det or det < since_3h:
+                    continue
+                if (is_long and ev == "entered_resistance") or (not is_long and ev == "entered_support"):
+                    ago = (utcnow() - det).total_seconds() / 3600
+                    emoji = "🎢" if is_long else "🧨"
+                    tf = kl.get("tf", "?")
+                    line += f"\n{emoji} Breakout {tf} {ago:.0f}ч назад"
+                    break
+        except Exception:
+            pass
+
+        # Ограничиваем на всякий случай до 250 chars
+        if len(line) > 250:
+            line = line[:247] + "..."
+        return f"\n{line}\n"
+    except Exception:
+        return ""
+
+
 def build_levels_alert_block(pair: str, direction: str,
                               entry: Optional[float] = None,
                               tp: Optional[float] = None,
