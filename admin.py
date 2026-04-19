@@ -1002,19 +1002,23 @@ async def api_st_enrich(payload: dict):
     payload: {"signals": [{id, pair, direction, at}, ...]}
     Возвращает: {enrich: {id: {flags: [...]}}}
 
+    Оптимизированная версия: читает ТОЛЬКО из _supertrend_signals collection,
+    без fetch свечей с Binance. Tracker loop каждые 5 мин наполняет БД —
+    значит для любого сигнала в журнале мы можем найти последний ST-флип ДО
+    времени сигнала и вывести флаги по его tier.
+
     Флаги:
-      aligned_1h: ST(1h) aligned с направлением
-      aligned_4h: ST(4h) aligned
-      aligned_d:  ST(1d) aligned
-      fresh_flip: ST(1h) flipped ≤3 bars назад от сигнала
-      vip_match:  в БД supertrend_signals есть VIP сигнал ±2ч на этой паре и направлении
+      aligned_1h: последний ST-флип ДО at — в том же направлении (± окно 6ч)
+      aligned_4h: последний flip имел tier=mtf (значит 4h тоже aligned)
+      aligned_d:  flip имел tier=mtf или daily (1d aligned)
+      fresh_flip: последний flip ≤3 часа назад от сигнала
+      vip_match:  в ±2ч окне есть VIP ST-сигнал same direction
     """
     from database import _supertrend_signals
     from datetime import datetime as _dt, timedelta as _td
     from collections import defaultdict
 
     signals = (payload or {}).get("signals", [])
-    # Группируем по паре для эффективного расчёта ST (один раз на пару)
     by_pair: dict[str, list[dict]] = defaultdict(list)
     for s in signals:
         sig_id = s.get("id")
@@ -1041,106 +1045,69 @@ async def api_st_enrich(payload: dict):
             continue
         by_pair[pair_norm].append({"id": sig_id, "direction": direction, "at": at_dt})
 
-    # Для каждой пары: считаем ST 1h/4h/1d + грузим VIP ST-сигналы в окне ±2ч
+    if not by_pair:
+        return {"enrich": {}, "count": 0}
+
     out: dict[str, dict] = {}
 
     def _process_pair_sync(pair_norm: str, sigs: list[dict]) -> dict:
+        """Один Mongo запрос на все ST-флипы по паре в широком окне, потом
+        in-memory фильтр для каждого сигнала."""
         local: dict[str, dict] = {}
-        from exchange import get_klines_any
-        from backtest_supertrend import compute_st_series, find_flips
-        pair_slash = pair_norm[:-4] + "/USDT"
-        try:
-            c1h = get_klines_any(pair_slash, "1h", 400)
-        except Exception:
-            c1h = None
-        st_1h = compute_st_series(c1h, 10, 3.0) if c1h else []
-        if not st_1h:
-            for s in sigs:
-                local[str(s["id"])] = {"flags": []}
-            return local
-
-        try: c4h = get_klines_any(pair_slash, "4h", 150)
-        except Exception: c4h = None
-        try: c1d = get_klines_any(pair_slash, "1d", 40)
-        except Exception: c1d = None
-        st_4h = compute_st_series(c4h or [], 10, 3.0)
-        st_1d = compute_st_series(c1d or [], 14, 3.0)
-
-        def _state_at(series: list[dict], ts_ms: int):
-            if not series: return None
-            lo, hi = 0, len(series) - 1
-            while lo < hi:
-                mid = (lo + hi + 1) // 2
-                if series[mid]["t"] <= ts_ms:
-                    lo = mid
-                else: hi = mid - 1
-            return series[lo] if series[lo]["t"] <= ts_ms else None
-
-        def _bar_idx(series: list[dict], ts_ms: int):
-            r = _state_at(series, ts_ms)
-            if not r: return None
-            # Ищем индекс
-            for i in range(len(series)-1, -1, -1):
-                if series[i]["t"] == r["t"]:
-                    return i
-            return None
-
-        # VIP matches: читаем из supertrend_signals collection
-        vip_window_ms = 2 * 3600 * 1000
-        vip_min_ts = min(int(s["at"].timestamp()*1000) for s in sigs) - vip_window_ms
-        vip_max_ts = max(int(s["at"].timestamp()*1000) for s in sigs) + vip_window_ms
-        vip_min_dt = _dt.utcfromtimestamp(vip_min_ts / 1000)
-        vip_max_dt = _dt.utcfromtimestamp(vip_max_ts / 1000)
-        vip_sigs = list(_supertrend_signals().find({
+        # Окно = min(at) - 12ч … max(at) + 2ч (чтобы поймать последний флип ДО)
+        min_at = min(s["at"] for s in sigs) - _td(hours=12)
+        max_at = max(s["at"] for s in sigs) + _td(hours=2)
+        flips = list(_supertrend_signals().find({
             "pair_norm": pair_norm,
-            "tier": "vip",
-            "flip_at": {"$gte": vip_min_dt, "$lte": vip_max_dt},
-        }, {"direction": 1, "flip_at": 1}))
+            "flip_at": {"$gte": min_at, "$lte": max_at},
+        }, {"direction": 1, "tier": 1, "flip_at": 1}).sort("flip_at", 1))
 
         for s in sigs:
             sid = str(s["id"])
-            flags = []
-            ts_ms = int(s["at"].timestamp() * 1000)
+            flags: list[str] = []
+            at = s["at"]
             is_long = s["direction"] == "LONG"
-            # 1h alignment
-            b1 = _state_at(st_1h, ts_ms)
-            if b1 and b1["trend"] != 0:
-                if (b1["trend"] == 1) == is_long:
+            # 1. Найти последний flip ДО at (и в том же направлении)
+            last_flip = None
+            for f in flips:
+                fa = f.get("flip_at")
+                if not fa or fa > at:
+                    break
+                if f.get("direction") == s["direction"]:
+                    last_flip = f
+            if last_flip:
+                age_h = (at - last_flip["flip_at"]).total_seconds() / 3600.0
+                # aligned_1h если flip в ту же сторону и в разумном окне (≤24h)
+                if age_h <= 24:
                     flags.append("aligned_1h")
-                    # Fresh flip check (within ≤3 bars)
-                    idx = _bar_idx(st_1h, ts_ms)
-                    if idx is not None and idx > 0:
-                        age = 0
-                        cur_trend = b1["trend"]
-                        for j in range(idx-1, -1, -1):
-                            if st_1h[j]["trend"] != 0 and st_1h[j]["trend"] != cur_trend:
-                                break
-                            age += 1
-                        if age <= 3:
-                            flags.append("fresh_flip")
-            # 4h
-            b4 = _state_at(st_4h, ts_ms)
-            if b4 and b4["trend"] != 0 and ((b4["trend"] == 1) == is_long):
-                flags.append("aligned_4h")
-            # 1d
-            bd = _state_at(st_1d, ts_ms)
-            if bd and bd["trend"] != 0 and ((bd["trend"] == 1) == is_long):
-                flags.append("aligned_d")
-            # VIP match
-            for v in vip_sigs:
-                if v.get("direction") != s["direction"]:
+                    if age_h <= 3:
+                        flags.append("fresh_flip")
+                    tier = last_flip.get("tier")
+                    # mtf означает что 4h и 1d тоже были aligned на момент flip
+                    if tier == "mtf":
+                        flags.append("aligned_4h")
+                        flags.append("aligned_d")
+                    elif tier == "daily":
+                        flags.append("aligned_d")
+            # 2. VIP match — есть ли VIP ST-signal ±2ч
+            for f in flips:
+                if f.get("tier") != "vip":
                     continue
-                v_ts_ms = int(v["flip_at"].timestamp() * 1000) if v.get("flip_at") else 0
-                if abs(v_ts_ms - ts_ms) <= vip_window_ms:
+                if f.get("direction") != s["direction"]:
+                    continue
+                fa = f.get("flip_at")
+                if not fa:
+                    continue
+                if abs((fa - at).total_seconds()) <= 2 * 3600:
                     flags.append("vip_match")
                     break
             local[sid] = {"flags": flags}
         return local
 
-    # Параллелим по парам
+    # Параллелим по парам (чисто Mongo — очень быстро)
     results = await asyncio.gather(*[
         asyncio.to_thread(_process_pair_sync, p, sigs) for p, sigs in by_pair.items()
-    ]) if by_pair else []
+    ])
     for d in results:
         out.update(d)
     return {"enrich": out, "count": len(out)}
