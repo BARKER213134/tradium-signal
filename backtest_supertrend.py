@@ -280,120 +280,130 @@ def st_state_at_ts(st_series: list[dict], ts_ms: int) -> Optional[dict]:
 # ── Основная функция бектеста ──────────────────────────────────────
 def backtest_variants_for_pair(
     pair: str,
-    candles_1h: list[dict],
-    candles_4h: list[dict],
-    candles_1d: list[dict],
+    candles_by_tf: dict[str, list[dict]],
     bot_signals: list[dict],  # [{at_ms, direction}] от других ботов за период
 ) -> dict[str, VariantStats]:
-    """Прогоняет все варианты для одной пары. Возвращает dict name→stats."""
-    st_1h = compute_st_series(candles_1h, period=10, mult=3.0)
-    st_4h = compute_st_series(candles_4h, period=10, mult=3.0)
-    st_1d = compute_st_series(candles_1d, period=14, mult=3.0)
-    if not st_1h:
-        return {}
-
-    flips = find_flips(st_1h)
-
-    results: dict[str, VariantStats] = {
-        "BASELINE": VariantStats("BASELINE"),
-        "T1_FILTER": VariantStats("T1_FILTER"),
-        "T2A_MTF": VariantStats("T2A_MTF"),
-        "T2B_BARCONF": VariantStats("T2B_BARCONF"),
-        "T2C_SIGCONF": VariantStats("T2C_SIGCONF"),
-        "T2D_HTF": VariantStats("T2D_HTF"),
-        "T2E_COMBO": VariantStats("T2E_COMBO"),
+    """Прогоняет все варианты для одной пары. candles_by_tf = {'15m':[...], '30m':[...], '1h':[...], '4h':[...], '1d':[...]}"""
+    # Параметры ST по TF (TV-совместимые)
+    ST_PARAMS = {
+        "15m": (7, 2.0),
+        "30m": (7, 2.5),
+        "1h":  (10, 3.0),
+        "4h":  (10, 3.0),
+        "1d":  (14, 3.0),
     }
 
-    def _make_trade(idx: int, direction: str) -> Optional[Trade]:
-        t = simulate_trade(st_1h, idx, direction)
-        if t:
-            t.pair = pair
-        return t
+    # Компилируем ST для каждого TF
+    st_by_tf: dict[str, list[dict]] = {}
+    for tf, candles in candles_by_tf.items():
+        if candles and len(candles) > 20:
+            p, m = ST_PARAMS.get(tf, (10, 3.0))
+            st_by_tf[tf] = compute_st_series(candles, period=p, mult=m)
+        else:
+            st_by_tf[tf] = []
 
-    # ── BASELINE: все сигналы ботов ────────────────────────────
-    for sig in bot_signals:
-        # find nearest 1h bar index to signal timestamp
-        idx = _ts_to_bar_idx(st_1h, sig["at_ms"])
-        if idx is None or idx < 2:
-            continue
-        t = _make_trade(idx, sig["direction"])
-        if t:
-            results["BASELINE"].trades.append(t)
+    st_1h = st_by_tf.get("1h") or []
 
-    # ── T1_FILTER: bot signal aligned with fresh ST (<=6 bars) ──
-    for sig in bot_signals:
-        idx = _ts_to_bar_idx(st_1h, sig["at_ms"])
-        if idx is None or idx < 2:
-            continue
-        st_bar = st_1h[idx]
-        if st_bar["trend"] == 0:
-            continue
-        is_long = sig["direction"] == "LONG"
-        aligned = (st_bar["trend"] == 1) == is_long
-        if not aligned:
-            continue
-        age = age_since_last_flip(st_1h, idx)
-        if age is None or age > 6:
-            continue
-        t = _make_trade(idx, sig["direction"])
-        if t:
-            results["T1_FILTER"].trades.append(t)
+    results: dict[str, VariantStats] = {}
+    def _get(name: str) -> VariantStats:
+        if name not in results:
+            results[name] = VariantStats(name)
+        return results[name]
 
-    # ── Для T2A..T2E — триггер это флип на 1h ──────────────────
-    for flip_idx in flips:
-        st_bar = st_1h[flip_idx]
-        direction = "LONG" if st_bar["trend"] == 1 else "SHORT"
-        is_long = direction == "LONG"
-
-        # T2A: MTF — ST 4h aligned
-        st4 = st_state_at_ts(st_4h, st_bar["t"])
-        mtf_ok = bool(st4 and st4["trend"] == st_bar["trend"])
-
-        # T2B: Bar-confirmation — next 2 bars confirmation (close on правильной стороне ST)
-        bar_conf_ok = False
-        if flip_idx + 2 < len(st_1h):
-            b1, b2 = st_1h[flip_idx + 1], st_1h[flip_idx + 2]
-            if is_long:
-                bar_conf_ok = (b1["close"] > st_bar["st"]) and (b2["close"] > st_bar["st"])
-            else:
-                bar_conf_ok = (b1["close"] < st_bar["st"]) and (b2["close"] < st_bar["st"])
-
-        # T2C: Signal-confirmation — other bot signal ±2h same direction
-        sig_conf_ok = False
-        window_ms = 2 * 3600 * 1000
+    # ── BASELINE + T1_FILTER + T2C_SIGCONF — используют bot signals на 1h ──
+    if st_1h:
         for sig in bot_signals:
-            if abs(sig["at_ms"] - st_bar["t"]) <= window_ms and sig["direction"] == direction:
-                sig_conf_ok = True
-                break
+            idx = _ts_to_bar_idx(st_1h, sig["at_ms"])
+            if idx is None or idx < 2:
+                continue
+            # BASELINE: все сигналы
+            t = simulate_trade(st_1h, idx, sig["direction"])
+            if t:
+                t.pair = pair
+                _get("BASELINE").trades.append(t)
+            # T1_FILTER: aligned + fresh flip ≤6 bars
+            st_bar = st_1h[idx]
+            if st_bar["trend"] == 0:
+                continue
+            is_long = sig["direction"] == "LONG"
+            aligned = (st_bar["trend"] == 1) == is_long
+            if not aligned:
+                continue
+            age = age_since_last_flip(st_1h, idx)
+            if age is None or age > 6:
+                continue
+            t = simulate_trade(st_1h, idx, sig["direction"])
+            if t:
+                t.pair = pair
+                _get("T1_FILTER").trades.append(t)
 
-        # T2D: HTF — daily ST aligned
-        st_d = st_state_at_ts(st_1d, st_bar["t"])
-        htf_ok = bool(st_d and st_d["trend"] == st_bar["trend"])
+    # ── Вариант: ST flip на trigger_tf + все align_tfs совпадают ──
+    # Список MTF-стратегий (TF триггера + TF-подтверждения)
+    MTF_VARIANTS = [
+        # (name, trigger_tf, align_tfs)
+        ("T2D_1H_D",       "1h", ["1d"]),
+        ("T2D_4H_D",       "4h", ["1d"]),
+        ("T2D_15M_1H",     "15m", ["1h"]),
+        ("T2D_15M_1H_4H",  "15m", ["1h", "4h"]),
+        ("T2D_30M_4H",     "30m", ["4h"]),
+        ("T2D_30M_4H_D",   "30m", ["4h", "1d"]),
+        ("T2D_1H_4H",      "1h", ["4h"]),  # повтор T2A_MTF (для сравнения)
+        ("T2D_1H_4H_D",    "1h", ["4h", "1d"]),
+    ]
 
-        # Делаем сделку ТОЛЬКО если вариант прошёл
-        # T2A: entry on flip bar (not next), to be fair — actually better on close of flip
-        if mtf_ok:
-            t = _make_trade(flip_idx, direction)
-            if t: results["T2A_MTF"].trades.append(t)
-        if bar_conf_ok:
-            # Вход через 2 бара после флипа (потому что 2 бара нужны для подтверждения)
-            entry_idx = flip_idx + 2
-            if entry_idx < len(st_1h):
-                t = _make_trade(entry_idx, direction)
-                if t: results["T2B_BARCONF"].trades.append(t)
-        if sig_conf_ok:
-            t = _make_trade(flip_idx, direction)
-            if t: results["T2C_SIGCONF"].trades.append(t)
-        if htf_ok:
-            t = _make_trade(flip_idx, direction)
-            if t: results["T2D_HTF"].trades.append(t)
-        if mtf_ok and bar_conf_ok and htf_ok:
-            entry_idx = flip_idx + 2
-            if entry_idx < len(st_1h):
-                t = _make_trade(entry_idx, direction)
-                if t: results["T2E_COMBO"].trades.append(t)
+    # T2C_SIGCONF на 1h (для полноты; WR 57.7% уже знаем, но включаем для фиксации)
+    if st_1h:
+        flips = find_flips(st_1h)
+        window_ms = 2 * 3600 * 1000
+        for flip_idx in flips:
+            st_bar = st_1h[flip_idx]
+            direction = "LONG" if st_bar["trend"] == 1 else "SHORT"
+            sig_conf_ok = False
+            for sig in bot_signals:
+                if abs(sig["at_ms"] - st_bar["t"]) <= window_ms and sig["direction"] == direction:
+                    sig_conf_ok = True
+                    break
+            if sig_conf_ok:
+                t = simulate_trade(st_1h, flip_idx, direction)
+                if t:
+                    t.pair = pair
+                    _get("T2C_SIGCONF").trades.append(t)
+
+    # ── MTF-варианты ──────────────────────────────────────────
+    for name, trigger_tf, align_tfs in MTF_VARIANTS:
+        trig_st = st_by_tf.get(trigger_tf) or []
+        if not trig_st:
+            continue
+        # Все align TF должны быть загружены
+        align_series = [st_by_tf.get(a) or [] for a in align_tfs]
+        if not all(align_series):
+            continue
+        flips = find_flips(trig_st)
+        for flip_idx in flips:
+            st_bar = trig_st[flip_idx]
+            direction = "LONG" if st_bar["trend"] == 1 else "SHORT"
+            # Проверяем все align TFs на момент флипа
+            all_aligned = True
+            for aseries in align_series:
+                astate = st_state_at_ts(aseries, st_bar["t"])
+                if not astate or astate["trend"] != st_bar["trend"]:
+                    all_aligned = False
+                    break
+            if not all_aligned:
+                continue
+            # Симулируем на trigger_tf
+            t = simulate_trade(trig_st, flip_idx, direction,
+                               max_hold_bars=_max_hold_for_tf(trigger_tf))
+            if t:
+                t.pair = pair
+                _get(name).trades.append(t)
 
     return results
+
+
+def _max_hold_for_tf(tf: str) -> int:
+    """Max hold bars для данного TF — нормируем чтобы было ~2 дня удержания."""
+    return {"15m": 192, "30m": 96, "1h": 48, "4h": 12, "1d": 3}.get(tf, 48)
 
 
 def _ts_to_bar_idx(st_series: list[dict], ts_ms: int) -> Optional[int]:
@@ -499,16 +509,19 @@ def run_backtest(days: int = 14, top_n: int = 200,
             try: on_progress(processed, total, pair_norm)
             except Exception: pass
 
-        # Свечи
+        # Свечи на всех TF
         pair_slash = pair_norm[:-4] + "/USDT"
+        candles_by_tf: dict[str, list[dict]] = {}
         try:
-            # 14 дней * 24 = 336 часовых баров + запас
-            c1h = get_klines_any(pair_slash, "1h", 400)
+            c1h = get_klines_any(pair_slash, "1h", 400)   # 14д * 24 + запас
             if not c1h or len(c1h) < 50:
                 skipped_no_candles += 1
                 continue
-            c4h = get_klines_any(pair_slash, "4h", 150)
-            c1d = get_klines_any(pair_slash, "1d", 40)
+            candles_by_tf["1h"] = c1h
+            candles_by_tf["15m"] = get_klines_any(pair_slash, "15m", 1500) or []  # 14д × 96 = 1344
+            candles_by_tf["30m"] = get_klines_any(pair_slash, "30m", 800) or []   # 14д × 48 = 672
+            candles_by_tf["4h"]  = get_klines_any(pair_slash, "4h", 150) or []
+            candles_by_tf["1d"]  = get_klines_any(pair_slash, "1d", 40) or []
         except Exception as e:
             logger.warning(f"[backtest-st] {pair_norm} candles fail: {e}")
             skipped_no_candles += 1
@@ -523,7 +536,7 @@ def run_backtest(days: int = 14, top_n: int = 200,
 
         # Бектест
         try:
-            per_pair = backtest_variants_for_pair(pair_norm, c1h, c4h or [], c1d or [], bot_sigs)
+            per_pair = backtest_variants_for_pair(pair_norm, candles_by_tf, bot_sigs)
         except Exception as e:
             logger.warning(f"[backtest-st] {pair_norm} backtest fail: {e}")
             continue
@@ -534,14 +547,15 @@ def run_backtest(days: int = 14, top_n: int = 200,
                 all_stats[name] = VariantStats(name)
             all_stats[name].trades.extend(vs.trades)
 
-    # 4. Формируем ответ
+    # 4. Формируем ответ — все собранные варианты, отсортированные по EV
     summary = []
-    for name in ["BASELINE", "T1_FILTER", "T2A_MTF", "T2B_BARCONF",
-                 "T2C_SIGCONF", "T2D_HTF", "T2E_COMBO"]:
-        if name in all_stats:
-            summary.append(all_stats[name].summary())
-        else:
-            summary.append({"name": name, "trades": 0})
+    for name, vs in all_stats.items():
+        summary.append(vs.summary())
+    # Сортировка: сначала BASELINE, потом по EV убыв.
+    def _key(x):
+        if x["name"] == "BASELINE": return (0, 0)
+        return (1, -(x.get("ev_per_trade", 0) or 0))
+    summary.sort(key=_key)
 
     return {
         "days": days,
