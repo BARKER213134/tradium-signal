@@ -2826,11 +2826,14 @@ safeInterval(loadConflicts, 30000);
 </style>
 
 <div id="atDashboard">
-  <!-- Aggressive Mode toggle -->
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px 14px;background:var(--dark-2);border:1px solid var(--border);border-radius:10px;">
+  <!-- Панель управления: режим + задать сумму + сброс -->
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px 14px;background:var(--dark-2);border:1px solid var(--border);border-radius:10px;flex-wrap:wrap;">
     <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Режим:</span>
     <button id="atModeBtn" onclick="togglePaperMode()" style="background:linear-gradient(135deg,rgba(255,77,109,0.22),rgba(255,140,50,0.1));color:#ff8c32;border:1px solid rgba(255,140,50,0.6);border-radius:8px;padding:6px 16px;font-size:12px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">🔥 AGGRESSIVE · size 3-15% · lev 2-10×</button>
     <span style="font-size:11px;color:var(--muted);font-family:var(--font-mono);">кликни для переключения</span>
+    <div style="flex:1"></div>
+    <button onclick="setPaperBalance()" title="Установить конкретную сумму без сброса истории (для перехода на реальную торговлю)" style="background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(123,92,255,0.08));color:#00d4ff;border:1px solid rgba(0,212,255,0.55);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">💰 Задать сумму</button>
+    <button onclick="resetPaper()" title="Сбросить — стереть историю и начать с новой суммы" style="background:transparent;color:var(--sell);border:1px solid rgba(255,77,109,0.45);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">🔄 Сброс</button>
   </div>
 
   <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px;">
@@ -2879,9 +2882,6 @@ safeInterval(loadConflicts, 30000);
     </div>
   </div>
 
-  <div style="margin-top:16px;text-align:right;">
-    <button class="delete-btn" onclick="resetPaper()" style="font-size:10px;padding:5px 12px;">🔄 Сброс ($1000)</button>
-  </div>
 </div>
 
 <script>
@@ -3441,9 +3441,45 @@ async function _renderPaperChart(idx, tf) {
 }
 
 async function resetPaper() {
-  if (!confirm('Сбросить Paper Trading? Депозит вернётся к $1000.')) return;
-  await fetch('/api/paper/reset', {method:'POST'});
-  loadPaperStatus();
+  const raw = prompt('Сбросить Paper Trading? Введи стартовую сумму в USDT:\n(пусто = $1000, Cancel — отмена)\n\nИстория и открытые позиции будут СТЁРТЫ.', '1000');
+  if (raw === null) return;
+  const amt = raw.trim() === '' ? 1000 : Number(raw.replace(',', '.'));
+  if (!isFinite(amt) || amt < 10 || amt > 10_000_000) {
+    alert('Сумма должна быть в диапазоне $10 - $10M');
+    return;
+  }
+  try {
+    const r = await fetch('/api/paper/reset', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({amount: amt}),
+    });
+    const d = await r.json();
+    if (!d.ok) { alert('Ошибка: ' + (d.error || '?')); return; }
+    loadPaperStatus();
+    loadAILearnings();
+  } catch (e) { alert('Ошибка сети: ' + e.message); }
+}
+
+async function setPaperBalance() {
+  const raw = prompt('Установить конкретную сумму в USDT БЕЗ сброса истории.\nДля перехода на реальную торговлю — введи свою реальную сумму.\nВся история сделок и AI память сохранится.\n\nТекущий баланс показан наверху.', '');
+  if (raw === null) return;
+  const amt = Number((raw || '').trim().replace(',', '.'));
+  if (!isFinite(amt) || amt < 10 || amt > 10_000_000) {
+    alert('Сумма должна быть в диапазоне $10 - $10M');
+    return;
+  }
+  if (!confirm(`Установить баланс на $${amt.toLocaleString()}?\n\nДействие: баланс = $${amt}, PnL пересчитается от этой точки.\nИстория НЕ стирается, AI память сохранится.`)) return;
+  try {
+    const r = await fetch('/api/paper/set-balance', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({amount: amt}),
+    });
+    const d = await r.json();
+    if (!d.ok) { alert('Ошибка: ' + (d.error || '?')); return; }
+    loadPaperStatus();
+  } catch (e) { alert('Ошибка сети: ' + e.message); }
 }
 
 // ═══════ Paper Trading — режим / закрытие / learnings ═══════

@@ -151,7 +151,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/supertrend/backfill", "/api/supertrend/backfill-status", "/api/bots-status",
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
-            "/api/paper/ai-prompt", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+            "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -3720,10 +3720,37 @@ async def api_paper_history(limit: int = 50):
 
 
 @app.post("/api/paper/reset")
-async def api_paper_reset():
+async def api_paper_reset(payload: dict | None = None):
+    """Сброс с опциональным custom balance. payload: {"amount": 5000}"""
     import paper_trader as pt
-    pt.reset_trading()
-    return {"ok": True}
+    amount = None
+    if payload and payload.get("amount") is not None:
+        try:
+            amount = float(payload["amount"])
+            if amount < 10 or amount > 10_000_000:
+                return {"ok": False, "error": "amount out of range [10, 10M]"}
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid amount"}
+    pt.reset_trading(initial_balance=amount)
+    return {"ok": True, "balance": amount or 1000.0}
+
+
+@app.post("/api/paper/set-balance")
+async def api_paper_set_balance(payload: dict):
+    """Установить баланс без сброса истории — для перехода на реальную
+    сумму. payload: {"amount": 5000}"""
+    import paper_trader as pt
+    amount = (payload or {}).get("amount")
+    if amount is None:
+        return {"ok": False, "error": "amount required"}
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "invalid amount"}
+    if amount < 10 or amount > 10_000_000:
+        return {"ok": False, "error": "amount out of range [10, 10M]"}
+    new_balance = pt.set_balance(amount)
+    return {"ok": True, "balance": new_balance}
 
 
 @app.get("/api/journal")

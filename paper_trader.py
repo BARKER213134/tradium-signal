@@ -842,10 +842,34 @@ async def _send_close_alert(trade: dict, review: str = ""):
         logger.error(f"BOT6 close alert: {e}")
 
 
-def reset_trading():
-    """Сброс Paper Trading — новый депозит."""
+def reset_trading(initial_balance: float = None):
+    """Сброс Paper Trading. Если initial_balance задан — используем его,
+    иначе INITIAL_BALANCE (1000). Удаляет историю и открытые позиции."""
     trades, stats = _get_collections()
     trades.delete_many({})
     stats.delete_many({})
-    trades.insert_one({"_id": "state", "balance": INITIAL_BALANCE, "started_at": _utcnow()})
-    logger.info("Paper Trading reset")
+    amount = float(initial_balance) if initial_balance is not None else INITIAL_BALANCE
+    trades.insert_one({
+        "_id": "state",
+        "balance": amount,
+        "initial_balance": amount,
+        "started_at": _utcnow(),
+    })
+    logger.info(f"Paper Trading reset: balance = ${amount}")
+
+
+def set_balance(new_balance: float):
+    """Установить произвольный баланс БЕЗ сброса истории — для перехода
+    на реальную торговлю с конкретной суммой. Сохраняет все сделки.
+    """
+    trades, _ = _get_collections()
+    new_amount = float(new_balance)
+    trades.update_one(
+        {"_id": "state"},
+        {"$set": {"balance": round(new_amount, 2),
+                  "initial_balance": round(new_amount, 2),
+                  "balance_set_at": _utcnow()}},
+        upsert=True,
+    )
+    logger.info(f"Paper balance set to ${new_amount} (history preserved)")
+    return new_amount
