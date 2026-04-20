@@ -74,9 +74,12 @@ def get_open_positions() -> list:
     return list(trades.find({"status": "OPEN"}).sort("opened_at", -1))
 
 
+CLOSED_STATUSES = ["TP", "SL", "MANUAL", "BE", "TRAIL", "AI_CLOSE", "KILL_SWITCH"]
+
+
 def get_history(limit: int = 50) -> list:
     trades, _ = _get_collections()
-    return list(trades.find({"status": {"$in": ["TP", "SL", "MANUAL"]}}).sort("closed_at", -1).limit(limit))
+    return list(trades.find({"status": {"$in": CLOSED_STATUSES}}).sort("closed_at", -1).limit(limit))
 
 
 def get_stats() -> dict:
@@ -123,7 +126,7 @@ def get_learnings(limit: int = 100) -> list:
     """Последние ai_review уроки из закрытых сделок."""
     trades, _ = _get_collections()
     out = []
-    q = {"status": {"$in": ["TP", "SL", "MANUAL"]}, "ai_review": {"$ne": None}}
+    q = {"status": {"$in": CLOSED_STATUSES}, "ai_review": {"$ne": None}}
     for t in trades.find(q).sort("closed_at", -1).limit(limit):
         out.append({
             "trade_id": t.get("trade_id"),
@@ -755,6 +758,8 @@ async def ai_decide(signal_data: dict) -> dict:
     eth = get_eth_market_context()
 
     if len(open_pos) >= MAX_POSITIONS:
+        # Тихий отказ БЕЗ Claude вызова (экономим токены) и БЕЗ записи в
+        # rejections (code path до записи не доходит — early return)
         return {"enter": False, "reasoning": f"Максимум позиций ({MAX_POSITIONS}) уже открыто"}
 
     # Формируем контекст

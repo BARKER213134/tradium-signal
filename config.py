@@ -66,6 +66,24 @@ BOT9_BOT_TOKEN = os.getenv("BOT9_BOT_TOKEN", "")
 # Токен выдан пользователем, хранить в Railway Variables
 BOT10_BOT_TOKEN = os.getenv("BOT10_BOT_TOKEN", "")
 
+# BOT11 — Live Trading confirmation (⚠️ реальные деньги!)
+# AI шлёт алерт с inline-кнопками ✅/❌ в этот бот, исполнение только
+# по подтверждению. Токен задаётся в Railway когда готовы к live.
+BOT11_BOT_TOKEN = os.getenv("BOT11_BOT_TOKEN", "")
+
+# ═════ Binance Futures API для реальной торговли ═════
+# API keys — создавать с минимальными правами (только futures trade, без withdraw)
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+
+# Режим торговли: paper | testnet | real
+# По умолчанию paper — чтобы случайный рестарт контейнера НЕ запускал
+# реальные ордера. Переключается через UI (/api/live/set-mode).
+DEFAULT_TRADING_MODE = os.getenv("DEFAULT_TRADING_MODE", "paper")
+
+# ═════ Safety лимиты по умолчанию (можно менять через UI presets) ═════
+# Конкретные значения берутся из live_safety presets (консерв / умеренный / agress)
+
 # TwelveData API — для форекс-данных (надёжнее чем yfinance для форекса)
 # Free tier: 800 req/day, 8 req/min
 # Регистрация: https://twelvedata.com/

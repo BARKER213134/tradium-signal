@@ -2747,11 +2747,79 @@ async def _check_paper_positions():
         logger.warning(f"[paper-positions] {e}", exc_info=True)
 
 
-async def _paper_on_signal(signal_data: dict):
-    """Передаёт сигнал в Paper Trader."""
+async def _send_live_confirmation_alert(pending: dict) -> None:
+    """BOT11 подтверждение для live сделки. Когда confirmation_required=True
+    AI решил войти — шлём сюда карту с inline кнопками ✅/❌.
+    Токен хранится в pending.confirmation_token, callback приходит через
+    /api/live/confirm."""
     try:
-        import paper_trader as pt
-        await pt.on_signal(signal_data)
+        from config import BOT11_BOT_TOKEN
+        if not BOT11_BOT_TOKEN or not _admin_chat_id:
+            logger.info("[live-confirm] BOT11 not configured")
+            return
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        bot11 = Bot(token=BOT11_BOT_TOKEN,
+                    default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+
+        sig = pending.get("signal_data", {})
+        dec = pending.get("decision", {})
+        env = pending.get("env", "testnet")
+        token = pending.get("confirmation_token", "")
+
+        env_emoji = "🟡" if env == "testnet" else "🔴"
+        dir_emoji = "🟢" if sig.get("direction") == "LONG" else "🔴"
+        size_pct = dec.get("size_pct", 0)
+        lev = dec.get("leverage", 0)
+
+        text = (
+            f"{env_emoji} <b>LIVE {env.upper()} — подтверждение</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{dir_emoji} <b>{sig.get('symbol','')}</b> · <b>{sig.get('direction','')}</b>\n"
+            f"Entry: <code>{sig.get('entry')}</code>\n"
+            f"TP1: <code>{dec.get('tp1')}</code> · SL: <code>{dec.get('sl')}</code>\n"
+            f"Size: <b>{size_pct}%</b> · Lev: <b>×{lev}</b>\n"
+            f"Source: {sig.get('source','?')}\n\n"
+            f"<b>Reasoning:</b>\n<i>{str(dec.get('reasoning',''))[:500]}</i>\n\n"
+            f"⏱ Токен истекает через 15 мин"
+        )
+
+        # Inline buttons с callback data содержащим токен
+        kbd = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Исполнить", callback_data=f"live_approve:{token}"),
+            InlineKeyboardButton(text="❌ Отказ", callback_data=f"live_reject:{token}"),
+        ]])
+        await bot11.send_message(_admin_chat_id, text, reply_markup=kbd, parse_mode="HTML")
+    except Exception as e:
+        logger.warning(f"[live-confirm] send fail: {e}")
+
+
+async def _paper_on_signal(signal_data: dict):
+    """Роутер сигнала по режиму торговли (paper | testnet | real).
+    Paper → ai_decide + запись в MongoDB (симуляция).
+    Testnet/Real → live_trader с обязательной safety-проверкой + (опционально)
+                    подтверждение в BOT11.
+    """
+    try:
+        # Определяем текущий режим
+        try:
+            import live_safety as ls
+            state = ls.get_state()
+            mode = state.get("mode", "paper")
+        except Exception:
+            mode = "paper"
+
+        if mode == "paper":
+            # Симуляция — как работало раньше
+            import paper_trader as pt
+            await pt.on_signal(signal_data)
+        elif mode in ("testnet", "real"):
+            # Реальная торговля через ccxt
+            import live_trader as lt
+            await lt.on_signal_live(signal_data, env=mode)
     except Exception as e:
         logger.warning(f"[paper-signal] {e}", exc_info=True)
 

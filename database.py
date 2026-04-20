@@ -107,6 +107,29 @@ def _supertrend_signals() -> Collection:
     return _get_db().supertrend_signals
 
 
+def _live_trades() -> Collection:
+    """Реальные сделки (Binance Futures через ccxt). Аналог paper_trades
+    но с exchange_order_id, exchange_fills, real PnL. Режим testnet|real
+    в поле `env`."""
+    return _get_db().live_trades
+
+
+def _live_state() -> Collection:
+    """Глобальное состояние реальной торговли:
+    {_id: 'state', mode: 'paper|testnet|real', kill_switch: bool,
+     safety_preset: 'conservative|moderate|aggressive',
+     balance_testnet: 1000, balance_real: 200, equity_peak: ...,
+     daily_pnl_start_balance: ..., daily_reset_at: datetime,
+     enabled: false, last_sync_at: ...}"""
+    return _get_db().live_state
+
+
+def _live_pending_confirmations() -> Collection:
+    """Ожидающие подтверждения сигналы (AI решил открыть — ждём ✅/❌ в Telegram
+    перед исполнением). TTL 15 мин — если не подтверждён за это время, протух."""
+    return _get_db().live_pending_confirmations
+
+
 
 
 def _counters() -> Collection:
@@ -675,6 +698,19 @@ def init_db():
         sts.create_index([("pair_norm", ASCENDING), ("flip_at", DESCENDING)])
         sts.create_index([("pair_norm", ASCENDING), ("tier", ASCENDING), ("flip_at", ASCENDING)], unique=True, name="uniq_flip")
         sts.create_index("id", unique=True, sparse=True)
+
+        # Live trades (реальные сделки Binance)
+        lt = _live_trades()
+        lt.create_index([("status", ASCENDING), ("opened_at", DESCENDING)])
+        lt.create_index([("env", ASCENDING), ("opened_at", DESCENDING)])
+        lt.create_index("exchange_order_id", unique=True, sparse=True)
+        lt.create_index("trade_id", unique=True, sparse=True)
+
+        # Live pending confirmations (15 мин TTL)
+        lpc = _live_pending_confirmations()
+        lpc.create_index("created_at", expireAfterSeconds=15*60, name="ttl_15min")
+        lpc.create_index([("status", ASCENDING), ("created_at", DESCENDING)])
+        lpc.create_index("confirmation_token", unique=True, sparse=True)
     except Exception:
         pass  # idempotent — если TTL индексы уже есть, ok
 

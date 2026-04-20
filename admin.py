@@ -152,7 +152,12 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
-            "/api/paper/rejections", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+            "/api/paper/rejections",
+            "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
+            "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
+            "/api/live/kill-switch/reset", "/api/live/test-connection",
+            "/api/live/positions", "/api/live/history", "/api/live/close",
+            "/api/live/confirm", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1365,6 +1370,184 @@ async def api_paper_learnings(limit: int = 100):
     learnings = await asyncio.to_thread(pt.get_learnings, limit)
     memory = await asyncio.to_thread(pt.get_ai_memory)
     return {"ok": True, "count": len(learnings), "learnings": learnings, "memory": memory}
+
+
+# ═══════════════════════════════════════════════════════════
+# LIVE TRADING API (Binance Futures через ccxt)
+# ═══════════════════════════════════════════════════════════
+
+@app.get("/api/live/status")
+async def api_live_status():
+    """Полный статус live trading — для UI badges + status bar."""
+    import live_safety as ls
+    try:
+        summary = await asyncio.to_thread(ls.get_status_summary)
+        return {"ok": True, **summary}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/set-mode")
+async def api_live_set_mode(payload: dict):
+    """Переключить режим: paper | testnet | real.
+    payload: {"mode": "testnet"}"""
+    import live_safety as ls
+    mode = (payload or {}).get("mode", "paper")
+    if mode not in ("paper", "testnet", "real"):
+        return {"ok": False, "error": "mode must be paper|testnet|real"}
+    try:
+        state = ls.set_mode(mode)
+        return {"ok": True, "state": {k: v for k, v in state.items() if k != "_id"}}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/set-preset")
+async def api_live_set_preset(payload: dict):
+    """Переключить safety preset: conservative | moderate | aggressive."""
+    import live_safety as ls
+    preset = (payload or {}).get("preset", "conservative")
+    try:
+        state = ls.set_preset(preset)
+        return {"ok": True, "preset": preset, "config": ls.get_preset_config()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/set-balance")
+async def api_live_set_balance(payload: dict):
+    """Установить баланс для testnet или real. payload: {"env":"testnet","amount":1000}"""
+    import live_safety as ls
+    env = (payload or {}).get("env", "testnet")
+    amount = (payload or {}).get("amount")
+    if amount is None:
+        return {"ok": False, "error": "amount required"}
+    try:
+        state = ls.set_balance(env, float(amount))
+        return {"ok": True, "env": env, "balance": float(amount)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/enable")
+async def api_live_enable(payload: dict | None = None):
+    """Включить автоторговлю. payload: {"enabled": true}"""
+    import live_safety as ls
+    enabled = bool((payload or {}).get("enabled", True))
+    try:
+        state = ls.set_enabled(enabled)
+        return {"ok": True, "enabled": enabled}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/kill-switch")
+async def api_live_kill_switch(payload: dict | None = None):
+    """Kill switch — блокирует новые + закрывает все открытые на бирже."""
+    import live_safety as ls
+    import live_trader as lt
+    reason = (payload or {}).get("reason", "manual")
+    try:
+        ls.activate_kill_switch(reason)
+        state = ls.get_state()
+        env = state.get("mode", "testnet")
+        if env in ("testnet", "real"):
+            results = await lt.close_all_positions(env, reason=f"KILL_{reason}")
+            return {"ok": True, "closed_count": sum(1 for r in results if r and r.get("ok"))}
+        return {"ok": True, "closed_count": 0}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/kill-switch/reset")
+async def api_live_reset_kill():
+    """Снять kill switch (только после анализа причины!)."""
+    import live_safety as ls
+    try:
+        state = ls.reset_kill_switch()
+        return {"ok": True, "state": {k: v for k, v in state.items() if k != "_id"}}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/live/test-connection")
+async def api_live_test_connection(env: str = "testnet"):
+    """Проверка Binance API — balance + ping."""
+    import live_trader as lt
+    try:
+        result = await asyncio.to_thread(lt.test_connection, env)
+        return result
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/live/positions")
+async def api_live_positions(env: str = ""):
+    """Открытые live позиции. Если env='' — из текущего режима."""
+    import live_trader as lt
+    import live_safety as ls
+    if not env:
+        env = ls.get_state().get("mode", "testnet")
+    try:
+        positions = await asyncio.to_thread(lt.get_open_positions, env)
+        for p in positions:
+            p["_id"] = str(p.get("_id", ""))
+            if p.get("opened_at") and hasattr(p["opened_at"], "isoformat"):
+                p["opened_at"] = p["opened_at"].isoformat()
+        return {"ok": True, "env": env, "count": len(positions), "positions": positions}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/live/history")
+async def api_live_history(env: str = "", limit: int = 50):
+    """История закрытых live сделок."""
+    import live_trader as lt
+    import live_safety as ls
+    if not env:
+        env = ls.get_state().get("mode", "testnet")
+    try:
+        history = await asyncio.to_thread(lt.get_history, env, limit)
+        for h in history:
+            h["_id"] = str(h.get("_id", ""))
+            for f in ("opened_at", "closed_at"):
+                if h.get(f) and hasattr(h[f], "isoformat"):
+                    h[f] = h[f].isoformat()
+        return {"ok": True, "env": env, "count": len(history), "history": history}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/close")
+async def api_live_close(payload: dict):
+    """Ручное закрытие live позиции. payload: {"trade_id": 123}"""
+    import live_trader as lt
+    trade_id = (payload or {}).get("trade_id")
+    if not trade_id:
+        return {"ok": False, "error": "trade_id required"}
+    try:
+        result = await lt.close_position(int(trade_id), reason="MANUAL")
+        return result or {"ok": False, "error": "close returned None"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/confirm")
+async def api_live_confirm(payload: dict):
+    """Подтвердить pending ордер (вызывается из BOT11 callback).
+    payload: {"token": "...", "action": "approve"|"reject"}"""
+    import live_trader as lt
+    token = (payload or {}).get("token", "")
+    action = (payload or {}).get("action", "")
+    if not token or action not in ("approve", "reject"):
+        return {"ok": False, "error": "token + action (approve|reject) required"}
+    try:
+        if action == "approve":
+            return await lt.execute_confirmed(token) or {"ok": False}
+        else:
+            return await lt.execute_rejected(token)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.get("/api/paper/rejections")
