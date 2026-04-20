@@ -2853,7 +2853,7 @@ safeInterval(loadConflicts, 30000);
           <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;">
             🧠 AI Learnings <span style="color:var(--muted);font-size:9px;text-transform:none;letter-spacing:0;">— чему научился после сделок</span>
           </div>
-          <button onclick="refreshAIMemory()" title="Пересобрать сводку через Claude (анализ последних 50 сделок)" style="background:transparent;color:var(--accent);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">🔄 Пересобрать</button>
+          <button id="atRefreshBtn" onclick="refreshAIMemory()" title="Пересобрать сводку через Claude (анализ последних 50 сделок)" style="background:linear-gradient(135deg,rgba(0,229,160,0.2),rgba(0,212,255,0.1));color:#00e5a0;border:1px solid rgba(0,229,160,0.6);border-radius:6px;padding:5px 12px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;transition:all 0.15s;">🔄 Пересобрать</button>
         </div>
         <div id="atMemory" style="background:linear-gradient(135deg,rgba(0,229,160,0.06),rgba(0,212,255,0.03));border:1px solid rgba(0,229,160,0.22);border-radius:10px;padding:14px 18px;font-size:12px;color:var(--text);min-height:80px;">
           <div style="color:var(--muted);font-size:11px;">Загрузка…</div>
@@ -2971,7 +2971,7 @@ async function loadPaperStatus() {
           <span class="mono text-muted" style="font-size:10px;">${closedAt}</span>
           <span class="mono ${pnlCls} fw-700">${(h.pnl_pct||0) >= 0 ? '+' : ''}${(h.pnl_pct||0).toFixed(1)}%</span>
           <span class="mono ${pnlCls}">$${(h.pnl_usdt||0) >= 0 ? '+' : ''}${(h.pnl_usdt||0).toFixed(2)}</span>
-          <span class="text-muted" style="font-size:10px;margin-left:auto;">${h.ai_review || h.ai_reasoning || ''}</span>
+          <span class="mono text-muted" style="font-size:10px;margin-left:auto;">×${h.leverage||1} · ${h.source||''}</span>
         </div>
         <div id="paperHistChart${idx}" style="display:none;background:#0a0e14;border-bottom:1px solid var(--border);" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();">
           <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;">
@@ -3503,12 +3503,37 @@ async function closePaperPosition(tradeId, pair, direction, pnlPct) {
 
 async function refreshAIMemory() {
   const memDiv = document.getElementById('atMemory');
-  if (memDiv) memDiv.innerHTML = '<div style="color:var(--accent);">⏳ Claude анализирует сделки…</div>';
+  const btn = document.getElementById('atRefreshBtn');
+  const origText = btn ? btn.textContent : null;
+  if (btn) {
+    btn.textContent = '⏳ Claude думает…';
+    btn.disabled = true;
+    btn.style.opacity = '0.65';
+    btn.style.cursor = 'wait';
+  }
+  if (memDiv) memDiv.innerHTML = '<div style="color:var(--accent);font-size:12px;">⏳ Claude анализирует последние 50 сделок… (5-20 сек)</div>';
   try {
-    await fetch('/api/paper/refresh-ai-memory', {method: 'POST'});
-    await loadAILearnings();
+    const r = await fetch('/api/paper/refresh-ai-memory', {method: 'POST'});
+    const d = await r.json();
+    if (!d.ok) {
+      if (memDiv) memDiv.innerHTML = `<div style="color:var(--sell);font-size:11px;">❌ Ошибка: ${d.error || '?'}</div>`;
+    } else {
+      const mem = d.memory || {};
+      if (mem.summary && mem.summary.startsWith('error:')) {
+        if (memDiv) memDiv.innerHTML = `<div style="color:var(--sell);font-size:11px;"><b>Claude API error:</b><br>${mem.summary.substring(7).substring(0, 300)}</div>`;
+      } else {
+        await loadAILearnings();
+      }
+    }
   } catch (e) {
-    if (memDiv) memDiv.innerHTML = '<div style="color:var(--sell);">Ошибка: ' + e.message + '</div>';
+    if (memDiv) memDiv.innerHTML = '<div style="color:var(--sell);font-size:11px;">Ошибка сети: ' + e.message + '</div>';
+  } finally {
+    if (btn) {
+      btn.textContent = origText;
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+    }
   }
 }
 
