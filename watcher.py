@@ -73,6 +73,23 @@ async def _st_tracker_loop():
         await _asyncio.sleep(300)
 
 
+async def _ai_memory_refresh_loop():
+    """Раз в сутки обновляет AI memory для paper trading — Claude делает
+    свод из последних 50 ai_review. Этот memory подаётся в каждый
+    ai_decide() для улучшения решений."""
+    import asyncio as _asyncio
+    # Первая попытка через 10 мин после старта (чтобы не забить на деплое)
+    await _asyncio.sleep(600)
+    while True:
+        try:
+            import paper_trader as pt
+            await pt.refresh_ai_memory()
+        except Exception:
+            logger.exception("[ai-memory] refresh crashed")
+        # 24 часа
+        await _asyncio.sleep(86400)
+
+
 async def _candles_prewarm_loop():
     """Фоновый прогрев candles cache для ВСЕХ активных пар, чтобы первое
     открытие графика было мгновенным. Два уровня:
@@ -2750,6 +2767,12 @@ async def start_watcher():
         logger.info("[prewarm] candles loop started")
     except Exception:
         logger.exception("[prewarm] failed to start loop")
+    # AI memory refresh — раз в сутки агрегация уроков Claude'ом
+    try:
+        asyncio.create_task(_ai_memory_refresh_loop())
+        logger.info("[ai-memory] daily refresh loop started")
+    except Exception:
+        logger.exception("[ai-memory] failed to start loop")
     tick = 0
     while True:
         tick += 1

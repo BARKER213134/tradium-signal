@@ -149,7 +149,8 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
             "/api/supertrend/backfill", "/api/supertrend/backfill-status", "/api/bots-status",
-            "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+            "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
+            "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1322,6 +1323,57 @@ async def api_backtest_st_signals(payload: dict | None = None):
 @app.get("/api/backtest-st-signals/status")
 async def api_backtest_st_signals_status():
     return _st_sigs_backtest_state
+
+
+@app.post("/api/paper/close")
+async def api_paper_close(payload: dict):
+    """Ручное закрытие позиции (статус MANUAL). payload: {"trade_id": 123}"""
+    import paper_trader as pt
+    trade_id = (payload or {}).get("trade_id")
+    if not trade_id:
+        return {"ok": False, "error": "trade_id required"}
+    try:
+        result = await pt.close_manual(int(trade_id))
+        if not result:
+            return {"ok": False, "error": "position not found or already closed"}
+        return {"ok": True, "result": result}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/paper/mode")
+async def api_paper_get_mode():
+    import paper_trader as pt
+    m = pt.get_mode()
+    return {"ok": True, "mode": m}
+
+
+@app.post("/api/paper/mode")
+async def api_paper_set_mode(payload: dict):
+    import paper_trader as pt
+    name = (payload or {}).get("name", "aggressive")
+    m = pt.set_mode(name)
+    return {"ok": True, "mode": m}
+
+
+@app.get("/api/paper/learnings")
+async def api_paper_learnings(limit: int = 100):
+    """Уроки AI из закрытых сделок + агрегированная память."""
+    import paper_trader as pt
+    learnings = await asyncio.to_thread(pt.get_learnings, limit)
+    memory = await asyncio.to_thread(pt.get_ai_memory)
+    return {"ok": True, "count": len(learnings), "learnings": learnings, "memory": memory}
+
+
+@app.post("/api/paper/refresh-ai-memory")
+async def api_paper_refresh_memory():
+    """Ручной запуск агрегации AI уроков (автоматически раз в сутки)."""
+    import paper_trader as pt
+    try:
+        data = await pt.refresh_ai_memory()
+        return {"ok": True, "memory": data}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.get("/api/paper/started")

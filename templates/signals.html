@@ -2826,10 +2826,17 @@ safeInterval(loadConflicts, 30000);
 </style>
 
 <div id="atDashboard">
+  <!-- Aggressive Mode toggle -->
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px 14px;background:var(--dark-2);border:1px solid var(--border);border-radius:10px;">
+    <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Режим:</span>
+    <button id="atModeBtn" onclick="togglePaperMode()" style="background:linear-gradient(135deg,rgba(255,77,109,0.22),rgba(255,140,50,0.1));color:#ff8c32;border:1px solid rgba(255,140,50,0.6);border-radius:8px;padding:6px 16px;font-size:12px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">🔥 AGGRESSIVE · size 3-15% · lev 2-10×</button>
+    <span style="font-size:11px;color:var(--muted);font-family:var(--font-mono);">кликни для переключения</span>
+  </div>
+
   <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px;">
     <div class="at-card"><div class="at-card-label">Баланс</div><div class="at-card-value" id="atBalance">$1,000</div></div>
     <div class="at-card"><div class="at-card-label">PnL</div><div class="at-card-value" id="atPnl">0%</div></div>
-    <div class="at-card"><div class="at-card-label">Позиции</div><div class="at-card-value" id="atOpen">0/5</div></div>
+    <div class="at-card"><div class="at-card-label">Позиции</div><div class="at-card-value" id="atOpen">0/10</div></div>
     <div class="at-card"><div class="at-card-label">Win Rate</div><div class="at-card-value" id="atWR">—</div></div>
     <div class="at-card"><div class="at-card-label">Сделок</div><div class="at-card-value" id="atTotal">0</div></div>
   </div>
@@ -2846,6 +2853,24 @@ safeInterval(loadConflicts, 30000);
       <div id="atHistory" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;min-height:100px;">
         <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>
       </div>
+    </div>
+  </div>
+
+  <!-- 🧠 AI Learnings — что AI выучил из каждой сделки -->
+  <div style="margin-top:20px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);">
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;">
+        🧠 AI Learnings <span style="color:var(--muted);font-size:10px;">— чему AI научился за сделки</span>
+      </div>
+      <button onclick="refreshAIMemory()" style="background:transparent;color:var(--accent);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">🔄 Пересобрать сводку</button>
+    </div>
+    <!-- Aggregated memory summary -->
+    <div id="atMemory" style="background:linear-gradient(135deg,rgba(0,229,160,0.06),rgba(0,212,255,0.03));border:1px solid rgba(0,229,160,0.22);border-radius:10px;padding:12px 16px;margin-bottom:12px;font-size:12px;color:var(--text);min-height:60px;">
+      <div style="color:var(--muted);font-size:11px;">Загрузка…</div>
+    </div>
+    <!-- Individual learnings list -->
+    <div id="atLearnings" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;max-height:400px;overflow-y:auto;">
+      <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>
     </div>
   </div>
 
@@ -2893,6 +2918,7 @@ async function loadPaperStatus() {
           <span class="mono text-muted" style="font-size:10px;">${p.source || ''}</span>
           <span class="mono text-buy" style="font-size:9px;">${tp}</span>
           <span class="mono text-sell" style="font-size:9px;">${sl}</span>
+          <button onclick="event.stopPropagation();closePaperPosition(${p.trade_id}, '${pair}', '${p.direction}', ${pnl.toFixed(2)})" style="margin-left:auto;background:transparent;color:#ff4d6d;border:1px solid rgba(255,77,109,0.4);border-radius:5px;padding:3px 9px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">✕ Закрыть</button>
         </div>
         <div id="paperChart${idx}" style="display:none;min-height:300px;background:#0a0e14;border-bottom:1px solid var(--border);" onclick="event.stopPropagation();" onmousedown="event.stopPropagation();"></div>`;
       }).join('');
@@ -3415,8 +3441,140 @@ async function resetPaper() {
   loadPaperStatus();
 }
 
+// ═══════ Paper Trading — режим / закрытие / learnings ═══════
+
+async function loadPaperMode() {
+  try {
+    const r = await fetch('/api/paper/mode');
+    const d = await r.json();
+    const m = (d && d.mode) || {};
+    const btn = document.getElementById('atModeBtn');
+    if (!btn) return;
+    if (m.name === 'aggressive') {
+      btn.style.background = 'linear-gradient(135deg,rgba(255,77,109,0.22),rgba(255,140,50,0.1))';
+      btn.style.color = '#ff8c32';
+      btn.style.borderColor = 'rgba(255,140,50,0.6)';
+      btn.textContent = `🔥 AGGRESSIVE · size ${m.size_min}-${m.size_max}% · lev ${m.lev_min}-${m.lev_max}×`;
+    } else {
+      btn.style.background = 'linear-gradient(135deg,rgba(0,212,255,0.18),rgba(0,180,255,0.06))';
+      btn.style.color = '#00d4ff';
+      btn.style.borderColor = 'rgba(0,212,255,0.55)';
+      btn.textContent = `🛡️ CONSERVATIVE · size ${m.size_min}-${m.size_max}% · lev ${m.lev_min}-${m.lev_max}×`;
+    }
+  } catch {}
+}
+
+async function togglePaperMode() {
+  try {
+    const r0 = await fetch('/api/paper/mode');
+    const d0 = await r0.json();
+    const cur = (d0 && d0.mode && d0.mode.name) || 'aggressive';
+    const next = cur === 'aggressive' ? 'conservative' : 'aggressive';
+    await fetch('/api/paper/mode', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name: next}),
+    });
+    loadPaperMode();
+  } catch (e) { alert('Не удалось переключить режим: ' + e.message); }
+}
+
+async function closePaperPosition(tradeId, pair, direction, pnlPct) {
+  if (!tradeId) { alert('Нет trade_id'); return; }
+  const ok = confirm(`Закрыть позицию #${tradeId}?\n${pair} · ${direction} · PnL ${pnlPct >= 0 ? '+' : ''}${pnlPct}%\n\nСтатус будет MANUAL.`);
+  if (!ok) return;
+  try {
+    const r = await fetch('/api/paper/close', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({trade_id: tradeId}),
+    });
+    const d = await r.json();
+    if (!d.ok) { alert('Ошибка: ' + (d.error || '?')); return; }
+    loadPaperStatus();
+    loadAILearnings();
+  } catch (e) { alert('Ошибка сети: ' + e.message); }
+}
+
+async function refreshAIMemory() {
+  const memDiv = document.getElementById('atMemory');
+  if (memDiv) memDiv.innerHTML = '<div style="color:var(--accent);">⏳ Claude анализирует сделки…</div>';
+  try {
+    await fetch('/api/paper/refresh-ai-memory', {method: 'POST'});
+    await loadAILearnings();
+  } catch (e) {
+    if (memDiv) memDiv.innerHTML = '<div style="color:var(--sell);">Ошибка: ' + e.message + '</div>';
+  }
+}
+
+async function loadAILearnings() {
+  try {
+    const r = await fetch('/api/paper/learnings?limit=100');
+    const d = await r.json();
+    const memory = d.memory || {};
+    const learnings = d.learnings || [];
+
+    // Memory summary
+    const memDiv = document.getElementById('atMemory');
+    if (memDiv) {
+      if (memory.summary) {
+        let lessonsHtml = '';
+        const top = memory.top_lessons || [];
+        if (top.length) {
+          lessonsHtml = '<div style="margin-top:8px;font-size:11px;">' +
+            top.map(l => `<div style="padding:3px 0;color:var(--text);"><span style="color:var(--accent);">▸</span> ${l}</div>`).join('') +
+            '</div>';
+        }
+        const updated = memory.updated_at ? new Date(memory.updated_at).toLocaleString('ru-RU') : '—';
+        memDiv.innerHTML =
+          `<div style="font-size:12px;color:var(--text);font-weight:600;">${memory.summary || ''}</div>` +
+          lessonsHtml +
+          `<div style="margin-top:8px;color:var(--muted);font-size:10px;">на основе ${memory.based_on_trades || 0} сделок · обновлено: ${updated}</div>`;
+      } else {
+        memDiv.innerHTML = '<div style="color:var(--muted);font-size:11px;">Ещё нет агрегированной памяти. Нужно ≥1 закрытая сделка. Агрегация автоматически раз в сутки или жми ↻.</div>';
+      }
+    }
+
+    // Individual learnings
+    const div = document.getElementById('atLearnings');
+    if (!div) return;
+    if (!learnings.length) {
+      div.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>';
+      return;
+    }
+    div.innerHTML = learnings.map(l => {
+      const win = (l.pnl_usdt || 0) > 0;
+      const icon = win ? '✅' : (l.status === 'MANUAL' ? '✋' : '❌');
+      const pnlCls = win ? 'text-buy' : 'text-sell';
+      const pnlStr = (l.pnl_pct >= 0 ? '+' : '') + (l.pnl_pct || 0).toFixed(2) + '%';
+      const when = l.closed_at ? new Date(l.closed_at).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+      const pair = (l.symbol || '').replace('USDT', '');
+      const src = l.source ? `<span style="color:var(--muted);font-size:10px;">src=${l.source}</span>` : '';
+      const review = l.review || '(нет обзора)';
+      return `<div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+          <span>${icon}</span>
+          <span class="mono fw-700">${pair}</span>
+          <span class="mono text-muted">${l.direction}</span>
+          <span class="mono">×${l.leverage||1}</span>
+          <span class="mono">size ${l.size_pct||'?'}%</span>
+          <span class="mono ${pnlCls} fw-700">${pnlStr}</span>
+          ${src}
+          <span class="mono text-muted" style="margin-left:auto;font-size:10px;">${when}</span>
+        </div>
+        <div style="color:var(--text);padding-left:26px;font-size:11px;font-style:italic;">${review}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    console.warn('[ai-learnings]', e);
+  }
+}
+
+loadPaperMode();
 loadPaperStatus();
+loadAILearnings();
 safeInterval(loadPaperStatus, 15000);
+safeInterval(loadAILearnings, 30000);
 </script>
 
 {% elif bot == 'forex_fvg' %}

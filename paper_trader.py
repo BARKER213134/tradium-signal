@@ -11,7 +11,38 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 INITIAL_BALANCE = 1000.0
-MAX_POSITIONS = 10  # было 5, поднято для более быстрого накопления статистики
+MAX_POSITIONS = 10
+
+# Режимы агрессивности — переключаются через UI (POST /api/paper/mode)
+# Хранятся в paper_stats.mode. По умолчанию AGGRESSIVE (user request).
+MODE_CONSERVATIVE = {
+    "name": "conservative",
+    "size_min": 2, "size_max": 5,
+    "lev_min": 1,  "lev_max": 5,
+    "cluster_size_bonus": 1, "top_pick_size_bonus": 1,
+}
+MODE_AGGRESSIVE = {
+    "name": "aggressive",
+    "size_min": 3, "size_max": 15,   # требование пользователя
+    "lev_min": 2,  "lev_max": 10,
+    "cluster_size_bonus": 3, "top_pick_size_bonus": 2,
+}
+
+
+def get_mode() -> dict:
+    """Текущий режим агрессивности. Дефолт — AGGRESSIVE."""
+    _, stats = _get_collections()
+    doc = stats.find_one({"_id": "mode"})
+    name = (doc or {}).get("name", "aggressive")
+    return MODE_AGGRESSIVE if name == "aggressive" else MODE_CONSERVATIVE
+
+
+def set_mode(name: str) -> dict:
+    """Устанавливает режим: 'aggressive' | 'conservative'."""
+    name = "aggressive" if name == "aggressive" else "conservative"
+    _, stats = _get_collections()
+    stats.update_one({"_id": "mode"}, {"$set": {"name": name}}, upsert=True)
+    return get_mode()
 
 
 def _utcnow():
@@ -63,6 +94,87 @@ def get_stats() -> dict:
         "total_pnl": round(total_pnl, 2),
         "avg_pnl": round(total_pnl / len(history), 2),
     }
+
+
+def get_learnings(limit: int = 100) -> list:
+    """Последние ai_review уроки из закрытых сделок."""
+    trades, _ = _get_collections()
+    out = []
+    q = {"status": {"$in": ["TP", "SL", "MANUAL"]}, "ai_review": {"$ne": None}}
+    for t in trades.find(q).sort("closed_at", -1).limit(limit):
+        out.append({
+            "trade_id": t.get("trade_id"),
+            "symbol": t.get("symbol"),
+            "direction": t.get("direction"),
+            "source": t.get("source"),
+            "entry": t.get("entry"),
+            "exit": t.get("exit_price"),
+            "leverage": t.get("leverage"),
+            "size_pct": t.get("size_pct"),
+            "pnl_pct": t.get("pnl_pct"),
+            "pnl_usdt": t.get("pnl_usdt"),
+            "status": t.get("status"),
+            "review": t.get("ai_review", ""),
+            "reasoning": t.get("ai_reasoning", ""),
+            "closed_at": t.get("closed_at").isoformat() if t.get("closed_at") and hasattr(t.get("closed_at"), "isoformat") else None,
+        })
+    return out
+
+
+def get_ai_memory() -> dict:
+    """Сводка уроков AI — агрегат сверху, для передачи в ai_decide() промпт.
+    Заполняется refresh_ai_memory() раз в день."""
+    _, stats = _get_collections()
+    doc = stats.find_one({"_id": "ai_memory"})
+    return doc or {"summary": "", "top_lessons": [], "updated_at": None, "based_on_trades": 0}
+
+
+async def refresh_ai_memory() -> dict:
+    """Раз в день: берёт последние 50 ai_review и просит Claude сделать свод
+    ключевых выводов — что AI выучил. Результат сохраняется в paper_stats.ai_memory
+    и подаётся в каждый ai_decide() через промпт.
+    Цель: дать пользователю прозрачность (что AI знает) + улучшить решения."""
+    import anthropic
+    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+    learnings = get_learnings(50)
+    if not learnings:
+        return {"summary": "Ещё нет закрытых сделок для анализа", "top_lessons": [], "based_on_trades": 0}
+    reviews_text = "\n".join(
+        f"  #{x['trade_id']} {x['symbol']} {x['direction']} PnL {x.get('pnl_pct',0):+.1f}% "
+        f"({x.get('status','?')}) · src={x.get('source','?')} · lev×{x.get('leverage','?')} "
+        f"size{x.get('size_pct','?')}% → {x.get('review','')[:180]}"
+        for x in learnings
+    )
+    prompt = (
+        f"Ты — AI трейдер, который должен извлечь ключевые уроки из истории своих "
+        f"сделок на Paper Trading. Прочитай последние {len(learnings)} разборов:\n\n"
+        f"{reviews_text}\n\n"
+        f"Задача:\n"
+        f"1. Сформулируй 3-5 ГЛАВНЫХ уроков (что работает / что нет)\n"
+        f"2. Краткое резюме (1-2 предложения): 'AI выучил, что ...'\n\n"
+        f"Ответь ТОЛЬКО JSON без markdown:\n"
+        f'{{"summary": "текст", "top_lessons": ["урок1", "урок2", ...]}}'
+    )
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        msg = await asyncio.to_thread(
+            client.messages.create, model=ANTHROPIC_MODEL, max_tokens=800,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = msg.content[0].text.strip()
+        if text.startswith("```"):
+            text = text.split("```")[1].strip()
+            if text.startswith("json"): text = text[4:].strip()
+        data = json.loads(text)
+        data["updated_at"] = _utcnow().isoformat()
+        data["based_on_trades"] = len(learnings)
+        _, stats = _get_collections()
+        stats.update_one({"_id": "ai_memory"}, {"$set": data}, upsert=True)
+        logger.info(f"[paper.ai-memory] refreshed from {len(learnings)} trades")
+        return data
+    except Exception as e:
+        logger.error(f"refresh_ai_memory fail: {e}")
+        return {"summary": f"error: {e}", "top_lessons": [], "based_on_trades": len(learnings)}
 
 
 def open_position(symbol: str, direction: str, entry: float, tp1: float, sl: float,
@@ -132,6 +244,24 @@ def close_position(trade_id: int, exit_price: float, reason: str = "TP"):
     _update_balance(balance + pnl_usdt)
     logger.info(f"Paper CLOSE #{trade_id}: {pos['symbol']} {reason} PnL={pnl_pct:+.2f}% ${pnl_usdt:+.2f}")
     return {"trade_id": trade_id, "pnl_pct": pnl_pct, "pnl_usdt": pnl_usdt, "reason": reason}
+
+
+async def close_manual(trade_id: int) -> dict | None:
+    """Ручное закрытие позиции — берёт текущую цену с биржи, закрывает
+    со статусом MANUAL. Возвращает {trade_id, pnl_pct, pnl_usdt} или None."""
+    trades, _ = _get_collections()
+    pos = trades.find_one({"trade_id": int(trade_id), "status": "OPEN"})
+    if not pos:
+        return None
+    from exchange import get_prices_any
+    pair = pos.get("pair") or pos["symbol"].replace("USDT", "/USDT")
+    prices = await asyncio.to_thread(get_prices_any, [pair])
+    cur = prices.get(pos["symbol"])
+    if cur is None:
+        # fallback — если цены нет, пробуем entry
+        cur = pos.get("entry", 0)
+    result = close_position(int(trade_id), cur, "MANUAL")
+    return result
 
 
 def check_positions(prices: dict):
@@ -208,14 +338,62 @@ async def ai_decide(signal_data: dict) -> dict:
         if strength == "RISKY":
             cluster_block += "  ⚠️ НО кластер ПРОТИВ Reversal — опасно, снизь размер!\n"
 
+    # Режим и диапазоны (aggressive vs conservative)
+    mode = get_mode()
+    size_min, size_max = mode["size_min"], mode["size_max"]
+    lev_min, lev_max = mode["lev_min"], mode["lev_max"]
+
+    # AI memory — сводка уроков (что AI выучил за все сделки)
+    memory = get_ai_memory()
+    memory_block = ""
+    if memory.get("summary"):
+        memory_block = (
+            f"\n🧠 ТВОЯ ПАМЯТЬ (выводы из {memory.get('based_on_trades',0)} сделок):\n"
+            f"  {memory.get('summary','')}\n"
+        )
+        lessons = memory.get("top_lessons", [])
+        if lessons:
+            memory_block += "  Главные уроки:\n"
+            for l in lessons[:5]:
+                memory_block += f"    • {l}\n"
+
+    # Знания о системе (обновлено с учётом новых фич)
+    system_knowledge = (
+        "\nЗНАНИЯ О ПЛАТФОРМЕ (обновлено за последнюю неделю):\n"
+        "  Источники сигналов:\n"
+        "    📡 tradium     — DCA4 pattern_triggered (редко но сильно)\n"
+        "    🚀 cryptovizor — pattern на 1h (молот, поглощение и т.д.)\n"
+        "    ⚠️ anomaly     — многофакторная аномалия (score/15)\n"
+        "    🎯 confluence  — 4-6 факторов совпали (STRONG=5+ 🔥=6)\n"
+        "    💠 cluster     — 2+ источника ±8ч (NORMAL/STRONG/MEGA)\n"
+        "    👑 top_pick    — double-confirm (73% WR в бектесте)\n"
+        "    🌀 supertrend  — ST flip: VIP/MTF/Daily (новое!)\n"
+        "\n  SuperTrend tier инсайты (бектест 2382 сделки, 14д):\n"
+        "    🏆 VIP SHORT: WR 58.8%, PF 2.95 — отлично, бери уверенно\n"
+        "    🔱 MTF LONG:  avg R +0.91, PF 2.55 — лучший EV на long\n"
+        "    🧭 Daily LONG: WR 33.4% — средний, стандартный размер\n"
+        "    ⚠️ Daily SHORT: EV -0.30R — ИЗБЕГАЙ, убыточно\n"
+        "    ⚠️ MTF SHORT:  EV -0.12R — осторожно\n"
+        "\n  Key Levels (уровни S/R в описании сигнала):\n"
+        "    🌀🌀🌀 + 🔥 = ST aligned на 3 TF + fresh flip → сильный вход\n"
+        "    🏆 = VIP совпадение (ST flip + bot signal ±2ч) → максимальный score\n"
+        "    TP за R уровнем ⚠️ → TP может не дойти\n"
+        "    SL под S уровнем ✅ → защищён\n"
+        "\n  Anti-cluster: если на паре конфликт LONG vs SHORT (противоречие\n"
+        "    нескольких ботов) — система автоматически блокирует, ты не увидишь.\n"
+    )
+
     prompt = (
-        f"Ты — AI трейдер на Paper Trading. Твоя задача — максимизировать прибыль.\n\n"
+        f"Ты — AI трейдер на Paper Trading. Твоя задача — максимизировать прибыль.\n"
+        f"Режим: <b>{mode['name'].upper()}</b> (size {size_min}-{size_max}%, lev {lev_min}-{lev_max}×)\n\n"
         f"ДЕПОЗИТ: ${balance:.2f}\n"
         f"ОТКРЫТО: {len(open_pos)}/{MAX_POSITIONS}\n"
         f"{open_str}"
         f"\nСТАТИСТИКА ({stats['total']} сделок):\n"
         f"  Win Rate: {stats['win_rate']}% | PnL: ${stats['total_pnl']:+.2f} | Avg: ${stats['avg_pnl']:+.2f}\n"
         f"\nПОСЛЕДНИЕ СДЕЛКИ:\n{hist_str or '  Нет истории'}\n"
+        f"{memory_block}"
+        f"{system_knowledge}"
         f"\nРЫНОК:\n"
         f"  Keltner ETH: {kc.get('direction','?')} ({'подтверждён' if kc.get('confirmed') else 'neutral'})\n"
         f"  ETH 1h: {eth.get('eth_1h',0):+.2f}% | BTC 1h: {eth.get('btc_1h',0):+.2f}%\n"
@@ -230,15 +408,18 @@ async def ai_decide(signal_data: dict) -> dict:
         f"  KC: {signal_data.get('kc_dir',kc.get('direction',''))}\n"
         f"  Pump: Vol ×{signal_data.get('pump_vol',0)} | OI {signal_data.get('pump_oi',0):+.1f}%\n"
         f"\nПРАВИЛА:\n"
-        f"  - Макс 5 позиций одновременно\n"
-        f"  - Размер: 1-5% от депозита\n"
-        f"  - Плечо: 1-10x\n"
-        f"  - Ставь TP и SL на основе уровней\n"
+        f"  - Макс {MAX_POSITIONS} позиций одновременно (сейчас {len(open_pos)})\n"
+        f"  - Размер: {size_min}-{size_max}% от депозита\n"
+        f"  - Плечо: {lev_min}-{lev_max}×\n"
+        f"  - Ставь TP и SL на основе уровней (из Key Levels / сигнала)\n"
         f"  - Не входи если сигнал против Keltner (когда Keltner подтверждён)\n"
-        f"  - При кластерном сигнале (78.6% WR) — бери увеличенный размер\n"
-        f"  - Учись на прошлых ошибках\n\n"
+        f"  - Cluster MEGA/STRONG (78.6% WR) — бери увеличенный размер\n"
+        f"  - ПРИМЕНЯЙ знания из своей памяти и бектест-инсайтов!\n"
+        f"  - Daily SHORT и MTF SHORT — осторожно или скип (отрицательный EV)\n"
+        f"  - VIP SHORT и MTF LONG — бери уверенно (лучшие в бектесте)\n\n"
         f"Ответь ТОЛЬКО JSON без markdown:\n"
-        f'{{"enter": true/false, "leverage": 1-10, "size_pct": 1-5, "tp1": цена, "sl": цена, "reasoning": "почему"}}'
+        f'{{"enter": true/false, "leverage": {lev_min}-{lev_max}, '
+        f'"size_pct": {size_min}-{size_max}, "tp1": цена, "sl": цена, "reasoning": "почему"}}'
     )
 
     try:
@@ -318,46 +499,49 @@ async def on_signal(signal_data: dict):
     if not entry:
         return None
 
+    mode = get_mode()
+    size_min, size_max = mode["size_min"], mode["size_max"]
+    lev_min, lev_max = mode["lev_min"], mode["lev_max"]
+
     tp1 = decision.get("tp1") or signal_data.get("tp1") or (entry * 1.015 if signal_data.get("direction") == "LONG" else entry * 0.985)
     sl = decision.get("sl") or signal_data.get("sl") or (entry * 0.985 if signal_data.get("direction") == "LONG" else entry * 1.015)
-    leverage = max(1, min(10, decision.get("leverage", 3)))
-    size_pct = max(1, min(5, decision.get("size_pct", 2)))
+    leverage = max(lev_min, min(lev_max, decision.get("leverage", max(lev_min, (lev_min + lev_max) // 2))))
+    size_pct = max(size_min, min(size_max, decision.get("size_pct", size_min + 1)))
 
     # Cluster boost — повышаем leverage и size для кластерных сигналов
     is_cluster = signal_data.get("is_cluster") or signal_data.get("source") == "cluster"
     strength = signal_data.get("cluster_strength", "NORMAL")
     boost_note = ""
+    cluster_bonus = mode["cluster_size_bonus"]
     if is_cluster:
         try:
             from cluster_detector import get_config as _cluster_cfg
             cfg = _cluster_cfg()
             if strength == "MEGA":
                 mult = cfg["strong_boost"]
-                leverage = max(1, min(10, int(round(leverage * mult))))
-                size_pct = max(1, min(5, size_pct + 2))
+                leverage = max(lev_min, min(lev_max, int(round(leverage * mult))))
+                size_pct = max(size_min, min(size_max, size_pct + cluster_bonus))
                 boost_note = f" [MEGA cluster boost ×{mult:.0f}]"
             elif strength == "STRONG":
                 mult = cfg["leverage_boost"]
-                leverage = max(1, min(10, int(round(leverage * mult))))
-                size_pct = max(1, min(5, size_pct + 1))
+                leverage = max(lev_min, min(lev_max, int(round(leverage * mult))))
+                size_pct = max(size_min, min(size_max, size_pct + max(1, cluster_bonus - 1)))
                 boost_note = f" [STRONG cluster boost ×{mult:.0f}]"
             elif strength == "NORMAL":
                 mult = cfg["leverage_boost"] * 0.7
-                leverage = max(1, min(10, int(round(leverage * mult))))
+                leverage = max(lev_min, min(lev_max, int(round(leverage * mult))))
                 boost_note = f" [cluster boost ×{mult:.1f}]"
             # RISKY — не повышаем, наоборот AI должен был снизить
         except Exception as e:
             logger.debug(f"cluster boost fail: {e}")
 
-    # Top Pick boost — дополнительный модификатор поверх cluster boost,
-    # применяется если сигнал is_top_pick=true (подтверждён STRONG Confluence).
-    # По бектесту WR Top Picks = 73% vs baseline 56% → можно увеличить size.
+    # Top Pick boost
     is_top_pick = signal_data.get("is_top_pick")
     if is_top_pick:
         old_lev, old_size = leverage, size_pct
-        # Умеренный буст: +30% leverage, +1 size_pct
-        leverage = max(1, min(10, int(round(leverage * 1.3))))
-        size_pct = max(1, min(5, size_pct + 1))
+        top_bonus = mode["top_pick_size_bonus"]
+        leverage = max(lev_min, min(lev_max, int(round(leverage * 1.3))))
+        size_pct = max(size_min, min(size_max, size_pct + top_bonus))
         boost_note += f" [👑 TOP PICK: lev {old_lev}→{leverage}, size {old_size}→{size_pct}]"
 
     pos = open_position(
