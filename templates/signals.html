@@ -3175,7 +3175,7 @@ async function _drawPaperHistChart(idx) {
     }
     // Key Levels — зоны S/R + маркеры Entered событий
     if (window._fetchKeyLevels && window._drawKeyLevelZones && h.symbol && d.candles.length) {
-      window._fetchKeyLevels(h.symbol, 48).then(klItems => {
+      window._fetchKeyLevels(h.symbol, 168).then(klItems => {
         if (!klItems || !klItems.length) return;
         window._drawKeyLevelZones(chart, series, d.candles, klItems);
         _klM = window._addKeyLevelMarkers(d.candles, klItems, h.direction) || [];
@@ -3413,7 +3413,7 @@ async function _renderPaperChart(idx, tf) {
     }
     // Key Levels — зоны S/R
     if (window._fetchKeyLevels && window._drawKeyLevelZones && p.symbol && d.candles.length) {
-      window._fetchKeyLevels(p.symbol, 48).then(klItems => {
+      window._fetchKeyLevels(p.symbol, 168).then(klItems => {
         if (!klItems || !klItems.length) return;
         window._drawKeyLevelZones(chart, series, d.candles, klItems);
         _klM = window._addKeyLevelMarkers(d.candles, klItems, p.direction) || [];
@@ -4902,7 +4902,7 @@ async function loadCoinChart(coin) {
     }
     // Key Levels — зоны S/R + маркеры
     if (window._fetchKeyLevels && window._drawKeyLevelZones && sym && d.candles.length) {
-      window._fetchKeyLevels(sym, 48).then(klItems => {
+      window._fetchKeyLevels(sym, 168).then(klItems => {
         if (!klItems || !klItems.length) return;
         window._drawKeyLevelZones(chart, series, d.candles, klItems);
         _klM = window._addKeyLevelMarkers(d.candles, klItems, null) || [];
@@ -5515,7 +5515,7 @@ async function openJournalChart(idx, forceTF) {
     }
     // Key Levels — зоны S/R + маркеры событий
     if (window._fetchKeyLevels && window._drawKeyLevelZones && sym && d.candles.length) {
-      window._fetchKeyLevels(sym, 48).then(klItems => {
+      window._fetchKeyLevels(sym, 168).then(klItems => {
         if (!klItems || !klItems.length) return;
         window._drawKeyLevelZones(chart, series, d.candles, klItems);
         _klM = window._addKeyLevelMarkers(d.candles, klItems, s.direction) || [];

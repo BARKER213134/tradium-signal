@@ -728,15 +728,50 @@
         if (!chart || !series || !candles || !candles.length || !klItems || !klItems.length) return [];
         const firstTs = candles[0].time;
         const lastTs = candles[candles.length-1].time;
-        // Выбираем самые актуальные зоны: последний SUPPORT и последний RESISTANCE
-        // среди "entered"/"new" событий. Не рисуем range (они временные).
+        // Выбираем самые актуальные зоны: последний SUPPORT и последний RESISTANCE.
+        // 1) new_support / entered_support → zone_low..zone_high = support
+        // 2) new_resistance / entered_resistance → zone_low..zone_high = resistance
+        // 3) range_* → zone_low = support, zone_high = resistance (ОБЕ одним событием)
+        // Range-события используются как fallback если для одной из сторон нет
+        // явного new/entered события.
         let lastSupport = null, lastResistance = null;
+        // Сначала ищем явные new/entered события (приоритет)
         for (const kl of klItems) {
           const ev = kl.event || '';
           if (ev.includes('support') && kl.zone_low && kl.zone_high) {
             if (!lastSupport) lastSupport = kl;
           } else if (ev.includes('resistance') && kl.zone_low && kl.zone_high) {
             if (!lastResistance) lastResistance = kl;
+          }
+        }
+        // Fallback — если чего-то не хватает, берём из последнего range
+        if (!lastSupport || !lastResistance) {
+          for (const kl of klItems) {
+            const ev = kl.event || '';
+            if (!ev.startsWith('range_')) continue;
+            if (!kl.zone_low || !kl.zone_high) continue;
+            // В range-событиях zone_low и zone_high — границы range'а
+            // → zone_low = support уровень, zone_high = resistance уровень
+            // Создаём синтетические kl-объекты с нужной геометрией
+            if (!lastSupport) {
+              // Support = zone_low (точка), но для визуализации нужна область.
+              // Делаем тонкую зону ±0.2% вокруг zone_low.
+              const lo = +kl.zone_low;
+              lastSupport = {
+                ...kl, tf: kl.tf || 'range',
+                zone_low: lo * 0.998, zone_high: lo,
+                _synthetic: true,
+              };
+            }
+            if (!lastResistance) {
+              const hi = +kl.zone_high;
+              lastResistance = {
+                ...kl, tf: kl.tf || 'range',
+                zone_low: hi, zone_high: hi * 1.002,
+                _synthetic: true,
+              };
+            }
+            if (lastSupport && lastResistance) break;
           }
         }
         const overlays = [];
@@ -2095,7 +2130,7 @@ async function _renderLwcSignalChart(containerId, opts) {
 
   // Key Levels — зоны S/R + маркеры событий (async)
   if (window._fetchKeyLevels && window._drawKeyLevelZones && opts.symbol && d.candles.length) {
-    window._fetchKeyLevels(opts.symbol, 48).then(klItems => {
+    window._fetchKeyLevels(opts.symbol, 168).then(klItems => {
       if (!klItems || !klItems.length) return;
       window._drawKeyLevelZones(chart, series, d.candles, klItems);
       _klM = window._addKeyLevelMarkers(d.candles, klItems, opts.direction) || [];
