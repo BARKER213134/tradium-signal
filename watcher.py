@@ -2408,21 +2408,43 @@ async def _check_forex_fvg_scan():
 
 
 async def _check_forex_fvg_monitor():
-    """Monitor retest + TP/SL (каждый тик)."""
+    """Monitor retest + TP/SL (каждый тик).
+    КРИТИЧНО: alerts в отдельных try/except — если один alert падает
+    (плохой chart_path, сетевая ошибка, и т.д.), остальные события всё
+    равно обрабатываются. Сам monitor_signals отделён от alerts.
+    """
+    # 1. Запускаем monitor_signals (БД работа) — отдельный try/except
     try:
         from fvg_scanner import monitor_signals
         events = await asyncio.to_thread(monitor_signals)
-        for sig in events.get("entered", []):
+    except Exception:
+        logger.exception("[FVG-MON] monitor_signals crashed")
+        return
+
+    # 2. Алерты — каждый в своём try/except (ошибка одного не блокирует остальных)
+    entered_count = 0
+    tp_count = 0
+    sl_count = 0
+    for sig in events.get("entered", []):
+        try:
             await _send_fvg_entry_alert(sig)
-        for sig in events.get("closed_tp", []):
+            entered_count += 1
+        except Exception as e:
+            logger.error(f"[FVG-MON] entry alert fail {sig.get('instrument','?')}: {e}")
+    for sig in events.get("closed_tp", []):
+        try:
             await _send_fvg_close_alert(sig, "TP")
-        for sig in events.get("closed_sl", []):
+            tp_count += 1
+        except Exception as e:
+            logger.error(f"[FVG-MON] TP alert fail {sig.get('instrument','?')}: {e}")
+    for sig in events.get("closed_sl", []):
+        try:
             await _send_fvg_close_alert(sig, "SL")
-        # EXPIRED — не шлём (спам)
-        if events.get("entered") or events.get("closed_tp") or events.get("closed_sl"):
-            logger.info(f"[FVG-MON] entered={len(events['entered'])} tp={len(events['closed_tp'])} sl={len(events['closed_sl'])}")
-    except Exception as e:
-        logger.debug(f"fvg monitor: {e}")
+            sl_count += 1
+        except Exception as e:
+            logger.error(f"[FVG-MON] SL alert fail {sig.get('instrument','?')}: {e}")
+    if entered_count or tp_count or sl_count:
+        logger.info(f"[FVG-MON] entered={entered_count} tp={tp_count} sl={sl_count}")
 
 
 async def _pending_cluster_block(pair: str, direction: str, triggered: bool = False) -> str:
