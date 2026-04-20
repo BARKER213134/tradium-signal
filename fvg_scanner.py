@@ -549,6 +549,13 @@ def _process_candles_for_instrument(name: str, ticker: str, asset_class: str, ca
         col.insert_one(doc)
         created += 1
         logger.info(f"[FVG] NEW {name} {fvg.direction} zone {fvg.bottom:.5f}-{fvg.top:.5f} size {fvg.size_rel*100:.3f}%")
+    if created:
+        try:
+            from cache_utils import fvg_signals_cache, fvg_journal_cache
+            fvg_signals_cache.invalidate()
+            fvg_journal_cache.invalidate()
+        except Exception:
+            pass
     return created
 
 
@@ -848,6 +855,14 @@ def monitor_signals() -> dict:
                             "trailing_sl": trailing_sl,
                             "updated_at": now,
                         }})
+    # Инвалидируем UI-кеши если что-то поменялось
+    if any(events.values()):
+        try:
+            from cache_utils import fvg_signals_cache, fvg_journal_cache
+            fvg_signals_cache.invalidate()
+            fvg_journal_cache.invalidate()
+        except Exception:
+            pass
     return events
 
 

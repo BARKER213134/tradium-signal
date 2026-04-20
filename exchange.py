@@ -255,7 +255,7 @@ def get_futures_prices_only(pairs: list[str]) -> dict[str, float]:
 # ── Keltner Channel ETH (кешированный) ────────────────────────────────
 _kc_cache: dict = {}
 _kc_cache_ts: float = 0
-_KC_TTL = 60  # 1 мин
+_KC_TTL = 300  # 5 мин — снижаем нагрузку на рендер /signals
 
 
 def _calc_keltner(candles, period=20, multiplier=2.0):
@@ -305,7 +305,7 @@ def _calc_keltner(candles, period=20, multiplier=2.0):
 
 
 def get_keltner_eth() -> dict:
-    """Keltner Channel ETH 1h: direction (LONG/SHORT/NEUTRAL), confirmed. Кеш 60с."""
+    """Keltner Channel ETH 1h: direction (LONG/SHORT/NEUTRAL), confirmed. Кеш 5 мин."""
     global _kc_cache, _kc_cache_ts
     now = time.time()
     if _kc_cache and (now - _kc_cache_ts) < _KC_TTL:
@@ -417,11 +417,11 @@ def check_pump_potential(symbol: str) -> dict:
 # ── ETH/BTC market context (кешированный) ───────────────────────────
 _eth_ctx_cache: dict = {}
 _eth_ctx_ts: float = 0
-_ETH_CTX_TTL = 60  # 1 мин
+_ETH_CTX_TTL = 300  # 5 мин — снижаем нагрузку на рендер /signals
 
 
 def get_eth_market_context() -> dict:
-    """Возвращает ETH 1h%, BTC 1h%, ETH/BTC тренд. Кеш 60с."""
+    """Возвращает ETH 1h%, BTC 1h%, ETH/BTC тренд. Кеш 5 мин."""
     global _eth_ctx_cache, _eth_ctx_ts
     now = time.time()
     if _eth_ctx_cache and (now - _eth_ctx_ts) < _ETH_CTX_TTL:

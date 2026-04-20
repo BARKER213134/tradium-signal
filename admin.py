@@ -1365,11 +1365,20 @@ async def api_paper_set_mode(payload: dict):
 
 @app.get("/api/paper/learnings")
 async def api_paper_learnings(limit: int = 100):
-    """Уроки AI из закрытых сделок + агрегированная память."""
+    """Уроки AI из закрытых сделок + агрегированная память.
+    Кеш 60с — вкладка «Авто-торговля» polling'ит этот endpoint, а тяжёлый
+    get_ai_memory/get_learnings читают Mongo каждый раз."""
     import paper_trader as pt
-    learnings = await asyncio.to_thread(pt.get_learnings, limit)
-    memory = await asyncio.to_thread(pt.get_ai_memory)
-    return {"ok": True, "count": len(learnings), "learnings": learnings, "memory": memory}
+    from cache_utils import paper_learnings_cache
+
+    async def _compute():
+        learnings = await asyncio.to_thread(pt.get_learnings, limit)
+        memory = await asyncio.to_thread(pt.get_ai_memory)
+        return {"learnings": learnings, "memory": memory}
+
+    data = await paper_learnings_cache.get_or_compute(f"limit_{limit}", _compute)
+    return {"ok": True, "count": len(data["learnings"]),
+            "learnings": data["learnings"], "memory": data["memory"]}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1609,9 +1618,15 @@ async def api_live_confirm(payload: dict):
 
 @app.get("/api/paper/rejections")
 async def api_paper_rejections(limit: int = 50):
-    """Последние отказы AI от сделок — для UI лога «почему не вошёл»."""
+    """Последние отказы AI от сделок — для UI лога «почему не вошёл».
+    Кеш 30с — аккордеон polling'ит этот endpoint."""
     import paper_trader as pt
-    items = await asyncio.to_thread(pt.get_rejections, limit)
+    from cache_utils import paper_rejections_cache
+
+    async def _compute():
+        return await asyncio.to_thread(pt.get_rejections, limit)
+
+    items = await paper_rejections_cache.get_or_compute(f"limit_{limit}", _compute)
     return {"ok": True, "count": len(items), "items": items}
 
 
@@ -2526,31 +2541,51 @@ async def _run_backfill_clusters(hours: int):
 @app.get("/api/fvg-signals")
 async def api_fvg_signals(status: str = "all", limit: int = 200, tf: str = ""):
     """Forex FVG сигналы (active + history).
-    tf — фильтр по таймфрейму (например '1H', '4H'). Пусто = все TF."""
-    from fvg_scanner import get_pending_fvgs, get_active_trades, get_journal, get_stats
-    waiting = await asyncio.to_thread(get_pending_fvgs, 300)
-    entered = await asyncio.to_thread(get_active_trades, 300)
-    stats = await asyncio.to_thread(get_stats)
+    tf — фильтр по таймфрейму (например '1H', '4H'). Пусто = все TF.
+    Кеш 30с — три коллекции читаются из Mongo + агрегирующий stats,
+    раньше тормозило на каждый запрос UI."""
+    from fvg_scanner import get_pending_fvgs, get_active_trades, get_stats
+    from cache_utils import fvg_signals_cache
+
+    async def _compute():
+        waiting = await asyncio.to_thread(get_pending_fvgs, 300)
+        entered = await asyncio.to_thread(get_active_trades, 300)
+        stats = await asyncio.to_thread(get_stats)
+        return {"waiting": waiting, "entered": entered, "stats": stats}
+
+    data = await fvg_signals_cache.get_or_compute("all", _compute)
+    waiting = data["waiting"]
+    entered = data["entered"]
     if tf:
         tf_up = tf.upper()
         waiting = [s for s in waiting if (s.get("timeframe") or "").upper() == tf_up]
         entered = [s for s in entered if (s.get("timeframe") or "").upper() == tf_up]
-    return {"waiting": waiting, "entered": entered, "stats": stats, "tf_filter": tf}
+    return {"waiting": waiting, "entered": entered, "stats": data["stats"], "tf_filter": tf}
 
 
 @app.get("/api/fvg-journal")
 async def api_fvg_journal(hours: int = 168, status: str = "", instrument: str = "",
                           direction: str = "", limit: int = 300, tf: str = ""):
     """Журнал Forex FVG с фильтрами.
-    tf — фильтр по таймфрейму (например '1H', '4H'). Пусто = все TF."""
+    tf — фильтр по таймфрейму. Пусто = все TF.
+    Кеш 30с по комбинации параметров — та же подборка читается часто (polling)."""
     from fvg_scanner import get_journal, get_stats
-    items = await asyncio.to_thread(get_journal, hours, status or None,
-                                    instrument or None, direction or None, limit)
+    from cache_utils import fvg_journal_cache
+
+    cache_key = f"{hours}|{status}|{instrument}|{direction}|{limit}"
+
+    async def _compute():
+        items = await asyncio.to_thread(get_journal, hours, status or None,
+                                        instrument or None, direction or None, limit)
+        stats = await asyncio.to_thread(get_stats)
+        return {"items": items, "stats": stats}
+
+    data = await fvg_journal_cache.get_or_compute(cache_key, _compute)
+    items = data["items"]
     if tf:
         tf_up = tf.upper()
         items = [i for i in items if (i.get("timeframe") or "").upper() == tf_up]
-    stats = await asyncio.to_thread(get_stats)
-    return {"items": items, "stats": stats, "total": len(items), "tf_filter": tf}
+    return {"items": items, "stats": data["stats"], "total": len(items), "tf_filter": tf}
 
 
 @app.get("/api/fvg-config")

@@ -79,3 +79,7 @@ pending_clusters_cache = AsyncTTLCache(ttl=90)  # /api/pending-clusters
 confluence_cache = AsyncTTLCache(ttl=30)    # /api/confluence
 anomalies_cache = AsyncTTLCache(ttl=30)     # /api/anomalies
 smart_levels_cache = AsyncTTLCache(ttl=120) # /api/smart-levels
+fvg_signals_cache = AsyncTTLCache(ttl=30)   # /api/fvg-signals
+fvg_journal_cache = AsyncTTLCache(ttl=30)   # /api/fvg-journal
+paper_learnings_cache = AsyncTTLCache(ttl=60)   # /api/paper/learnings
+paper_rejections_cache = AsyncTTLCache(ttl=30)  # /api/paper/rejections

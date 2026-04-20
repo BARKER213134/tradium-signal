@@ -107,6 +107,30 @@ async def _ai_memory_refresh_loop():
         await _asyncio.sleep(86400)
 
 
+async def _eth_kc_prewarm_loop():
+    """Фоновый прогрев Keltner ETH + ETH/BTC контекста.
+    Обе функции вызываются в каждом рендере /signals и при холодном кеше
+    блокировали первый запрос на ~20с (HTTP к Binance). Прогреваем каждые
+    4 мин (TTL кеша 5 мин, запас).
+    """
+    import asyncio as _asyncio
+    from exchange import get_keltner_eth, get_eth_market_context
+    # сразу на старте
+    try:
+        await _asyncio.to_thread(get_keltner_eth)
+        await _asyncio.to_thread(get_eth_market_context)
+        logger.info("[prewarm] ETH/KC warmed on start")
+    except Exception:
+        logger.exception("[prewarm] ETH/KC initial warm failed")
+    while True:
+        try:
+            await _asyncio.sleep(240)  # 4 мин
+            await _asyncio.to_thread(get_keltner_eth)
+            await _asyncio.to_thread(get_eth_market_context)
+        except Exception:
+            logger.exception("[prewarm] ETH/KC loop error")
+
+
 async def _candles_prewarm_loop():
     """Фоновый прогрев candles cache для ВСЕХ активных пар, чтобы первое
     открытие графика было мгновенным. Два уровня:
@@ -2892,6 +2916,13 @@ async def start_watcher():
         logger.info("[prewarm] candles loop started")
     except Exception:
         logger.exception("[prewarm] failed to start loop")
+    # ETH/KC prewarm — каждые 4 мин, чтобы рендер /signals не упирался
+    # в холодный HTTP к Binance (раньше 20+ сек на холодный старт страницы)
+    try:
+        asyncio.create_task(_eth_kc_prewarm_loop())
+        logger.info("[prewarm] ETH/KC loop started")
+    except Exception:
+        logger.exception("[prewarm] ETH/KC loop failed to start")
     # AI memory refresh — раз в сутки агрегация уроков Claude'ом
     try:
         asyncio.create_task(_ai_memory_refresh_loop())

@@ -324,6 +324,12 @@ def close_position(trade_id: int, exit_price: float, reason: str = "TP"):
     balance = get_balance()
     _update_balance(balance + pnl_usdt)
     logger.info(f"Paper CLOSE #{trade_id}: {pos['symbol']} {reason} PnL={pnl_pct:+.2f}% ${pnl_usdt:+.2f}")
+    # Инвалидируем кеш learnings чтобы закрытая сделка сразу появилась в UI
+    try:
+        from cache_utils import paper_learnings_cache
+        paper_learnings_cache.invalidate()
+    except Exception:
+        pass
     return {"trade_id": trade_id, "pnl_pct": pnl_pct, "pnl_usdt": pnl_usdt, "reason": reason}
 
 
