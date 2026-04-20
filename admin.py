@@ -2524,24 +2524,33 @@ async def _run_backfill_clusters(hours: int):
 
 
 @app.get("/api/fvg-signals")
-async def api_fvg_signals(status: str = "all", limit: int = 200):
-    """Forex FVG сигналы (active + history)."""
+async def api_fvg_signals(status: str = "all", limit: int = 200, tf: str = ""):
+    """Forex FVG сигналы (active + history).
+    tf — фильтр по таймфрейму (например '1H', '4H'). Пусто = все TF."""
     from fvg_scanner import get_pending_fvgs, get_active_trades, get_journal, get_stats
-    waiting = await asyncio.to_thread(get_pending_fvgs, 100)
-    entered = await asyncio.to_thread(get_active_trades, 100)
+    waiting = await asyncio.to_thread(get_pending_fvgs, 300)
+    entered = await asyncio.to_thread(get_active_trades, 300)
     stats = await asyncio.to_thread(get_stats)
-    return {"waiting": waiting, "entered": entered, "stats": stats}
+    if tf:
+        tf_up = tf.upper()
+        waiting = [s for s in waiting if (s.get("timeframe") or "").upper() == tf_up]
+        entered = [s for s in entered if (s.get("timeframe") or "").upper() == tf_up]
+    return {"waiting": waiting, "entered": entered, "stats": stats, "tf_filter": tf}
 
 
 @app.get("/api/fvg-journal")
 async def api_fvg_journal(hours: int = 168, status: str = "", instrument: str = "",
-                          direction: str = "", limit: int = 300):
-    """Журнал Forex FVG с фильтрами."""
+                          direction: str = "", limit: int = 300, tf: str = ""):
+    """Журнал Forex FVG с фильтрами.
+    tf — фильтр по таймфрейму (например '1H', '4H'). Пусто = все TF."""
     from fvg_scanner import get_journal, get_stats
     items = await asyncio.to_thread(get_journal, hours, status or None,
                                     instrument or None, direction or None, limit)
+    if tf:
+        tf_up = tf.upper()
+        items = [i for i in items if (i.get("timeframe") or "").upper() == tf_up]
     stats = await asyncio.to_thread(get_stats)
-    return {"items": items, "stats": stats, "total": len(items)}
+    return {"items": items, "stats": stats, "total": len(items), "tf_filter": tf}
 
 
 @app.get("/api/fvg-config")

@@ -4004,19 +4004,24 @@ safeInterval(() => {
 }, 20000);
 </script>
 
-{% elif bot == 'forex_fvg' %}
+{% elif bot in ['forex_fvg', 'forex_fvg_4h'] %}
+{% set fvg_tf = '4H' if bot == 'forex_fvg_4h' else '1H' %}
 <div class="strategy-box">
-  <div class="strat-icon">📈</div>
+  <div class="strat-icon">{{ '🏆' if bot == 'forex_fvg_4h' else '📈' }}</div>
   <div class="strat-body">
-    <div class="strat-title">Стратегия · Forex FVG (Fair Value Gap)</div>
-    Источник: <b>TradingView LuxAlgo FVG</b> webhook на 1H+4H для 32 инструментов
+    <div class="strat-title">
+      {% if bot == 'forex_fvg_4h' %}Стратегия · Forex FVG <b>4H</b> (Top Signals — редкие и сильные){% else %}Стратегия · Forex FVG <b>1H</b> (Fair Value Gap){% endif %}
+    </div>
+    Источник: <b>TradingView LuxAlgo FVG</b> webhook на {{ fvg_tf }} для 32 инструментов
     (forex, metals, indices, energy). Зона FVG эмулируется через <code>ATR × 0.5</code>.
     <b>Entry</b> — лимит на границе FVG при retest, <b>SL</b> — противоположная граница
     ±5% буфер. <b>Trailing stop</b> активируется после +1R, тянет SL на 1R сзади.
-    Expiry 30ч. Top Picks — Multi-TF (1H+4H) + Smart Level proximity
-    + Multi-Pair correlation = score ≥ 5.
+    {% if bot == 'forex_fvg_4h' %}<b>4H FVG встречаются в ~4× реже 1H</b>, но статистически
+    сильнее — работают на более значимых уровнях.{% else %}Top Picks — Multi-TF (1H+4H) + Smart Level proximity
+    + Multi-Pair correlation = score ≥ 5.{% endif %}
   </div>
 </div>
+<script>window._fvgTfFilter = '{{ fvg_tf }}';</script>
 <!-- ── Forex FVG (Active + Pending) ────────────────────────────────── -->
 <style>
 .fvg-hero { padding:16px 20px; margin-bottom:14px; background:linear-gradient(135deg,rgba(0,212,255,0.08),rgba(123,92,255,0.05)); border:1px solid rgba(0,212,255,0.25); border-radius:12px; }
@@ -4138,7 +4143,11 @@ function _fvgFilterTopPicks(items) {
 
 async function loadFvgSignals() {
   try {
-    const r = await fetch('/api/fvg-signals');
+    // window._fvgTfFilter устанавливается на каждой вкладке (1H или 4H).
+    // Если не задан — грузим все TF.
+    const tf = window._fvgTfFilter || '';
+    const qs = tf ? '?tf=' + encodeURIComponent(tf) : '';
+    const r = await fetch('/api/fvg-signals' + qs);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     const s = d.stats || {};

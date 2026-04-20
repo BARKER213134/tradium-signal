@@ -110,7 +110,8 @@ BOTS = [
     {"id": "coin_analysis", "label": "🧠 AI Анализ", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
-    {"id": "forex_fvg", "label": "Forex FVG", "category": "stocks"},
+    {"id": "forex_fvg", "label": "Forex FVG 1H", "category": "stocks"},
+    {"id": "forex_fvg_4h", "label": "🏆 Forex FVG 4H", "category": "stocks"},
     {"id": "forex_journal", "label": "Forex Журнал", "category": "stocks"},
 ]
 
