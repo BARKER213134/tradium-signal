@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 
 FAPI = "https://fapi.binance.com"
 
+# Persistent HTTP client с keep-alive — без этого каждый запрос делал
+# новый TLS-handshake (~200мс). Сканер гоняет ~500 пар × 5-8 типов проверок
+# каждые 5 минут — старый код тратил десятки секунд только на handshake'ах.
+_http_limits = httpx.Limits(max_connections=30, max_keepalive_connections=20,
+                            keepalive_expiry=30.0)
+_http_client = httpx.Client(timeout=10.0, limits=_http_limits,
+                            headers={"Accept-Encoding": "gzip"})
+
+
+def _http_get(url: str, **kw):
+    return _http_client.get(url, **kw)
+
 # Кеш списка пар
 _pairs_cache: list[str] = []
 _pairs_cache_ts: float = 0
@@ -42,7 +54,7 @@ def _refresh_batch_cache():
 
     # 1. premiumIndex — funding rate + mark price для всех пар (1 запрос)
     try:
-        r = httpx.get(f"{FAPI}/fapi/v1/premiumIndex", timeout=10)
+        r = _http_get(f"{FAPI}/fapi/v1/premiumIndex", timeout=10)
         if r.status_code == 200:
             for item in r.json():
                 s = item.get("symbol", "")
@@ -52,7 +64,7 @@ def _refresh_batch_cache():
 
     # 2. ticker/24hr — объём, цена для всех пар (1 запрос)
     try:
-        r = httpx.get(f"{FAPI}/fapi/v1/ticker/24hr", timeout=10)
+        r = _http_get(f"{FAPI}/fapi/v1/ticker/24hr", timeout=10)
         if r.status_code == 200:
             for item in r.json():
                 s = item.get("symbol", "")
@@ -65,7 +77,7 @@ def _refresh_batch_cache():
 
     # 3. openInterest для всех пар (1 запрос)
     try:
-        r = httpx.get(f"{FAPI}/fapi/v1/openInterest", timeout=10)
+        r = _http_get(f"{FAPI}/fapi/v1/openInterest", timeout=10)
         # Этот endpoint принимает только один символ, используем ticker вместо
     except Exception:
         pass
@@ -95,7 +107,7 @@ def get_all_futures_pairs() -> list[str]:
     if _pairs_cache and (now - _pairs_cache_ts) < _PAIRS_TTL:
         return _pairs_cache
     try:
-        r = httpx.get(f"{FAPI}/fapi/v1/exchangeInfo", timeout=15)
+        r = _http_get(f"{FAPI}/fapi/v1/exchangeInfo", timeout=15)
         if r.status_code != 200:
             return _pairs_cache
         import re
@@ -119,7 +131,7 @@ def get_all_futures_pairs() -> list[str]:
 def check_oi_spike(symbol: str, threshold: float = 5.0) -> Optional[dict]:
     """OI change за последний час. Returns None если нет аномалии."""
     try:
-        r = httpx.get(f"{FAPI}/futures/data/openInterestHist",
+        r = _http_get(f"{FAPI}/futures/data/openInterestHist",
                       params={"symbol": symbol, "period": "1h", "limit": 2}, timeout=5)
         if r.status_code != 200 or not r.json():
             return None
@@ -149,7 +161,7 @@ def check_funding(symbol: str, threshold: float = 0.05) -> Optional[dict]:
 def check_ls_ratio(symbol: str, high: float = 2.5, low: float = 0.5) -> Optional[dict]:
     """Top trader Long/Short ratio extreme."""
     try:
-        r = httpx.get(f"{FAPI}/futures/data/topLongShortPositionRatio",
+        r = _http_get(f"{FAPI}/futures/data/topLongShortPositionRatio",
                       params={"symbol": symbol, "period": "1h", "limit": 1}, timeout=5)
         if r.status_code != 200 or not r.json():
             return None
@@ -164,7 +176,7 @@ def check_ls_ratio(symbol: str, high: float = 2.5, low: float = 0.5) -> Optional
 def check_taker_ratio(symbol: str, high: float = 1.5, low: float = 0.5) -> Optional[dict]:
     """Taker buy/sell ratio extreme."""
     try:
-        r = httpx.get(f"{FAPI}/futures/data/takerlongshortRatio",
+        r = _http_get(f"{FAPI}/futures/data/takerlongshortRatio",
                       params={"symbol": symbol, "period": "1h", "limit": 1}, timeout=5)
         if r.status_code != 200 or not r.json():
             return None
@@ -183,7 +195,7 @@ def check_trade_speed(symbol: str, multiplier: float = 3.0) -> Optional[dict]:
         now_ms = int(time.time() * 1000)
         one_min = 60 * 1000
         # Последняя минута
-        r1 = httpx.get(f"{FAPI}/fapi/v1/aggTrades",
+        r1 = _http_get(f"{FAPI}/fapi/v1/aggTrades",
                        params={"symbol": symbol, "startTime": now_ms - one_min, "endTime": now_ms, "limit": 1000},
                        timeout=5)
         if r1.status_code != 200:
@@ -191,7 +203,7 @@ def check_trade_speed(symbol: str, multiplier: float = 3.0) -> Optional[dict]:
         recent_count = len(r1.json())
 
         # 10 минут назад (для среднего)
-        r2 = httpx.get(f"{FAPI}/fapi/v1/aggTrades",
+        r2 = _http_get(f"{FAPI}/fapi/v1/aggTrades",
                        params={"symbol": symbol, "startTime": now_ms - 10 * one_min, "endTime": now_ms - 9 * one_min, "limit": 1000},
                        timeout=5)
         if r2.status_code != 200:
@@ -215,7 +227,7 @@ def check_delta_clusters(symbol: str) -> Optional[dict]:
     Возвращает аномалию если на экстремуме сильный дисбаланс."""
     try:
         now_ms = int(time.time() * 1000)
-        r = httpx.get(f"{FAPI}/fapi/v1/aggTrades",
+        r = _http_get(f"{FAPI}/fapi/v1/aggTrades",
                       params={"symbol": symbol, "startTime": now_ms - 5 * 60 * 1000, "limit": 1000},
                       timeout=5)
         if r.status_code != 200:
@@ -276,7 +288,7 @@ def check_delta_clusters(symbol: str) -> Optional[dict]:
 def _check_ftt_tf(symbol: str, interval: str = "1h") -> Optional[dict]:
     """FTT на одном таймфрейме. Возвращает dict с ftt_score или None."""
     try:
-        r = httpx.get(f"{FAPI}/fapi/v1/klines",
+        r = _http_get(f"{FAPI}/fapi/v1/klines",
                       params={"symbol": symbol, "interval": interval, "limit": 5}, timeout=5)
         if r.status_code != 200:
             return None
@@ -355,7 +367,7 @@ def _check_ftt_tf(symbol: str, interval: str = "1h") -> Optional[dict]:
         # 5. aggTrades delta на экстремуме (кто торговал на тени)
         try:
             now_ms = int(time.time() * 1000)
-            tr = httpx.get(f"{FAPI}/fapi/v1/aggTrades",
+            tr = _http_get(f"{FAPI}/fapi/v1/aggTrades",
                            params={"symbol": symbol, "startTime": now_ms - 60 * 60 * 1000, "limit": 500},
                            timeout=5)
             if tr.status_code == 200:
@@ -427,7 +439,7 @@ def check_ftt(symbol: str) -> Optional[dict]:
 def check_orderbook_wall(symbol: str, multiplier: float = 10.0) -> Optional[dict]:
     """Ищет стены в order book (объём > multiplier × среднего)."""
     try:
-        r = httpx.get(f"{FAPI}/fapi/v1/depth",
+        r = _http_get(f"{FAPI}/fapi/v1/depth",
                       params={"symbol": symbol, "limit": 100}, timeout=5)
         if r.status_code != 200:
             return None

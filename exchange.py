@@ -8,6 +8,19 @@ logger = logging.getLogger(__name__)
 BINANCE_BASE = "https://data-api.binance.vision"
 BINANCE_FUTURES = "https://fapi.binance.com"
 
+# Persistent HTTP client с keep-alive — без этого каждый запрос делал новый
+# TLS-handshake (+200-500мс к каждому klines). pool_maxsize=20 хватает для
+# параллельных запросов графиков + фонового прогрева.
+_http_limits = httpx.Limits(max_connections=30, max_keepalive_connections=20,
+                            keepalive_expiry=30.0)
+_http_client = httpx.Client(timeout=8.0, limits=_http_limits,
+                            headers={"Accept-Encoding": "gzip"})
+
+
+def _http_get(url: str, **kw):
+    """Единая точка входа для sync HTTP — использует общий keep-alive клиент."""
+    return _http_client.get(url, **kw)
+
 # кэш
 _symbols_cache: set[str] = set()
 _symbols_cache_ts: float = 0
@@ -31,7 +44,7 @@ def get_all_usdt_symbols() -> set[str]:
     if _symbols_cache and (now - _symbols_cache_ts) < _SYMBOLS_TTL:
         return _symbols_cache
     try:
-        r = httpx.get(f"{BINANCE_BASE}/api/v3/exchangeInfo", timeout=10)
+        r = _http_get(f"{BINANCE_BASE}/api/v3/exchangeInfo", timeout=10)
         r.raise_for_status()
         data = r.json()
         symbols = {
@@ -58,7 +71,7 @@ def get_price(pair: str) -> float | None:
     if cached and (now - cached[1]) < _PRICE_TTL:
         return cached[0]
     try:
-        r = httpx.get(
+        r = _http_get(
             f"{BINANCE_BASE}/api/v3/ticker/price",
             params={"symbol": symbol},
             timeout=5,
@@ -88,10 +101,9 @@ def get_klines(pair: str, timeframe: str, limit: int = 50) -> list[dict]:
     if not symbol:
         return []
     try:
-        r = httpx.get(
+        r = _http_get(
             f"{BINANCE_BASE}/api/v3/klines",
             params={"symbol": symbol, "interval": interval, "limit": limit},
-            timeout=8,
         )
         if r.status_code != 200:
             return []
@@ -117,7 +129,7 @@ def _fetch_batch(symbols: list[str]) -> dict[str, float] | None:
         return {}
     try:
         import json as _json
-        r = httpx.get(
+        r = _http_get(
             f"{BINANCE_BASE}/api/v3/ticker/price",
             params={"symbols": _json.dumps(symbols, separators=(",", ":"))},
             timeout=8,
@@ -141,7 +153,7 @@ def _fetch_batch(symbols: list[str]) -> dict[str, float] | None:
 
 def _fetch_single(symbol: str) -> float | None:
     try:
-        r = httpx.get(
+        r = _http_get(
             f"{BINANCE_BASE}/api/v3/ticker/price",
             params={"symbol": symbol},
             timeout=5,
@@ -171,7 +183,7 @@ def get_futures_price(pair: str) -> float | None:
     if cached and (now - cached[1]) < _FUTURES_TTL:
         return cached[0]
     try:
-        r = httpx.get(
+        r = _http_get(
             f"{BINANCE_FUTURES}/fapi/v1/ticker/price",
             params={"symbol": symbol},
             timeout=5,
@@ -205,7 +217,7 @@ def get_futures_klines(pair: str, timeframe: str, limit: int = 50) -> list[dict]
     if not symbol:
         return []
     try:
-        r = httpx.get(
+        r = _http_get(
             f"{BINANCE_FUTURES}/fapi/v1/klines",
             params={"symbol": symbol, "interval": interval, "limit": limit},
             timeout=8,
@@ -340,7 +352,7 @@ def check_pump_potential(symbol: str) -> dict:
 
     try:
         # 1. Volume Spike — текущий vs средний за 5 свечей 1h
-        r = httpx.get(f"{FAPI}/fapi/v1/klines",
+        r = _http_get(f"{FAPI}/fapi/v1/klines",
                       params={"symbol": symbol, "interval": "1h", "limit": 6}, timeout=5)
         if r.status_code == 200:
             k = r.json()
@@ -355,7 +367,7 @@ def check_pump_potential(symbol: str) -> dict:
                         result["factors"].append(f"📊 Объём ×{ratio:.1f} от среднего")
 
         # 2. OI Change — за последний час
-        r = httpx.get(f"{FAPI}/futures/data/openInterestHist",
+        r = _http_get(f"{FAPI}/futures/data/openInterestHist",
                       params={"symbol": symbol, "period": "1h", "limit": 2}, timeout=5)
         if r.status_code == 200:
             data = r.json()
@@ -380,7 +392,7 @@ def check_pump_potential(symbol: str) -> dict:
                 result["factors"].append(f"💰 Funding {funding:.3f}% ({side})")
         else:
             # Fallback
-            r = httpx.get(f"{FAPI}/fapi/v1/premiumIndex",
+            r = _http_get(f"{FAPI}/fapi/v1/premiumIndex",
                           params={"symbol": symbol}, timeout=5)
             if r.status_code == 200:
                 d = r.json()
@@ -430,7 +442,7 @@ def get_eth_market_context() -> dict:
     ctx = {"eth_1h": 0, "btc_1h": 0, "eth_btc": "—", "eth_price": 0, "btc_price": 0}
     try:
         # ETH 1h
-        r = httpx.get(f"{BINANCE_FUTURES}/fapi/v1/klines",
+        r = _http_get(f"{BINANCE_FUTURES}/fapi/v1/klines",
                       params={"symbol": "ETHUSDT", "interval": "1h", "limit": 2}, timeout=5)
         if r.status_code == 200:
             k = r.json()
@@ -441,7 +453,7 @@ def get_eth_market_context() -> dict:
                 ctx["eth_price"] = curr_c
 
         # BTC 1h
-        r = httpx.get(f"{BINANCE_FUTURES}/fapi/v1/klines",
+        r = _http_get(f"{BINANCE_FUTURES}/fapi/v1/klines",
                       params={"symbol": "BTCUSDT", "interval": "1h", "limit": 2}, timeout=5)
         if r.status_code == 200:
             k = r.json()
@@ -452,7 +464,7 @@ def get_eth_market_context() -> dict:
                 ctx["btc_price"] = curr_c
 
         # ETH/BTC тренд (последние 4 свечи 1h)
-        r = httpx.get(f"{BINANCE_BASE}/api/v3/klines",
+        r = _http_get(f"{BINANCE_BASE}/api/v3/klines",
                       params={"symbol": "ETHBTC", "interval": "1h", "limit": 4}, timeout=5)
         if r.status_code == 200:
             k = r.json()

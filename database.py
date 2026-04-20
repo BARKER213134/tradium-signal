@@ -644,6 +644,8 @@ def init_db():
     pt = _get_db().paper_trades
     pt.create_index("opened_at")
     pt.create_index([("status", ASCENDING), ("opened_at", DESCENDING)])
+    # paper_trader делает find_one({"trade_id": N}) / update_one в hot-loop — без индекса это full scan
+    pt.create_index("trade_id", unique=True, sparse=True, name="trade_id_unique")
 
     tdq = _get_db().td_quota
     tdq.create_index("at")
@@ -681,6 +683,8 @@ def init_db():
         kl.create_index("detected_at", expireAfterSeconds=14*86400, name="ttl_14d")
         kl.create_index([("pair_norm", ASCENDING), ("detected_at", DESCENDING)])
         kl.create_index([("pair_norm", ASCENDING), ("event", ASCENDING), ("tf", ASCENDING), ("zone_low", ASCENDING)], unique=False)
+        # KL backfill делает find_one({"message_id": m.id}) в цикле — без индекса full scan на каждой итерации
+        kl.create_index("message_id", sparse=True, name="message_id_sparse")
 
         # Paper AI rejections — лог отказов от сделок (TTL 7 дней)
         try:

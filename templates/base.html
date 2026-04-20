@@ -869,6 +869,34 @@
       // все 6 мест вызова (base.html×2, signals.html×4) продолжали работать.
       window._addVolumeSeries = function(_chart, _candles, _tf) { return null; };
 
+      // ─── Chart lifecycle helpers ─────────────────────────────────
+      // КРИТИЧНО: Lightweight Charts НЕ освобождается сам — каждый
+      // createChart создаёт WebGL context + subscribeCrosshairMove handler.
+      // Если вызвать createChart второй раз в том же div без remove() —
+      // старый контекст остаётся в памяти. После 5-6 открытий графиков
+      // браузер начинает тормозить.
+      //
+      // Usage:
+      //   const chart = window._createChartSafe(div, opts);  // автоматом чистит старый
+      //   window._disposeChart(div);                         // при закрытии модалки/TF
+      window._disposeChart = function(container) {
+        try {
+          if (!container) return;
+          const old = container._lwcChart;
+          if (old && typeof old.remove === 'function') {
+            old.remove();
+          }
+          container._lwcChart = null;
+          container.dataset.loaded = '';
+        } catch (e) { /* ignore */ }
+      };
+      window._createChartSafe = function(container, opts) {
+        window._disposeChart(container);
+        const chart = LightweightCharts.createChart(container, opts);
+        container._lwcChart = chart;
+        return chart;
+      };
+
       // ─── SuperTrend (TradingView-совместимый) ────────────────────
       // Расчёт клиентский (~5мс на 200 свечах), две LineSeries (green+red),
       // whitespace на неактивных барах → "телепорт" на флипе как в TV.
@@ -1086,24 +1114,53 @@
       // ─── Фоновый prefetch соседних TF для мгновенного переключения ─────
       // Когда пользователь открыл график на TF X, мы тихо в фоне подтягиваем
       // свечи для других TF — смена TF будет мгновенной (cache hit).
+      // Очередь вместо массового fire-and-forget: при 5+ одновременно открытых
+      // графиках раньше это было 5×4=20 параллельных fetch, что забивало back-end
+      // очередь и тормозило открытие 6-го графика.
       window._prefetchedTF = window._prefetchedTF || new Set();
+      window._prefetchQueue = window._prefetchQueue || [];
+      window._prefetchActive = window._prefetchActive || 0;
+      window._prefetchMaxConc = 2;
+      // Единый таймер сброса Set'а (раньше ставился на каждый вызов → утечка).
+      if (!window._prefetchResetTimer) {
+        window._prefetchResetTimer = setInterval(() => {
+          window._prefetchedTF = new Set();
+        }, 5 * 60 * 1000);
+      }
+      function _prefetchDrain() {
+        while (window._prefetchActive < window._prefetchMaxConc && window._prefetchQueue.length) {
+          // Если пользователь ушёл со вкладки — не грузим до возвращения
+          if (window._pollingPaused) return;
+          const { symbol, tf, limit } = window._prefetchQueue.shift();
+          const key = `${symbol}|${tf}|${limit}`;
+          if (window._prefetchedTF.has(key)) continue;
+          window._prefetchedTF.add(key);
+          window._prefetchActive++;
+          fetch(`/api/journal-candles?symbol=${symbol}&tf=${tf}&limit=${limit}`, { cache: 'default' })
+            .catch(() => {})
+            .finally(() => {
+              window._prefetchActive--;
+              _prefetchDrain();
+            });
+        }
+      }
       window._prefetchOtherTFs = function(symbol, currentTf, limit) {
         if (!symbol) return;
         const allTFs = ['15m', '30m', '1h', '4h', '1d'];
         const others = allTFs.filter(t => t !== currentTf);
-        // fire-and-forget с задержкой чтобы не конкурировать с основным чартом
-        setTimeout(() => {
+        const lim = limit || 200;
+        // Идем через requestIdleCallback чтоб не конкурировать с rendering'ом графика
+        const schedule = window.requestIdleCallback || ((cb) => setTimeout(cb, 1500));
+        schedule(() => {
           for (const tf of others) {
-            const key = `${symbol}|${tf}|${limit || 200}`;
+            const key = `${symbol}|${tf}|${lim}`;
             if (window._prefetchedTF.has(key)) continue;
-            window._prefetchedTF.add(key);
-            fetch(`/api/journal-candles?symbol=${symbol}&tf=${tf}&limit=${limit || 200}`, {
-              cache: 'default',
-            }).catch(() => {});
+            // не дублируем в очереди
+            if (window._prefetchQueue.some(j => j.symbol === symbol && j.tf === tf && j.limit === lim)) continue;
+            window._prefetchQueue.push({ symbol, tf, limit: lim });
           }
-          // Сброс через 5 минут чтоб не повторять слишком часто
-          setTimeout(() => { window._prefetchedTF = new Set(); }, 5 * 60 * 1000);
-        }, 1500);
+          _prefetchDrain();
+        });
       };
 
       // ─── SuperTrend signals (VIP/MTF/Daily) — markers на графиках ─────
@@ -1999,7 +2056,8 @@ async function _renderLwcSignalChart(containerId, opts) {
     chartDiv.innerHTML = '<div style="padding:20px;color:var(--muted);text-align:center;">Нет данных для ' + sym + '</div>';
     return;
   }
-  const chart = LightweightCharts.createChart(chartDiv, {
+  // safe: удаляет старый chart (fix leak при повторном открытии signal-details modal)
+  const chart = window._createChartSafe(chartDiv, {
     layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
     grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
     crosshair: { mode: 0 },
@@ -2408,7 +2466,8 @@ async function _renderFvgChart(area, sig, tf) {
     chartDiv.innerHTML = `<div style="padding:20px;color:var(--muted);text-align:center;">Нет данных yfinance для ${sig.instrument} (${d.error||''})</div>`;
     return;
   }
-  const chart = LightweightCharts.createChart(chartDiv, {
+  // safe: удаляет старый chart (fix leak при повторном открытии FVG modal)
+  const chart = window._createChartSafe(chartDiv, {
     layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
     grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
     crosshair: { mode: 0 },

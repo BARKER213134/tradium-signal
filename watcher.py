@@ -1466,7 +1466,8 @@ async def _generate_ai_full_analysis(signal, current_price, s1, r1):
     )
 
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        from ai_client import get_ai_client
+        client = get_ai_client()
         message = await asyncio.to_thread(
             client.messages.create,
             model=ANTHROPIC_MODEL,
@@ -1502,7 +1503,8 @@ async def _generate_ai_tg_summary(signal, current_price, s1, r1):
     )
 
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        from ai_client import get_ai_client
+        client = get_ai_client()
         message = await asyncio.to_thread(
             client.messages.create,
             model=ANTHROPIC_MODEL,

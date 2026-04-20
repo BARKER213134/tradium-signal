@@ -649,9 +649,9 @@ function _updateTimer() {
   label.textContent = `Следующий скан ${m}:${String(s).padStart(2,'0')}`;
 }
 
-setInterval(_updateTimer, 1000);
+safeInterval(_updateTimer, 1000);
 pollScanStatus();
-setInterval(pollScanStatus, 5000);
+safeInterval(pollScanStatus, 5000);
 
 
 let _lastToggleAn = 0;
@@ -1058,7 +1058,7 @@ async function pollConfluenceStatus() {
   } catch {}
 }
 
-setInterval(() => {
+safeInterval(() => {
   if (!_cfScanning && _cfScanTarget > 0) {
     const left = Math.max(0, Math.round((_cfScanTarget - Date.now()) / 1000));
     const m = Math.floor(left / 60), s = left % 60;
@@ -1070,7 +1070,7 @@ setInterval(() => {
 loadConfluence();
 safeInterval(loadConfluence, 60000);
 pollConfluenceStatus();
-setInterval(pollConfluenceStatus, 5000);
+safeInterval(pollConfluenceStatus, 5000);
 </script>
 
 {% elif bot == 'clusters' %}
@@ -3167,7 +3167,8 @@ async function _drawPaperHistChart(idx) {
     const allSigs = sigR ? ((await sigR.json()).items || []) : [];
 
     chartDiv.innerHTML = '';
-    const chart = LightweightCharts.createChart(chartDiv, {
+    // safe: удаляет старый chart в этом div (fix chart-leak после 5+ открытий)
+    const chart = window._createChartSafe(chartDiv, {
       layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
       grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
       crosshair: { mode: 0 },
@@ -3419,7 +3420,8 @@ async function _renderPaperChart(idx, tf) {
 
     const area = document.getElementById('paperChartArea'+idx);
     area.innerHTML = '';
-    const chart = LightweightCharts.createChart(area, {
+    // safe: _createChartSafe удаляет старый chart в этом div (fix leak на переключении TF в paper)
+    const chart = window._createChartSafe(area, {
       layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
       grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
       rightPriceScale: { borderColor: '#1a1e2a' },
@@ -5120,7 +5122,8 @@ async function loadCoinChart(coin) {
     }
 
     chartDiv.innerHTML = '';
-    const chart = LightweightCharts.createChart(chartDiv, {
+    // safe: удаляет старый chart (fix leak при смене монеты/TF в поисковом графике)
+    const chart = window._createChartSafe(chartDiv, {
       layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
       grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
       crosshair: { mode: 0 },
@@ -5343,50 +5346,32 @@ async function loadJournal() {
     _journalPrevIds = new Set(items.map(_signalKey));
     _journalFirstLoad = false;
     _journalData = items;
-    filterJournal();
+    filterJournal();  // первая перерисовка (без badge)
 
-    // Key Levels enrich (batch) — подтягиваем эмоджи для каждой строки, потом перерисовываем
+    // Key Levels + SuperTrend enrich — идут ПАРАЛЛЕЛЬНО, перерисовка один раз после обоих.
+    // Раньше было 3 последовательных filterJournal() → 3× innerHTML tbody (до 3400 строк).
+    const batch = items.slice(0, 300).map((s, i) => ({
+      id: `j_${i}`, pair: s.pair || s.symbol, direction: s.direction, at: s.at,
+    }));
+    const payload = JSON.stringify({signals: batch});
+    const jopt = { method: 'POST', headers: {'Content-Type': 'application/json'}, body: payload };
     try {
-      const batch = items.slice(0, 300).map((s, i) => ({
-        id: `j_${i}`,
-        pair: s.pair || s.symbol,
-        direction: s.direction,
-        at: s.at,
-      }));
-      const er = await fetch('/api/key-levels/enrich', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({signals: batch}),
-      });
-      const ed = await er.json();
-      const enrich = ed.enrich || {};
-      items.forEach((s, i) => { s._kl = enrich[`j_${i}`] || null; });
-      filterJournal();  // перерисовать с KL badge
-    } catch (e) {
-      console.warn('[KL] journal enrich fail:', e);
-    }
-    // SuperTrend enrich (параллельно с KL — отдельный батч)
-    try {
-      const stBatch = items.slice(0, 300).map((s, i) => ({
-        id: `j_${i}`,
-        pair: s.pair || s.symbol,
-        direction: s.direction,
-        at: s.at,
-      }));
-      const sr = await fetch('/api/st-enrich', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({signals: stBatch}),
-      });
-      const sd = await sr.json();
+      const [er, sr] = await Promise.all([
+        fetch('/api/key-levels/enrich', jopt).catch(() => null),
+        fetch('/api/st-enrich', jopt).catch(() => null),
+      ]);
+      const ed = er ? await er.json().catch(() => ({})) : {};
+      const sd = sr ? await sr.json().catch(() => ({})) : {};
+      const klEnrich = ed.enrich || {};
       const stEnrich = sd.enrich || {};
       items.forEach((s, i) => {
+        s._kl = klEnrich[`j_${i}`] || null;
         const e = stEnrich[`j_${i}`];
         s._stFlags = (e && e.flags) ? e.flags : [];
       });
-      filterJournal();  // перерисовать с ST badge
+      filterJournal();  // ЕДИНАЯ перерисовка с badge'ами
     } catch (e) {
-      console.warn('[ST] journal enrich fail:', e);
+      console.warn('[journal] enrich fail:', e);
     }
   } catch {}
 }
@@ -5732,7 +5717,8 @@ async function openJournalChart(idx, forceTF) {
     }
 
     container.innerHTML = '';
-    const chart = LightweightCharts.createChart(container, {
+    // safe: освобождает предыдущий chart (fix leak при многократном открытии журнальной модалки)
+    const chart = window._createChartSafe(container, {
       layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
       grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
       crosshair: { mode: 0 },
@@ -5894,7 +5880,7 @@ document.getElementById('journalChartModal').onclick = function(e) {
 document.addEventListener('keydown', (e) => {
   const modal = document.getElementById('journalChartModal');
   if (!modal.classList.contains('open')) return;
-  if (e.key === 'Escape') { modal.classList.remove('open'); return; }
+  if (e.key === 'Escape') { if (typeof closeModal==='function') closeModal(); else modal.classList.remove('open'); return; }
   if (e.key === 'a' || e.key === 'A' || e.key === 'ф' || e.key === 'Ф') {
     e.preventDefault();
     if (_currentJournalIdx > 0) openJournalChart(_currentJournalIdx - 1);
@@ -5906,7 +5892,10 @@ document.addEventListener('keydown', (e) => {
 });
 
 loadJournal();
-safeInterval(loadJournal, 10000);  // 10с чтобы новые сигналы появлялись быстро
+// 30с вместо 10с: каждый poll делает 3 POST (journal+KL-enrich+ST-enrich)
+// и 3× innerHTML tbody из 3400 строк — при 5+ открытых графиках это убивает main thread.
+// WebSocket broadcast всё равно даёт мгновенный пуш при новых сигналах.
+safeInterval(loadJournal, 30000);
 </script>
 
 {% elif bot == 'cryptovizor' %}
@@ -6690,7 +6679,7 @@ async function loadAnalysis(idx, pair, direction, entry, pattern) {
 }
 
 updatePricesAndPnl();
-setInterval(updatePricesAndPnl, 10000);
+safeInterval(updatePricesAndPnl, 10000);
 
 // ── WebSocket для live-обновлений Cryptovizor ──
 (function connectCvWS() {
@@ -7479,8 +7468,9 @@ updateLive();
 })();
 
 // Fallback polling раз в минуту на случай пропущенных broadcasts
-setInterval(updateLive, 60000);
-setInterval(updatePrices, 10000);
+// safeInterval: в фоне (hidden tab) paused — снижает нагрузку пока юзер не смотрит.
+safeInterval(updateLive, 60000);
+safeInterval(updatePrices, 10000);
 
 async function openModal(id) {
   const modal = document.getElementById('modal');
@@ -7495,7 +7485,15 @@ async function openModal(id) {
     body.innerHTML = '<div style="padding:40px;text-align:center;" class="text-muted">Ошибка загрузки</div>';
   }
 }
-function closeModal() { document.getElementById('modal').classList.remove('open'); }
+function closeModal() {
+  // Освобождаем все chart instances внутри модалок перед закрытием (fix WebGL-leak)
+  try {
+    document.querySelectorAll('#modal [id^="modalChart"], #modal [id^="jModalChart"], #modal [id^="fvgModalChart"]').forEach(div => {
+      if (window._disposeChart) window._disposeChart(div);
+    });
+  } catch (e) { /* ignore */ }
+  document.getElementById('modal').classList.remove('open');
+}
 document.addEventListener('keydown', e => e.key === 'Escape' && closeModal());
 
 function renderSignal(s) {

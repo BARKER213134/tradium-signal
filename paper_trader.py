@@ -182,7 +182,8 @@ async def refresh_ai_memory() -> dict:
         f'{{"summary": "текст", "top_lessons": ["урок1", "урок2", ...]}}'
     )
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        from ai_client import get_ai_client
+        client = get_ai_client()
         msg = await asyncio.to_thread(
             client.messages.create, model=ANTHROPIC_MODEL, max_tokens=2000,
             messages=[{"role": "user", "content": prompt}],
@@ -548,7 +549,8 @@ async def ai_review_open_positions() -> list:
             f'{{"action": "HOLD"|"CLOSE"|"MOVE_SL", "new_sl": число_если_MOVE_SL, "reasoning": "одно предложение"}}'
         )
         try:
-            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            from ai_client import get_ai_client
+            client = get_ai_client()
             msg = await asyncio.to_thread(
                 client.messages.create, model=ANTHROPIC_MODEL, max_tokens=300,
                 messages=[{"role": "user", "content": prompt}],
@@ -881,7 +883,8 @@ async def ai_decide(signal_data: dict) -> dict:
     )
 
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        from ai_client import get_ai_client
+        client = get_ai_client()
         message = await asyncio.to_thread(
             client.messages.create,
             model=ANTHROPIC_MODEL,
@@ -989,7 +992,8 @@ async def ai_review_trade(trade: dict) -> str:
         f"Одно предложение: что можно улучшить? На русском."
     )
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        from ai_client import get_ai_client
+        client = get_ai_client()
         msg = await asyncio.to_thread(
             client.messages.create, model=ANTHROPIC_MODEL, max_tokens=100,
             messages=[{"role": "user", "content": prompt}],

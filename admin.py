@@ -1728,47 +1728,50 @@ async def api_paper_refresh_memory():
 @app.get("/api/paper/started")
 async def api_paper_started():
     """Когда запущена paper trading (autotrading) + базовая статистика.
-    Публичный endpoint для диагностики."""
+    Sync Mongo (3 операции) выносим в to_thread."""
     from database import _get_db, utcnow
     from datetime import datetime, timezone
-    db = _get_db()
-    state = db.paper_trades.find_one({"_id": "state"})
-    if not state:
-        return {"ok": False, "error": "paper trading not initialized"}
-    started = state.get("started_at")
-    now = utcnow()
-    # Normalize tz
-    if started and started.tzinfo is None:
-        started_naive = started
-    elif started:
-        started_naive = started.replace(tzinfo=None)
-    else:
-        started_naive = None
-    if not started_naive:
-        return {"ok": False, "error": "started_at missing"}
-    delta = now - started_naive
-    total_sec = int(delta.total_seconds())
-    days = total_sec // 86400
-    hours = (total_sec % 86400) // 3600
-    minutes = (total_sec % 3600) // 60
-    parts = []
-    if days:  parts.append(f"{days} д")
-    if hours: parts.append(f"{hours} ч")
-    parts.append(f"{minutes} мин")
-    total_trades = db.paper_trades.count_documents({"status": {"$in": ["TP", "SL", "MANUAL"]}})
-    open_count  = db.paper_trades.count_documents({"status": "OPEN"})
-    return {
-        "ok": True,
-        "started_at": started.isoformat() if hasattr(started, "isoformat") else str(started),
-        "now_utc": now.isoformat(),
-        "elapsed_seconds": total_sec,
-        "elapsed_human": " ".join(parts),
-        "balance": state.get("balance"),
-        "initial_balance": 1000.0,
-        "pnl_pct": round((state.get("balance", 1000) - 1000.0) / 1000.0 * 100, 2),
-        "total_trades": total_trades,
-        "open_positions": open_count,
-    }
+
+    def _sync():
+        db = _get_db()
+        state = db.paper_trades.find_one({"_id": "state"})
+        if not state:
+            return {"ok": False, "error": "paper trading not initialized"}
+        started = state.get("started_at")
+        now = utcnow()
+        if started and started.tzinfo is None:
+            started_naive = started
+        elif started:
+            started_naive = started.replace(tzinfo=None)
+        else:
+            started_naive = None
+        if not started_naive:
+            return {"ok": False, "error": "started_at missing"}
+        delta = now - started_naive
+        total_sec = int(delta.total_seconds())
+        days = total_sec // 86400
+        hours = (total_sec % 86400) // 3600
+        minutes = (total_sec % 3600) // 60
+        parts = []
+        if days:  parts.append(f"{days} д")
+        if hours: parts.append(f"{hours} ч")
+        parts.append(f"{minutes} мин")
+        total_trades = db.paper_trades.count_documents({"status": {"$in": ["TP", "SL", "MANUAL"]}})
+        open_count  = db.paper_trades.count_documents({"status": "OPEN"})
+        return {
+            "ok": True,
+            "started_at": started.isoformat() if hasattr(started, "isoformat") else str(started),
+            "now_utc": now.isoformat(),
+            "elapsed_seconds": total_sec,
+            "elapsed_human": " ".join(parts),
+            "balance": state.get("balance"),
+            "initial_balance": 1000.0,
+            "pnl_pct": round((state.get("balance", 1000) - 1000.0) / 1000.0 * 100, 2),
+            "total_trades": total_trades,
+            "open_positions": open_count,
+        }
+
+    return await asyncio.to_thread(_sync)
 
 
 @app.get("/api/bots-status")
@@ -1805,28 +1808,40 @@ async def api_bots_status():
         "BOT9_BOT_TOKEN":   bool(BOT9_BOT_TOKEN),
         "BOT10_BOT_TOKEN":  bool(BOT10_BOT_TOKEN),
     }
-    # Recent DB activity
-    conf_all = _confluence().count_documents({"detected_at": {"$gte": since_24h}})
-    conf_alertable_24h = _confluence().count_documents({
-        "detected_at": {"$gte": since_24h}, "score": {"$gte": 5}, "st_passed": True,
-    })
-    conf_alertable_6h = _confluence().count_documents({
-        "detected_at": {"$gte": since_6h}, "score": {"$gte": 5}, "st_passed": True,
-    })
-    anomaly_24h = _anomalies().count_documents({"detected_at": {"$gte": since_24h}})
-    tradium_24h = _signals().count_documents({
-        "source": "tradium", "received_at": {"$gte": since_24h},
-    })
-    cv_24h = _signals().count_documents({
-        "source": "cryptovizor", "pattern_triggered": True,
-        "pattern_triggered_at": {"$gte": since_24h},
-    })
-    cluster_24h = _clusters().count_documents({"trigger_at": {"$gte": since_24h}})
-    try:
-        from database import _supertrend_signals
-        st_24h = _supertrend_signals().count_documents({"flip_at": {"$gte": since_24h}})
-    except Exception:
-        st_24h = 0
+    # Recent DB activity — 8 count_documents параллельно через gather(to_thread) вместо последовательно
+    from database import _supertrend_signals as _sts
+
+    def _cnt_conf_all():
+        return _confluence().count_documents({"detected_at": {"$gte": since_24h}})
+    def _cnt_conf_alert_24h():
+        return _confluence().count_documents({"detected_at": {"$gte": since_24h}, "score": {"$gte": 5}, "st_passed": True})
+    def _cnt_conf_alert_6h():
+        return _confluence().count_documents({"detected_at": {"$gte": since_6h}, "score": {"$gte": 5}, "st_passed": True})
+    def _cnt_anom():
+        return _anomalies().count_documents({"detected_at": {"$gte": since_24h}})
+    def _cnt_trad():
+        return _signals().count_documents({"source": "tradium", "received_at": {"$gte": since_24h}})
+    def _cnt_cv():
+        return _signals().count_documents({"source": "cryptovizor", "pattern_triggered": True, "pattern_triggered_at": {"$gte": since_24h}})
+    def _cnt_cluster():
+        return _clusters().count_documents({"trigger_at": {"$gte": since_24h}})
+    def _cnt_st():
+        try:
+            return _sts().count_documents({"flip_at": {"$gte": since_24h}})
+        except Exception:
+            return 0
+
+    (conf_all, conf_alertable_24h, conf_alertable_6h, anomaly_24h,
+     tradium_24h, cv_24h, cluster_24h, st_24h) = await asyncio.gather(
+        asyncio.to_thread(_cnt_conf_all),
+        asyncio.to_thread(_cnt_conf_alert_24h),
+        asyncio.to_thread(_cnt_conf_alert_6h),
+        asyncio.to_thread(_cnt_anom),
+        asyncio.to_thread(_cnt_trad),
+        asyncio.to_thread(_cnt_cv),
+        asyncio.to_thread(_cnt_cluster),
+        asyncio.to_thread(_cnt_st),
+    )
     return {
         "bots_initialized": bots,
         "tokens_in_env": tokens,
@@ -2431,39 +2446,58 @@ async def _run_backfill_patterns(limit: int, status: str):
 
 @app.get("/api/clusters")
 async def api_clusters(status: str = "all", limit: int = 200):
-    """Список кластеров для UI вкладки "Кластеры"."""
+    """Список кластеров для UI вкладки "Кластеры".
+    Sync Mongo (2 .find() + full-scan) выносим в to_thread и считаем stats
+    одним aggregate pipeline вместо полного чтения коллекции."""
     from database import _clusters
     from pymongo import DESCENDING
-    q = {}
-    if status and status != "all":
-        q["status"] = status.upper()
-    docs = list(_clusters().find(q).sort("trigger_at", DESCENDING).limit(limit))
-    out = []
-    for d in docs:
-        d.pop("_id", None)
-        for k in ("trigger_at", "closed_at", "created_at"):
-            v = d.get(k)
-            if hasattr(v, "isoformat"): d[k] = v.isoformat()
-        for s in d.get("signals_in_cluster", []):
-            if hasattr(s.get("at"), "isoformat"):
-                s["at"] = s["at"].isoformat()
-        out.append(d)
-    all_docs = list(_clusters().find({}))
-    wins = sum(1 for x in all_docs if x.get("status") == "TP")
-    losses = sum(1 for x in all_docs if x.get("status") == "SL")
-    open_n = sum(1 for x in all_docs if x.get("status") == "OPEN")
-    mega = sum(1 for x in all_docs if x.get("strength") == "MEGA")
-    strong = sum(1 for x in all_docs if x.get("strength") == "STRONG")
-    total_pnl = sum((x.get("pnl_percent") or 0) for x in all_docs if x.get("status") in ("TP", "SL"))
-    return {
-        "items": out,
-        "stats": {
-            "total": len(all_docs), "wins": wins, "losses": losses, "open": open_n,
-            "mega": mega, "strong": strong,
-            "wr": round(wins / max(wins + losses, 1) * 100, 1),
-            "sum_pnl": round(total_pnl, 1),
-        },
-    }
+
+    def _sync():
+        q = {}
+        if status and status != "all":
+            q["status"] = status.upper()
+        docs = list(_clusters().find(q).sort("trigger_at", DESCENDING).limit(limit))
+        out = []
+        for d in docs:
+            d.pop("_id", None)
+            for k in ("trigger_at", "closed_at", "created_at"):
+                v = d.get(k)
+                if hasattr(v, "isoformat"): d[k] = v.isoformat()
+            for s in d.get("signals_in_cluster", []):
+                if hasattr(s.get("at"), "isoformat"):
+                    s["at"] = s["at"].isoformat()
+            out.append(d)
+        # Aggregate pipeline вместо list(find({})) — всё считается на сервере Mongo
+        pipe = [{"$group": {
+            "_id": None,
+            "total": {"$sum": 1},
+            "wins": {"$sum": {"$cond": [{"$eq": ["$status", "TP"]}, 1, 0]}},
+            "losses": {"$sum": {"$cond": [{"$eq": ["$status", "SL"]}, 1, 0]}},
+            "open": {"$sum": {"$cond": [{"$eq": ["$status", "OPEN"]}, 1, 0]}},
+            "mega": {"$sum": {"$cond": [{"$eq": ["$strength", "MEGA"]}, 1, 0]}},
+            "strong": {"$sum": {"$cond": [{"$eq": ["$strength", "STRONG"]}, 1, 0]}},
+            "sum_pnl": {"$sum": {"$cond": [
+                {"$in": ["$status", ["TP", "SL"]]},
+                {"$ifNull": ["$pnl_percent", 0]}, 0]}},
+        }}]
+        agg = list(_clusters().aggregate(pipe))
+        if agg:
+            a = agg[0]
+            stats = {
+                "total": a.get("total", 0),
+                "wins": a.get("wins", 0),
+                "losses": a.get("losses", 0),
+                "open": a.get("open", 0),
+                "mega": a.get("mega", 0),
+                "strong": a.get("strong", 0),
+                "wr": round(a.get("wins", 0) / max(a.get("wins", 0) + a.get("losses", 0), 1) * 100, 1),
+                "sum_pnl": round(a.get("sum_pnl", 0), 1),
+            }
+        else:
+            stats = {"total": 0, "wins": 0, "losses": 0, "open": 0, "mega": 0, "strong": 0, "wr": 0, "sum_pnl": 0}
+        return {"items": out, "stats": stats}
+
+    return await asyncio.to_thread(_sync)
 
 
 @app.get("/api/cluster-config")
@@ -3497,7 +3531,8 @@ async def api_analyze_coin(payload: dict):
     )
 
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        from ai_client import get_ai_client
+        client = get_ai_client()
         message = await asyncio.to_thread(
             client.messages.create,
             model=ANTHROPIC_MODEL,
@@ -3549,7 +3584,8 @@ async def api_analyze_result(payload: dict):
     )
 
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        from ai_client import get_ai_client
+        client = get_ai_client()
         message = await asyncio.to_thread(
             client.messages.create,
             model=ANTHROPIC_MODEL,
@@ -3563,13 +3599,19 @@ async def api_analyze_result(payload: dict):
 
 @app.get("/api/anomalies")
 async def api_anomalies():
+    """Sync Mongo + sync httpx (_sync_eth_ctx) — выносим в to_thread,
+    чтобы polling UI не блокировал event loop."""
     from database import _anomalies
-    docs = list(_anomalies().find().sort("detected_at", -1).limit(100))
-    for d in docs:
-        d["_id"] = str(d["_id"])
-        if d.get("detected_at"):
-            d["detected_at"] = d["detected_at"].isoformat() if hasattr(d["detected_at"], "isoformat") else str(d["detected_at"])
-    return {"items": docs, "eth_ctx": _sync_eth_ctx()}
+
+    def _sync():
+        docs = list(_anomalies().find().sort("detected_at", -1).limit(100))
+        for d in docs:
+            d["_id"] = str(d["_id"])
+            if d.get("detected_at"):
+                d["detected_at"] = d["detected_at"].isoformat() if hasattr(d["detected_at"], "isoformat") else str(d["detected_at"])
+        return {"items": docs, "eth_ctx": _sync_eth_ctx()}
+
+    return await asyncio.to_thread(_sync)
 
 
 @app.get("/api/anomalies/scan-status")
@@ -3709,7 +3751,8 @@ async def api_anomaly_analyze(payload: dict):
     )
 
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        from ai_client import get_ai_client
+        client = get_ai_client()
         message = await asyncio.to_thread(
             client.messages.create,
             model=ANTHROPIC_MODEL,
@@ -3910,13 +3953,18 @@ async def api_anomalies_backtest(st: int = 0):
 
 @app.get("/api/confluence")
 async def api_confluence():
+    """Sync Mongo + sync httpx (_sync_eth_ctx) — выносим в to_thread."""
     from database import _confluence
-    docs = list(_confluence().find().sort("detected_at", -1).limit(100))
-    for d in docs:
-        d["_id"] = str(d["_id"])
-        if d.get("detected_at"):
-            d["detected_at"] = d["detected_at"].isoformat() if hasattr(d["detected_at"], "isoformat") else str(d["detected_at"])
-    return {"items": docs, "eth_ctx": _sync_eth_ctx()}
+
+    def _sync():
+        docs = list(_confluence().find().sort("detected_at", -1).limit(100))
+        for d in docs:
+            d["_id"] = str(d["_id"])
+            if d.get("detected_at"):
+                d["detected_at"] = d["detected_at"].isoformat() if hasattr(d["detected_at"], "isoformat") else str(d["detected_at"])
+        return {"items": docs, "eth_ctx": _sync_eth_ctx()}
+
+    return await asyncio.to_thread(_sync)
 
 
 @app.get("/api/confluence/scan-status")
@@ -4327,31 +4375,36 @@ async def api_market_events(since_ts: int = 0, until_ts: int = 0, types: str = "
         return hit[1]
 
     type_list = [t.strip() for t in types.split(",") if t.strip()]
-    q = {}
-    if type_list:
-        q["type"] = {"$in": type_list}
-    if since_ts or until_ts:
-        dq = {}
-        if since_ts:
-            dq["$gte"] = _dt.fromtimestamp(since_ts, tz=_tz.utc).replace(tzinfo=None)
-        if until_ts:
-            dq["$lte"] = _dt.fromtimestamp(until_ts, tz=_tz.utc).replace(tzinfo=None)
-        q["at"] = dq
-    events = []
-    for e in _me().find(q).sort("at", 1).limit(500):
-        at = e.get("at")
-        if not at:
-            continue
-        events.append({
-            "at": at.isoformat() if hasattr(at, "isoformat") else str(at),
-            "at_ts": int(at.timestamp()) if hasattr(at, "timestamp") else 0,
-            "type": e.get("type"),
-            "from": e.get("from"),
-            "to": e.get("to"),
-            "score": e.get("score"),
-            "direction": e.get("direction"),
-        })
-    resp = {"events": events, "count": len(events)}
+
+    def _sync():
+        q = {}
+        if type_list:
+            q["type"] = {"$in": type_list}
+        if since_ts or until_ts:
+            dq = {}
+            if since_ts:
+                dq["$gte"] = _dt.fromtimestamp(since_ts, tz=_tz.utc).replace(tzinfo=None)
+            if until_ts:
+                dq["$lte"] = _dt.fromtimestamp(until_ts, tz=_tz.utc).replace(tzinfo=None)
+            q["at"] = dq
+        events = []
+        for e in _me().find(q).sort("at", 1).limit(500):
+            at = e.get("at")
+            if not at:
+                continue
+            events.append({
+                "at": at.isoformat() if hasattr(at, "isoformat") else str(at),
+                "at_ts": int(at.timestamp()) if hasattr(at, "timestamp") else 0,
+                "type": e.get("type"),
+                "from": e.get("from"),
+                "to": e.get("to"),
+                "score": e.get("score"),
+                "direction": e.get("direction"),
+            })
+        return {"events": events, "count": len(events)}
+
+    # sync Mongo cursor — выносим в thread, чтоб не блокировать event loop
+    resp = await asyncio.to_thread(_sync)
     _mkt_events_cache[key] = (now, resp)
     if len(_mkt_events_cache) > 100:
         for k in [k for k, v in _mkt_events_cache.items() if (now - v[0]) > _MKT_EVENTS_TTL * 2]:
