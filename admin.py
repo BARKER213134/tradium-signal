@@ -148,7 +148,8 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
-            "/api/supertrend/backfill", "/api/supertrend/backfill-status", "/api/bots-status", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+            "/api/supertrend/backfill", "/api/supertrend/backfill-status", "/api/bots-status",
+            "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1179,6 +1180,148 @@ async def api_supertrend_backfill(payload: dict | None = None):
 @app.get("/api/supertrend/backfill-status")
 async def api_supertrend_backfill_status():
     return _st_backfill_state
+
+
+_st_sigs_backtest_state: dict = {
+    "running": False, "started_at": None, "finished_at": None,
+    "progress": None, "result": None, "error": None,
+}
+
+
+async def _run_st_sigs_backtest(days: int, tier: str):
+    """Бектестит ST-сигналы из _supertrend_signals collection.
+    Для каждого сигнала симулирует сделку с помощью simulate_trade из
+    backtest_supertrend (entry на close флипа, trailing exit на
+    противофлипе, timeout 48h, SL = min(ST_value, 1.5 × ATR))."""
+    from datetime import datetime as _dt, timedelta as _td
+    from database import _supertrend_signals, utcnow
+    from backtest_supertrend import compute_st_series, simulate_trade, VariantStats
+    from exchange import get_klines_any
+
+    try:
+        since = utcnow() - _td(days=days)
+        q = {"flip_at": {"$gte": since}}
+        if tier:
+            q["tier"] = tier
+        sigs = list(_supertrend_signals().find(q, {
+            "pair_norm": 1, "pair": 1, "direction": 1, "tier": 1,
+            "entry_price": 1, "sl_price": 1, "flip_at": 1,
+        }))
+        total = len(sigs)
+        _st_sigs_backtest_state["progress"] = {"processed": 0, "total": total}
+
+        # Группируем по паре — для каждой пары один fetch свечей
+        by_pair: dict[str, list[dict]] = {}
+        for s in sigs:
+            by_pair.setdefault(s["pair_norm"], []).append(s)
+
+        stats: dict[str, VariantStats] = {
+            "vip":   VariantStats("vip"),
+            "mtf":   VariantStats("mtf"),
+            "daily": VariantStats("daily"),
+        }
+        stats_by_dir: dict[str, dict[str, VariantStats]] = {
+            "vip":   {"LONG": VariantStats("vip_LONG"),   "SHORT": VariantStats("vip_SHORT")},
+            "mtf":   {"LONG": VariantStats("mtf_LONG"),   "SHORT": VariantStats("mtf_SHORT")},
+            "daily": {"LONG": VariantStats("daily_LONG"), "SHORT": VariantStats("daily_SHORT")},
+        }
+
+        processed = 0
+        for pair_norm, pair_sigs in by_pair.items():
+            pair_slash = pair_norm[:-4] + "/USDT"
+            try:
+                candles = await asyncio.to_thread(get_klines_any, pair_slash, "1h", 400)
+            except Exception:
+                processed += len(pair_sigs)
+                _st_sigs_backtest_state["progress"] = {"processed": processed, "total": total}
+                continue
+            if not candles or len(candles) < 30:
+                processed += len(pair_sigs)
+                _st_sigs_backtest_state["progress"] = {"processed": processed, "total": total}
+                continue
+            st_series = compute_st_series(candles, period=10, mult=3.0)
+            if not st_series:
+                processed += len(pair_sigs)
+                _st_sigs_backtest_state["progress"] = {"processed": processed, "total": total}
+                continue
+
+            for s in pair_sigs:
+                processed += 1
+                flip_at = s.get("flip_at")
+                if not flip_at:
+                    continue
+                flip_ts_ms = int(flip_at.timestamp() * 1000)
+                # Ищем индекс entry-бара
+                idx = None
+                for i in range(len(st_series)):
+                    if st_series[i]["t"] >= flip_ts_ms:
+                        idx = i
+                        break
+                if idx is None or idx >= len(st_series) - 2:
+                    continue
+                direction = s.get("direction")
+                if direction not in ("LONG", "SHORT"):
+                    continue
+                trade = simulate_trade(st_series, idx, direction,
+                                        atr_mult_sl=1.5, max_hold_bars=48)
+                if trade is None:
+                    continue
+                trade.pair = pair_norm
+                tier_key = s.get("tier", "daily")
+                if tier_key in stats:
+                    stats[tier_key].trades.append(trade)
+                    if direction in stats_by_dir[tier_key]:
+                        stats_by_dir[tier_key][direction].trades.append(trade)
+
+            _st_sigs_backtest_state["progress"] = {"processed": processed, "total": total}
+
+        result = {
+            "days": days,
+            "tier_filter": tier or "all",
+            "total_signals": total,
+            "by_tier": {k: stats[k].summary() for k in ["vip", "mtf", "daily"]},
+            "by_tier_direction": {
+                k: {
+                    "LONG":  stats_by_dir[k]["LONG"].summary(),
+                    "SHORT": stats_by_dir[k]["SHORT"].summary(),
+                }
+                for k in ["vip", "mtf", "daily"]
+            },
+        }
+        _st_sigs_backtest_state["result"] = result
+    except Exception as e:
+        import traceback
+        _st_sigs_backtest_state["error"] = f"{e}\n{traceback.format_exc()[-800:]}"
+    finally:
+        _st_sigs_backtest_state["running"] = False
+        _st_sigs_backtest_state["finished_at"] = _dt.utcnow().isoformat()
+
+
+@app.post("/api/backtest-st-signals")
+async def api_backtest_st_signals(payload: dict | None = None):
+    """Бектест фактических ST-сигналов из БД по tier.
+    payload: {"days": 14, "tier": ""}  # tier пустой = все 3
+    """
+    from datetime import datetime as _dt
+    if _st_sigs_backtest_state.get("running"):
+        return {"ok": False, "error": "already running", "state": _st_sigs_backtest_state}
+    days = int((payload or {}).get("days", 14))
+    tier = (payload or {}).get("tier", "") or ""
+    _st_sigs_backtest_state.update({
+        "running": True,
+        "started_at": _dt.utcnow().isoformat(),
+        "finished_at": None,
+        "progress": {"processed": 0, "total": 0},
+        "result": None, "error": None,
+        "days": days, "tier": tier,
+    })
+    asyncio.create_task(_run_st_sigs_backtest(days, tier))
+    return {"ok": True, "started": True, "days": days, "tier": tier}
+
+
+@app.get("/api/backtest-st-signals/status")
+async def api_backtest_st_signals_status():
+    return _st_sigs_backtest_state
 
 
 @app.get("/api/bots-status")
