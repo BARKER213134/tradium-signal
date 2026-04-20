@@ -4320,7 +4320,9 @@ def warm_candles_cache(symbol: str, tf: str, limit: int = 200) -> bool:
 
 @app.get("/api/journal-candles")
 async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
-    """Свечи для Lightweight Charts. Сервер-кеш по TTL per TF."""
+    """Свечи для Lightweight Charts. Сервер-кеш по TTL per TF.
+    При cache-miss запускает background fetch остальных TF для той же пары,
+    чтоб последующее переключение TF было мгновенным."""
     from exchange import get_klines_any
     key = f"{symbol}|{tf}|{limit}"
     now = time.time()
@@ -4348,6 +4350,19 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
     if len(_candles_cache) > 500:
         for k in [k for k, v in _candles_cache.items() if (now - v[0]) > ttl * 2]:
             _candles_cache.pop(k, None)
+    # Background prefetch остальных TF — юзер вероятнее всего переключит
+    async def _bg_prefetch():
+        for other_tf in ["15m", "30m", "1h", "4h", "1d"]:
+            if other_tf == (tf or "").lower():
+                continue
+            try:
+                await asyncio.to_thread(warm_candles_cache, symbol, other_tf, limit)
+            except Exception:
+                pass
+    try:
+        asyncio.create_task(_bg_prefetch())
+    except Exception:
+        pass
     return {"ok": True, "candles": data}
 
 

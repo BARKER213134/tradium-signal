@@ -74,34 +74,49 @@ async def _st_tracker_loop():
 
 
 async def _candles_prewarm_loop():
-    """Фоновый прогрев candles cache для топ-активных пар, чтобы первое
-    открытие графика было мгновенным. Каждые 3 минуты идёт по топ-80 парам
-    и прогревает 4 ходовых TF (15m/1h/4h/1d). TTL кеша выставлены так что
-    50% времени кеш уже свеж и HTTP не идёт — реальные походы к Binance
-    только когда TTL истекает (раз в TF-specific интервал)."""
+    """Фоновый прогрев candles cache для ВСЕХ активных пар, чтобы первое
+    открытие графика было мгновенным. Два уровня:
+      — топ-50 (важные) прогреваются каждые 3 мин на 5 TF (15m/1h/4h/1d/30m)
+      — остальные (до 300) прогреваются каждые 10 мин на 3 TF (1h/4h/1d)
+    warm_candles_cache пропускает если >50% TTL осталось, так что реальные
+    HTTP запросы к Binance идут только когда надо.
+    """
     import asyncio as _asyncio
-    TFS = ["1h", "4h", "1d", "15m"]  # приоритет 1h > 4h > 1d > 15m
+    HOT_TFS = ["1h", "4h", "1d", "15m", "30m"]
+    COLD_TFS = ["1h", "4h", "1d"]
+    tick = 0
     while True:
         try:
             from supertrend_tracker import get_tracked_pairs
             from admin import warm_candles_cache
             pairs = await _asyncio.to_thread(get_tracked_pairs)
-            # Топ-80 — достаточно чтобы покрыть активный поток сигналов
-            top_pairs = pairs[:80] if len(pairs) > 80 else pairs
-            warmed = 0
-            for p in top_pairs:
-                for tf in TFS:
+            hot = pairs[:50]
+            cold = pairs[50:300] if len(pairs) > 50 else []
+            warmed_hot = 0
+            for p in hot:
+                for tf in HOT_TFS:
                     try:
                         if await _asyncio.to_thread(warm_candles_cache, p, tf, 200):
-                            warmed += 1
+                            warmed_hot += 1
                     except Exception:
                         pass
-                    # Мягкая пауза — не забиваем Binance rate limit
                     await _asyncio.sleep(0.03)
-            logger.info(f"[prewarm] cycle done: {warmed} cache entries refreshed across {len(top_pairs)} pairs")
+            # Cold пары — только раз в 3-й цикл (~10 мин)
+            warmed_cold = 0
+            if tick % 3 == 0:
+                for p in cold:
+                    for tf in COLD_TFS:
+                        try:
+                            if await _asyncio.to_thread(warm_candles_cache, p, tf, 200):
+                                warmed_cold += 1
+                        except Exception:
+                            pass
+                        await _asyncio.sleep(0.03)
+            tick += 1
+            logger.info(f"[prewarm] hot={warmed_hot} cold={warmed_cold} (hot {len(hot)} × {len(HOT_TFS)}TF + cold {len(cold)} × {len(COLD_TFS)}TF)")
         except Exception:
             logger.exception("[prewarm] loop crashed")
-        await _asyncio.sleep(180)  # каждые 3 мин
+        await _asyncio.sleep(180)
 
 
 def _resolve_chart(p: str) -> str | None:
