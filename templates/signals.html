@@ -2847,13 +2847,16 @@ safeInterval(loadConflicts, 30000);
       <div id="atPositions" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;min-height:100px;">
         <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет открытых позиций</div>
       </div>
-      <!-- 🧠 AI Learnings — сразу под открытыми позициями -->
+      <!-- 🧠 AI Learnings — зелёная агрегированная сводка + кнопка refresh -->
       <div style="margin-top:16px;">
-        <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">
-          🧠 AI Learnings <span style="color:var(--muted);font-size:9px;text-transform:none;letter-spacing:0;">— чему научился после сделок</span>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;">
+            🧠 AI Learnings <span style="color:var(--muted);font-size:9px;text-transform:none;letter-spacing:0;">— чему научился после сделок</span>
+          </div>
+          <button onclick="refreshAIMemory()" title="Пересобрать сводку через Claude (анализ последних 50 сделок)" style="background:transparent;color:var(--accent);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">🔄 Пересобрать</button>
         </div>
-        <div id="atLearnings" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;max-height:500px;overflow-y:auto;">
-          <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>
+        <div id="atMemory" style="background:linear-gradient(135deg,rgba(0,229,160,0.06),rgba(0,212,255,0.03));border:1px solid rgba(0,229,160,0.22);border-radius:10px;padding:14px 18px;font-size:12px;color:var(--text);min-height:80px;">
+          <div style="color:var(--muted);font-size:11px;">Загрузка…</div>
         </div>
       </div>
     </div>
@@ -3499,46 +3502,36 @@ async function refreshAIMemory() {
 }
 
 async function loadAILearnings() {
+  const memDiv = document.getElementById('atMemory');
+  if (!memDiv) return;
   try {
     const r = await fetch('/api/paper/learnings?limit=100');
     const d = await r.json();
-    const learnings = d.learnings || [];
-    // memory summary отключена по запросу пользователя — оставлены только
-    // индивидуальные обзоры после каждой сделки (agg continues on backend
-    // чтобы подаваться в ai_decide промпт)
+    const memory = d.memory || {};
+    const trades = d.count || 0;
 
-    // Individual learnings
-    const div = document.getElementById('atLearnings');
-    if (!div) return;
-    if (!learnings.length) {
-      div.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>';
-      return;
+    if (memory.summary) {
+      let lessonsHtml = '';
+      const top = memory.top_lessons || [];
+      if (top.length) {
+        lessonsHtml = '<div style="margin-top:10px;font-size:11px;">' +
+          top.map(l => `<div style="padding:4px 0;color:var(--text);line-height:1.4;"><span style="color:var(--accent);margin-right:6px;">▸</span>${l}</div>`).join('') +
+          '</div>';
+      }
+      const updated = memory.updated_at ? new Date(memory.updated_at).toLocaleString('ru-RU') : '—';
+      memDiv.innerHTML =
+        `<div style="font-size:13px;color:var(--text);font-weight:600;line-height:1.5;">${memory.summary || ''}</div>` +
+        lessonsHtml +
+        `<div style="margin-top:10px;color:var(--muted);font-size:10px;">на основе ${memory.based_on_trades || 0} сделок · обновлено: ${updated}</div>`;
+    } else {
+      memDiv.innerHTML =
+        `<div style="color:var(--muted);font-size:12px;line-height:1.5;">Ещё нет агрегированной памяти. ` +
+        `Всего закрытых сделок с обзором: <b style="color:var(--text)">${trades}</b>. ` +
+        `Агрегация автоматически раз в сутки или нажми <b style="color:var(--accent)">🔄 Пересобрать</b>.</div>`;
     }
-    div.innerHTML = learnings.map(l => {
-      const win = (l.pnl_usdt || 0) > 0;
-      const icon = win ? '✅' : (l.status === 'MANUAL' ? '✋' : '❌');
-      const pnlCls = win ? 'text-buy' : 'text-sell';
-      const pnlStr = (l.pnl_pct >= 0 ? '+' : '') + (l.pnl_pct || 0).toFixed(2) + '%';
-      const when = l.closed_at ? new Date(l.closed_at).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-      const pair = (l.symbol || '').replace('USDT', '');
-      const src = l.source ? `<span style="color:var(--muted);font-size:10px;">src=${l.source}</span>` : '';
-      const review = l.review || '(нет обзора)';
-      return `<div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
-          <span>${icon}</span>
-          <span class="mono fw-700">${pair}</span>
-          <span class="mono text-muted">${l.direction}</span>
-          <span class="mono">×${l.leverage||1}</span>
-          <span class="mono">size ${l.size_pct||'?'}%</span>
-          <span class="mono ${pnlCls} fw-700">${pnlStr}</span>
-          ${src}
-          <span class="mono text-muted" style="margin-left:auto;font-size:10px;">${when}</span>
-        </div>
-        <div style="color:var(--text);padding-left:26px;font-size:11px;font-style:italic;">${review}</div>
-      </div>`;
-    }).join('');
   } catch (e) {
     console.warn('[ai-learnings]', e);
+    memDiv.innerHTML = `<div style="color:var(--sell);font-size:12px;">Ошибка загрузки: ${e.message}</div>`;
   }
 }
 
