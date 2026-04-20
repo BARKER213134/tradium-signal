@@ -4457,6 +4457,8 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   </select>
   <button id="jStrongOnlyBtn" onclick="_toggleStrongOnly()" title="Только STRONG: Confluence≥5, Anomaly≥70, CV с паттерном" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">⭐ Strong · OFF</button>
   <button id="jTopPickBtn" onclick="_toggleTopPicks()" title="Только Top Picks — сигналы подтверждённые STRONG Confluence" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">👑 Top · OFF</button>
+  <button id="jStVipBtn" onclick="_toggleStTier('vip')" title="Только 🏆 VIP SuperTrend: ST flip + сигнал другого бота ±2ч (WR 60%, PF 3.6)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;">🏆 VIP · OFF</button>
+  <button id="jStMtfBtn" onclick="_toggleStTier('mtf')" title="Только 🔱 Triple MTF: ST 1h flip + 4h + 1d aligned (EV +0.68R, PF 2.15)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;">🔱 MTF · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
 </div>
 
@@ -4983,6 +4985,11 @@ function filterJournal() {
       }
     }
     if (window._journalTopPickOnly && !s.is_top_pick) return false;
+    // ST tier фильтр: если выбран, оставляем только supertrend с нужным tier
+    if (window._journalStTier) {
+      if (s.source !== 'supertrend') return false;
+      if (s.st_tier !== window._journalStTier) return false;
+    }
     return true;
   });
   // Apply current sort
@@ -5053,6 +5060,43 @@ function _toggleTopPicks() {
       btn.textContent = '👑 Top · OFF';
     }
   }
+  const scrollY = window.scrollY;
+  filterJournal();
+  requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
+}
+
+function _toggleStTier(tier) {
+  // Тумблер по одному тиру за раз — если включили один, выключаем другой
+  const current = window._journalStTier || null;
+  window._journalStTier = (current === tier) ? null : tier;
+
+  const cfg = {
+    vip: { btnId: 'jStVipBtn', on: '🏆 VIP · ON', off: '🏆 VIP · OFF',
+            bg: 'linear-gradient(135deg, rgba(255,215,0,0.22), rgba(255,180,0,0.08))',
+            border: 'rgba(255,215,0,0.65)', color: '#ffd700' },
+    mtf: { btnId: 'jStMtfBtn', on: '🔱 MTF · ON', off: '🔱 MTF · OFF',
+            bg: 'linear-gradient(135deg, rgba(0,229,160,0.22), rgba(0,200,140,0.08))',
+            border: 'rgba(0,229,160,0.6)', color: '#00e5a0' },
+  };
+
+  // Сбрасываем оба в off, потом активный включаем
+  for (const t of ['vip', 'mtf']) {
+    const c = cfg[t];
+    const btn = document.getElementById(c.btnId);
+    if (!btn) continue;
+    if (window._journalStTier === t) {
+      btn.style.background = c.bg;
+      btn.style.borderColor = c.border;
+      btn.style.color = c.color;
+      btn.textContent = c.on;
+    } else {
+      btn.style.background = 'none';
+      btn.style.borderColor = 'var(--border)';
+      btn.style.color = 'var(--muted)';
+      btn.textContent = c.off;
+    }
+  }
+
   const scrollY = window.scrollY;
   filterJournal();
   requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
