@@ -157,7 +157,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
             "/api/live/positions", "/api/live/history", "/api/live/close",
-            "/api/live/confirm", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+            "/api/live/confirm", "/api/fvg-monitor-debug", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1375,6 +1375,34 @@ async def api_paper_learnings(limit: int = 100):
 # ═══════════════════════════════════════════════════════════
 # LIVE TRADING API (Binance Futures через ccxt)
 # ═══════════════════════════════════════════════════════════
+
+@app.post("/api/fvg-monitor-debug")
+async def api_fvg_monitor_debug():
+    """Диагностика: вручную вызывает monitor_signals и возвращает детальный
+    trace + все exceptions. Без глотания ошибок как в _check_forex_fvg_monitor."""
+    import traceback as _tb
+    try:
+        from fvg_scanner import monitor_signals
+        events = await asyncio.to_thread(monitor_signals)
+        summary = {k: len(v) for k, v in events.items()}
+        # Пример первых entered/closed для проверки
+        samples = {}
+        for k in ("entered", "closed_tp", "closed_sl", "expired"):
+            sample = events.get(k, [])[:3]
+            samples[k] = [
+                {"instrument": s.get("instrument"), "direction": s.get("direction"),
+                 "entry_price": s.get("entry_price"), "entered_price": s.get("entered_price"),
+                 "exit_price": s.get("exit_price"), "outcome_R": s.get("outcome_R")}
+                for s in sample
+            ]
+        return {"ok": True, "summary": summary, "samples": samples}
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "traceback": _tb.format_exc()[-1500:],
+        }
+
 
 @app.get("/api/live/status")
 async def api_live_status():
