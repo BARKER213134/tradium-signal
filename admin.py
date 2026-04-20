@@ -149,7 +149,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
             "/api/supertrend/backfill", "/api/supertrend/backfill-status", "/api/bots-status",
-            "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+            "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1322,6 +1322,52 @@ async def api_backtest_st_signals(payload: dict | None = None):
 @app.get("/api/backtest-st-signals/status")
 async def api_backtest_st_signals_status():
     return _st_sigs_backtest_state
+
+
+@app.get("/api/paper/started")
+async def api_paper_started():
+    """Когда запущена paper trading (autotrading) + базовая статистика.
+    Публичный endpoint для диагностики."""
+    from database import _get_db, utcnow
+    from datetime import datetime, timezone
+    db = _get_db()
+    state = db.paper_trades.find_one({"_id": "state"})
+    if not state:
+        return {"ok": False, "error": "paper trading not initialized"}
+    started = state.get("started_at")
+    now = utcnow()
+    # Normalize tz
+    if started and started.tzinfo is None:
+        started_naive = started
+    elif started:
+        started_naive = started.replace(tzinfo=None)
+    else:
+        started_naive = None
+    if not started_naive:
+        return {"ok": False, "error": "started_at missing"}
+    delta = now - started_naive
+    total_sec = int(delta.total_seconds())
+    days = total_sec // 86400
+    hours = (total_sec % 86400) // 3600
+    minutes = (total_sec % 3600) // 60
+    parts = []
+    if days:  parts.append(f"{days} д")
+    if hours: parts.append(f"{hours} ч")
+    parts.append(f"{minutes} мин")
+    total_trades = db.paper_trades.count_documents({"status": {"$in": ["TP", "SL", "MANUAL"]}})
+    open_count  = db.paper_trades.count_documents({"status": "OPEN"})
+    return {
+        "ok": True,
+        "started_at": started.isoformat() if hasattr(started, "isoformat") else str(started),
+        "now_utc": now.isoformat(),
+        "elapsed_seconds": total_sec,
+        "elapsed_human": " ".join(parts),
+        "balance": state.get("balance"),
+        "initial_balance": 1000.0,
+        "pnl_pct": round((state.get("balance", 1000) - 1000.0) / 1000.0 * 100, 2),
+        "total_trades": total_trades,
+        "open_positions": open_count,
+    }
 
 
 @app.get("/api/bots-status")
