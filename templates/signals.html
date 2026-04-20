@@ -4072,20 +4072,8 @@ safeInterval(() => {
   <span id="fvgMsg" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
 </div>
 
-<h3 style="font-family:var(--font-mono);font-size:12px;color:var(--buy);margin:16px 18px 8px;letter-spacing:0.1em;">🎯 ENTERED (открытые сделки)</h3>
-<div class="table-wrap">
-  <table>
-    <thead>
-      <tr>
-        <th>Entered</th><th>Инстр</th><th>TF</th><th>Напр</th>
-        <th>Entry</th><th>SL</th><th>Peak R</th><th>Trail</th><th>Status</th>
-      </tr>
-    </thead>
-    <tbody id="fvgEnteredBody">
-      <tr><td colspan="9" style="text-align:center;padding:30px;" class="text-muted">Нет открытых сделок</td></tr>
-    </tbody>
-  </table>
-</div>
+<!-- 🎯 ENTERED таблица убрана — открытые сделки теперь только во вкладке
+     📓 Forex Журнал. Во вкладке Forex FVG остаются только WAITING сигналы. -->
 
 <h3 style="font-family:var(--font-mono);font-size:12px;color:#ffd23e;margin:20px 18px 8px;letter-spacing:0.1em;">⏳ WAITING RETEST (ожидают входа)</h3>
 <div class="table-wrap">
@@ -4197,6 +4185,7 @@ async function fvgRescoreAll() {
 
 function renderEntered(items) {
   const tb = document.getElementById('fvgEnteredBody');
+  if (!tb) return;  // таблица ENTERED убрана из UI — открытые в forex_journal
   if (!items.length) { tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;" class="text-muted">Нет открытых сделок</td></tr>'; return; }
   tb.innerHTML = items.map((s, i) => {
     const dir = s.direction === 'bullish' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
