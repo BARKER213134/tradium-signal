@@ -2872,6 +2872,17 @@ safeInterval(loadConflicts, 30000);
           </div>
           <div id="atPromptBody" style="display:none;max-height:800px;overflow-y:auto;background:var(--dark-2);"></div>
         </div>
+
+        <!-- 🛑 Лог отказов AI — почему не вошёл в сделку -->
+        <div style="margin-top:10px;border:1px solid rgba(255,77,109,0.25);border-radius:10px;overflow:hidden;">
+          <div id="atRejHeader" onclick="toggleRejections()" style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;background:rgba(255,77,109,0.04);user-select:none;">
+            <span id="atRejArrow" style="transition:transform 0.2s;display:inline-block;font-size:10px;">▶</span>
+            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:600;">🛑 Отказы AI</span>
+            <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);">— почему не вошёл в сделку</span>
+            <span id="atRejMeta" style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
+          </div>
+          <div id="atRejBody" style="display:none;max-height:500px;overflow-y:auto;background:var(--dark-2);"></div>
+        </div>
       </div>
     </div>
     <div>
@@ -3680,16 +3691,80 @@ async function loadAIPrompt() {
   }
 }
 
+// 🛑 Отказы AI — гармошка (почему не вошёл в сделку)
+async function toggleRejections() {
+  const body = document.getElementById('atRejBody');
+  const arr  = document.getElementById('atRejArrow');
+  if (!body) return;
+  const opened = body.style.display === 'block';
+  if (opened) {
+    body.style.display = 'none';
+    if (arr) arr.style.transform = 'rotate(0deg)';
+    return;
+  }
+  body.style.display = 'block';
+  if (arr) arr.style.transform = 'rotate(90deg)';
+  await loadRejections();
+}
+
+async function loadRejections() {
+  const body = document.getElementById('atRejBody');
+  const meta = document.getElementById('atRejMeta');
+  if (!body) return;
+  try {
+    const r = await fetch('/api/paper/rejections?limit=50');
+    const d = await r.json();
+    if (!d.ok) { body.innerHTML = `<div style="padding:20px;color:var(--sell);">Ошибка: ${d.error || '?'}</div>`; return; }
+    const items = d.items || [];
+    if (meta) meta.textContent = `${items.length} отказов`;
+    if (!items.length) {
+      body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:11px;">AI пока не отказывал (либо только что задеплоили — лог накопится)</div>';
+      return;
+    }
+    // Компактный вид: пара · direction · источник · score · краткая причина
+    const srcEmoji = {
+      tradium:'📡', cryptovizor:'🚀', anomaly:'⚠', confluence:'🎯',
+      cluster:'💠', paper:'🤖', supertrend:'🌀', ai_signal:'🧠',
+    };
+    body.innerHTML = items.map(it => {
+      const when = it.at ? new Date(it.at).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '';
+      const pair = (it.symbol || '').replace('USDT','');
+      const dirC = it.direction === 'LONG' ? '#00e5a0' : '#ff4d6d';
+      const se = srcEmoji[it.source] || '•';
+      const tp = it.is_top_pick ? '👑' : '';
+      const score = it.score != null ? `· ${it.score}` : '';
+      const reason = (it.reasoning || '').replace(/</g,'&lt;');
+      return `<div style="padding:9px 14px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:11px;">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px;">
+          <span class="mono text-muted" style="font-size:10px;">${when}</span>
+          <span class="mono fw-700" style="min-width:60px;">${pair}</span>
+          <span class="mono fw-700" style="color:${dirC};">${it.direction || ''}</span>
+          <span>${se} ${it.source || ''}</span>
+          <span class="mono text-muted" style="font-size:10px;">${score} ${tp}</span>
+        </div>
+        <div style="color:var(--text);padding-left:2px;font-size:11px;line-height:1.4;">${reason}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = `<div style="padding:20px;color:var(--sell);">Ошибка сети: ${e.message}</div>`;
+  }
+}
+
 loadPaperMode();
 loadPaperStatus();
 loadAILearnings();
 safeInterval(loadPaperStatus, 15000);
 safeInterval(loadAILearnings, 30000);
-// Если гармошка открыта — обновляем промт раз в минуту
+// Если гармошка промта открыта — обновляем раз в минуту
 safeInterval(() => {
   const body = document.getElementById('atPromptBody');
   if (body && body.style.display === 'block') loadAIPrompt();
 }, 60000);
+// Если гармошка отказов открыта — обновляем раз в 20 сек
+safeInterval(() => {
+  const body = document.getElementById('atRejBody');
+  if (body && body.style.display === 'block') loadRejections();
+}, 20000);
 </script>
 
 {% elif bot == 'forex_fvg' %}

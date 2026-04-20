@@ -332,24 +332,53 @@ def _format_alert_html(sig: dict) -> str:
 
 
 async def _alert_signal(sig: dict) -> None:
-    """Отправка в BOT10. Daily tier в алерты НЕ шлётся (только эмоджи на
-    графике) — user request. Daily сигналы всё равно сохраняются в БД
-    для маркеров но не спамят Telegram."""
-    if sig.get("tier") == "daily":
-        return  # Daily — только эмоджи на графиках
+    """1) Telegram BOT10 (только VIP и MTF — Daily по запросу пользователя
+       не отправляется в бот, остаётся только эмоджи на графиках).
+    2) Paper trader: ВСЕ tier'ы (vip/mtf/daily) передаются для AI-решения
+       о входе. ST был добавлен позже основной интеграции — раньше его
+       сигналы обходили paper, теперь исправлено."""
+    tier = sig.get("tier", "daily")
+
+    # === 1. Telegram (кроме daily) ===
+    if tier != "daily":
+        try:
+            from watcher import _bot10, _admin_chat_id
+            if _bot10 and _admin_chat_id:
+                text = _format_alert_html(sig)
+                try:
+                    await _bot10.send_message(_admin_chat_id, text, parse_mode="HTML")
+                except Exception as e:
+                    logger.warning(f"[st-tracker] BOT10 send fail: {e}")
+        except Exception:
+            logger.debug("[st-tracker] watcher module not ready for BOT10")
+
+    # === 2. Paper trader — AI решает входить или нет ===
+    # Передаём все 3 tier'а. VIP и MTF имеют хорошую edge по бектесту,
+    # Daily — слабее но тоже попадёт в ai_decide чтобы AI сам решил.
     try:
-        from watcher import _bot10, _admin_chat_id
-    except Exception:
-        logger.warning("[st-tracker] watcher module not ready, skip alert")
-        return
-    if not _bot10 or not _admin_chat_id:
-        logger.debug("[st-tracker] BOT10 not configured, skip alert")
-        return
-    text = _format_alert_html(sig)
-    try:
-        await _bot10.send_message(_admin_chat_id, text, parse_mode="HTML")
+        from watcher import _paper_on_signal
+        pair = sig.get("pair") or ""
+        symbol = sig.get("pair_norm") or pair.replace("/", "").upper()
+        # tier → score mapping (чтобы AI видел силу)
+        tier_score = {"vip": 9, "mtf": 7, "daily": 5}.get(tier, 5)
+        # Флаг is_top_pick для VIP — AI применит boost
+        await _paper_on_signal({
+            "symbol": symbol,
+            "pair": pair,
+            "direction": sig.get("direction"),
+            "entry": sig.get("entry_price"),
+            "tp1": None,                       # trailing via ST — AI сам поставит
+            "sl": sig.get("sl_price"),
+            "source": "supertrend",
+            "score": tier_score,
+            "pattern": f"ST {tier.upper()}",
+            "st_tier": tier,
+            "is_top_pick": tier == "vip",
+            "aligned_bots": sig.get("aligned_bots", []),
+            "aligned_tfs": sig.get("aligned_tfs", []),
+        })
     except Exception as e:
-        logger.warning(f"[st-tracker] BOT10 send fail: {e}")
+        logger.debug(f"[st-tracker] paper route fail: {e}")
 
 
 async def _process_pair(pair_norm: str, alert_enabled: bool = True) -> int:

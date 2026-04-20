@@ -659,6 +659,15 @@ def init_db():
         kl.create_index([("pair_norm", ASCENDING), ("detected_at", DESCENDING)])
         kl.create_index([("pair_norm", ASCENDING), ("event", ASCENDING), ("tf", ASCENDING), ("zone_low", ASCENDING)], unique=False)
 
+        # Paper AI rejections — лог отказов от сделок (TTL 7 дней)
+        try:
+            rej = _get_db().paper_rejections
+            rej.create_index("at", expireAfterSeconds=7*86400, name="ttl_7d")
+            rej.create_index([("at", DESCENDING)])
+            rej.create_index([("symbol", ASCENDING), ("at", DESCENDING)])
+        except Exception:
+            pass
+
         # SuperTrend signals
         sts = _supertrend_signals()
         sts.create_index("created_at", expireAfterSeconds=30*86400, name="ttl_30d")

@@ -96,6 +96,29 @@ def get_stats() -> dict:
     }
 
 
+def get_rejections(limit: int = 50) -> list:
+    """Последние N отказов AI от сделок (enter=false) — для UI-лога."""
+    from database import _get_db
+    db = _get_db()
+    out = []
+    try:
+        for r in db.paper_rejections.find({}).sort("at", -1).limit(limit):
+            at = r.get("at")
+            out.append({
+                "symbol": r.get("symbol"),
+                "direction": r.get("direction"),
+                "source": r.get("source"),
+                "score": r.get("score"),
+                "pattern": r.get("pattern"),
+                "is_top_pick": r.get("is_top_pick"),
+                "reasoning": r.get("reasoning", ""),
+                "at": at.isoformat() if hasattr(at, "isoformat") else str(at or ""),
+            })
+    except Exception as e:
+        logger.debug(f"get_rejections fail: {e}")
+    return out
+
+
 def get_learnings(limit: int = 100) -> list:
     """Последние ai_review уроки из закрытых сделок."""
     trades, _ = _get_collections()
@@ -682,6 +705,25 @@ async def ai_decide(signal_data: dict) -> dict:
                 # совсем никак — отказ с объяснением
                 raise je
         logger.info(f"Paper AI: {signal_data.get('symbol','')} → enter={result.get('enter')} reason={str(result.get('reasoning',''))[:60]}")
+        # Записываем отказы в БД для UI-лога rejections
+        if result.get("enter") is False:
+            try:
+                from database import _get_db
+                db = _get_db()
+                db.paper_rejections.insert_one({
+                    "symbol": signal_data.get("symbol", ""),
+                    "pair": signal_data.get("pair", ""),
+                    "direction": signal_data.get("direction", ""),
+                    "source": signal_data.get("source", ""),
+                    "score": signal_data.get("score"),
+                    "pattern": signal_data.get("pattern", ""),
+                    "is_top_pick": bool(signal_data.get("is_top_pick")),
+                    "is_cluster": bool(signal_data.get("is_cluster")),
+                    "reasoning": str(result.get("reasoning", ""))[:800],
+                    "at": _utcnow(),
+                })
+            except Exception as _e:
+                logger.debug(f"rejection log fail: {_e}")
         return result
     except Exception as e:
         logger.error(f"Paper AI error: {e}")
