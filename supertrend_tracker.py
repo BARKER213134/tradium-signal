@@ -247,6 +247,12 @@ async def _save_signal(pair_norm: str, flip_bar: dict, tier: str, extras: dict,
 
     try:
         _supertrend_signals().insert_one(doc)
+        # Инвалидация journal cache чтоб новый ST-сигнал сразу появился в UI
+        try:
+            from cache_utils import journal_cache
+            journal_cache.invalidate("journal_all")
+        except Exception:
+            pass
         return doc
     except Exception as e:
         # DuplicateKeyError (этот флип уже был записан) — тихо пропускаем

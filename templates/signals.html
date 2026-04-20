@@ -5450,7 +5450,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 loadJournal();
-safeInterval(loadJournal, 30000);
+safeInterval(loadJournal, 10000);  // 10с чтобы новые сигналы появлялись быстро
 </script>
 
 {% elif bot == 'cryptovizor' %}
