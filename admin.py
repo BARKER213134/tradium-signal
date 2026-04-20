@@ -157,7 +157,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
             "/api/live/positions", "/api/live/history", "/api/live/close",
-            "/api/live/confirm", "/api/fvg-monitor-debug", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+            "/api/live/confirm", "/api/fvg-monitor-debug", "/api/fvg-entry-alert-test", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1375,6 +1375,35 @@ async def api_paper_learnings(limit: int = 100):
 # ═══════════════════════════════════════════════════════════
 # LIVE TRADING API (Binance Futures через ccxt)
 # ═══════════════════════════════════════════════════════════
+
+@app.post("/api/fvg-entry-alert-test")
+async def api_fvg_entry_alert_test():
+    """Диагностика: шлёт entry alert на первом ENTERED сигнале.
+    Если BOT8 работает для FORMED, должен работать для ENTRY тоже."""
+    import traceback as _tb
+    try:
+        from database import _get_db
+        db = _get_db()
+        sig = db.fvg_signals.find_one({"status": "ENTERED"}, sort=[("entered_at", -1)])
+        if not sig:
+            return {"ok": False, "error": "no ENTERED signal found"}
+        sig["_id"] = str(sig.get("_id", ""))
+        from watcher import _send_fvg_entry_alert, _bot8, _admin_chat_id
+        state_before = {
+            "bot8_initialized": bool(_bot8),
+            "admin_chat_id": _admin_chat_id,
+        }
+        await _send_fvg_entry_alert(sig)
+        from watcher import _bot8 as _bot8_after
+        state_after = {"bot8_initialized_after": bool(_bot8_after)}
+        return {"ok": True, "sig": {
+            "instrument": sig.get("instrument"),
+            "direction": sig.get("direction"),
+            "entered_at": str(sig.get("entered_at")),
+        }, **state_before, **state_after}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "traceback": _tb.format_exc()[-1500:]}
+
 
 @app.post("/api/fvg-monitor-debug")
 async def api_fvg_monitor_debug():
