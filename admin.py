@@ -151,7 +151,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/supertrend/backfill", "/api/supertrend/backfill-status", "/api/bots-status",
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
-            "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+            "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1364,6 +1364,53 @@ async def api_paper_learnings(limit: int = 100):
     learnings = await asyncio.to_thread(pt.get_learnings, limit)
     memory = await asyncio.to_thread(pt.get_ai_memory)
     return {"ok": True, "count": len(learnings), "learnings": learnings, "memory": memory}
+
+
+@app.post("/api/paper/ai-test")
+async def api_paper_ai_test(payload: dict | None = None):
+    """Симулирует ai_decide() на синтетическом или переданном сигнале —
+    для диагностики почему AI отказывается открывать сделки.
+
+    payload (optional): {"symbol":"BTCUSDT","direction":"LONG","entry":65000,"source":"supertrend","score":5}
+    Если пусто — берёт последний CV сигнал из БД.
+    """
+    import paper_trader as pt
+    from database import _signals, utcnow
+    from datetime import timedelta
+    sig = payload or {}
+    if not sig.get("symbol"):
+        # Берём последний CV с pattern
+        doc = _signals().find_one(
+            {"source": "cryptovizor", "pattern_triggered": True},
+            sort=[("pattern_triggered_at", -1)],
+        )
+        if not doc:
+            return {"ok": False, "error": "no signal to test with"}
+        sig = {
+            "symbol": (doc.get("pair") or "").replace("/", "").upper(),
+            "pair": doc.get("pair"),
+            "direction": doc.get("direction"),
+            "entry": doc.get("pattern_price") or doc.get("entry"),
+            "source": "cryptovizor",
+            "score": doc.get("ai_score"),
+            "pattern": doc.get("pattern_name"),
+            "is_top_pick": bool(doc.get("is_top_pick")),
+        }
+    try:
+        decision = await pt.ai_decide(sig)
+        # Плюс состояние
+        return {
+            "ok": True,
+            "input": sig,
+            "decision": decision,
+            "mode": pt.get_mode(),
+            "open_positions": len(pt.get_open_positions()),
+            "max_positions": pt.MAX_POSITIONS,
+            "balance": pt.get_balance(),
+        }
+    except Exception as e:
+        import traceback
+        return {"ok": False, "error": f"{e}", "traceback": traceback.format_exc()[-800:]}
 
 
 @app.get("/api/paper/ai-prompt")
