@@ -4478,16 +4478,12 @@ safeInterval(loadFvgSignals, 30000);
 </style>
 
 <div class="fj-toolbar">
-  <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Статус</span>
-  <select id="fjStatus" onchange="loadForexJournal()" class="fj-select">
-    <option value="">Все</option>
-    <option value="WAITING_RETEST">⏳ Waiting</option>
-    <option value="ENTERED">🎯 Entered</option>
-    <option value="TP">✅ TP</option>
-    <option value="SL">❌ SL</option>
-    <option value="EXPIRED">⏱ Expired</option>
-  </select>
-  <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-left:6px;">Напр</span>
+  <!-- Journal показывает ТОЛЬКО открытые (ENTERED) позиции.
+       TP/SL/EXPIRED не нужны — по запросу пользователя.
+       WAITING сигналы смотри во вкладке 🧭 Forex FVG. -->
+  <input type="hidden" id="fjStatus" value="ENTERED">
+  <span style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">🎯 ENTERED (открытые)</span>
+  <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-left:14px;">Напр</span>
   <select id="fjDir" onchange="loadForexJournal()" class="fj-select">
     <option value="">Все</option>
     <option value="bullish">🟢 Bullish</option>
@@ -4537,20 +4533,21 @@ safeInterval(loadFvgSignals, 30000);
   <table>
     <thead>
       <tr>
-        <th class="sortable" onclick="fjSort('formed_at')" id="fjSort_formed_at">Время ▼</th>
+        <!-- Показываем только ENTERED позиции — status и outcome_R убраны как
+             бесполезные (все ENTERED, R=null до закрытия). -->
+        <th class="sortable" onclick="fjSort('entered_at')" id="fjSort_entered_at">Entered ▼</th>
         <th class="sortable" onclick="fjSort('instrument')" id="fjSort_instrument">Инстр</th>
         <th class="sortable" onclick="fjSort('asset_class')" id="fjSort_asset_class">Класс</th>
         <th class="sortable" onclick="fjSort('timeframe')" id="fjSort_timeframe">TF</th>
         <th class="sortable" onclick="fjSort('direction')" id="fjSort_direction">Напр</th>
         <th>Zone</th>
         <th class="sortable" onclick="fjSort('entry_price')" id="fjSort_entry_price">Entry</th>
-        <th class="sortable" onclick="fjSort('status')" id="fjSort_status">Статус</th>
-        <th class="sortable" onclick="fjSort('outcome_R')" id="fjSort_outcome_R">R</th>
+        <th>SL</th>
         <th class="sortable" onclick="fjSort('peak_R')" id="fjSort_peak_R">Peak R</th>
       </tr>
     </thead>
     <tbody id="fjBody">
-      <tr><td colspan="10" style="text-align:center;padding:60px;color:var(--muted);">
+      <tr><td colspan="9" style="text-align:center;padding:60px;color:var(--muted);">
         <div style="font-size:36px;margin-bottom:8px;opacity:0.5;">⏳</div>
         <div style="font-family:var(--font-mono);">Загрузка…</div>
       </td></tr>
@@ -4705,47 +4702,37 @@ function _playBeep() {
 function renderJournalRows(items) {
   const tb = document.getElementById('fjBody');
   if (!items.length) {
-    tb.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:60px;">
+    tb.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:60px;">
       <div style="font-size:44px;margin-bottom:10px;">📭</div>
-      <div style="font-family:var(--font-mono);font-size:13px;color:var(--text);font-weight:700;margin-bottom:4px;">Нет сигналов</div>
-      <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);">Попробуй расширить окно времени или сменить фильтры</div>
+      <div style="font-family:var(--font-mono);font-size:13px;color:var(--text);font-weight:700;margin-bottom:4px;">Нет открытых сигналов</div>
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);">Все текущие ENTERED позиции появятся здесь · ждущие сигналы → вкладка 🧭 Forex FVG</div>
     </td></tr>`;
     return;
   }
-  const stMap = {
-    WAITING_RETEST:['⏳ WAIT', 'fj-st-waiting', 'fj-row-waiting'],
-    ENTERED:       ['🎯 OPEN', 'fj-st-entered', 'fj-row-entered'],
-    TP:            ['✅ TP',   'fj-st-tp',      'fj-row-tp'],
-    SL:            ['❌ SL',   'fj-st-sl',      'fj-row-sl'],
-    EXPIRED:       ['⏱ EXP',  'fj-st-expired', 'fj-row-expired'],
-    TIMEOUT:       ['⏱ TO',   'fj-st-expired', 'fj-row-expired'],
-  };
   tb.innerHTML = items.map((s) => {
     const origIdx = _fjData.indexOf(s);
     const isL = s.direction === 'bullish';
     const dirHtml = isL
       ? `<span class="fj-dir-long">🟢 LONG</span>`
       : `<span class="fj-dir-short">🔴 SHORT</span>`;
-    const t = s.formed_at ? new Date(s.formed_at).toLocaleString('ru', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
-    const st = stMap[s.status] || [s.status, 'fj-st-expired', ''];
-    const R = s.outcome_R;
-    const rStr = R != null ? ((R>=0?'+':'') + R.toFixed(2) + 'R') : '—';
-    const rColor = R != null ? (R > 0 ? 'var(--buy)' : 'var(--sell)') : 'var(--muted)';
+    // Показываем entered_at (когда вошли в позицию), fallback на formed_at
+    const tSrc = s.entered_at || s.formed_at;
+    const t = tSrc ? new Date(tSrc).toLocaleString('ru', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
     const peak = (s.peak_R || 0).toFixed(2);
+    const peakColor = (s.peak_R || 0) > 0 ? 'var(--buy)' : 'var(--muted)';
     const tpBadge = (typeof _fvgTopPickBadge === 'function') ? _fvgTopPickBadge(s) : '';
     const srcBadge = (typeof _fvgSourceBadge === 'function') ? _fvgSourceBadge(s) : '';
     const rowExtra = s.is_top_pick ? ' fvg-row-toppick' : '';
-    return `<tr class="${st[2]}${rowExtra}" style="cursor:pointer;" onclick="openFjChart(${origIdx})">
+    return `<tr class="fj-row-entered${rowExtra}" style="cursor:pointer;" onclick="openFjChart(${origIdx})">
       <td class="mono" style="font-size:11px;color:var(--muted);white-space:nowrap;">${t}</td>
       <td class="mono" style="font-weight:800;color:var(--cyan);font-size:13px;">${s.instrument}${tpBadge}${srcBadge}</td>
       <td class="mono" style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:0.05em;">${s.asset_class}</td>
       <td class="mono" style="color:var(--muted);font-size:11px;">${s.timeframe}</td>
       <td>${dirHtml}</td>
       <td class="mono" style="font-size:10px;color:var(--muted);">${s.fvg_bottom} → ${s.fvg_top}</td>
-      <td class="mono" style="font-weight:700;">${s.entry_price}</td>
-      <td><span class="fj-st ${st[1]}">${st[0]}</span></td>
-      <td class="mono" style="color:${rColor};font-weight:700;">${rStr}</td>
-      <td class="mono" style="color:var(--muted);">+${peak}R</td>
+      <td class="mono" style="font-weight:700;">${s.entered_price || s.entry_price}</td>
+      <td class="mono" style="color:var(--sell);font-size:11px;">${s.sl_price}</td>
+      <td class="mono" style="color:${peakColor};font-weight:700;">+${peak}R</td>
     </tr>`;
   }).join('');
 }
