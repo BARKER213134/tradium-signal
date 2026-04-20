@@ -295,6 +295,149 @@ def check_positions(prices: dict):
     return closed
 
 
+def get_prompt_preview() -> dict:
+    """Возвращает текущий AI-промт разбитый на секции — для UI-гармошки.
+    Промт динамический: чем больше закрытых сделок → тем больше уроков в
+    блоке 'Память', тем умнее решения AI.
+
+    Возвращает dict:
+      {
+        sections: [{title, body, type: static|dynamic}, ...],
+        full_text: str,   # полный собранный промт
+        memory: {summary, lessons, based_on_trades, updated_at},
+        mode: {name, size, lev},
+        balance: float,
+      }
+    """
+    from exchange import get_keltner_eth, get_eth_market_context
+    balance = get_balance()
+    open_pos = get_open_positions()
+    stats = get_stats()
+    mode = get_mode()
+    memory = get_ai_memory()
+    try:
+        kc = get_keltner_eth()
+        eth = get_eth_market_context()
+    except Exception:
+        kc, eth = {}, {}
+
+    # ── Секция 1: Роль + текущее состояние (dynamic — зависит от режима/баланса) ──
+    section_role = (
+        f"Ты — AI трейдер на Paper Trading. Твоя задача — максимизировать прибыль.\n"
+        f"Режим: <b>{mode['name'].upper()}</b> (size {mode['size_min']}-{mode['size_max']}%, "
+        f"lev {mode['lev_min']}-{mode['lev_max']}×)\n"
+        f"\n"
+        f"ДЕПОЗИТ: ${balance:.2f}\n"
+        f"ОТКРЫТО: {len(open_pos)}/{MAX_POSITIONS}\n"
+    )
+
+    # ── Секция 2: Статистика (dynamic) ──
+    section_stats = (
+        f"СТАТИСТИКА ({stats['total']} сделок):\n"
+        f"  Win Rate: {stats['win_rate']}% | "
+        f"PnL: ${stats['total_pnl']:+.2f} | "
+        f"Avg: ${stats['avg_pnl']:+.2f}\n"
+    )
+
+    # ── Секция 3: Память (dynamic, зависит от накопленных уроков) ──
+    memory_text = ""
+    if memory.get("summary"):
+        memory_text = f"🧠 ТВОЯ ПАМЯТЬ (из {memory.get('based_on_trades',0)} сделок):\n"
+        memory_text += f"  {memory.get('summary','')}\n"
+        lessons = memory.get("top_lessons", [])
+        if lessons:
+            memory_text += "\n  Главные уроки:\n"
+            for l in lessons[:5]:
+                memory_text += f"    • {l}\n"
+    else:
+        memory_text = (
+            "🧠 ТВОЯ ПАМЯТЬ: пока пуста.\n"
+            "  (Накапливается когда Claude агрегирует closed trades — раз в сутки\n"
+            "   или по кнопке 'Пересобрать сводку'. Нужно минимум 1 закрытая сделка.)"
+        )
+
+    # ── Секция 4: Знания о платформе (static — инварианты) ──
+    section_knowledge = (
+        "ЗНАНИЯ О ПЛАТФОРМЕ:\n"
+        "  Источники сигналов:\n"
+        "    📡 tradium     — DCA4 pattern_triggered\n"
+        "    🚀 cryptovizor — pattern на 1h\n"
+        "    ⚠️ anomaly     — многофакторная аномалия (score/15)\n"
+        "    🎯 confluence  — 4-6 факторов совпали (STRONG=5+ 🔥=6)\n"
+        "    💠 cluster     — 2+ источника ±8ч (NORMAL/STRONG/MEGA)\n"
+        "    👑 top_pick    — double-confirm (73% WR)\n"
+        "    🌀 supertrend  — VIP / MTF / Daily\n"
+        "\n  SuperTrend бектест (2382 сделки, 14д):\n"
+        "    🏆 VIP SHORT: WR 58.8%, PF 2.95 — бери уверенно\n"
+        "    🔱 MTF LONG:  avg R +0.91, PF 2.55 — лучший long\n"
+        "    🧭 Daily LONG: WR 33.4% — средний\n"
+        "    ⚠️ Daily SHORT: EV -0.30R — ИЗБЕГАЙ\n"
+        "    ⚠️ MTF SHORT:  EV -0.12R — осторожно\n"
+        "\n  Key Levels флаги в сигнале:\n"
+        "    🌀🌀🌀 + 🔥 = ST aligned 3 TF + fresh flip → сильно\n"
+        "    🏆 = VIP совпадение ±2ч → максимум\n"
+        "    TP⚠️ = TP за R уровнем → риск\n"
+        "    SL✅ = SL под S уровнем → защищён\n"
+    )
+
+    # ── Секция 5: Правила входа (static) ──
+    section_rules = (
+        f"ПРАВИЛА:\n"
+        f"  - Макс {MAX_POSITIONS} позиций одновременно\n"
+        f"  - Размер: {mode['size_min']}-{mode['size_max']}% от депозита\n"
+        f"  - Плечо: {mode['lev_min']}-{mode['lev_max']}×\n"
+        f"  - Cluster MEGA/STRONG → увеличенный size (+{mode['cluster_size_bonus']}%)\n"
+        f"  - Top Pick → +{mode['top_pick_size_bonus']}% size, +30% lev\n"
+        f"  - Не входи против Keltner когда он подтверждён\n"
+        f"  - Daily SHORT / MTF SHORT — скип или мало (отрицат. EV)\n"
+        f"  - VIP SHORT / MTF LONG — уверенно (лучшие в бектесте)\n"
+        f"  - ПРИМЕНЯЙ уроки из своей памяти\n"
+    )
+
+    # ── Секция 6: Рынок (dynamic) ──
+    section_market = (
+        f"РЫНОК:\n"
+        f"  Keltner ETH: {kc.get('direction','?')} "
+        f"({'подтверждён' if kc.get('confirmed') else 'neutral'})\n"
+        f"  ETH 1h: {eth.get('eth_1h',0):+.2f}% | "
+        f"BTC 1h: {eth.get('btc_1h',0):+.2f}%\n"
+    )
+
+    # ── Формат ответа AI (static) ──
+    section_format = (
+        'Ответь ТОЛЬКО JSON без markdown:\n'
+        f'{{"enter": true/false, "leverage": {mode["lev_min"]}-{mode["lev_max"]}, '
+        f'"size_pct": {mode["size_min"]}-{mode["size_max"]}, '
+        '"tp1": цена, "sl": цена, "reasoning": "почему"}}'
+    )
+
+    sections = [
+        {"title": "🎯 Роль и текущее состояние", "body": section_role, "type": "dynamic"},
+        {"title": "📊 Статистика", "body": section_stats, "type": "dynamic"},
+        {"title": "🧠 Память AI", "body": memory_text, "type": "memory"},
+        {"title": "📚 Знания о платформе", "body": section_knowledge, "type": "static"},
+        {"title": "📏 Правила входа", "body": section_rules, "type": "rules"},
+        {"title": "📈 Рыночный контекст", "body": section_market, "type": "dynamic"},
+        {"title": "📤 Ожидаемый формат ответа", "body": section_format, "type": "static"},
+    ]
+
+    full_text = "\n\n".join(s["body"] for s in sections)
+    return {
+        "sections": sections,
+        "full_text": full_text,
+        "memory": {
+            "summary": memory.get("summary", ""),
+            "lessons": memory.get("top_lessons", []),
+            "based_on_trades": memory.get("based_on_trades", 0),
+            "updated_at": memory.get("updated_at"),
+        },
+        "mode": mode,
+        "balance": balance,
+        "open_positions": len(open_pos),
+        "stats": stats,
+    }
+
+
 async def ai_decide(signal_data: dict) -> dict:
     """AI решает: входить или нет. Возвращает решение."""
     import anthropic

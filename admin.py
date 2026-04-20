@@ -150,7 +150,8 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/supertrend-stats", "/api/st-enrich",
             "/api/supertrend/backfill", "/api/supertrend/backfill-status", "/api/bots-status",
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
-            "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+            "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
+            "/api/paper/ai-prompt", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -1363,6 +1364,19 @@ async def api_paper_learnings(limit: int = 100):
     learnings = await asyncio.to_thread(pt.get_learnings, limit)
     memory = await asyncio.to_thread(pt.get_ai_memory)
     return {"ok": True, "count": len(learnings), "learnings": learnings, "memory": memory}
+
+
+@app.get("/api/paper/ai-prompt")
+async def api_paper_ai_prompt():
+    """Возвращает текущий AI-промт по секциям (для UI-гармошки).
+    Динамический: меняется с ростом памяти AI и изменением mode/balance."""
+    import paper_trader as pt
+    try:
+        data = await asyncio.to_thread(pt.get_prompt_preview)
+        return {"ok": True, **data}
+    except Exception as e:
+        import traceback
+        return {"ok": False, "error": f"{e}\n{traceback.format_exc()[-500:]}"}
 
 
 @app.post("/api/paper/refresh-ai-memory")

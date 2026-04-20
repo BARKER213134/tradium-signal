@@ -2858,6 +2858,17 @@ safeInterval(loadConflicts, 30000);
         <div id="atMemory" style="background:linear-gradient(135deg,rgba(0,229,160,0.06),rgba(0,212,255,0.03));border:1px solid rgba(0,229,160,0.22);border-radius:10px;padding:14px 18px;font-size:12px;color:var(--text);min-height:80px;">
           <div style="color:var(--muted);font-size:11px;">Загрузка…</div>
         </div>
+
+        <!-- 🤖 AI промт — гармошка. Динамический: меняется с ростом памяти -->
+        <div style="margin-top:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+          <div id="atPromptHeader" onclick="toggleAIPrompt()" style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.02);user-select:none;">
+            <span id="atPromptArrow" style="transition:transform 0.2s;display:inline-block;font-size:10px;">▶</span>
+            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:600;">🤖 Промт AI для авто-торговли</span>
+            <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);">— меняется по мере обучения</span>
+            <span id="atPromptMeta" style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
+          </div>
+          <div id="atPromptBody" style="display:none;max-height:800px;overflow-y:auto;background:var(--dark-2);"></div>
+        </div>
       </div>
     </div>
     <div>
@@ -3535,11 +3546,89 @@ async function loadAILearnings() {
   }
 }
 
+// 🤖 AI промт — гармошка (динамический, меняется с обучением)
+let _atPromptLoaded = false;
+
+async function toggleAIPrompt() {
+  const body = document.getElementById('atPromptBody');
+  const arr  = document.getElementById('atPromptArrow');
+  if (!body) return;
+  const opened = body.style.display === 'block';
+  if (opened) {
+    body.style.display = 'none';
+    if (arr) arr.style.transform = 'rotate(0deg)';
+    return;
+  }
+  body.style.display = 'block';
+  if (arr) arr.style.transform = 'rotate(90deg)';
+  if (!_atPromptLoaded) await loadAIPrompt();
+}
+
+async function loadAIPrompt() {
+  const body = document.getElementById('atPromptBody');
+  const meta = document.getElementById('atPromptMeta');
+  if (!body) return;
+  body.innerHTML = '<div style="padding:20px;color:var(--muted);font-family:var(--font-mono);font-size:11px;">Загрузка промта…</div>';
+  try {
+    const r = await fetch('/api/paper/ai-prompt');
+    const d = await r.json();
+    if (!d.ok) {
+      body.innerHTML = `<div style="padding:20px;color:var(--sell);">Ошибка: ${d.error || '?'}</div>`;
+      return;
+    }
+    // Meta в заголовке
+    if (meta) {
+      const based = (d.memory && d.memory.based_on_trades) || 0;
+      const upd = (d.memory && d.memory.updated_at) ? new Date(d.memory.updated_at).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+      meta.textContent = `память: ${based} сделок · ${upd}`;
+    }
+
+    // Стили типов секций
+    const typeStyle = {
+      dynamic: { border: 'rgba(0,212,255,0.35)', bg: 'rgba(0,212,255,0.04)',   tag: '🔄 dynamic' },
+      memory:  { border: 'rgba(0,229,160,0.55)', bg: 'rgba(0,229,160,0.07)',   tag: '🧠 memory' },
+      static:  { border: 'rgba(255,255,255,0.12)', bg: 'rgba(255,255,255,0.02)', tag: '📌 static' },
+      rules:   { border: 'rgba(255,210,62,0.35)', bg: 'rgba(255,210,62,0.05)',  tag: '📏 rules' },
+    };
+
+    const sections = d.sections || [];
+    const html = sections.map(s => {
+      const st = typeStyle[s.type] || typeStyle.static;
+      const bodyEscaped = (s.body || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `<div style="margin:10px;padding:10px 14px;border:1px solid ${st.border};background:${st.bg};border-radius:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:600;">${s.title || ''}</span>
+          <span style="font-family:var(--font-mono);font-size:9px;color:var(--muted);">${st.tag}</span>
+        </div>
+        <pre style="margin:0;font-family:var(--font-mono);font-size:11px;color:var(--text);white-space:pre-wrap;word-break:break-word;line-height:1.45;">${bodyEscaped}</pre>
+      </div>`;
+    }).join('');
+
+    // Легенда внизу
+    const legend = `<div style="margin:10px;padding:8px 12px;font-family:var(--font-mono);font-size:10px;color:var(--muted);text-align:center;background:rgba(255,255,255,0.02);border-radius:6px;">
+      <span style="color:#3aa0ff">🔄 dynamic</span> — пересчитывается на каждый сигнал ·
+      <span style="color:#00e5a0">🧠 memory</span> — обновляется через Claude-агрегацию (раз в сутки) ·
+      <span style="color:var(--muted)">📌 static</span> — инварианты платформы ·
+      <span style="color:#ffd23e">📏 rules</span> — базовые правила входа
+    </div>`;
+
+    body.innerHTML = html + legend;
+    _atPromptLoaded = true;
+  } catch (e) {
+    body.innerHTML = `<div style="padding:20px;color:var(--sell);">Ошибка сети: ${e.message}</div>`;
+  }
+}
+
 loadPaperMode();
 loadPaperStatus();
 loadAILearnings();
 safeInterval(loadPaperStatus, 15000);
 safeInterval(loadAILearnings, 30000);
+// Если гармошка открыта — обновляем промт раз в минуту
+safeInterval(() => {
+  const body = document.getElementById('atPromptBody');
+  if (body && body.style.display === 'block') loadAIPrompt();
+}, 60000);
 </script>
 
 {% elif bot == 'forex_fvg' %}
