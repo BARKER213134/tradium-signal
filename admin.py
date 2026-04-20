@@ -962,10 +962,27 @@ async def api_supertrend_signals(tier: str = "", pair: str = "",
             "tier": tier, "pair": pair, "hours": hours}
 
 
+# Серверный кеш для /api/supertrend-signals/by-pair (TTL 60с)
+# Снижает нагрузку при смене TF и клике по разным графикам одной пары.
+_st_by_pair_cache: dict = {}
+_ST_BY_PAIR_TTL = 60.0
+
+
 @app.get("/api/supertrend-signals/by-pair")
 async def api_supertrend_signals_by_pair(pair: str, hours: int = 336):
-    """Сигналы по одной паре — для рисования маркеров на графиках."""
-    return await api_supertrend_signals(tier="", pair=pair, hours=hours, limit=100)
+    """Сигналы по одной паре — для рисования маркеров на графиках.
+    Кеш 60с — ST сигналы редкие, не меняются при смене TF на графике."""
+    key = f"{pair}|{hours}"
+    now = time.time()
+    hit = _st_by_pair_cache.get(key)
+    if hit and (now - hit[0]) < _ST_BY_PAIR_TTL:
+        return hit[1]
+    resp = await api_supertrend_signals(tier="", pair=pair, hours=hours, limit=100)
+    _st_by_pair_cache[key] = (now, resp)
+    if len(_st_by_pair_cache) > 300:
+        for k in [k for k, v in _st_by_pair_cache.items() if (now - v[0]) > _ST_BY_PAIR_TTL * 2]:
+            _st_by_pair_cache.pop(k, None)
+    return resp
 
 
 @app.get("/api/supertrend-stats")
@@ -3637,17 +3654,26 @@ def _market_events_backfill_sync(days: int) -> dict:
     return stats
 
 
+# Серверный кеш market-events (TTL 60с — они меняются редко, глобальные для ETH)
+_mkt_events_cache: dict = {}
+_MKT_EVENTS_TTL = 60.0
+
+
 @app.get("/api/market-events")
 async def api_market_events(since_ts: int = 0, until_ts: int = 0, types: str = "kc,reversal"):
     """Смены состояния рынка — Keltner ETH и Reversal Meter.
-    Используется для маркеров на всех графиках.
-
-    Params:
-      since_ts / until_ts — unix timestamps (если 0 — без границы)
-      types — csv "kc,reversal" (по умолчанию оба)
+    Используется для маркеров на всех графиках. Кеш 60с (глобальные события,
+    не зависят от пары или TF).
     """
     from database import _market_events as _me
     from datetime import datetime as _dt, timezone as _tz
+
+    key = f"{since_ts}|{until_ts}|{types}"
+    now = time.time()
+    hit = _mkt_events_cache.get(key)
+    if hit and (now - hit[0]) < _MKT_EVENTS_TTL:
+        return hit[1]
+
     type_list = [t.strip() for t in types.split(",") if t.strip()]
     q = {}
     if type_list:
@@ -3673,7 +3699,12 @@ async def api_market_events(since_ts: int = 0, until_ts: int = 0, types: str = "
             "score": e.get("score"),
             "direction": e.get("direction"),
         })
-    return {"events": events, "count": len(events)}
+    resp = {"events": events, "count": len(events)}
+    _mkt_events_cache[key] = (now, resp)
+    if len(_mkt_events_cache) > 100:
+        for k in [k for k, v in _mkt_events_cache.items() if (now - v[0]) > _MKT_EVENTS_TTL * 2]:
+            _mkt_events_cache.pop(k, None)
+    return resp
 
 
 @app.get("/api/journal/by-symbol")
