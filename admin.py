@@ -4010,14 +4010,19 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
 
-    # SuperTrend signals для этой монеты
+    # SuperTrend signals для этой монеты (исключаем daily)
+    import calendar as _cal
     try:
         from database import _supertrend_signals as _sts
-        for s in _sts().find({"pair_norm": sym_clean, "flip_at": {"$gte": since}}).sort("flip_at", -1):
+        for s in _sts().find({
+            "pair_norm": sym_clean,
+            "flip_at": {"$gte": since},
+            "tier": {"$in": ["vip", "mtf"]},
+        }).sort("flip_at", -1):
             at_dt = s.get("flip_at")
-            tier = s.get("tier", "daily")
-            tier_emoji = {"vip": "🏆", "mtf": "🔱", "daily": "🧭"}.get(tier, "🌀")
-            tier_label = {"vip": "VIP", "mtf": "Triple MTF", "daily": "Daily"}.get(tier, tier.upper())
+            tier = s.get("tier", "mtf")
+            tier_emoji = {"vip": "🏆", "mtf": "🔱"}.get(tier, "🌀")
+            tier_label = {"vip": "VIP", "mtf": "Triple MTF"}.get(tier, tier.upper())
             aligned_bots = s.get("aligned_bots", [])
             aligned_tfs = s.get("aligned_tfs", [])
             if tier == "vip" and aligned_bots:
@@ -4025,6 +4030,12 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 pattern = f"{tier_emoji} ST {tier_label} + {'+'.join(src_names)}"
             else:
                 pattern = f"{tier_emoji} ST {tier_label} ({'+'.join(aligned_tfs)})"
+            if at_dt and hasattr(at_dt, "timetuple"):
+                at_ts = _cal.timegm(at_dt.timetuple())
+                at_iso = at_dt.isoformat() + "Z"
+            else:
+                at_ts = 0
+                at_iso = None
             items.append({
                 "source": "supertrend",
                 "symbol": s.get("pair_norm", ""),
@@ -4038,8 +4049,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "top_pick_confirmations_count": len(aligned_bots),
                 "st_tier": tier,
                 "aligned_tfs": aligned_tfs,
-                "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else None,
-                "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+                "at": at_iso,
+                "at_ts": at_ts,
             })
     except Exception:
         pass
@@ -4230,13 +4241,18 @@ async def _compute_journal():
         })
 
     # SuperTrend signals (14 дней) — источник 'supertrend' с tier в pattern
+    # ИСКЛЮЧАЕМ daily — их оставляем только на графиках (emoji 🧭) без журнала и бота
+    import calendar as _cal
     try:
         from database import _supertrend_signals as _sts
-        for s in _sts().find({"flip_at": {"$gte": since_14d}}).sort("flip_at", -1).limit(1500):
+        for s in _sts().find({
+            "flip_at": {"$gte": since_14d},
+            "tier": {"$in": ["vip", "mtf"]},  # daily исключены
+        }).sort("flip_at", -1).limit(1500):
             at_dt = s.get("flip_at")
-            tier = s.get("tier", "daily")
-            tier_emoji = {"vip": "🏆", "mtf": "🔱", "daily": "🧭"}.get(tier, "🌀")
-            tier_label = {"vip": "VIP", "mtf": "Triple MTF", "daily": "Daily"}.get(tier, tier.upper())
+            tier = s.get("tier", "mtf")
+            tier_emoji = {"vip": "🏆", "mtf": "🔱"}.get(tier, "🌀")
+            tier_label = {"vip": "VIP", "mtf": "Triple MTF"}.get(tier, tier.upper())
             aligned_bots = s.get("aligned_bots", [])
             aligned_tfs = s.get("aligned_tfs", [])
             # Pattern column: emoji + tier + aligned info
@@ -4245,6 +4261,14 @@ async def _compute_journal():
                 pattern = f"{tier_emoji} ST {tier_label} + {'+'.join(src_names)}"
             else:
                 pattern = f"{tier_emoji} ST {tier_label} ({'+'.join(aligned_tfs)})"
+            # Правильный UTC timestamp: calendar.timegm от naive UTC datetime,
+            # вместо .timestamp() который может подтягивать локальную TZ.
+            if at_dt and hasattr(at_dt, "timetuple"):
+                at_ts = _cal.timegm(at_dt.timetuple())
+                at_iso = at_dt.isoformat() + "Z"  # явно UTC для frontend Date()
+            else:
+                at_ts = 0
+                at_iso = str(at_dt or "")
             items.append({
                 "source": "supertrend",
                 "symbol": s.get("pair_norm", ""),
@@ -4257,13 +4281,13 @@ async def _compute_journal():
                 "score": None,
                 "st_passed": None,
                 "pump_score": 0,
-                "is_top_pick": tier == "vip",  # VIP = top pick для фильтрации
+                "is_top_pick": tier == "vip",
                 "top_pick_confirmations_count": len(aligned_bots),
                 "st_tier": tier,
                 "aligned_tfs": aligned_tfs,
                 "aligned_bots_count": len(aligned_bots),
-                "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
-                "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+                "at": at_iso,
+                "at_ts": at_ts,
             })
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] supertrend fetch fail: {e}")

@@ -326,7 +326,11 @@ def _format_alert_html(sig: dict) -> str:
 
 
 async def _alert_signal(sig: dict) -> None:
-    """Отправка в BOT10."""
+    """Отправка в BOT10. Daily tier в алерты НЕ шлётся (только эмоджи на
+    графике) — user request. Daily сигналы всё равно сохраняются в БД
+    для маркеров но не спамят Telegram."""
+    if sig.get("tier") == "daily":
+        return  # Daily — только эмоджи на графиках
     try:
         from watcher import _bot10, _admin_chat_id
     except Exception:

@@ -1394,10 +1394,9 @@ safeInterval(loadPendingClusters, 30000);
           style="flex:1;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">
     🔱 Triple MTF · EV +0.68R
   </button>
-  <button id="st-sub-daily" class="st-sub-btn" onclick="_switchStSub('daily')"
-          style="flex:1;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">
-    🧭 Daily Filter · EV +0.58R
-  </button>
+  <!-- Daily отключена по запросу пользователя — оставлены только эмоджи на графиках -->
+  <!-- <button id="st-sub-daily" ...>🧭 Daily Filter · EV +0.58R</button> -->
+
 </div>
 
 <!-- Статистика + фильтры -->
@@ -1486,7 +1485,7 @@ async function _loadStStats() {
     document.getElementById('st-stats').innerHTML =
       `<span>🏆 VIP: <b style="color:#ffd700">${fmt(bt.vip || {})}</b></span>` +
       `<span>🔱 MTF: <b style="color:#00e5a0">${fmt(bt.mtf || {})}</b></span>` +
-      `<span>🧭 Daily: <b style="color:#3aa0ff">${fmt(bt.daily || {})}</b></span>` +
+      `<span style="color:var(--muted);opacity:0.6">🧭 Daily: ${fmt(bt.daily || {})} (только на графиках)</span>` +
       `<span style="margin-left:auto;color:var(--muted);">за последние 14 дней</span>`;
   } catch {}
 }
