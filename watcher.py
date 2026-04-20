@@ -73,6 +73,37 @@ async def _st_tracker_loop():
         await _asyncio.sleep(300)
 
 
+async def _candles_prewarm_loop():
+    """Фоновый прогрев candles cache для топ-активных пар, чтобы первое
+    открытие графика было мгновенным. Каждые 3 минуты идёт по топ-80 парам
+    и прогревает 4 ходовых TF (15m/1h/4h/1d). TTL кеша выставлены так что
+    50% времени кеш уже свеж и HTTP не идёт — реальные походы к Binance
+    только когда TTL истекает (раз в TF-specific интервал)."""
+    import asyncio as _asyncio
+    TFS = ["1h", "4h", "1d", "15m"]  # приоритет 1h > 4h > 1d > 15m
+    while True:
+        try:
+            from supertrend_tracker import get_tracked_pairs
+            from admin import warm_candles_cache
+            pairs = await _asyncio.to_thread(get_tracked_pairs)
+            # Топ-80 — достаточно чтобы покрыть активный поток сигналов
+            top_pairs = pairs[:80] if len(pairs) > 80 else pairs
+            warmed = 0
+            for p in top_pairs:
+                for tf in TFS:
+                    try:
+                        if await _asyncio.to_thread(warm_candles_cache, p, tf, 200):
+                            warmed += 1
+                    except Exception:
+                        pass
+                    # Мягкая пауза — не забиваем Binance rate limit
+                    await _asyncio.sleep(0.03)
+            logger.info(f"[prewarm] cycle done: {warmed} cache entries refreshed across {len(top_pairs)} pairs")
+        except Exception:
+            logger.exception("[prewarm] loop crashed")
+        await _asyncio.sleep(180)  # каждые 3 мин
+
+
 def _resolve_chart(p: str) -> str | None:
     if not p:
         return None
@@ -2698,6 +2729,12 @@ async def start_watcher():
         logger.info("[st-tracker] background loop started")
     except Exception:
         logger.exception("[st-tracker] failed to start loop")
+    # Candles prewarm — каждые 3 мин для топ-80 активных пар
+    try:
+        asyncio.create_task(_candles_prewarm_loop())
+        logger.info("[prewarm] candles loop started")
+    except Exception:
+        logger.exception("[prewarm] failed to start loop")
     tick = 0
     while True:
         tick += 1

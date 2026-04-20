@@ -4133,17 +4133,46 @@ async def _compute_journal():
 # Серверный кеш для /api/journal-candles (TTL per TF)
 # Самая медленная часть открытия графика — HTTP к Binance (до 6с cold).
 # Повторные запросы в одной сессии → мгновенно из кеша.
+# Фоновый прогрев (_candles_prewarm_loop в watcher.py) держит топ-пары горячими.
 _candles_cache: dict = {}
 _CANDLES_TTL_BY_TF = {
-    "15m": 45.0,   # 15m обновляется каждые 15 мин, 45с кеш OK
-    "30m": 90.0,
-    "1h":  180.0,  # 3 минуты
-    "2h":  300.0,
-    "4h":  600.0,  # 10 минут
-    "12h": 1800.0,
-    "1d":  3600.0, # 1 час
+    "15m": 90.0,   # 15m обновляется каждые 15 мин — 90с запас
+    "30m": 180.0,  # 3 мин
+    "1h":  300.0,  # 5 мин (был 180)
+    "2h":  600.0,  # 10 мин
+    "4h":  1200.0, # 20 мин (был 600)
+    "12h": 3600.0, # 1 час
+    "1d":  7200.0, # 2 часа
 }
-_CANDLES_TTL_DEFAULT = 120.0
+_CANDLES_TTL_DEFAULT = 300.0
+
+
+def warm_candles_cache(symbol: str, tf: str, limit: int = 200) -> bool:
+    """Синхронно прогревает candles cache для заданной пары/TF. Используется
+    фоновым циклом в watcher.py. Возвращает True если обновил, False если
+    кеш ещё свежий (> 50% TTL осталось) или ошибка."""
+    from exchange import get_klines_any
+    key = f"{symbol}|{tf}|{limit}"
+    now = time.time()
+    ttl = _CANDLES_TTL_BY_TF.get((tf or "").lower(), _CANDLES_TTL_DEFAULT)
+    hit = _candles_cache.get(key)
+    # Если кеш ещё достаточно свежий — пропускаем (экономим Binance rate limit)
+    if hit and (now - hit[0]) < ttl * 0.5:
+        return False
+    pair = symbol.replace("USDT", "/USDT") if "USDT" in symbol else symbol
+    try:
+        candles = get_klines_any(pair, tf, limit)
+        if not candles:
+            return False
+        data = [{
+            "time": int(c["t"] / 1000),
+            "open": c["o"], "high": c["h"], "low": c["l"], "close": c["c"],
+            "volume": c.get("v", 0),
+        } for c in candles]
+        _candles_cache[key] = (time.time(), data)
+        return True
+    except Exception:
+        return False
 
 
 @app.get("/api/journal-candles")

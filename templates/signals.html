@@ -4565,6 +4565,7 @@ async function loadCoinChart(coin) {
     series.setData(d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _coinTF);
     const _stResCoin = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, _coinTF, { anchor: chartDiv }) : null;
+    if (window._prefetchOtherTFs && sym) window._prefetchOtherTFs(sym, _coinTF, 200);
 
     // Все маркеры + tooltip map
     // Пропускаем сигналы ВНЕ окна свечей (чтоб не лепить фантомы к первой/последней свече).
@@ -5136,6 +5137,7 @@ async function openJournalChart(idx, forceTF) {
     series.setData(d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _modalTF);
     const _stResJ = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, _modalTF, { anchor: container }) : null;
+    if (window._prefetchOtherTFs && sym) window._prefetchOtherTFs(sym, _modalTF, 200);
 
     // Маркеры: все сигналы по монете из _journalData (уже включают cluster/paper/все)
     // + дополнительно из /api/pair-signals для покрытия старых, что могли не попасть в журнал
