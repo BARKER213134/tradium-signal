@@ -158,19 +158,67 @@ async def refresh_ai_memory() -> dict:
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         msg = await asyncio.to_thread(
-            client.messages.create, model=ANTHROPIC_MODEL, max_tokens=800,
+            client.messages.create, model=ANTHROPIC_MODEL, max_tokens=2000,
             messages=[{"role": "user", "content": prompt}],
         )
         text = msg.content[0].text.strip()
+        # Robust JSON extraction: Claude может добавить ```json fences, вступительный
+        # текст или комментарии. Ищем первый { и его закрывающий }.
         if text.startswith("```"):
-            text = text.split("```")[1].strip()
-            if text.startswith("json"): text = text[4:].strip()
-        data = json.loads(text)
+            text = text.split("```", 2)[1]
+            if text.startswith("json"): text = text[4:]
+            text = text.strip()
+        # Находим JSON object даже если он в середине ответа
+        start = text.find("{")
+        if start != -1:
+            # Ищем закрывающий } методом подсчёта скобок + игнорируем строки
+            depth = 0
+            in_str = False
+            esc = False
+            end = -1
+            for i in range(start, len(text)):
+                c = text[i]
+                if esc:
+                    esc = False
+                    continue
+                if c == "\\" and in_str:
+                    esc = True
+                    continue
+                if c == '"':
+                    in_str = not in_str
+                    continue
+                if in_str:
+                    continue
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            if end != -1:
+                text = text[start:end]
+
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as je:
+            # Fallback: пробуем regex на summary + top_lessons
+            logger.warning(f"[ai-memory] JSON parse fail: {je}. Raw: {text[:200]}")
+            import re as _re
+            summary_match = _re.search(r'"summary"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', text, _re.S)
+            lessons = _re.findall(r'"([^"]{20,})"', text)  # любые длинные строки
+            data = {
+                "summary": (summary_match.group(1) if summary_match else "Claude вернул неформат, см. логи")[:500],
+                "top_lessons": lessons[:5] if lessons else [],
+            }
+
+        data.setdefault("summary", "")
+        data.setdefault("top_lessons", [])
         data["updated_at"] = _utcnow().isoformat()
         data["based_on_trades"] = len(learnings)
         _, stats = _get_collections()
         stats.update_one({"_id": "ai_memory"}, {"$set": data}, upsert=True)
-        logger.info(f"[paper.ai-memory] refreshed from {len(learnings)} trades")
+        logger.info(f"[paper.ai-memory] refreshed from {len(learnings)} trades, lessons={len(data.get('top_lessons', []))}")
         return data
     except Exception as e:
         logger.error(f"refresh_ai_memory fail: {e}")
