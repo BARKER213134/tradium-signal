@@ -2847,30 +2847,21 @@ safeInterval(loadConflicts, 30000);
       <div id="atPositions" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;min-height:100px;">
         <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет открытых позиций</div>
       </div>
+      <!-- 🧠 AI Learnings — сразу под открытыми позициями -->
+      <div style="margin-top:16px;">
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">
+          🧠 AI Learnings <span style="color:var(--muted);font-size:9px;text-transform:none;letter-spacing:0;">— чему научился после сделок</span>
+        </div>
+        <div id="atLearnings" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;max-height:500px;overflow-y:auto;">
+          <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>
+        </div>
+      </div>
     </div>
     <div>
       <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">Последние сделки</div>
       <div id="atHistory" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;min-height:100px;">
         <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>
       </div>
-    </div>
-  </div>
-
-  <!-- 🧠 AI Learnings — что AI выучил из каждой сделки -->
-  <div style="margin-top:20px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);">
-      <div style="font-family:var(--font-mono);font-size:11px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;">
-        🧠 AI Learnings <span style="color:var(--muted);font-size:10px;">— чему AI научился за сделки</span>
-      </div>
-      <button onclick="refreshAIMemory()" style="background:transparent;color:var(--accent);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">🔄 Пересобрать сводку</button>
-    </div>
-    <!-- Aggregated memory summary -->
-    <div id="atMemory" style="background:linear-gradient(135deg,rgba(0,229,160,0.06),rgba(0,212,255,0.03));border:1px solid rgba(0,229,160,0.22);border-radius:10px;padding:12px 16px;margin-bottom:12px;font-size:12px;color:var(--text);min-height:60px;">
-      <div style="color:var(--muted);font-size:11px;">Загрузка…</div>
-    </div>
-    <!-- Individual learnings list -->
-    <div id="atLearnings" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;max-height:400px;overflow-y:auto;">
-      <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>
     </div>
   </div>
 
@@ -3511,29 +3502,10 @@ async function loadAILearnings() {
   try {
     const r = await fetch('/api/paper/learnings?limit=100');
     const d = await r.json();
-    const memory = d.memory || {};
     const learnings = d.learnings || [];
-
-    // Memory summary
-    const memDiv = document.getElementById('atMemory');
-    if (memDiv) {
-      if (memory.summary) {
-        let lessonsHtml = '';
-        const top = memory.top_lessons || [];
-        if (top.length) {
-          lessonsHtml = '<div style="margin-top:8px;font-size:11px;">' +
-            top.map(l => `<div style="padding:3px 0;color:var(--text);"><span style="color:var(--accent);">▸</span> ${l}</div>`).join('') +
-            '</div>';
-        }
-        const updated = memory.updated_at ? new Date(memory.updated_at).toLocaleString('ru-RU') : '—';
-        memDiv.innerHTML =
-          `<div style="font-size:12px;color:var(--text);font-weight:600;">${memory.summary || ''}</div>` +
-          lessonsHtml +
-          `<div style="margin-top:8px;color:var(--muted);font-size:10px;">на основе ${memory.based_on_trades || 0} сделок · обновлено: ${updated}</div>`;
-      } else {
-        memDiv.innerHTML = '<div style="color:var(--muted);font-size:11px;">Ещё нет агрегированной памяти. Нужно ≥1 закрытая сделка. Агрегация автоматически раз в сутки или жми ↻.</div>';
-      }
-    }
+    // memory summary отключена по запросу пользователя — оставлены только
+    // индивидуальные обзоры после каждой сделки (agg continues on backend
+    // чтобы подаваться в ai_decide промпт)
 
     // Individual learnings
     const div = document.getElementById('atLearnings');
