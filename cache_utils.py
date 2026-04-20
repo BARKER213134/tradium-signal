@@ -73,7 +73,9 @@ class AsyncTTLCache:
 
 
 # ── Глобальные инстансы для admin.py ──
-journal_cache = AsyncTTLCache(ttl=15)       # /api/journal — 15с чтобы новые сигналы не залёживались
+journal_cache = AsyncTTLCache(ttl=45)       # /api/journal — 45с; при новом сигнале инвалидируется вручную
+kl_enrich_cache = AsyncTTLCache(ttl=30)     # /api/key-levels/enrich — обогащение идёт сразу после журнала
+journal_by_symbol_cache = AsyncTTLCache(ttl=60)  # /api/journal/by-symbol
 top_picks_cache = AsyncTTLCache(ttl=60)     # /api/top-picks
 pending_clusters_cache = AsyncTTLCache(ttl=90)  # /api/pending-clusters
 confluence_cache = AsyncTTLCache(ttl=30)    # /api/confluence

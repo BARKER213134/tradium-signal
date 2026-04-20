@@ -640,11 +640,29 @@ async def api_key_levels_enrich(payload: dict):
     Оптимизация: ОДИН mongo-запрос на уникальную пару (вместо N запросов),
     потом для каждого сигнала фильтруем in-memory по ±2h окну.
     payload: {"signals": [{id, pair, direction, at}, ...]}
-    Возвращает: {"enrich": {id1: {emoji, label, ...}, id2: null}}"""
+    Возвращает: {"enrich": {id1: {emoji, label, ...}, id2: null}}
+    Кеш 30с по хешу payload — UI дергает этот endpoint после каждого
+    /api/journal (polling), а ответ меняется редко."""
     from key_levels import _tf_power, ENRICH_WINDOW_H
     from database import _key_levels
     from datetime import datetime as _dt, timedelta as _td
+    from cache_utils import kl_enrich_cache
+    import hashlib as _hl, json as _json
     signals = (payload or {}).get("signals", [])
+
+    # Кеш-ключ = хеш сигналов (id+pair+direction+at); при тех же сигналах ответ одинаковый
+    try:
+        _key_material = _json.dumps(
+            [(str(s.get("id")), s.get("pair") or s.get("symbol"),
+              s.get("direction"), s.get("at")) for s in signals],
+            sort_keys=True, default=str,
+        )
+        _cache_key = _hl.md5(_key_material.encode()).hexdigest()
+        _cached = kl_enrich_cache.get(_cache_key)
+        if _cached is not None:
+            return _cached
+    except Exception:
+        _cache_key = None
     # 1) Парсим входные сигналы в нормализованную форму
     norm = []
     pair_times: dict[str, list[_dt]] = {}
@@ -762,7 +780,13 @@ async def api_key_levels_enrich(payload: dict):
             continue
         enrich = _pick_best(pair_norm, direction, at) if (pair_norm and at) else None
         out[str(sig_id)] = enrich
-    return {"enrich": out, "count": len(out), "pairs": len(pair_cache)}
+    resp = {"enrich": out, "count": len(out), "pairs": len(pair_cache)}
+    if _cache_key:
+        try:
+            kl_enrich_cache.set(_cache_key, resp)
+        except Exception:
+            pass
+    return resp
 
 
 @app.get("/api/key-levels/stats")
@@ -4096,9 +4120,15 @@ async def api_paper_set_balance(payload: dict):
 @app.get("/api/journal")
 async def api_journal():
     """Все сигналы из 4 источников — для вкладки Журнал.
-    Server-side limit 14 days + per-source cap. Cache 45s (async-lock safe)."""
+    Server-side limit 14 days + per-source cap. Cache 45s (async-lock safe).
+    _compute_journal делает 7 sync Mongo-запросов → выносим в thread,
+    иначе блокируется event loop и тормозят параллельные /api/* (candles и т.п.)."""
     from cache_utils import journal_cache
-    return await journal_cache.get_or_compute("journal_all", _compute_journal)
+
+    async def _compute_in_thread():
+        return await asyncio.to_thread(_compute_journal_sync)
+
+    return await journal_cache.get_or_compute("journal_all", _compute_in_thread)
 
 
 @app.get("/api/backtest/today")
@@ -4332,9 +4362,15 @@ async def api_market_events(since_ts: int = 0, until_ts: int = 0, types: str = "
 @app.get("/api/journal/by-symbol")
 async def api_journal_by_symbol(symbol: str, days: int = 30):
     """Все сигналы по конкретной монете из всех источников — для ручного
-    поиска. Возвращает без лимитов на источник, в окне days (default 30).
-    Формат ответа идентичен /api/journal, но без кеша (редкий вызов)."""
-    return await asyncio.to_thread(_compute_journal_by_symbol_sync, symbol, days)
+    поиска. Формат ответа идентичен /api/journal.
+    Кеш 60с по (symbol, days) — окно графика каждой монеты дергает этот
+    endpoint при открытии."""
+    from cache_utils import journal_by_symbol_cache
+
+    async def _compute():
+        return await asyncio.to_thread(_compute_journal_by_symbol_sync, symbol, days)
+
+    return await journal_by_symbol_cache.get_or_compute(f"{symbol}|{days}", _compute)
 
 
 def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
@@ -4538,7 +4574,9 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
     return {"items": items, "symbol": sym_clean, "days": days, "count": len(items)}
 
 
-async def _compute_journal():
+def _compute_journal_sync():
+    """Синхронная версия — вызывается через asyncio.to_thread из api_journal,
+    чтоб блокирующие Mongo-курсоры не тормозили весь event loop."""
     from database import _signals, _anomalies, _confluence
     from datetime import datetime, timedelta
     from database import utcnow as _utcnow
