@@ -948,43 +948,42 @@
         const { trend, st } = calc;
 
         try {
-          // Каждый сегмент тренда = отдельная LineSeries. Так избегаем
-          // whitespace-артефактов (LWC иногда рисует горизонтальные
-          // тени или соединяет через gap при WithSteps).
-          // Результат: чистый stepped line, без ложных соединений,
-          // флип = просто конец одной серии и начало другой в том же баре.
+          // ⚡ PERF: 2 LineSeries (up + down) вместо N сегментов.
+          // Раньше создавали отдельную series на каждый trend сегмент
+          // (при 20+ флипах — 20+ series), это сильно тормозило LWC.
+          // Теперь 2 series, в каждой — данные только на "своих" барах,
+          // остальные — whitespace ({time} без value). LWC v4 корректно
+          // рисует разрывы на whitespace, флип = чистый telepоrt визуально.
           const LT = (window.LightweightCharts && window.LightweightCharts.LineType) || {};
           const stepType = (typeof LT.WithSteps !== 'undefined') ? LT.WithSteps : 1;
-          const segments = [];
-          let cur = null;
+          const upSeries = chart.addLineSeries({
+            color: '#00e5a0', lineWidth: 2, lineType: stepType,
+            priceLineVisible: false, lastValueVisible: false,
+            crosshairMarkerVisible: false,
+          });
+          const dnSeries = chart.addLineSeries({
+            color: '#ff4d6d', lineWidth: 2, lineType: stepType,
+            priceLineVisible: false, lastValueVisible: false,
+            crosshairMarkerVisible: false,
+          });
+          const upData = [];
+          const dnData = [];
           for (let i = 0; i < candles.length; i++) {
-            if (trend[i] === 0 || st[i] == null) {
-              cur = null;  // gap
-              continue;
+            const t = candles[i].time;
+            if (trend[i] === 1 && st[i] != null) {
+              upData.push({ time: t, value: st[i] });
+              dnData.push({ time: t });  // whitespace gap
+            } else if (trend[i] === -1 && st[i] != null) {
+              dnData.push({ time: t, value: st[i] });
+              upData.push({ time: t });  // whitespace gap
+            } else {
+              upData.push({ time: t });
+              dnData.push({ time: t });
             }
-            if (!cur || cur.trend !== trend[i]) {
-              cur = { trend: trend[i], data: [] };
-              segments.push(cur);
-            }
-            cur.data.push({ time: candles[i].time, value: st[i] });
           }
-          const createdSeries = [];
-          for (const seg of segments) {
-            if (seg.data.length < 1) continue;
-            const s = chart.addLineSeries({
-              color: seg.trend === 1 ? '#00e5a0' : '#ff4d6d',
-              lineWidth: 2,
-              lineType: stepType,
-              priceLineVisible: false,
-              lastValueVisible: false,
-              crosshairMarkerVisible: false,
-            });
-            s.setData(seg.data);
-            createdSeries.push(s);
-          }
-          // Для совместимости с cleanup() сохраняем общие ссылки
-          const upSeries = createdSeries[0] || null;
-          const dnSeries = null;
+          upSeries.setData(upData);
+          dnSeries.setData(dnData);
+          const createdSeries = [upSeries, dnSeries];
 
           // Маркеры-стрелки на флипах
           const flipMarkers = [];
