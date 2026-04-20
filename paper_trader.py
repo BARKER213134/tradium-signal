@@ -617,18 +617,71 @@ async def ai_decide(signal_data: dict) -> dict:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         message = await asyncio.to_thread(
             client.messages.create,
-            model=ANTHROPIC_MODEL,  # Sonnet — лучшее качество решений
-            max_tokens=300,
+            model=ANTHROPIC_MODEL,
+            max_tokens=600,  # было 300 — иногда Claude обрезал JSON на длинном reasoning
             messages=[{"role": "user", "content": prompt}],
         )
         text = message.content[0].text.strip()
-        # Парсим JSON
+        # ── Robust JSON parsing (такой же как в refresh_ai_memory) ──
+        # Claude может вернуть: 1) markdown fences, 2) вступительный текст,
+        # 3) JSON с кавычками внутри строк. Парсим устойчиво через подсчёт скобок.
         if text.startswith("```"):
-            text = text.split("```")[1].strip()
-            if text.startswith("json"):
-                text = text[4:].strip()
-        result = json.loads(text)
-        logger.info(f"Paper AI: {signal_data.get('symbol','')} → enter={result.get('enter')} reason={result.get('reasoning','')[:50]}")
+            text = text.split("```", 2)[1]
+            if text.startswith("json"): text = text[4:]
+            text = text.strip()
+        start = text.find("{")
+        if start != -1:
+            depth = 0
+            in_str = False
+            esc = False
+            end = -1
+            for i in range(start, len(text)):
+                c = text[i]
+                if esc:
+                    esc = False
+                    continue
+                if c == "\\" and in_str:
+                    esc = True
+                    continue
+                if c == '"':
+                    in_str = not in_str
+                    continue
+                if in_str:
+                    continue
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            if end != -1:
+                text = text[start:end]
+        try:
+            result = json.loads(text)
+        except json.JSONDecodeError as je:
+            # Fallback: regex-парсим ключевые поля чтобы не терять решение
+            logger.warning(f"[paper.ai_decide] JSON parse fail: {je}. Raw first 200: {text[:200]}")
+            import re as _re
+            enter_m = _re.search(r'"enter"\s*:\s*(true|false)', text, _re.I)
+            lev_m = _re.search(r'"leverage"\s*:\s*(\d+)', text)
+            size_m = _re.search(r'"size_pct"\s*:\s*(\d+(?:\.\d+)?)', text)
+            tp_m = _re.search(r'"tp1"\s*:\s*([\d.]+)', text)
+            sl_m = _re.search(r'"sl"\s*:\s*([\d.]+)', text)
+            reas_m = _re.search(r'"reasoning"\s*:\s*"([^"]{0,500})', text)
+            if enter_m:
+                result = {
+                    "enter": enter_m.group(1).lower() == "true",
+                    "leverage": int(lev_m.group(1)) if lev_m else (lev_min + lev_max) // 2,
+                    "size_pct": float(size_m.group(1)) if size_m else size_min,
+                    "tp1": float(tp_m.group(1)) if tp_m else None,
+                    "sl": float(sl_m.group(1)) if sl_m else None,
+                    "reasoning": (reas_m.group(1) if reas_m else "regex-parsed") + " [regex-fallback]",
+                }
+            else:
+                # совсем никак — отказ с объяснением
+                raise je
+        logger.info(f"Paper AI: {signal_data.get('symbol','')} → enter={result.get('enter')} reason={str(result.get('reasoning',''))[:60]}")
         return result
     except Exception as e:
         logger.error(f"Paper AI error: {e}")
