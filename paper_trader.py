@@ -1148,7 +1148,20 @@ async def _send_close_alert(trade: dict, review: str = ""):
     pnl = trade.get("pnl_pct", 0)
     pnl_usd = trade.get("pnl_usdt", 0)
     status = trade.get("status", "")
-    icon = "✅" if status == "TP" else "❌"
+    # Иконка по статусу + прибыльности
+    status_icon = {
+        "TP": "✅",           # Take Profit
+        "SL": "❌",           # Stop Loss (убыток)
+        "BE": "🛡️",          # Breakeven (около нуля)
+        "TRAIL": "🎯",        # Trailing SL (зафиксировали прибыль)
+        "AI_CLOSE": "🧠",     # AI решил закрыть
+        "MANUAL": "✋",       # Закрыл руками
+        "KILL_SWITCH": "⛔",  # Kill switch
+    }
+    # Для TRAIL/BE/AI_CLOSE — цвет по факту прибыли
+    icon = status_icon.get(status, "❌")
+    if status in ("TRAIL", "AI_CLOSE", "MANUAL") and pnl > 0:
+        icon = status_icon.get(status, "✅")
     balance = get_balance()
 
     text = (

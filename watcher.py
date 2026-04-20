@@ -2724,27 +2724,45 @@ async def _send_confluence_alert(r: dict):
 # ── Paper Trading positions check ─────────────────────────────────────
 
 async def _check_paper_positions():
-    """Проверяет открытые Paper Trading позиции на TP/SL."""
+    """Проверяет открытые Paper Trading позиции на TP/SL.
+    КРИТИЧНО: alert отправляется ДО ai_review_trade — если AI фейлит
+    (Claude API down / JSON parse / timeout), сигнал всё равно дойдёт.
+    Каждая сделка обработана в своём try/except, чтобы ошибка одной
+    не блокировала остальные."""
     try:
         import paper_trader as pt
         positions = pt.get_open_positions()
         if not positions:
             return
-        # Получаем цены
         pairs = list({p.get("pair", p["symbol"].replace("USDT", "/USDT")) for p in positions})
         prices = await get_prices_any(pairs)
         closed = pt.check_positions(prices)
-        # AI review для закрытых
-        for c in closed:
+    except Exception as e:
+        logger.warning(f"[paper-positions] fetch/check fail: {e}", exc_info=True)
+        return
+
+    # Обрабатываем каждое закрытие ИЗОЛИРОВАННО
+    for c in closed:
+        try:
+            import paper_trader as pt
             trades, _ = pt._get_collections()
             trade = trades.find_one({"trade_id": c["trade_id"]})
-            if trade:
+            if not trade:
+                continue
+            # 1. СНАЧАЛА отправляем alert (критично — без review если AI упал)
+            try:
+                await pt._send_close_alert(trade, "")
+            except Exception as ae:
+                logger.error(f"[paper-positions] close alert fail #{c['trade_id']}: {ae}")
+            # 2. ПОТОМ AI review (может упасть — не страшно, alert уже ушёл)
+            try:
                 review = await pt.ai_review_trade(trade)
                 if review:
                     trades.update_one({"trade_id": c["trade_id"]}, {"$set": {"ai_review": review}})
-                await pt._send_close_alert(trade, review or "")
-    except Exception as e:
-        logger.warning(f"[paper-positions] {e}", exc_info=True)
+            except Exception as re:
+                logger.warning(f"[paper-positions] ai_review fail #{c['trade_id']}: {re}")
+        except Exception as e:
+            logger.warning(f"[paper-positions] close handler fail #{c.get('trade_id')}: {e}", exc_info=True)
 
 
 async def _send_live_confirmation_alert(pending: dict) -> None:
