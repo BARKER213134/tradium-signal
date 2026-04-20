@@ -73,6 +73,23 @@ async def _st_tracker_loop():
         await _asyncio.sleep(300)
 
 
+async def _paper_position_ai_review_loop():
+    """Каждые 30 мин Claude ревьюит открытые позиции: держать/закрыть/
+    сдвинуть SL. Работает ПОВЕРХ rule-based breakeven/trailing."""
+    import asyncio as _asyncio
+    # Первый запуск через 5 мин (пусть позиции наберутся)
+    await _asyncio.sleep(300)
+    while True:
+        try:
+            import paper_trader as pt
+            actions = await pt.ai_review_open_positions()
+            if actions:
+                logger.info(f"[ai-review] applied {len(actions)} actions")
+        except Exception:
+            logger.exception("[ai-review] loop crashed")
+        await _asyncio.sleep(30 * 60)  # 30 мин
+
+
 async def _ai_memory_refresh_loop():
     """Раз в сутки обновляет AI memory для paper trading — Claude делает
     свод из последних 50 ai_review. Этот memory подаётся в каждый
@@ -2773,6 +2790,12 @@ async def start_watcher():
         logger.info("[ai-memory] daily refresh loop started")
     except Exception:
         logger.exception("[ai-memory] failed to start loop")
+    # Paper position AI review — каждые 30 мин Claude ревьюит открытые
+    try:
+        asyncio.create_task(_paper_position_ai_review_loop())
+        logger.info("[ai-review] paper position review loop started")
+    except Exception:
+        logger.exception("[ai-review] failed to start loop")
     tick = 0
     while True:
         tick += 1

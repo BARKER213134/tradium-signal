@@ -267,6 +267,7 @@ def open_position(symbol: str, direction: str, entry: float, tp1: float, sl: flo
         "entry": entry,
         "tp1": tp1,
         "sl": sl,
+        "original_sl": sl,          # для истории (после breakeven/trail SL меняется)
         "leverage": leverage,
         "size_usdt": size_usdt,
         "size_pct": size_pct,
@@ -274,6 +275,12 @@ def open_position(symbol: str, direction: str, entry: float, tp1: float, sl: flo
         "source": source,
         "ai_reasoning": reasoning,
         "ai_review": None,
+        # Exit management fields
+        "max_favorable_pct": 0.0,   # лучший PnL % наблюдался за время позиции
+        "sl_moved_to_be": False,    # SL подвинут в безубыток?
+        "sl_trailing": False,       # включён ли trailing stop?
+        "last_ai_review_at": None,  # timestamp последнего AI-ревью
+        "exit_events": [],          # лог событий: [{at, type, old_sl, new_sl, note}]
         "opened_at": _utcnow(),
         "closed_at": None,
         "exit_price": None,
@@ -335,8 +342,20 @@ async def close_manual(trade_id: int) -> dict | None:
     return result
 
 
+# Параметры rule-based exit management (можно вынести в Mongo config)
+# Все пороги — в "raw" %, то есть без учёта leverage (процент движения цены).
+BREAKEVEN_TRIGGER_PCT = 1.0   # +1% движения в плюс → SL в безубыток
+TRAILING_TRIGGER_PCT = 2.0    # +2% движения → включаем trailing
+TRAILING_DISTANCE_PCT = 1.0   # отступ trailing-SL от максимума (в %)
+
+
 def check_positions(prices: dict):
-    """Проверяет открытые позиции на TP/SL."""
+    """Проверяет открытые позиции. Делает 3 вещи на каждом тике:
+      1. Breakeven: при +1% движения в плюс → SL к entry (защита капитала)
+      2. Trailing: при +2% движения → SL идёт за ценой на расстоянии 1%
+      3. TP/SL hit → закрываем позицию
+    """
+    trades, _ = _get_collections()
     closed = []
     for pos in get_open_positions():
         sym = pos.get("symbol", "")
@@ -344,26 +363,240 @@ def check_positions(prices: dict):
         if not price:
             continue
 
+        entry = pos["entry"]
         direction = pos["direction"]
         tp1 = pos.get("tp1")
         sl = pos.get("sl")
+        is_long = direction == "LONG"
 
-        if direction == "LONG":
+        # Raw PnL % (без leverage — чистое движение цены)
+        raw_pnl = ((price - entry) / entry) * 100
+        if not is_long:
+            raw_pnl = -raw_pnl
+
+        # Обновляем max_favorable_pct
+        max_fav = max(pos.get("max_favorable_pct", 0.0) or 0.0, raw_pnl)
+        updates = {}
+        events = []
+        new_sl = sl
+
+        # ── 1. BREAKEVEN: SL в точку entry ──
+        if (not pos.get("sl_moved_to_be")) and max_fav >= BREAKEVEN_TRIGGER_PCT:
+            be_sl = entry
+            # Проверяем что новый SL лучше старого
+            if is_long:
+                if be_sl > (sl or -1):
+                    new_sl = be_sl
+                    events.append({"at": _utcnow(), "type": "BE", "old_sl": sl,
+                                   "new_sl": new_sl, "note": f"+{max_fav:.2f}% → SL to entry"})
+                    updates["sl_moved_to_be"] = True
+            else:  # SHORT
+                if be_sl < (sl or 9e12):
+                    new_sl = be_sl
+                    events.append({"at": _utcnow(), "type": "BE", "old_sl": sl,
+                                   "new_sl": new_sl, "note": f"+{max_fav:.2f}% → SL to entry"})
+                    updates["sl_moved_to_be"] = True
+
+        # ── 2. TRAILING: SL следует за ценой на TRAILING_DISTANCE ──
+        if max_fav >= TRAILING_TRIGGER_PCT:
+            if is_long:
+                # Максимальная цена пока позиция открыта (приблизительно через max_fav)
+                max_price = entry * (1 + max_fav / 100.0)
+                trail_sl = max_price * (1 - TRAILING_DISTANCE_PCT / 100.0)
+                if trail_sl > (new_sl or -1):
+                    events.append({"at": _utcnow(), "type": "TRAIL", "old_sl": new_sl,
+                                   "new_sl": trail_sl, "note": f"trail @ {max_price:.6g}"})
+                    new_sl = trail_sl
+                    updates["sl_trailing"] = True
+            else:  # SHORT
+                min_price = entry * (1 - max_fav / 100.0)
+                trail_sl = min_price * (1 + TRAILING_DISTANCE_PCT / 100.0)
+                if trail_sl < (new_sl or 9e12):
+                    events.append({"at": _utcnow(), "type": "TRAIL", "old_sl": new_sl,
+                                   "new_sl": trail_sl, "note": f"trail @ {min_price:.6g}"})
+                    new_sl = trail_sl
+                    updates["sl_trailing"] = True
+
+        # Применяем updates в MongoDB
+        if new_sl != sl or updates or max_fav != pos.get("max_favorable_pct", 0):
+            upd = {
+                "max_favorable_pct": max_fav,
+                **updates,
+            }
+            if new_sl != sl:
+                upd["sl"] = new_sl
+            if events:
+                trades.update_one(
+                    {"trade_id": pos["trade_id"]},
+                    {"$set": upd, "$push": {"exit_events": {"$each": events}}},
+                )
+                for ev in events:
+                    logger.info(f"Paper #{pos['trade_id']} {sym} {ev['type']}: {ev.get('note','')} (old_sl={ev.get('old_sl')}, new_sl={ev.get('new_sl')})")
+            else:
+                trades.update_one({"trade_id": pos["trade_id"]}, {"$set": upd})
+            sl = new_sl  # для проверки hit ниже
+
+        # ── 3. TP/SL hit ──
+        if is_long:
             if tp1 and price >= tp1:
                 r = close_position(pos["trade_id"], price, "TP")
                 if r: closed.append(r)
             elif sl and price <= sl:
-                r = close_position(pos["trade_id"], price, "SL")
+                # Определяем тип закрытия
+                reason = "SL"
+                if pos.get("sl_trailing"):
+                    reason = "TRAIL"
+                elif pos.get("sl_moved_to_be") and abs(price - entry) / entry * 100 < 0.2:
+                    reason = "BE"  # закрылись в безубытке
+                r = close_position(pos["trade_id"], price, reason)
                 if r: closed.append(r)
-        elif direction == "SHORT":
+        else:  # SHORT
             if tp1 and price <= tp1:
                 r = close_position(pos["trade_id"], price, "TP")
                 if r: closed.append(r)
             elif sl and price >= sl:
-                r = close_position(pos["trade_id"], price, "SL")
+                reason = "SL"
+                if pos.get("sl_trailing"):
+                    reason = "TRAIL"
+                elif pos.get("sl_moved_to_be") and abs(price - entry) / entry * 100 < 0.2:
+                    reason = "BE"
+                r = close_position(pos["trade_id"], price, reason)
                 if r: closed.append(r)
 
     return closed
+
+
+async def ai_review_open_positions() -> list:
+    """AI-ревью открытых позиций — вызывается раз в 30 мин из watcher.
+    Claude оценивает каждую позицию и решает:
+      — HOLD: держим
+      — CLOSE: закрыть немедленно
+      — MOVE_SL: сдвинуть SL к указанной цене
+    Возвращает список применённых действий.
+    """
+    import anthropic
+    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+    from exchange import get_prices_any
+    from datetime import timedelta
+    trades, _ = _get_collections()
+    positions = get_open_positions()
+    if not positions:
+        return []
+
+    pairs = [p.get("pair") or p["symbol"].replace("USDT","/USDT") for p in positions]
+    try:
+        prices = await asyncio.to_thread(get_prices_any, pairs)
+    except Exception as e:
+        logger.warning(f"ai_review prices fail: {e}")
+        return []
+
+    # Фильтр — ревью делаем не чаще чем раз в 25 мин на позицию (экономим Claude)
+    actions = []
+    for pos in positions:
+        last_review = pos.get("last_ai_review_at")
+        if last_review and (_utcnow() - last_review) < timedelta(minutes=25):
+            continue
+        sym = pos.get("symbol", "")
+        cur = prices.get(sym)
+        if not cur:
+            continue
+        entry = pos["entry"]
+        direction = pos["direction"]
+        raw_pnl = ((cur - entry) / entry) * 100
+        if direction == "SHORT":
+            raw_pnl = -raw_pnl
+        lev = pos.get("leverage", 1)
+        leveraged_pnl = raw_pnl * lev
+        hours_open = (_utcnow() - pos["opened_at"]).total_seconds() / 3600
+
+        events_str = ""
+        for ev in (pos.get("exit_events") or [])[-3:]:
+            events_str += f"  [{ev.get('type')}] {ev.get('note','')}\n"
+
+        prompt = (
+            f"Ты — AI трейдер. Проанализируй открытую позицию и реши что делать.\n\n"
+            f"ПОЗИЦИЯ #{pos.get('trade_id')}:\n"
+            f"  {sym} {direction} ×{lev}\n"
+            f"  Entry: {entry} | Сейчас: {cur}\n"
+            f"  PnL (raw): {raw_pnl:+.2f}% | С плечом: {leveraged_pnl:+.2f}%\n"
+            f"  TP: {pos.get('tp1')} | SL: {pos.get('sl')} (original: {pos.get('original_sl')})\n"
+            f"  Max favorable: +{pos.get('max_favorable_pct', 0):.2f}%\n"
+            f"  SL moved to BE: {pos.get('sl_moved_to_be', False)} | Trailing: {pos.get('sl_trailing', False)}\n"
+            f"  Открыта {hours_open:.1f}ч назад\n"
+            f"  Source: {pos.get('source')}\n"
+            f"  Reasoning (на входе): {(pos.get('ai_reasoning') or '')[:200]}\n"
+            f"  Последние exit события:\n{events_str or '  (нет)'}\n"
+            f"\nРЕШИ:\n"
+            f"  HOLD    — держим, не трогаем\n"
+            f"  CLOSE   — закрыть сейчас (если фиксируем прибыль или видим разворот)\n"
+            f"  MOVE_SL — сдвинуть SL к цене X (защитить прибыль / дать буфер)\n"
+            f"\nКонтекст: breakeven и trailing уже автоматически работают по правилам:\n"
+            f"  +1% → SL в entry (авто)\n"
+            f"  +2% → trailing -1% от max (авто)\n"
+            f"Ты НУЖЕН когда: фиксировать прибыль при экстремальном движении,\n"
+            f"закрыть застойную позицию, сдвинуть SL агрессивнее правил.\n"
+            f"\nОтветь ТОЛЬКО JSON:\n"
+            f'{{"action": "HOLD"|"CLOSE"|"MOVE_SL", "new_sl": число_если_MOVE_SL, "reasoning": "одно предложение"}}'
+        )
+        try:
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            msg = await asyncio.to_thread(
+                client.messages.create, model=ANTHROPIC_MODEL, max_tokens=300,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = msg.content[0].text.strip()
+            # Те же robust-парсер трюки
+            if text.startswith("```"):
+                text = text.split("```", 2)[1]
+                if text.startswith("json"): text = text[4:]
+                text = text.strip()
+            s_i = text.find("{")
+            e_i = text.rfind("}")
+            if s_i >= 0 and e_i > s_i:
+                text = text[s_i:e_i+1]
+            decision = json.loads(text)
+        except Exception as e:
+            logger.warning(f"[ai-review] #{pos.get('trade_id')} fail: {e}")
+            trades.update_one({"trade_id": pos["trade_id"]},
+                              {"$set": {"last_ai_review_at": _utcnow()}})
+            continue
+
+        action = (decision.get("action") or "").upper()
+        reasoning = decision.get("reasoning", "")
+        logger.info(f"[ai-review] #{pos.get('trade_id')} {sym}: {action} — {reasoning[:80]}")
+
+        if action == "CLOSE":
+            r = close_position(pos["trade_id"], cur, "AI_CLOSE")
+            if r: actions.append({"trade_id": pos["trade_id"], "action": "CLOSE", "reasoning": reasoning})
+        elif action == "MOVE_SL":
+            new_sl = decision.get("new_sl")
+            if new_sl:
+                is_long = direction == "LONG"
+                old_sl = pos.get("sl")
+                # Проверяем что новый SL разумный
+                valid = False
+                if is_long and new_sl < cur and new_sl > (old_sl or -1):
+                    valid = True
+                elif not is_long and new_sl > cur and new_sl < (old_sl or 9e12):
+                    valid = True
+                if valid:
+                    trades.update_one(
+                        {"trade_id": pos["trade_id"]},
+                        {"$set": {"sl": new_sl, "last_ai_review_at": _utcnow()},
+                         "$push": {"exit_events": {
+                             "at": _utcnow(), "type": "AI_MOVE_SL",
+                             "old_sl": old_sl, "new_sl": new_sl, "note": reasoning[:100],
+                         }}},
+                    )
+                    actions.append({"trade_id": pos["trade_id"], "action": "MOVE_SL",
+                                    "new_sl": new_sl, "reasoning": reasoning})
+
+        trades.update_one({"trade_id": pos["trade_id"]},
+                          {"$set": {"last_ai_review_at": _utcnow()}})
+        # Пауза чтоб не долбить Claude API
+        await asyncio.sleep(1.0)
+
+    return actions
 
 
 def get_prompt_preview() -> dict:
