@@ -168,6 +168,17 @@ def get_ai_memory() -> dict:
     return doc or {"summary": "", "top_lessons": [], "updated_at": None, "based_on_trades": 0}
 
 
+def clear_ai_memory() -> bool:
+    """Полностью удаляет ai_memory из БД. Используется когда Claude застрял
+    на неверном правиле (например, 'Vol×0 = стоп' на основе багованных данных).
+    После reset AI решает без уроков до следующего refresh'а (раз в сутки или
+    ручного). Новые сделки с корректными данными переформируют память."""
+    _, stats = _get_collections()
+    r = stats.delete_one({"_id": "ai_memory"})
+    logger.info(f"[ai-memory] CLEARED (deleted={r.deleted_count})")
+    return r.deleted_count > 0
+
+
 async def refresh_ai_memory() -> dict:
     """Раз в день: берёт последние 50 ai_review и просит Claude сделать свод
     ключевых выводов — что AI выучил. Результат сохраняется в paper_stats.ai_memory

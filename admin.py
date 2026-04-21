@@ -152,6 +152,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
+            "/api/paper/clear-ai-memory",
             "/api/paper/rejections", "/api/paper/be-audit", "/api/paper/close-all",
             "/api/paper/history",
             "/api/backtest-yesterday", "/api/backtest-yesterday/status",
@@ -1739,6 +1740,19 @@ async def api_paper_refresh_memory():
     try:
         data = await pt.refresh_ai_memory()
         return {"ok": True, "memory": data}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/paper/clear-ai-memory")
+async def api_paper_clear_memory():
+    """Полный reset AI-памяти. Используется когда Claude застрял на неверном
+    правиле — например, 'Vol×0 = абсолютный стоп' на основе багованных данных.
+    После reset AI работает без уроков до следующего refresh'а."""
+    import paper_trader as pt
+    try:
+        cleared = await asyncio.to_thread(pt.clear_ai_memory)
+        return {"ok": True, "cleared": cleared}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
