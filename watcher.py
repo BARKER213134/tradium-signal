@@ -73,38 +73,10 @@ async def _st_tracker_loop():
         await _asyncio.sleep(300)
 
 
-async def _paper_position_ai_review_loop():
-    """Каждые 30 мин Claude ревьюит открытые позиции: держать/закрыть/
-    сдвинуть SL. Работает ПОВЕРХ rule-based breakeven/trailing."""
-    import asyncio as _asyncio
-    # Первый запуск через 5 мин (пусть позиции наберутся)
-    await _asyncio.sleep(300)
-    while True:
-        try:
-            import paper_trader as pt
-            actions = await pt.ai_review_open_positions()
-            if actions:
-                logger.info(f"[ai-review] applied {len(actions)} actions")
-        except Exception:
-            logger.exception("[ai-review] loop crashed")
-        await _asyncio.sleep(30 * 60)  # 30 мин
-
-
-async def _ai_memory_refresh_loop():
-    """Раз в сутки обновляет AI memory для paper trading — Claude делает
-    свод из последних 50 ai_review. Этот memory подаётся в каждый
-    ai_decide() для улучшения решений."""
-    import asyncio as _asyncio
-    # Первая попытка через 10 мин после старта (чтобы не забить на деплое)
-    await _asyncio.sleep(600)
-    while True:
-        try:
-            import paper_trader as pt
-            await pt.refresh_ai_memory()
-        except Exception:
-            logger.exception("[ai-memory] refresh crashed")
-        # 24 часа
-        await _asyncio.sleep(86400)
+# [ОТКЛЮЧЕНО] _paper_position_ai_review_loop и _ai_memory_refresh_loop
+# удалены в рамках перехода на rule-based систему. Exit management работает
+# через TP ladder (paper_trader.check_positions), решения о входе — через
+# verified_entry.check_entry. AI не используется для торговых решений.
 
 
 async def _market_phase_loop():
@@ -2846,13 +2818,7 @@ async def _check_paper_positions():
                 await pt._send_close_alert(trade, "")
             except Exception as ae:
                 logger.error(f"[paper-positions] close alert fail #{c['trade_id']}: {ae}")
-            # 2. ПОТОМ AI review (может упасть — не страшно, alert уже ушёл)
-            try:
-                review = await pt.ai_review_trade(trade)
-                if review:
-                    trades.update_one({"trade_id": c["trade_id"]}, {"$set": {"ai_review": review}})
-            except Exception as re:
-                logger.warning(f"[paper-positions] ai_review fail #{c['trade_id']}: {re}")
+            # [ОТКЛЮЧЕНО] ai_review_trade — система rule-based, без AI-уроков.
         except Exception as e:
             logger.warning(f"[paper-positions] close handler fail #{c.get('trade_id')}: {e}", exc_info=True)
 
@@ -3016,18 +2982,9 @@ async def start_watcher():
         logger.info("[market-phase] loop started")
     except Exception:
         logger.exception("[market-phase] loop failed to start")
-    # AI memory refresh — раз в сутки агрегация уроков Claude'ом
-    try:
-        asyncio.create_task(_ai_memory_refresh_loop())
-        logger.info("[ai-memory] daily refresh loop started")
-    except Exception:
-        logger.exception("[ai-memory] failed to start loop")
-    # Paper position AI review — каждые 30 мин Claude ревьюит открытые
-    try:
-        asyncio.create_task(_paper_position_ai_review_loop())
-        logger.info("[ai-review] paper position review loop started")
-    except Exception:
-        logger.exception("[ai-review] failed to start loop")
+    # [ОТКЛЮЧЕНО] AI memory refresh + AI review open positions —
+    # система переведена на rule-based (Entry Checker 8 проверок + TP ladder).
+    # AI больше не используется для торговых решений.
     tick = 0
     while True:
         tick += 1

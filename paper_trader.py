@@ -1276,94 +1276,227 @@ async def ai_review_trade(trade: dict) -> str:
         return ""
 
 
-async def on_signal(signal_data: dict):
-    """Вызывается при новом сигнале. AI решает и открывает позицию.
-    Для is_cluster=True применяется boost на leverage и size в зависимости
-    от cluster_strength (MEGA → ×strong_boost, STRONG → ×leverage_boost).
-
-    Anti-cluster block: если источники противоречат (severity strong/nuclear)
-    — позиция НЕ открывается, независимо от решения AI.
-    """
-    # Anti-cluster guard: проверяем конфликт на паре перед AI-решением
+def _log_rejection_sync(signal_data: dict, reason: str):
+    """Пишет в paper_rejections БЕЗ AI. Используется rule-based версией."""
     try:
-        from anti_cluster_detector import detect_conflict
-        pair = signal_data.get("pair") or signal_data.get("symbol", "").replace("USDT", "/USDT")
-        if pair:
-            conflict = detect_conflict(pair, None, window_h=4)
-            if conflict["has_conflict"] and conflict["severity"] in ("strong", "nuclear"):
-                logger.info(f"Paper SKIP: {signal_data.get('symbol','')} — CONFLICT {conflict['severity']} "
-                            f"L={conflict['long_weight']} S={conflict['short_weight']}")
-                return None
-    except Exception as e:
-        logger.debug(f"paper anti-cluster check failed: {e}")
+        from database import _get_db
+        _get_db().paper_rejections.insert_one({
+            "symbol": signal_data.get("symbol", ""),
+            "pair": signal_data.get("pair", ""),
+            "direction": signal_data.get("direction", ""),
+            "source": signal_data.get("source", ""),
+            "score": signal_data.get("score"),
+            "pattern": signal_data.get("pattern", ""),
+            "is_top_pick": bool(signal_data.get("is_top_pick")),
+            "is_cluster": bool(signal_data.get("is_cluster")),
+            "reasoning": str(reason)[:800],
+            "at": _utcnow(),
+        })
+    except Exception:
+        logger.debug("[rule-based] rejection log fail", exc_info=True)
 
-    decision = await ai_decide(signal_data)
-    if not decision.get("enter"):
-        logger.info(f"Paper SKIP: {signal_data.get('symbol','')} — {decision.get('reasoning','')}")
-        return None
 
-    entry = signal_data.get("entry") or signal_data.get("price", 0)
-    if not entry:
-        return None
+def _calc_position_params(signal_data: dict, phase: str, verdict: str,
+                          mode_cfg: dict) -> tuple[int, int, str]:
+    """Rule-based выбор size/leverage.
+    Возвращает (size_pct, leverage, note).
+    """
+    size_min, size_max = mode_cfg["size_min"], mode_cfg["size_max"]
+    lev_min, lev_max = mode_cfg["lev_min"], mode_cfg["lev_max"]
+    notes = []
 
-    mode = get_mode()
-    size_min, size_max = mode["size_min"], mode["size_max"]
-    lev_min, lev_max = mode["lev_min"], mode["lev_max"]
+    # Старт — среднее
+    size_pct = (size_min + size_max) / 2.0
+    leverage = (lev_min + lev_max) // 2
 
-    tp1 = decision.get("tp1") or signal_data.get("tp1") or (entry * 1.015 if signal_data.get("direction") == "LONG" else entry * 0.985)
-    sl = decision.get("sl") or signal_data.get("sl") or (entry * 0.985 if signal_data.get("direction") == "LONG" else entry * 1.015)
-    leverage = max(lev_min, min(lev_max, decision.get("leverage", max(lev_min, (lev_min + lev_max) // 2))))
-    size_pct = max(size_min, min(size_max, decision.get("size_pct", size_min + 1)))
+    source = (signal_data.get("source") or "").lower()
+    tier = (signal_data.get("tier") or signal_data.get("st_tier") or "").lower()
 
-    # Cluster boost — повышаем leverage и size для кластерных сигналов
-    is_cluster = signal_data.get("is_cluster") or signal_data.get("source") == "cluster"
+    # Бонусы за силу источника
+    is_cluster = signal_data.get("is_cluster") or source == "cluster"
     strength = signal_data.get("cluster_strength", "NORMAL")
-    boost_note = ""
-    cluster_bonus = mode["cluster_size_bonus"]
+    is_top_pick = bool(signal_data.get("is_top_pick"))
+    is_vip = tier == "vip" or source == "supertrend_vip"
+
     if is_cluster:
         try:
-            from cluster_detector import get_config as _cluster_cfg
-            cfg = _cluster_cfg()
+            from cluster_detector import get_config as _cc
+            cfg = _cc()
             if strength == "MEGA":
-                mult = cfg["strong_boost"]
-                leverage = max(lev_min, min(lev_max, int(round(leverage * mult))))
-                size_pct = max(size_min, min(size_max, size_pct + cluster_bonus))
-                boost_note = f" [MEGA cluster boost ×{mult:.0f}]"
+                mult = cfg.get("strong_boost", 2.0)
+                leverage = int(round(leverage * mult))
+                size_pct += mode_cfg["cluster_size_bonus"]
+                notes.append(f"MEGA ×{mult:.1f}")
             elif strength == "STRONG":
-                mult = cfg["leverage_boost"]
-                leverage = max(lev_min, min(lev_max, int(round(leverage * mult))))
-                size_pct = max(size_min, min(size_max, size_pct + max(1, cluster_bonus - 1)))
-                boost_note = f" [STRONG cluster boost ×{mult:.0f}]"
+                mult = cfg.get("leverage_boost", 1.5)
+                leverage = int(round(leverage * mult))
+                size_pct += max(1, mode_cfg["cluster_size_bonus"] - 1)
+                notes.append(f"STRONG ×{mult:.1f}")
             elif strength == "NORMAL":
-                mult = cfg["leverage_boost"] * 0.7
-                leverage = max(lev_min, min(lev_max, int(round(leverage * mult))))
-                boost_note = f" [cluster boost ×{mult:.1f}]"
-            # RISKY — не повышаем, наоборот AI должен был снизить
-        except Exception as e:
-            logger.debug(f"cluster boost fail: {e}")
+                leverage = int(round(leverage * 1.2))
+                notes.append("cluster")
+        except Exception:
+            pass
+    elif is_top_pick:
+        leverage = int(round(leverage * 1.3))
+        size_pct += mode_cfg["top_pick_size_bonus"]
+        notes.append("TOP PICK")
+    elif is_vip:
+        size_pct += 1
+        notes.append("VIP")
 
-    # Top Pick boost
-    is_top_pick = signal_data.get("is_top_pick")
-    if is_top_pick:
-        old_lev, old_size = leverage, size_pct
-        top_bonus = mode["top_pick_size_bonus"]
-        leverage = max(lev_min, min(lev_max, int(round(leverage * 1.3))))
-        size_pct = max(size_min, min(size_max, size_pct + top_bonus))
-        boost_note += f" [👑 TOP PICK: lev {old_lev}→{leverage}, size {old_size}→{size_pct}]"
+    # Фазовые корректировки
+    if phase == "CHOP":
+        size_pct *= 0.6
+        leverage = max(lev_min, int(leverage * 0.7))
+        notes.append("CHOP×0.6")
+    elif phase == "VOLATILE":
+        size_pct *= 0.4
+        leverage = max(lev_min, int(leverage * 0.5))
+        notes.append("VOL×0.4")
+    elif phase in ("EUPHORIA",):
+        size_pct *= 0.5
+        notes.append("EUPHORIA×0.5")
+    elif phase == "CAPITULATION":
+        # LONG на отскок — нормальный размер; SHORT мы и так блокируем ранее
+        pass
+    # BULL/BEAR — оставляем средний
 
+    # CAUTION verdict — половина
+    if verdict == "caution":
+        size_pct *= 0.5
+        notes.append("CAUTION×0.5")
+
+    # Clamp в диапазон mode
+    size_pct = max(size_min, min(size_max, size_pct))
+    leverage = max(lev_min, min(lev_max, leverage))
+
+    note = " [" + " · ".join(notes) + "]" if notes else ""
+    return int(round(size_pct)), int(leverage), note
+
+
+async def on_signal(signal_data: dict):
+    """Rule-based логика входа (без AI).
+
+    Последовательность:
+      1. Anti-cluster guard (детектор конфликтов)
+      2. verified_entry.check_entry() — 8-пунктовый чек-лист
+      3. Если verdict=SKIP → отказ с логом в rejections
+      4. Если verdict=CAUTION и источник слабый → отказ
+      5. Если GO или (CAUTION + cluster/VIP) → open_position с параметрами
+         из mode + фазовых корректировок + бонусов за источник
+    """
+    import verified_entry as ve
+
+    symbol = signal_data.get("symbol", "")
+    pair = signal_data.get("pair") or (symbol.replace("USDT", "/USDT") if "USDT" in symbol else symbol)
+    direction = (signal_data.get("direction") or "").upper()
+    source = (signal_data.get("source") or "").lower()
+
+    if not pair or direction not in ("LONG", "SHORT"):
+        return None
+
+    # ── 1. Anti-cluster guard ──
+    try:
+        from anti_cluster_detector import detect_conflict
+        conflict = detect_conflict(pair, None, window_h=4)
+        if conflict["has_conflict"] and conflict["severity"] in ("strong", "nuclear"):
+            logger.info(f"Paper SKIP (anti-cluster): {symbol} {direction} — "
+                        f"CONFLICT {conflict['severity']}")
+            _log_rejection_sync(signal_data,
+                                f"⛔ Anti-cluster {conflict['severity']}: L={conflict['long_weight']} S={conflict['short_weight']}")
+            return None
+    except Exception:
+        logger.debug("[paper] anti-cluster check fail", exc_info=True)
+
+    # ── 2. Max positions ──
+    open_pos = get_open_positions()
+    if len(open_pos) >= MAX_POSITIONS:
+        logger.info(f"Paper SKIP (max): {symbol} — {MAX_POSITIONS} открыто")
+        return None  # тихий отказ без rejections-лога
+
+    # Дубль на этой паре?
+    pair_norm = pair.replace("/", "").upper()
+    if not pair_norm.endswith("USDT"):
+        pair_norm += "USDT"
+    if any((p.get("symbol") or "").upper() == pair_norm for p in open_pos):
+        _log_rejection_sync(signal_data, f"Уже есть открытая позиция на {pair_norm}")
+        return None
+
+    # ── 3. Entry Checker ──
+    try:
+        check = await asyncio.to_thread(ve.check_entry, pair, direction, signal_data)
+    except Exception as _e:
+        logger.exception(f"[paper on_signal] check_entry crashed: {_e}")
+        return None
+    if not check.get("ok"):
+        _log_rejection_sync(signal_data, f"check_entry: {check.get('error','?')}")
+        return None
+
+    verdict = check.get("verdict")
+    counts = check.get("counts", {})
+    summary = check.get("summary", "")
+
+    if verdict == "skip":
+        # Читаемый лог причин
+        bad_checks = [c["name"] for c in check.get("checks", []) if c.get("status") == "bad"]
+        _log_rejection_sync(signal_data,
+                            f"⛔ SKIP {summary} (bad: {', '.join(bad_checks)})")
+        logger.info(f"Paper SKIP (rule): {symbol} {direction} — {summary}")
+        return None
+
+    if verdict == "caution":
+        # CAUTION — разрешаем только для сильных источников
+        is_strong = (
+            source == "cluster" or
+            (source == "supertrend" and (signal_data.get("tier") or "").lower() == "vip") or
+            source == "supertrend_vip" or
+            bool(signal_data.get("is_top_pick"))
+        )
+        if not is_strong:
+            _log_rejection_sync(signal_data,
+                                f"⚠ CAUTION без strong-source (src={source}): {summary}")
+            logger.info(f"Paper SKIP (caution, src={source}): {symbol} {direction}")
+            return None
+
+    # ── 4. Параметры позиции ──
+    sig = check.get("signal", {})
+    market = check.get("market", {})
+    phase = market.get("phase", "NEUTRAL")
+
+    entry = sig.get("entry") or signal_data.get("entry") or signal_data.get("price")
+    tp1 = sig.get("tp1")
+    sl = sig.get("sl")
+    if not (entry and tp1 and sl):
+        _log_rejection_sync(signal_data, "Нет entry/tp/sl после check_entry")
+        return None
+
+    mode_cfg = get_mode()
+    size_pct, leverage, param_note = _calc_position_params(signal_data, phase, verdict, mode_cfg)
+
+    # Reasoning для истории
+    emoji = {"go": "✅", "caution": "⚠"}.get(verdict, "?")
+    reasoning = (f"{emoji} Rule-based {verdict.upper()} · {phase} · "
+                 f"{counts.get('ok',0)}OK/{counts.get('warn',0)}w/{counts.get('bad',0)}b · "
+                 f"{summary}{param_note}")
+
+    # ── 5. Открытие ──
     pos = open_position(
-        symbol=signal_data.get("symbol", ""),
-        direction=signal_data.get("direction", "LONG"),
+        symbol=symbol,
+        direction=direction,
         entry=entry,
         tp1=tp1,
         sl=sl,
         leverage=leverage,
         size_pct=size_pct,
-        source=signal_data.get("source", ""),
-        reasoning=decision.get("reasoning", "") + boost_note,
+        source=source or "?",
+        reasoning=reasoning,
     )
-    # Алерт в Telegram
-    await _send_open_alert(pos, decision)
+    # Alert в BOT6
+    try:
+        await _send_open_alert(pos, {"reasoning": reasoning})
+    except Exception:
+        logger.debug("[paper] open alert fail", exc_info=True)
     return pos
 
 
