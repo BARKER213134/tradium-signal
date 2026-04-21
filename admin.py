@@ -4131,6 +4131,132 @@ async def api_paper_history(limit: int = 50):
     return {"items": history}
 
 
+@app.get("/api/paper/be-audit")
+async def api_paper_be_audit(hours: int = 48):
+    """Аудит: для всех сделок закрытых по BE/TRAIL/AI_CLOSE за последние N часов —
+    смотрим что было бы если бы оригинальный SL не подтягивался.
+
+    Берём свечи 15m с opened_at, идём вперёд, смотрим касание TP1 или original_sl.
+    Сравниваем факт vs гипотеза.
+    Возвращает items[] + summary (total actual/hypo PnL, saved/missed).
+    """
+    from database import _get_db, utcnow
+    from datetime import timedelta
+    from exchange import get_klines_any
+
+    def _simulate(symbol, direction, entry, tp1, original_sl, opened_at):
+        pair = symbol.replace("USDT", "/USDT") if "USDT" in symbol else symbol
+        candles = get_klines_any(pair, "15m", 500)
+        if not candles:
+            return {"ok": False, "error": "no candles"}
+        opened_ts_ms = int(opened_at.timestamp() * 1000) if hasattr(opened_at, "timestamp") else 0
+        after = [c for c in candles if c["t"] >= opened_ts_ms]
+        if not after:
+            return {"ok": False, "error": "no candles after open"}
+        is_long = direction == "LONG"
+        for c in after:
+            hi, lo = c["h"], c["l"]
+            if is_long:
+                tp_hit = tp1 and hi >= tp1
+                sl_hit = lo <= original_sl
+            else:
+                tp_hit = tp1 and lo <= tp1
+                sl_hit = hi >= original_sl
+            # В одной свече обе сторонки — консервативно считаем SL первым
+            if sl_hit:
+                return {"ok": True, "what": "SL", "price": original_sl, "at": c["t"]}
+            if tp_hit:
+                return {"ok": True, "what": "TP", "price": tp1, "at": c["t"]}
+        last = after[-1]["c"]
+        return {"ok": True, "what": "OPEN", "price": last, "at": after[-1]["t"]}
+
+    def _pct(direction, entry, exit_price, leverage):
+        raw = (exit_price - entry) / entry * 100
+        if direction == "SHORT":
+            raw = -raw
+        return round(raw * leverage, 2)
+
+    def _sync():
+        db = _get_db()
+        since = utcnow() - timedelta(hours=hours)
+        trades = list(db.paper_trades.find({
+            "status": {"$in": ["BE", "TRAIL", "AI_CLOSE"]},
+            "closed_at": {"$gte": since},
+        }).sort("closed_at", -1))
+
+        items = []
+        total_actual = 0.0
+        total_hypo = 0.0
+        saved = 0
+        missed = 0
+        open_n = 0
+
+        for t in trades:
+            entry = t.get("entry") or 0
+            tp1 = t.get("tp1")
+            original_sl = t.get("original_sl") or t.get("sl")
+            leverage = t.get("leverage", 1)
+            actual_pct = t.get("pnl_pct", 0)
+            opened_at = t.get("opened_at")
+            symbol = t.get("symbol", "")
+            direction = t.get("direction", "")
+            status = t.get("status")
+
+            if not (entry and tp1 and original_sl and opened_at):
+                items.append({
+                    "trade_id": t.get("trade_id"), "symbol": symbol, "direction": direction,
+                    "status": status, "actual_pct": actual_pct, "hypo": None,
+                    "error": "missing entry/tp/sl/opened_at",
+                })
+                continue
+            sim = _simulate(symbol, direction, entry, tp1, original_sl, opened_at)
+            if not sim.get("ok"):
+                items.append({
+                    "trade_id": t.get("trade_id"), "symbol": symbol, "direction": direction,
+                    "status": status, "actual_pct": actual_pct, "hypo": None,
+                    "error": sim.get("error"),
+                })
+                continue
+            hypo_pct = _pct(direction, entry, sim["price"], leverage)
+            delta = round(hypo_pct - actual_pct, 2)
+            total_actual += actual_pct
+            total_hypo += hypo_pct
+            if sim["what"] == "SL":
+                saved += 1
+            elif sim["what"] == "TP":
+                missed += 1
+            else:
+                open_n += 1
+            items.append({
+                "trade_id": t.get("trade_id"),
+                "symbol": symbol, "direction": direction, "status": status,
+                "entry": entry, "tp1": tp1, "original_sl": original_sl,
+                "exit_price": t.get("exit_price"),
+                "leverage": leverage,
+                "actual_pct": actual_pct,
+                "hypo_what": sim["what"],
+                "hypo_price": sim["price"],
+                "hypo_pct": hypo_pct,
+                "delta_pct": delta,
+                "opened_at": opened_at.isoformat() if hasattr(opened_at, "isoformat") else str(opened_at),
+                "closed_at": t.get("closed_at").isoformat() if hasattr(t.get("closed_at"), "isoformat") else str(t.get("closed_at") or ""),
+            })
+        return {
+            "ok": True, "count": len(trades), "hours": hours,
+            "summary": {
+                "total_actual_pct": round(total_actual, 2),
+                "total_hypo_pct": round(total_hypo, 2),
+                "delta_pct": round(total_hypo - total_actual, 2),
+                "saved_by_be_trail": saved,
+                "missed_profit": missed,
+                "still_open": open_n,
+            },
+            "items": items,
+        }
+
+    return await asyncio.to_thread(_sync)
+
+
 @app.post("/api/paper/reset")
 async def api_paper_reset(payload: dict | None = None):
     """Сброс с опциональным custom balance. payload: {"amount": 5000}"""
