@@ -9,7 +9,7 @@ import time
 from typing import Set
 
 from fastapi import FastAPI, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, Response, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -5301,9 +5301,15 @@ async def api_entry_checker(pair: str, direction: str = "LONG"):
     import verified_entry as ve
     result = await asyncio.to_thread(ve.check_entry, pair, direction)
     if not result.get("ok"):
-        return {"ok": False, "error": result.get("error", "unknown"),
-                "hint": "Сначала дождись свежего сигнала на эту пару (за последние 4 часа)."}
-    return result
+        return JSONResponse(
+            {"ok": False, "error": result.get("error", "unknown"),
+             "hint": "Сначала дождись свежего сигнала на эту пару (за последние 4 часа)."},
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
+    return JSONResponse(
+        result,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 @app.get("/api/verified-signals")

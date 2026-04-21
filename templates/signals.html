@@ -2089,7 +2089,8 @@ async function runBacktest() {
     const origText = btn.textContent;
     btn.textContent = '⏳ Проверяю…'; btn.disabled = true;
     try {
-      const r = await fetch(`/api/entry-checker?pair=${encodeURIComponent(pair)}&direction=${window._ecDirection}`);
+      // cache-buster + no-store — чтобы не показывать устаревший закешированный ответ
+      const r = await fetch(`/api/entry-checker?pair=${encodeURIComponent(pair)}&direction=${window._ecDirection}&_t=${Date.now()}`, {cache: 'no-store'});
       const d = await r.json();
       const verdict = document.getElementById('ecVerdict');
       const resultBox = document.getElementById('ecResultBox');
