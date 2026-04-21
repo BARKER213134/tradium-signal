@@ -343,10 +343,22 @@ get_supertrend_eth = get_keltner_eth
 
 # ── Pump Check (Volume + OI + Funding) ────────────────────────────────
 
+# Кеш на 120с per symbol — функция вызывается на каждый сигнал (3 HTTP к Binance
+# каждый раз = долго). При множестве сигналов подряд на одну пару дублирование
+# было главным источником тормозов.
+_pump_cache: dict = {}
+_PUMP_TTL = 120.0
+
+
 def check_pump_potential(symbol: str) -> dict:
     """Проверяет Volume Spike + OI change + Funding для одной монеты.
-    Возвращает {volume_spike, oi_change, funding, score, label}."""
+    Возвращает {volume_spike, oi_change, funding, score, label}.
+    Кеш 120с на пару."""
     import httpx
+    now = time.time()
+    cached = _pump_cache.get(symbol)
+    if cached and (now - cached[0]) < _PUMP_TTL:
+        return cached[1]
     FAPI = "https://fapi.binance.com"
     result = {"volume_spike": 0, "oi_change": 0, "funding": 0, "score": 0, "factors": []}
 
@@ -423,6 +435,11 @@ def check_pump_potential(symbol: str) -> dict:
     else:
         result["label"] = ""
 
+    _pump_cache[symbol] = (now, result)
+    # Lazy eviction старых записей (чтобы кеш не рос бесконечно)
+    if len(_pump_cache) > 500:
+        for k in [k for k, v in _pump_cache.items() if (now - v[0]) > _PUMP_TTL * 2]:
+            _pump_cache.pop(k, None)
     return result
 
 

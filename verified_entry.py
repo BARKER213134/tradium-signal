@@ -10,12 +10,20 @@
 Эмоджи:
   ✨      — verdict=GO
   ⚠️✨    — verdict=CAUTION + source in (cluster, supertrend_vip)
+
+Кеш 10с на (pair, direction) — чтобы paper_trader.on_signal и
+verified_entry.run_verified_check не делали двойную работу.
 """
 from __future__ import annotations
 import logging
+import time
 from datetime import timedelta
 
 logger = logging.getLogger(__name__)
+
+# Кеш check_entry: (pair_norm, direction) → (timestamp, result)
+_check_cache: dict = {}
+_CHECK_TTL = 10.0
 
 
 # ───────────────────────────────────────────────────────────────────
@@ -28,6 +36,9 @@ def check_entry(pair: str, direction: str,
 
     Если provided_signal задан — используем его (сигнал только что пришёл,
     не надо искать в Mongo за 4ч).
+
+    Кеш 10с на (pair, direction) — убирает дубль вызова из paper_trader
+    и verified_entry параллельно.
     """
     from database import (_signals, _anomalies, _confluence, _clusters,
                           _supertrend_signals, _key_levels, utcnow)
@@ -44,6 +55,13 @@ def check_entry(pair: str, direction: str,
     pair_norm = pair_slash.replace("/", "")
     if not pair_norm.endswith("USDT"):
         pair_norm = pair_norm + "USDT"
+
+    # Cache lookup
+    cache_key = (pair_norm, direction)
+    now = time.time()
+    cached = _check_cache.get(cache_key)
+    if cached and (now - cached[0]) < _CHECK_TTL:
+        return cached[1]
 
     # ── Сигнал: берём переданный или ищем свежий в Mongo ──
     if provided_signal:
@@ -330,7 +348,7 @@ def check_entry(pair: str, direction: str,
         verdict = "go"
         summary = f"✅ {n_ok} OK, {n_warn} warn"
 
-    return {
+    result = {
         "ok": True,
         "pair": pair_slash,
         "pair_norm": pair_norm,
@@ -353,6 +371,12 @@ def check_entry(pair: str, direction: str,
             "avg_funding": phase_data.get("metrics", {}).get("avg_funding"),
         },
     }
+    # Cache save (10с TTL — убирает дубль paper_trader + verified)
+    _check_cache[cache_key] = (now, result)
+    if len(_check_cache) > 300:
+        for k in [k for k, v in _check_cache.items() if (now - v[0]) > _CHECK_TTL * 3]:
+            _check_cache.pop(k, None)
+    return result
 
 
 # ───────────────────────────────────────────────────────────────────

@@ -2882,25 +2882,9 @@ async def _paper_on_signal(signal_data: dict):
     Плюс: параллельно запускает Verified Entry Checker (rule-based 8 проверок),
     и если verdict=GO шлёт в @topmonetabot с эмоджи ✨.
     """
-    # ── Fallback Vol/OI если сигнал пришёл без них ──
-    # (anomaly_scanner batch-кеш может быть не прогрет → pump_vol=0, pump_oi=0
-    # → AI отказывает по правилу памяти "Vol×0 = стоп-сигнал")
-    try:
-        pv = signal_data.get("pump_vol")
-        po = signal_data.get("pump_oi")
-        if pv in (None, 0, 0.0) or po in (None, 0, 0.0):
-            sym = (signal_data.get("symbol") or "").upper()
-            if sym:
-                from exchange import check_pump_potential
-                pump = await asyncio.to_thread(check_pump_potential, sym)
-                if pump.get("volume_spike") and not signal_data.get("pump_vol"):
-                    signal_data["pump_vol"] = pump["volume_spike"]
-                if pump.get("oi_change") and not signal_data.get("pump_oi"):
-                    signal_data["pump_oi"] = pump["oi_change"]
-                if pump.get("funding"):
-                    signal_data["funding"] = pump["funding"]
-    except Exception:
-        logger.debug("[pump-fallback] fail", exc_info=True)
+    # [УБРАНО] Pump fallback — он был нужен когда использовался AI (Claude
+    # отказывал при pump_vol=0). Теперь система rule-based, check_entry
+    # сам делает Vol/OI fallback через check_pump_potential (с кешем 120с).
 
     # ── Verified Entry Checker (параллельно, не блокирует основной поток) ──
     # @topmonetabot = наш BOT9 (Top Picks) — verified ✨ сообщения идут в него.
