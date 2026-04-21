@@ -122,13 +122,34 @@ async def _market_phase_loop():
 
 
 async def _eth_kc_prewarm_loop():
-    """Фоновый прогрев Keltner ETH + ETH/BTC контекста.
-    Обе функции вызываются в каждом рендере /signals и при холодном кеше
-    блокировали первый запрос на ~20с (HTTP к Binance). Прогреваем каждые
-    4 мин (TTL кеша 5 мин, запас).
+    """Фоновый прогрев Keltner ETH + ETH/BTC контекста + ST 1h для топ-пар.
+    Без прогрева первый Entry Checker или открытие графика висит ~7с на
+    холодном HTTP к Binance (supertrend_state + check_pump_potential).
+    Прогреваем каждые 4 мин.
     """
     import asyncio as _asyncio
-    from exchange import get_keltner_eth, get_eth_market_context
+    from exchange import get_keltner_eth, get_eth_market_context, check_pump_potential
+    from supertrend import supertrend_state
+
+    async def _warm_st_top_pairs():
+        """Прогрев ST 1h + pump для топ-30 активных пар."""
+        try:
+            from supertrend_tracker import get_tracked_pairs
+            pairs = await _asyncio.to_thread(get_tracked_pairs)
+            top = pairs[:30]  # топ-30 — достаточно для 95% входов
+            for p_norm in top:
+                try:
+                    pair_slash = p_norm[:-4] + "/USDT" if p_norm.endswith("USDT") else p_norm
+                    # ST 1h — закеширует в _cache (TTL 2 мин)
+                    await _asyncio.to_thread(supertrend_state, pair_slash, "1h", None, None, False)
+                    # Pump — закеширует на 120с
+                    await _asyncio.to_thread(check_pump_potential, p_norm)
+                except Exception:
+                    pass
+            logger.info(f"[prewarm] ST+pump warmed for {len(top)} pairs")
+        except Exception:
+            logger.exception("[prewarm] ST/pump warm fail")
+
     # сразу на старте
     try:
         await _asyncio.to_thread(get_keltner_eth)
@@ -136,11 +157,16 @@ async def _eth_kc_prewarm_loop():
         logger.info("[prewarm] ETH/KC warmed on start")
     except Exception:
         logger.exception("[prewarm] ETH/KC initial warm failed")
+    # ST+pump — асинхронно чтобы не задерживать запуск watcher'а
+    _asyncio.create_task(_warm_st_top_pairs())
+
     while True:
         try:
             await _asyncio.sleep(240)  # 4 мин
             await _asyncio.to_thread(get_keltner_eth)
             await _asyncio.to_thread(get_eth_market_context)
+            # Периодический refresh ST+pump (каждые 4 мин)
+            _asyncio.create_task(_warm_st_top_pairs())
         except Exception:
             logger.exception("[prewarm] ETH/KC loop error")
 
