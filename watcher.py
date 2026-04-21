@@ -132,23 +132,25 @@ async def _eth_kc_prewarm_loop():
     from supertrend import supertrend_state
 
     async def _warm_st_top_pairs():
-        """Прогрев ST 1h + pump для топ-30 активных пар."""
+        """Прогрев ST 1h + pump для топ-10 активных пар.
+        Ограничено 10 парами с sleep между чтобы не забивать threadpool
+        во время старта контейнера (иначе /api/journal-candles тормозит)."""
         try:
             from supertrend_tracker import get_tracked_pairs
             pairs = await _asyncio.to_thread(get_tracked_pairs)
-            top = pairs[:30]  # топ-30 — достаточно для 95% входов
+            top = pairs[:10]  # меньше пар — быстрее прогрев, остальные закешируются при первом вызове
             for p_norm in top:
                 try:
                     pair_slash = p_norm[:-4] + "/USDT" if p_norm.endswith("USDT") else p_norm
-                    # ST 1h — закеширует в _cache (TTL 2 мин)
                     await _asyncio.to_thread(supertrend_state, pair_slash, "1h", None, None, False)
-                    # Pump — закеширует на 120с
-                    await _asyncio.to_thread(check_pump_potential, p_norm)
+                    # pump — НЕ прогреваем заранее (TTL 120с, закешируется при первом use)
                 except Exception:
                     pass
-            logger.info(f"[prewarm] ST+pump warmed for {len(top)} pairs")
+                # Даём threadpool'у слот для других запросов
+                await _asyncio.sleep(0.2)
+            logger.info(f"[prewarm] ST warmed for {len(top)} pairs (async-friendly)")
         except Exception:
-            logger.exception("[prewarm] ST/pump warm fail")
+            logger.exception("[prewarm] ST warm fail")
 
     # сразу на старте
     try:
