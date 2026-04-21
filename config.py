@@ -107,7 +107,6 @@ BOTS = [
     # — функционал остаётся: endpoint /api/conflicts, вкладка по прямому URL
     # /signals?bot=conflicts работает, данные детектируются в фоне через
     # anti_cluster_detector. Включить обратно: раскомментировать строку.
-    {"id": "coin_analysis", "label": "🧠 AI Анализ", "category": "crypto"},
     {"id": "entry_checker", "label": "🎯 Entry Checker", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
