@@ -3603,26 +3603,29 @@ async function loadPaperMode() {
     const m = (d && d.mode) || {};
     const btn = document.getElementById('atModeBtn');
     if (!btn) return;
-    if (m.name === 'aggressive') {
-      btn.style.background = 'linear-gradient(135deg,rgba(255,77,109,0.22),rgba(255,140,50,0.1))';
-      btn.style.color = '#ff8c32';
-      btn.style.borderColor = 'rgba(255,140,50,0.6)';
-      btn.textContent = `🔥 AGGRESSIVE · size ${m.size_min}-${m.size_max}% · lev ${m.lev_min}-${m.lev_max}×`;
-    } else {
-      btn.style.background = 'linear-gradient(135deg,rgba(0,212,255,0.18),rgba(0,180,255,0.06))';
-      btn.style.color = '#00d4ff';
-      btn.style.borderColor = 'rgba(0,212,255,0.55)';
-      btn.textContent = `🛡️ CONSERVATIVE · size ${m.size_min}-${m.size_max}% · lev ${m.lev_min}-${m.lev_max}×`;
-    }
+    const name = (m.name || 'aggressive');
+    const styles = {
+      'conservative': {bg:'linear-gradient(135deg,rgba(0,212,255,0.18),rgba(0,180,255,0.06))', c:'#00d4ff', bd:'rgba(0,212,255,0.55)', emoji:'🛡️', label:'CONSERVATIVE'},
+      'aggressive':   {bg:'linear-gradient(135deg,rgba(255,77,109,0.22),rgba(255,140,50,0.1))', c:'#ff8c32', bd:'rgba(255,140,50,0.6)',  emoji:'🔥', label:'AGGRESSIVE'},
+      'hyper':        {bg:'linear-gradient(135deg,rgba(255,0,128,0.28),rgba(190,0,230,0.14))', c:'#ff4cc4', bd:'rgba(255,76,196,0.7)', emoji:'💎', label:'HYPER'},
+    };
+    const s = styles[name] || styles.aggressive;
+    btn.style.background = s.bg;
+    btn.style.color = s.c;
+    btn.style.borderColor = s.bd;
+    btn.textContent = `${s.emoji} ${s.label} · size ${m.size_min}-${m.size_max}% · lev ${m.lev_min}-${m.lev_max}×`;
   } catch {}
 }
 
 async function togglePaperMode() {
+  // Цикл: conservative → aggressive → hyper → conservative
+  const ORDER = ['conservative', 'aggressive', 'hyper'];
   try {
     const r0 = await fetch('/api/paper/mode');
     const d0 = await r0.json();
     const cur = (d0 && d0.mode && d0.mode.name) || 'aggressive';
-    const next = cur === 'aggressive' ? 'conservative' : 'aggressive';
+    const idx = ORDER.indexOf(cur);
+    const next = ORDER[(idx + 1) % ORDER.length];
     await fetch('/api/paper/mode', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},

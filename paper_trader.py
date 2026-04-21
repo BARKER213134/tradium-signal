@@ -20,13 +20,25 @@ MODE_CONSERVATIVE = {
     "size_min": 2, "size_max": 5,
     "lev_min": 1,  "lev_max": 5,
     "cluster_size_bonus": 1, "top_pick_size_bonus": 1,
+    # 10 позиций × max 5% = до 50% депозита в открытых позициях
 }
 MODE_AGGRESSIVE = {
     "name": "aggressive",
-    "size_min": 3, "size_max": 15,   # требование пользователя
+    "size_min": 3, "size_max": 15,
     "lev_min": 2,  "lev_max": 10,
     "cluster_size_bonus": 3, "top_pick_size_bonus": 2,
+    # 10 позиций × max 15% = до 150%
 }
+MODE_HYPER = {
+    "name": "hyper",
+    "size_min": 5, "size_max": 25,
+    "lev_min": 3,  "lev_max": 15,
+    "cluster_size_bonus": 5, "top_pick_size_bonus": 3,
+    # 10 позиций × max 25% = до 250%. Claude всё равно адаптивно снижает
+    # размер когда уже есть открытые позиции (видит их в контексте).
+}
+
+_MODES = {"conservative": MODE_CONSERVATIVE, "aggressive": MODE_AGGRESSIVE, "hyper": MODE_HYPER}
 
 
 def get_mode() -> dict:
@@ -34,12 +46,13 @@ def get_mode() -> dict:
     _, stats = _get_collections()
     doc = stats.find_one({"_id": "mode"})
     name = (doc or {}).get("name", "aggressive")
-    return MODE_AGGRESSIVE if name == "aggressive" else MODE_CONSERVATIVE
+    return _MODES.get(name, MODE_AGGRESSIVE)
 
 
 def set_mode(name: str) -> dict:
-    """Устанавливает режим: 'aggressive' | 'conservative'."""
-    name = "aggressive" if name == "aggressive" else "conservative"
+    """Устанавливает режим: 'conservative' | 'aggressive' | 'hyper'."""
+    if name not in _MODES:
+        name = "aggressive"
     _, stats = _get_collections()
     stats.update_one({"_id": "mode"}, {"$set": {"name": name}}, upsert=True)
     return get_mode()
