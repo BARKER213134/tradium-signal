@@ -152,7 +152,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
-            "/api/paper/rejections", "/api/paper/be-audit",
+            "/api/paper/rejections", "/api/paper/be-audit", "/api/backtest-yesterday",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
@@ -4129,6 +4129,275 @@ async def api_paper_history(limit: int = 50):
             if h.get(f) and hasattr(h[f], "isoformat"):
                 h[f] = h[f].isoformat()
     return {"items": history}
+
+
+@app.get("/api/backtest-yesterday")
+async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
+    """Бектест ВСЕХ сигналов за последние N часов.
+
+    Источники: tradium, cryptovizor (pattern_triggered), anomaly, confluence,
+    cluster, supertrend (VIP/MTF/Daily). Для каждого сигнала симулируем
+    касание TP1 или SL на свечах 15m с момента сигнала в течение forward_hours.
+    Если TP/SL не заданы — используем ATR(14) 1h × 1.5 как SL, × 2.5 как TP.
+
+    Возвращает per-source breakdown (count, wins, losses, wr, avg_r, sum_r)
+    + per-signal детали.
+    """
+    from database import (_signals, _anomalies, _confluence, _clusters,
+                          _supertrend_signals, utcnow)
+    from datetime import timedelta
+    from exchange import get_klines_any
+
+    def _simulate(pair: str, direction: str, entry: float, tp1: float, sl: float,
+                  opened_at, forward_h: int = 48) -> dict:
+        if entry is None or sl is None:
+            return {"ok": False, "error": "no entry/sl"}
+        candles = get_klines_any(pair, "15m", 500)
+        if not candles:
+            return {"ok": False, "error": "no candles"}
+        opened_ts_ms = int(opened_at.timestamp() * 1000) if hasattr(opened_at, "timestamp") else 0
+        end_ms = opened_ts_ms + forward_h * 3600 * 1000
+        after = [c for c in candles if opened_ts_ms <= c["t"] <= end_ms]
+        if not after:
+            return {"ok": False, "error": "no candles in window"}
+        is_long = direction == "LONG"
+        risk = abs(entry - sl)
+        if risk <= 0:
+            return {"ok": False, "error": "zero risk"}
+        for c in after:
+            hi, lo = c["h"], c["l"]
+            if is_long:
+                tp_hit = tp1 and hi >= tp1
+                sl_hit = lo <= sl
+            else:
+                tp_hit = tp1 and lo <= tp1
+                sl_hit = hi >= sl
+            # SL первым — консервативная оценка
+            if sl_hit:
+                return {"ok": True, "what": "SL", "exit": sl,
+                        "r": -1.0, "pnl_pct": round((sl - entry) / entry * 100 * (1 if is_long else -1), 2),
+                        "bars_held": after.index(c) + 1}
+            if tp_hit:
+                reward = abs(tp1 - entry)
+                return {"ok": True, "what": "TP", "exit": tp1,
+                        "r": round(reward / risk, 2),
+                        "pnl_pct": round((tp1 - entry) / entry * 100 * (1 if is_long else -1), 2),
+                        "bars_held": after.index(c) + 1}
+        # Всё ещё открыта → оцениваем по last close
+        last = after[-1]["c"]
+        r = (last - entry) / risk if is_long else (entry - last) / risk
+        return {"ok": True, "what": "OPEN", "exit": last,
+                "r": round(r, 3),
+                "pnl_pct": round((last - entry) / entry * 100 * (1 if is_long else -1), 2),
+                "bars_held": len(after)}
+
+    def _atr_sl_tp(pair: str, direction: str, entry: float) -> tuple[float | None, float | None]:
+        """Для anomaly/cluster без TP/SL — вычисляем ATR 1h × 1.5/2.5."""
+        candles = get_klines_any(pair, "1h", 30)
+        if not candles or len(candles) < 15:
+            return None, None
+        trs = []
+        for i in range(1, len(candles)):
+            c, pc = candles[i], candles[i-1]["c"]
+            trs.append(max(c["h"] - c["l"], abs(c["h"] - pc), abs(c["l"] - pc)))
+        if not trs:
+            return None, None
+        atr = sum(trs[-14:]) / min(14, len(trs))
+        if direction == "LONG":
+            return entry - atr * 1.5, entry + atr * 2.5
+        return entry + atr * 1.5, entry - atr * 2.5
+
+    def _sync():
+        since = utcnow() - timedelta(hours=hours)
+        raw: list[dict] = []
+
+        # 1. Tradium (все за период)
+        for s in _signals().find({"source": "tradium", "received_at": {"$gte": since}}):
+            at = s.get("pattern_triggered_at") or s.get("received_at")
+            raw.append({
+                "source": "tradium",
+                "pair": s.get("pair"),
+                "symbol": (s.get("pair") or "").replace("/", "").upper(),
+                "direction": s.get("direction"),
+                "entry": s.get("entry"),
+                "tp1": s.get("tp1"),
+                "sl": s.get("sl"),
+                "at": at,
+                "score": s.get("ai_score"),
+            })
+
+        # 2. Cryptovizor (только pattern_triggered)
+        for s in _signals().find({
+            "source": "cryptovizor", "pattern_triggered": True,
+            "pattern_triggered_at": {"$gte": since},
+        }):
+            raw.append({
+                "source": "cryptovizor",
+                "pair": s.get("pair"),
+                "symbol": (s.get("pair") or "").replace("/", "").upper(),
+                "direction": s.get("direction"),
+                "entry": s.get("pattern_price") or s.get("entry"),
+                "tp1": s.get("dca2"),
+                "sl": s.get("dca1"),
+                "at": s.get("pattern_triggered_at"),
+                "score": s.get("ai_score"),
+            })
+
+        # 3. Anomaly — нет TP/SL, вычислим через ATR
+        for a in _anomalies().find({"detected_at": {"$gte": since}}):
+            raw.append({
+                "source": "anomaly",
+                "pair": (a.get("pair") or a.get("symbol") or "").replace("USDT", "/USDT") if a.get("symbol", "").endswith("USDT") else a.get("pair"),
+                "symbol": (a.get("symbol") or "").upper(),
+                "direction": a.get("direction"),
+                "entry": a.get("price"),
+                "tp1": None, "sl": None,  # вычислим
+                "at": a.get("detected_at"),
+                "score": a.get("score"),
+            })
+
+        # 4. Confluence
+        for c in _confluence().find({"detected_at": {"$gte": since}}):
+            raw.append({
+                "source": "confluence",
+                "pair": c.get("pair"),
+                "symbol": (c.get("symbol") or "").upper(),
+                "direction": c.get("direction"),
+                "entry": c.get("price"),
+                "tp1": c.get("r1"),
+                "sl": c.get("s1"),
+                "at": c.get("detected_at"),
+                "score": c.get("score"),
+            })
+
+        # 5. Cluster
+        for cl in _clusters().find({"trigger_at": {"$gte": since}}):
+            raw.append({
+                "source": "cluster",
+                "pair": cl.get("pair"),
+                "symbol": (cl.get("pair") or "").replace("/", "").upper(),
+                "direction": cl.get("direction"),
+                "entry": cl.get("trigger_price"),
+                "tp1": cl.get("tp_price"),
+                "sl": cl.get("sl_price"),
+                "at": cl.get("trigger_at"),
+                "score": cl.get("reversal_score"),
+            })
+
+        # 6. SuperTrend (VIP + MTF, daily исключаем — они не попадают в journal)
+        for s in _supertrend_signals().find({
+            "flip_at": {"$gte": since},
+            "tier": {"$in": ["vip", "mtf"]},
+        }):
+            raw.append({
+                "source": f"supertrend_{s.get('tier','?')}",
+                "pair": s.get("pair"),
+                "symbol": s.get("pair_norm"),
+                "direction": s.get("direction"),
+                "entry": s.get("entry_price"),
+                "tp1": None,  # ST не задаёт TP — посчитаем ATR
+                "sl": s.get("sl_price"),
+                "at": s.get("flip_at"),
+                "score": None,
+                "tier": s.get("tier"),
+            })
+
+        # Симулируем каждый сигнал
+        items = []
+        stats_by_source: dict = {}
+
+        for sig in raw:
+            pair = sig.get("pair")
+            direction = sig.get("direction")
+            entry = sig.get("entry")
+            at = sig.get("at")
+            if not (pair and direction in ("LONG", "SHORT") and entry and at):
+                continue
+            # Если TP/SL не заданы — считаем через ATR
+            tp1 = sig.get("tp1")
+            sl = sig.get("sl")
+            if not sl:
+                sl_atr, tp_atr = _atr_sl_tp(pair, direction, entry)
+                sl = sl_atr
+                if not tp1:
+                    tp1 = tp_atr
+            if not sl:
+                continue
+            if not tp1:
+                # ATR для TP если всё ещё пусто
+                _, tp_atr = _atr_sl_tp(pair, direction, entry)
+                tp1 = tp_atr
+            if not tp1:
+                continue
+            sim = _simulate(pair, direction, entry, tp1, sl, at, forward_hours)
+            if not sim.get("ok"):
+                items.append({**{k: sig.get(k) for k in ("source", "symbol", "direction")},
+                              "entry": entry, "sl": sl, "tp1": tp1,
+                              "error": sim.get("error")})
+                continue
+            src = sig["source"]
+            st = stats_by_source.setdefault(src, {
+                "count": 0, "wins": 0, "losses": 0, "open": 0,
+                "sum_r": 0.0, "sum_pct": 0.0,
+            })
+            st["count"] += 1
+            if sim["what"] == "TP":
+                st["wins"] += 1
+            elif sim["what"] == "SL":
+                st["losses"] += 1
+            else:
+                st["open"] += 1
+            st["sum_r"] += sim.get("r") or 0
+            st["sum_pct"] += sim.get("pnl_pct") or 0
+            items.append({
+                "source": src, "symbol": sig.get("symbol"), "pair": pair,
+                "direction": direction, "score": sig.get("score"),
+                "entry": entry, "tp1": round(tp1, 8), "sl": round(sl, 8),
+                "at": at.isoformat() if hasattr(at, "isoformat") else str(at),
+                "what": sim["what"], "exit": sim.get("exit"),
+                "r": sim.get("r"), "pnl_pct": sim.get("pnl_pct"),
+                "bars_held": sim.get("bars_held"),
+            })
+
+        # Финализируем stats: WR, avg_r
+        summary_rows = []
+        for src, st in stats_by_source.items():
+            closed = st["wins"] + st["losses"]
+            wr = round(st["wins"] / closed * 100, 1) if closed else 0
+            avg_r = round(st["sum_r"] / st["count"], 3) if st["count"] else 0
+            pf = None
+            # PF — sum_r_wins / abs(sum_r_losses)
+            wr_sum = sum(i["r"] for i in items if i.get("source") == src and (i.get("r") or 0) > 0)
+            lr_sum = abs(sum(i["r"] for i in items if i.get("source") == src and (i.get("r") or 0) <= 0 and i.get("what") != "OPEN"))
+            pf = round(wr_sum / lr_sum, 2) if lr_sum > 0 else None
+            summary_rows.append({
+                "source": src, "count": st["count"], "wins": st["wins"],
+                "losses": st["losses"], "open": st["open"],
+                "wr": wr, "avg_r": avg_r, "pf": pf,
+                "sum_r": round(st["sum_r"], 2), "sum_pct": round(st["sum_pct"], 2),
+            })
+        # Сортируем по sum_r убыв
+        summary_rows.sort(key=lambda x: -(x.get("sum_r") or 0))
+
+        # Total
+        total_count = sum(r["count"] for r in summary_rows)
+        total_wins = sum(r["wins"] for r in summary_rows)
+        total_losses = sum(r["losses"] for r in summary_rows)
+        total_r = sum(r["sum_r"] for r in summary_rows)
+
+        return {
+            "ok": True,
+            "hours": hours, "forward_hours": forward_hours,
+            "total": {
+                "signals": total_count, "wins": total_wins, "losses": total_losses,
+                "wr": round(total_wins / max(total_wins + total_losses, 1) * 100, 1),
+                "sum_r": round(total_r, 2),
+            },
+            "by_source": summary_rows,
+            "items": items,
+        }
+
+    return await asyncio.to_thread(_sync)
 
 
 @app.get("/api/paper/be-audit")
