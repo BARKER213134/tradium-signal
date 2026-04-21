@@ -152,7 +152,8 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
-            "/api/paper/rejections", "/api/paper/be-audit", "/api/backtest-yesterday",
+            "/api/paper/rejections", "/api/paper/be-audit",
+            "/api/backtest-yesterday", "/api/backtest-yesterday/status",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
@@ -4131,24 +4132,36 @@ async def api_paper_history(limit: int = 50):
     return {"items": history}
 
 
-@app.get("/api/backtest-yesterday")
-async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
-    """Бектест ВСЕХ сигналов за последние N часов.
+_by_state: dict = {
+    "running": False, "started_at": None, "finished_at": None,
+    "progress": {"processed": 0, "total": 0, "current": ""},
+    "result": None, "error": None,
+    "hours": 24, "forward_hours": 48,
+}
 
-    Источники: tradium, cryptovizor (pattern_triggered), anomaly, confluence,
-    cluster, supertrend (VIP/MTF/Daily). Для каждого сигнала симулируем
-    касание TP1 или SL на свечах 15m с момента сигнала в течение forward_hours.
-    Если TP/SL не заданы — используем ATR(14) 1h × 1.5 как SL, × 2.5 как TP.
 
-    Возвращает per-source breakdown (count, wins, losses, wr, avg_r, sum_r)
-    + per-signal детали.
-    """
+async def _run_backtest_yesterday(hours: int, forward_hours: int):
+    from datetime import datetime as _dt
+    try:
+        result = await asyncio.to_thread(_backtest_yesterday_sync, hours, forward_hours)
+        _by_state["result"] = result
+    except Exception as e:
+        _by_state["error"] = str(e)
+        logging.getLogger(__name__).exception("[backtest-yesterday] crashed")
+    finally:
+        _by_state["running"] = False
+        _by_state["finished_at"] = _dt.utcnow().isoformat()
+
+
+def _backtest_yesterday_sync(hours: int, forward_hours: int) -> dict:
+    """Синхронная версия (вызывается через to_thread из background task)."""
     from database import (_signals, _anomalies, _confluence, _clusters,
                           _supertrend_signals, utcnow)
     from datetime import timedelta
     from exchange import get_klines_any
+    import logging as _log
+    logger = _log.getLogger(__name__)
 
-    # Кешируем свечи по паре (1 HTTP на pair, не на сигнал!)
     candles_15m: dict[str, list] = {}
     candles_1h:  dict[str, list] = {}
 
@@ -4166,8 +4179,7 @@ async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
         candles_1h[pair] = c
         return c
 
-    def _simulate(pair: str, direction: str, entry: float, tp1: float, sl: float,
-                  opened_at, forward_h: int = 48) -> dict:
+    def _simulate(pair, direction, entry, tp1, sl, opened_at, forward_h):
         if entry is None or sl is None:
             return {"ok": False, "error": "no entry/sl"}
         candles = _get_15m(pair)
@@ -4193,10 +4205,8 @@ async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
             else:
                 tp_hit = tp1 and lo <= tp1
                 sl_hit = hi >= sl
-            # SL первым — консервативная оценка
             if sl_hit:
-                return {"ok": True, "what": "SL", "exit": sl,
-                        "r": -1.0,
+                return {"ok": True, "what": "SL", "exit": sl, "r": -1.0,
                         "pnl_pct": round((sl - entry) / entry * 100 * (1 if is_long else -1), 2),
                         "bars_held": bar_count}
             if tp_hit:
@@ -4209,13 +4219,11 @@ async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
             return {"ok": False, "error": "no candles in window"}
         last = last_c["c"]
         r = (last - entry) / risk if is_long else (entry - last) / risk
-        return {"ok": True, "what": "OPEN", "exit": last,
-                "r": round(r, 3),
+        return {"ok": True, "what": "OPEN", "exit": last, "r": round(r, 3),
                 "pnl_pct": round((last - entry) / entry * 100 * (1 if is_long else -1), 2),
                 "bars_held": bar_count}
 
-    def _atr_sl_tp(pair: str, direction: str, entry: float) -> tuple[float | None, float | None]:
-        """Для anomaly/cluster без TP/SL — вычисляем ATR 1h × 1.5/2.5."""
+    def _atr_sl_tp(pair, direction, entry):
         candles = _get_1h(pair)
         if not candles or len(candles) < 15:
             return None, None
@@ -4230,216 +4238,168 @@ async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
             return entry - atr * 1.5, entry + atr * 2.5
         return entry + atr * 1.5, entry - atr * 2.5
 
-    def _sync():
-        import logging as _log
-        logger = _log.getLogger(__name__)
-        since = utcnow() - timedelta(hours=hours)
-        raw: list[dict] = []
-        fetch_errors: list[str] = []
+    since = utcnow() - timedelta(hours=hours)
+    raw: list[dict] = []
 
-        def _safe_fetch(name, fn):
-            try:
-                fn()
-            except Exception as _e:
-                logger.exception(f"[backtest-yesterday] fetch {name} failed")
-                fetch_errors.append(f"{name}: {_e}")
+    # 1. Tradium
+    for s in _signals().find({"source": "tradium", "received_at": {"$gte": since}}):
+        at = s.get("pattern_triggered_at") or s.get("received_at")
+        raw.append({"source": "tradium", "pair": s.get("pair"),
+                    "symbol": (s.get("pair") or "").replace("/", "").upper(),
+                    "direction": s.get("direction"),
+                    "entry": s.get("entry"), "tp1": s.get("tp1"), "sl": s.get("sl"),
+                    "at": at, "score": s.get("ai_score")})
+    # 2. Cryptovizor
+    for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True,
+                              "pattern_triggered_at": {"$gte": since}}):
+        raw.append({"source": "cryptovizor", "pair": s.get("pair"),
+                    "symbol": (s.get("pair") or "").replace("/", "").upper(),
+                    "direction": s.get("direction"),
+                    "entry": s.get("pattern_price") or s.get("entry"),
+                    "tp1": s.get("dca2"), "sl": s.get("dca1"),
+                    "at": s.get("pattern_triggered_at"), "score": s.get("ai_score")})
+    # 3. Anomaly — топ-200 по score
+    for a in _anomalies().find({"detected_at": {"$gte": since}}).sort("score", -1).limit(200):
+        sym = (a.get("symbol") or "").upper()
+        pair = a.get("pair") or (sym.replace("USDT", "/USDT") if sym.endswith("USDT") else None)
+        raw.append({"source": "anomaly", "pair": pair, "symbol": sym,
+                    "direction": a.get("direction"), "entry": a.get("price"),
+                    "tp1": None, "sl": None,
+                    "at": a.get("detected_at"), "score": a.get("score")})
+    # 4. Confluence — топ-300 по score
+    for c in _confluence().find({"detected_at": {"$gte": since}}).sort("score", -1).limit(300):
+        raw.append({"source": "confluence", "pair": c.get("pair"),
+                    "symbol": (c.get("symbol") or "").upper(),
+                    "direction": c.get("direction"),
+                    "entry": c.get("price"), "tp1": c.get("r1"), "sl": c.get("s1"),
+                    "at": c.get("detected_at"), "score": c.get("score")})
+    # 5. Cluster
+    for cl in _clusters().find({"trigger_at": {"$gte": since}}):
+        raw.append({"source": "cluster", "pair": cl.get("pair"),
+                    "symbol": (cl.get("pair") or "").replace("/", "").upper(),
+                    "direction": cl.get("direction"),
+                    "entry": cl.get("trigger_price"),
+                    "tp1": cl.get("tp_price"), "sl": cl.get("sl_price"),
+                    "at": cl.get("trigger_at"), "score": cl.get("reversal_score")})
+    # 6. SuperTrend VIP+MTF
+    for s in _supertrend_signals().find({"flip_at": {"$gte": since},
+                                         "tier": {"$in": ["vip", "mtf"]}}):
+        raw.append({"source": f"supertrend_{s.get('tier','?')}",
+                    "pair": s.get("pair"), "symbol": s.get("pair_norm"),
+                    "direction": s.get("direction"),
+                    "entry": s.get("entry_price"),
+                    "tp1": None, "sl": s.get("sl_price"),
+                    "at": s.get("flip_at"), "score": None, "tier": s.get("tier")})
 
-        # 1. Tradium (все за период)
-        for s in _signals().find({"source": "tradium", "received_at": {"$gte": since}}):
-            at = s.get("pattern_triggered_at") or s.get("received_at")
-            raw.append({
-                "source": "tradium",
-                "pair": s.get("pair"),
-                "symbol": (s.get("pair") or "").replace("/", "").upper(),
-                "direction": s.get("direction"),
-                "entry": s.get("entry"),
-                "tp1": s.get("tp1"),
-                "sl": s.get("sl"),
-                "at": at,
-                "score": s.get("ai_score"),
-            })
+    _by_state["progress"]["total"] = len(raw)
+    logger.info(f"[backtest-yesterday] собрано сигналов: {len(raw)}")
 
-        # 2. Cryptovizor (только pattern_triggered)
-        for s in _signals().find({
-            "source": "cryptovizor", "pattern_triggered": True,
-            "pattern_triggered_at": {"$gte": since},
-        }):
-            raw.append({
-                "source": "cryptovizor",
-                "pair": s.get("pair"),
-                "symbol": (s.get("pair") or "").replace("/", "").upper(),
-                "direction": s.get("direction"),
-                "entry": s.get("pattern_price") or s.get("entry"),
-                "tp1": s.get("dca2"),
-                "sl": s.get("dca1"),
-                "at": s.get("pattern_triggered_at"),
-                "score": s.get("ai_score"),
-            })
-
-        # 3. Anomaly — нет TP/SL, вычислим через ATR. Топ-200 по score.
-        for a in _anomalies().find(
-            {"detected_at": {"$gte": since}}
-        ).sort("score", -1).limit(200):
-            raw.append({
-                "source": "anomaly",
-                "pair": (a.get("pair") or a.get("symbol") or "").replace("USDT", "/USDT") if a.get("symbol", "").endswith("USDT") else a.get("pair"),
-                "symbol": (a.get("symbol") or "").upper(),
-                "direction": a.get("direction"),
-                "entry": a.get("price"),
-                "tp1": None, "sl": None,  # вычислим
-                "at": a.get("detected_at"),
-                "score": a.get("score"),
-            })
-
-        # 4. Confluence — может быть 1000+ за сутки, ограничиваем топ-300 по score
-        for c in _confluence().find(
-            {"detected_at": {"$gte": since}}
-        ).sort("score", -1).limit(300):
-            raw.append({
-                "source": "confluence",
-                "pair": c.get("pair"),
-                "symbol": (c.get("symbol") or "").upper(),
-                "direction": c.get("direction"),
-                "entry": c.get("price"),
-                "tp1": c.get("r1"),
-                "sl": c.get("s1"),
-                "at": c.get("detected_at"),
-                "score": c.get("score"),
-            })
-
-        # 5. Cluster
-        for cl in _clusters().find({"trigger_at": {"$gte": since}}):
-            raw.append({
-                "source": "cluster",
-                "pair": cl.get("pair"),
-                "symbol": (cl.get("pair") or "").replace("/", "").upper(),
-                "direction": cl.get("direction"),
-                "entry": cl.get("trigger_price"),
-                "tp1": cl.get("tp_price"),
-                "sl": cl.get("sl_price"),
-                "at": cl.get("trigger_at"),
-                "score": cl.get("reversal_score"),
-            })
-
-        # 6. SuperTrend (VIP + MTF, daily исключаем — они не попадают в journal)
-        for s in _supertrend_signals().find({
-            "flip_at": {"$gte": since},
-            "tier": {"$in": ["vip", "mtf"]},
-        }):
-            raw.append({
-                "source": f"supertrend_{s.get('tier','?')}",
-                "pair": s.get("pair"),
-                "symbol": s.get("pair_norm"),
-                "direction": s.get("direction"),
-                "entry": s.get("entry_price"),
-                "tp1": None,  # ST не задаёт TP — посчитаем ATR
-                "sl": s.get("sl_price"),
-                "at": s.get("flip_at"),
-                "score": None,
-                "tier": s.get("tier"),
-            })
-
-        # Симулируем каждый сигнал
-        items = []
-        stats_by_source: dict = {}
-        sim_errors = 0
-
-        for sig in raw:
-          try:
+    items = []
+    stats_by_source: dict = {}
+    sim_errors = 0
+    processed = 0
+    for sig in raw:
+        processed += 1
+        _by_state["progress"]["processed"] = processed
+        _by_state["progress"]["current"] = f"{sig.get('source','')} {sig.get('symbol','')}"
+        try:
             pair = sig.get("pair")
             direction = sig.get("direction")
             entry = sig.get("entry")
             at = sig.get("at")
             if not (pair and direction in ("LONG", "SHORT") and entry and at):
                 continue
-            # Если TP/SL не заданы — считаем через ATR
-            tp1 = sig.get("tp1")
-            sl = sig.get("sl")
+            tp1 = sig.get("tp1"); sl = sig.get("sl")
             if not sl:
                 sl_atr, tp_atr = _atr_sl_tp(pair, direction, entry)
                 sl = sl_atr
-                if not tp1:
-                    tp1 = tp_atr
-            if not sl:
-                continue
+                if not tp1: tp1 = tp_atr
+            if not sl: continue
             if not tp1:
-                # ATR для TP если всё ещё пусто
                 _, tp_atr = _atr_sl_tp(pair, direction, entry)
                 tp1 = tp_atr
-            if not tp1:
-                continue
+            if not tp1: continue
             sim = _simulate(pair, direction, entry, tp1, sl, at, forward_hours)
             if not sim.get("ok"):
-                items.append({**{k: sig.get(k) for k in ("source", "symbol", "direction")},
-                              "entry": entry, "sl": sl, "tp1": tp1,
-                              "error": sim.get("error")})
                 continue
             src = sig["source"]
-            st = stats_by_source.setdefault(src, {
-                "count": 0, "wins": 0, "losses": 0, "open": 0,
-                "sum_r": 0.0, "sum_pct": 0.0,
-            })
+            st = stats_by_source.setdefault(src, {"count": 0, "wins": 0, "losses": 0,
+                                                  "open": 0, "sum_r": 0.0, "sum_pct": 0.0})
             st["count"] += 1
-            if sim["what"] == "TP":
-                st["wins"] += 1
-            elif sim["what"] == "SL":
-                st["losses"] += 1
-            else:
-                st["open"] += 1
+            if sim["what"] == "TP": st["wins"] += 1
+            elif sim["what"] == "SL": st["losses"] += 1
+            else: st["open"] += 1
             st["sum_r"] += sim.get("r") or 0
             st["sum_pct"] += sim.get("pnl_pct") or 0
-            items.append({
-                "source": src, "symbol": sig.get("symbol"), "pair": pair,
-                "direction": direction, "score": sig.get("score"),
-                "entry": entry, "tp1": round(tp1, 8), "sl": round(sl, 8),
-                "at": at.isoformat() if hasattr(at, "isoformat") else str(at),
-                "what": sim["what"], "exit": sim.get("exit"),
-                "r": sim.get("r"), "pnl_pct": sim.get("pnl_pct"),
-                "bars_held": sim.get("bars_held"),
-            })
-          except Exception as _e:
+            items.append({"source": src, "symbol": sig.get("symbol"), "pair": pair,
+                         "direction": direction, "score": sig.get("score"),
+                         "entry": entry, "tp1": round(tp1, 8), "sl": round(sl, 8),
+                         "at": at.isoformat() if hasattr(at, "isoformat") else str(at),
+                         "what": sim["what"], "exit": sim.get("exit"),
+                         "r": sim.get("r"), "pnl_pct": sim.get("pnl_pct"),
+                         "bars_held": sim.get("bars_held")})
+        except Exception as _e:
             sim_errors += 1
-            logger.warning(f"[backtest-yesterday] sim fail {sig.get('source')} {sig.get('symbol')}: {_e}")
 
-        # Финализируем stats: WR, avg_r
-        summary_rows = []
-        for src, st in stats_by_source.items():
-            closed = st["wins"] + st["losses"]
-            wr = round(st["wins"] / closed * 100, 1) if closed else 0
-            avg_r = round(st["sum_r"] / st["count"], 3) if st["count"] else 0
-            pf = None
-            # PF — sum_r_wins / abs(sum_r_losses)
-            wr_sum = sum(i["r"] for i in items if i.get("source") == src and (i.get("r") or 0) > 0)
-            lr_sum = abs(sum(i["r"] for i in items if i.get("source") == src and (i.get("r") or 0) <= 0 and i.get("what") != "OPEN"))
-            pf = round(wr_sum / lr_sum, 2) if lr_sum > 0 else None
-            summary_rows.append({
-                "source": src, "count": st["count"], "wins": st["wins"],
-                "losses": st["losses"], "open": st["open"],
-                "wr": wr, "avg_r": avg_r, "pf": pf,
-                "sum_r": round(st["sum_r"], 2), "sum_pct": round(st["sum_pct"], 2),
-            })
-        # Сортируем по sum_r убыв
-        summary_rows.sort(key=lambda x: -(x.get("sum_r") or 0))
+    summary_rows = []
+    for src, st in stats_by_source.items():
+        closed = st["wins"] + st["losses"]
+        wr = round(st["wins"] / closed * 100, 1) if closed else 0
+        avg_r = round(st["sum_r"] / st["count"], 3) if st["count"] else 0
+        wr_sum = sum(i["r"] for i in items if i.get("source") == src and (i.get("r") or 0) > 0)
+        lr_sum = abs(sum(i["r"] for i in items if i.get("source") == src and (i.get("r") or 0) <= 0 and i.get("what") != "OPEN"))
+        pf = round(wr_sum / lr_sum, 2) if lr_sum > 0 else None
+        summary_rows.append({"source": src, "count": st["count"], "wins": st["wins"],
+                            "losses": st["losses"], "open": st["open"],
+                            "wr": wr, "avg_r": avg_r, "pf": pf,
+                            "sum_r": round(st["sum_r"], 2),
+                            "sum_pct": round(st["sum_pct"], 2)})
+    summary_rows.sort(key=lambda x: -(x.get("sum_r") or 0))
 
-        # Total
-        total_count = sum(r["count"] for r in summary_rows)
-        total_wins = sum(r["wins"] for r in summary_rows)
-        total_losses = sum(r["losses"] for r in summary_rows)
-        total_r = sum(r["sum_r"] for r in summary_rows)
+    total_count = sum(r["count"] for r in summary_rows)
+    total_wins = sum(r["wins"] for r in summary_rows)
+    total_losses = sum(r["losses"] for r in summary_rows)
+    total_r = sum(r["sum_r"] for r in summary_rows)
+    total_pct = sum(r["sum_pct"] for r in summary_rows)
 
-        return {
-            "ok": True,
-            "hours": hours, "forward_hours": forward_hours,
-            "total": {
-                "signals": total_count, "wins": total_wins, "losses": total_losses,
-                "wr": round(total_wins / max(total_wins + total_losses, 1) * 100, 1),
-                "sum_r": round(total_r, 2),
-            },
-            "by_source": summary_rows,
-            "items": items,
-        }
+    return {
+        "ok": True, "hours": hours, "forward_hours": forward_hours,
+        "raw_signals": len(raw), "sim_errors": sim_errors,
+        "pairs_cached_15m": len(candles_15m),
+        "total": {
+            "signals": total_count, "wins": total_wins, "losses": total_losses,
+            "wr": round(total_wins / max(total_wins + total_losses, 1) * 100, 1),
+            "sum_r": round(total_r, 2), "sum_pct": round(total_pct, 2),
+        },
+        "by_source": summary_rows,
+        "items_count": len(items),
+        "items_top": items[:80],  # чтобы не раздувать response
+    }
 
-    return await asyncio.to_thread(_sync)
+
+@app.post("/api/backtest-yesterday")
+async def api_backtest_yesterday_start(payload: dict | None = None):
+    """Запускает фоновый бектест всех сигналов за последние N часов.
+    Статус через GET /api/backtest-yesterday/status."""
+    from datetime import datetime as _dt
+    if _by_state.get("running"):
+        return {"ok": False, "error": "already running", "state": _by_state}
+    hours = int((payload or {}).get("hours", 24))
+    forward_hours = int((payload or {}).get("forward_hours", 48))
+    _by_state.update({
+        "running": True, "started_at": _dt.utcnow().isoformat(),
+        "finished_at": None,
+        "progress": {"processed": 0, "total": 0, "current": ""},
+        "result": None, "error": None,
+        "hours": hours, "forward_hours": forward_hours,
+    })
+    asyncio.create_task(_run_backtest_yesterday(hours, forward_hours))
+    return {"ok": True, "started": True, "hours": hours, "forward_hours": forward_hours}
+
+
+@app.get("/api/backtest-yesterday/status")
+async def api_backtest_yesterday_status():
+    return _by_state
 
 
 @app.get("/api/paper/be-audit")
