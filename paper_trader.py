@@ -930,26 +930,16 @@ async def ai_decide(signal_data: dict) -> dict:
             logger.debug(f"[ST-block] recent flip check fail for {pair}: {_e}")
 
     # ═══════════════════════════════════════════════════════════
-    # MARKET PHASE — фазо-зависимые блокировки из 7-дневного бектеста
+    # MARKET PHASE — фазо-зависимые блокировки
     # ═══════════════════════════════════════════════════════════
-    # Данные из /api/backtest-optimize (7 дней × источник):
-    #   CV SHORT: WR 0.7% (1 из 146), sumR -58.67 → ВСЕГДА блок
-    #   MTF SHORT: WR 22%, sumR -34.7 → ВСЕГДА блок
-    #   CV pattern=Молот: sumR -27 → блок
-    #   Confluence LONG: sumR -17 → блок в BEAR фазе
-    #   MTF LONG: работает только при BTC=UP → блок в BEAR_TREND
+    # Статистические блоки на основе 7-дневного окна НЕ применяем —
+    # недельные цифры слишком шумны, на следующей неделе паттерны могут
+    # перевернуться. Пусть AI сам оценивает каждый сигнал с учётом
+    # свежей статистики (через ai_memory — обновляется ежедневно).
+    #
+    # Остаются только адаптивные (фазо-зависимые) блоки — они реагируют
+    # на текущее состояние рынка, а не на исторические WR.
     source = (signal_data.get("source") or "").lower()
-    pattern_name = signal_data.get("pattern") or signal_data.get("pattern_name") or ""
-
-    # Универсальные блокировки (независимо от фазы):
-    if source == "cryptovizor" and direction == "SHORT":
-        return {"enter": False, "reasoning": "⛔ CV SHORT: 7д-бектест WR 0.7% (1 из 146). Стратегия мёртва."}
-    if source == "supertrend":
-        tier = (signal_data.get("tier") or signal_data.get("st_tier") or "").lower()
-        if tier == "mtf" and direction == "SHORT":
-            return {"enter": False, "reasoning": "⛔ MTF SHORT: 7д-бектест WR 22%, sumR -34.7R. Блок."}
-    if source == "cryptovizor" and "Молот" in pattern_name and "Перевёрнутый" not in pattern_name:
-        return {"enter": False, "reasoning": f"⛔ CV паттерн «{pattern_name}»: 7д-бектест sumR -27R. Блок."}
 
     # Фазо-зависимые — получаем текущую фазу (cached, 120с)
     try:
