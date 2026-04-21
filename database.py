@@ -686,6 +686,11 @@ def init_db():
         # KL backfill делает find_one({"message_id": m.id}) в цикле — без индекса full scan на каждой итерации
         kl.create_index("message_id", sparse=True, name="message_id_sparse")
 
+        # Market phases — TTL 60 дней, индекс по времени
+        mp = _get_db().market_phases
+        mp.create_index("at", expireAfterSeconds=60*86400, name="ttl_60d")
+        mp.create_index([("at", DESCENDING)])
+
         # Paper AI rejections — лог отказов от сделок (TTL 7 дней)
         try:
             rej = _get_db().paper_rejections

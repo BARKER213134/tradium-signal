@@ -156,6 +156,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/history",
             "/api/backtest-yesterday", "/api/backtest-yesterday/status",
             "/api/backtest-optimize", "/api/backtest-optimize/status",
+            "/api/market-phase", "/api/market-phase/history",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
@@ -4790,6 +4791,24 @@ async def api_backtest_optimize_start(payload: dict | None = None):
 @app.get("/api/backtest-optimize/status")
 async def api_backtest_optimize_status():
     return _bo_state
+
+
+# ═══════════════════════════════════════════════════════════════════
+# MARKET PHASE — определение текущей фазы рынка + история смен
+# ═══════════════════════════════════════════════════════════════════
+@app.get("/api/market-phase")
+async def api_market_phase(force: int = 0):
+    """Возвращает текущую фазу рынка + метрики + рекомендации.
+    Кеш 120с, force=1 пересчитать принудительно."""
+    import market_phase as mp
+    return await asyncio.to_thread(mp.get_market_phase, bool(force))
+
+
+@app.get("/api/market-phase/history")
+async def api_market_phase_history(hours: int = 72):
+    """История смен фазы за последние N часов."""
+    import market_phase as mp
+    return {"items": await asyncio.to_thread(mp.get_phase_history, hours)}
 
 
 @app.get("/api/paper/be-audit")

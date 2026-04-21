@@ -822,6 +822,81 @@ async def ai_decide(signal_data: dict) -> dict:
         except Exception as _e:
             logger.debug(f"[ST-block] recent flip check fail for {pair}: {_e}")
 
+    # ═══════════════════════════════════════════════════════════
+    # MARKET PHASE — фазо-зависимые блокировки из 7-дневного бектеста
+    # ═══════════════════════════════════════════════════════════
+    # Данные из /api/backtest-optimize (7 дней × источник):
+    #   CV SHORT: WR 0.7% (1 из 146), sumR -58.67 → ВСЕГДА блок
+    #   MTF SHORT: WR 22%, sumR -34.7 → ВСЕГДА блок
+    #   CV pattern=Молот: sumR -27 → блок
+    #   Confluence LONG: sumR -17 → блок в BEAR фазе
+    #   MTF LONG: работает только при BTC=UP → блок в BEAR_TREND
+    source = (signal_data.get("source") or "").lower()
+    pattern_name = signal_data.get("pattern") or signal_data.get("pattern_name") or ""
+
+    # Универсальные блокировки (независимо от фазы):
+    if source == "cryptovizor" and direction == "SHORT":
+        return {"enter": False, "reasoning": "⛔ CV SHORT: 7д-бектест WR 0.7% (1 из 146). Стратегия мёртва."}
+    if source == "supertrend":
+        tier = (signal_data.get("tier") or signal_data.get("st_tier") or "").lower()
+        if tier == "mtf" and direction == "SHORT":
+            return {"enter": False, "reasoning": "⛔ MTF SHORT: 7д-бектест WR 22%, sumR -34.7R. Блок."}
+    if source == "cryptovizor" and "Молот" in pattern_name and "Перевёрнутый" not in pattern_name:
+        return {"enter": False, "reasoning": f"⛔ CV паттерн «{pattern_name}»: 7д-бектест sumR -27R. Блок."}
+
+    # Фазо-зависимые — получаем текущую фазу (cached, 120с)
+    try:
+        import market_phase as _mp
+        phase_data = _mp.get_market_phase()
+        phase = phase_data.get("phase", "NEUTRAL")
+    except Exception:
+        phase = "NEUTRAL"
+
+    if phase == "BEAR_TREND":
+        if source == "supertrend":
+            tier = (signal_data.get("tier") or signal_data.get("st_tier") or "").lower()
+            if tier == "mtf" and direction == "LONG":
+                # MTF LONG работает только при BTC=UP (бектест)
+                return {"enter": False, "reasoning": "⛔ BEAR phase + MTF LONG: работает только при BTC=UP"}
+        if source == "confluence" and direction == "LONG":
+            # Confluence LONG в BEAR — оверфильтрация требуется
+            score = signal_data.get("score") or 0
+            if score < 5:
+                return {"enter": False, "reasoning": f"⛔ BEAR phase + Confluence LONG score={score}<5: 7д-бектест avg_R -0.02"}
+
+    if phase == "BULL_TREND":
+        if source == "confluence" and direction == "SHORT":
+            score = signal_data.get("score") or 0
+            if score < 5:
+                return {"enter": False, "reasoning": f"⛔ BULL phase + Confluence SHORT score={score}<5: против глобального тренда"}
+        if source == "supertrend":
+            tier = (signal_data.get("tier") or signal_data.get("st_tier") or "").lower()
+            if tier in ("vip", "mtf") and direction == "SHORT":
+                return {"enter": False, "reasoning": f"⛔ BULL phase + ST {tier.upper()} SHORT: против тренда"}
+
+    if phase == "VOLATILE":
+        # В whipsaw принимаем только VIP с двойным подтверждением или Cluster MEGA
+        if source not in ("cluster",):
+            if source == "supertrend":
+                tier = (signal_data.get("tier") or signal_data.get("st_tier") or "").lower()
+                aligned = signal_data.get("aligned_bots_count") or 0
+                if tier != "vip" or aligned < 2:
+                    return {"enter": False, "reasoning": "⛔ VOLATILE phase: только VIP с 2+ aligned_bots или Cluster MEGA"}
+            elif source in ("cryptovizor", "anomaly"):
+                return {"enter": False, "reasoning": f"⛔ VOLATILE phase: {source} блокируется (whipsaw)"}
+
+    if phase == "CHOP":
+        # Флет — только сильные сетапы
+        if source == "supertrend":
+            tier = (signal_data.get("tier") or signal_data.get("st_tier") or "").lower()
+            if tier == "daily":
+                return {"enter": False, "reasoning": "⛔ CHOP phase: Daily ST сигналы в диапазоне дают whipsaw"}
+        if source == "confluence":
+            factors = signal_data.get("factors_count") or signal_data.get("factors") or 0
+            score = signal_data.get("score") or 0
+            if score < 5 and factors < 5:
+                return {"enter": False, "reasoning": "⛔ CHOP phase: Confluence без score≥5 или factors≥5"}
+
     # Формируем контекст
     open_str = ""
     for p in open_pos:

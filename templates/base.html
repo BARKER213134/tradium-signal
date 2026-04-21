@@ -1310,6 +1310,93 @@
     </script>
 </head>
 <body>
+
+<!-- ═══ MARKET PHASE BANNER ═══ -->
+<div id="mpBanner" style="display:none;position:sticky;top:0;z-index:100;padding:10px 24px;background:linear-gradient(90deg,rgba(11,13,18,0.95),rgba(17,21,28,0.92));backdrop-filter:blur(8px);border-bottom:2px solid #333;font-family:var(--font-mono,monospace);font-size:13px;cursor:pointer;transition:all 0.3s;"
+     onclick="window._mpToggleDetail && window._mpToggleDetail()"
+     title="Кликни чтобы развернуть детали">
+  <div style="max-width:1600px;margin:0 auto;display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
+    <!-- Phase emoji + label -->
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span id="mpEmoji" style="font-size:22px;line-height:1;">❓</span>
+      <div>
+        <div id="mpLabel" style="font-weight:800;font-size:14px;letter-spacing:0.05em;">LOADING…</div>
+        <div id="mpConf" style="font-size:10px;color:#7a8ba6;letter-spacing:0.1em;">confidence —</div>
+      </div>
+    </div>
+    <!-- Metrics -->
+    <div id="mpMetrics" style="display:flex;gap:14px;font-size:11px;color:#aab3c2;flex-wrap:wrap;">
+      <span id="mpBtcSt">BTC: —</span>
+      <span id="mpAtr">ATR%: —</span>
+      <span id="mpFunding">Funding: —</span>
+      <span id="mpEthBtc">ETH/BTC 1h: —</span>
+    </div>
+    <!-- Recommendations inline -->
+    <div id="mpRec" style="margin-left:auto;font-size:11px;color:#7a8ba6;"></div>
+  </div>
+  <!-- Details (expand on click) -->
+  <div id="mpDetail" style="display:none;max-width:1600px;margin:10px auto 0;padding:12px;background:rgba(0,0,0,0.3);border-radius:8px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;font-size:12px;">
+      <div>
+        <div style="color:#00e5a0;font-weight:700;margin-bottom:6px;">✅ Что брать в этой фазе:</div>
+        <ul id="mpTake" style="margin:0;padding-left:18px;color:#c8d0dc;"></ul>
+      </div>
+      <div>
+        <div style="color:#ff6b6b;font-weight:700;margin-bottom:6px;">❌ Что НЕ брать:</div>
+        <ul id="mpAvoid" style="margin:0;padding-left:18px;color:#c8d0dc;"></ul>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  // Market phase refresh — fetch /api/market-phase каждые 3 мин
+  (function(){
+    const byId = (id) => document.getElementById(id);
+    window._mpDetailOpen = false;
+    window._mpToggleDetail = function(){
+      window._mpDetailOpen = !window._mpDetailOpen;
+      const el = byId('mpDetail');
+      if (el) el.style.display = window._mpDetailOpen ? 'block' : 'none';
+    };
+    async function loadPhase(){
+      try {
+        const r = await fetch('/api/market-phase');
+        const d = await r.json();
+        const banner = byId('mpBanner');
+        if (!banner) return;
+        banner.style.display = 'block';
+        banner.style.borderBottomColor = d.color || '#333';
+        byId('mpEmoji').textContent = d.emoji || '❓';
+        byId('mpLabel').textContent = d.label || d.phase || 'Neutral';
+        byId('mpLabel').style.color = d.color || '#c8d0dc';
+        byId('mpConf').textContent = `confidence ${d.confidence || 0}%`;
+        const m = d.metrics || {};
+        const stFmt = s => s === 'UP' ? '↑' : s === 'DOWN' ? '↓' : '—';
+        const btcSt = m.btc_st || {};
+        byId('mpBtcSt').textContent = `BTC: 1h${stFmt(btcSt['1h'])} 4h${stFmt(btcSt['4h'])} 1d${stFmt(btcSt['1d'])}`;
+        byId('mpAtr').textContent = `ATR%: ${m.atr_1h_pct != null ? m.atr_1h_pct.toFixed(2) : '—'}`;
+        byId('mpFunding').textContent = `Funding: ${m.avg_funding != null ? (m.avg_funding >= 0 ? '+' : '') + m.avg_funding.toFixed(3) + '%' : '—'}`;
+        byId('mpEthBtc').textContent = `ETH/BTC 1h: ${m.eth_btc_diff != null ? (m.eth_btc_diff >= 0 ? '+' : '') + m.eth_btc_diff.toFixed(2) + '%' : '—'}`;
+        const take = d.recommended || [];
+        const avoid = d.avoid || [];
+        const takeEl = byId('mpTake');
+        const avoidEl = byId('mpAvoid');
+        if (takeEl) takeEl.innerHTML = take.map(s => '<li>' + s + '</li>').join('');
+        if (avoidEl) avoidEl.innerHTML = avoid.map(s => '<li>' + s + '</li>').join('');
+        // Короткий рекомендационный текст справа (первый take)
+        byId('mpRec').textContent = take.length ? `→ ${take[0]}` : '';
+      } catch (e) { /* ignore */ }
+    }
+    loadPhase();
+    if (window.safeInterval) {
+      window.safeInterval(loadPhase, 180000);  // 3 мин
+    } else {
+      setInterval(loadPhase, 180000);
+    }
+  })();
+</script>
+<!-- ═══ END MARKET PHASE BANNER ═══ -->
+
 <main class="main" style="margin-left:0;">
     <header class="topbar" style="padding:22px 40px;">
         <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">

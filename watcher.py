@@ -107,6 +107,48 @@ async def _ai_memory_refresh_loop():
         await _asyncio.sleep(86400)
 
 
+async def _market_phase_loop():
+    """Раз в 3 мин пересчитываем фазу рынка. При смене — запись в историю + alert в BOT."""
+    import asyncio as _asyncio
+    prev_phase = None
+    while True:
+        try:
+            import market_phase as mp
+            result = await _asyncio.to_thread(mp.get_market_phase, True)
+            phase = result.get("phase")
+            confidence = result.get("confidence", 0)
+            metrics = result.get("metrics", {})
+            if phase and phase != prev_phase:
+                # записываем смену
+                changed = await _asyncio.to_thread(
+                    mp.record_phase_change, phase, confidence, metrics
+                )
+                if changed:
+                    logger.info(f"[market-phase] CHANGED: {prev_phase} → {phase} ({confidence}%)")
+                    # Telegram alert (BOT — главный админ)
+                    if prev_phase is not None:  # не алертим при первом старте
+                        try:
+                            global _bot, _admin_chat_id
+                            if _bot and _admin_chat_id:
+                                rec = result.get("recommended", [])
+                                avoid = result.get("avoid", [])
+                                msg = (
+                                    f"{result.get('emoji','')} <b>РЫНОК: {result.get('label', phase)}</b>\n"
+                                    f"confidence {confidence}%\n\n"
+                                    f"Было: {prev_phase}\n"
+                                    f"Стало: <b>{phase}</b>\n\n"
+                                    f"✅ Что брать:\n" + "\n".join(f"  • {r}" for r in rec[:3]) + "\n\n"
+                                    f"❌ Что НЕ брать:\n" + "\n".join(f"  • {a}" for a in avoid[:3])
+                                )
+                                await _bot.send_message(_admin_chat_id, msg, parse_mode="HTML")
+                        except Exception:
+                            logger.debug("[market-phase] alert fail", exc_info=True)
+                prev_phase = phase
+        except Exception:
+            logger.exception("[market-phase] loop crashed")
+        await _asyncio.sleep(180)  # 3 мин
+
+
 async def _eth_kc_prewarm_loop():
     """Фоновый прогрев Keltner ETH + ETH/BTC контекста.
     Обе функции вызываются в каждом рендере /signals и при холодном кеше
@@ -2925,6 +2967,12 @@ async def start_watcher():
         logger.info("[prewarm] ETH/KC loop started")
     except Exception:
         logger.exception("[prewarm] ETH/KC loop failed to start")
+    # Market phase loop — каждые 3 мин определяем фазу + alert при смене
+    try:
+        asyncio.create_task(_market_phase_loop())
+        logger.info("[market-phase] loop started")
+    except Exception:
+        logger.exception("[market-phase] loop failed to start")
     # AI memory refresh — раз в сутки агрегация уроков Claude'ом
     try:
         asyncio.create_task(_ai_memory_refresh_loop())
