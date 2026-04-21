@@ -17,21 +17,12 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
 SOURCE_GROUP_ID = int(os.getenv("SOURCE_GROUP_ID", "-1002423680272"))
 # Топик (форум) внутри группы с Trade Setup Screener — только отсюда парсим сетапы
 TRADIUM_SETUP_TOPIC_ID = int(os.getenv("TRADIUM_SETUP_TOPIC_ID", "3204"))
-# Топик для ✨ Verified Entries (Entry Checker автопроверка)
-# Если не задан — шлём в общую ленту форума (без thread_id)
+# Топик для ✨ Verified Entries (Entry Checker автопроверка).
+# @topmonetabot = BOT9 (Top Picks) — verified сообщения шлются через него
+# в ADMIN_CHAT_ID. Если задан VERIFIED_TOPIC_ID — в конкретный топик форума,
+# иначе — в общую ленту чата.
 _vt = os.getenv("VERIFIED_TOPIC_ID", "").strip()
 VERIFIED_TOPIC_ID = int(_vt) if _vt.isdigit() else None
-
-# @topmonetabot — отдельный бот для ✨ verified entries
-# Если TOPMONETA_BOT_TOKEN задан — используем его (отдельный bot instance).
-# Если нет — fallback на главный BOT_TOKEN.
-TOPMONETA_BOT_TOKEN = os.getenv("TOPMONETA_BOT_TOKEN", "").strip()
-_tm_chat = os.getenv("TOPMONETA_CHAT_ID", "").strip()
-# поддержка положительных/отрицательных ID
-try:
-    TOPMONETA_CHAT_ID = int(_tm_chat) if _tm_chat and (_tm_chat.lstrip('-').isdigit()) else None
-except Exception:
-    TOPMONETA_CHAT_ID = None
 
 # Сколько секунд ждать график после текстового сообщения
 CHART_WAIT_SECONDS = int(os.getenv("CHART_WAIT_SECONDS", "5"))
