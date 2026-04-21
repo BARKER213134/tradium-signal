@@ -4148,23 +4148,44 @@ async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
     from datetime import timedelta
     from exchange import get_klines_any
 
+    # Кешируем свечи по паре (1 HTTP на pair, не на сигнал!)
+    candles_15m: dict[str, list] = {}
+    candles_1h:  dict[str, list] = {}
+
+    def _get_15m(pair: str):
+        if pair in candles_15m:
+            return candles_15m[pair]
+        c = get_klines_any(pair, "15m", 500) or []
+        candles_15m[pair] = c
+        return c
+
+    def _get_1h(pair: str):
+        if pair in candles_1h:
+            return candles_1h[pair]
+        c = get_klines_any(pair, "1h", 30) or []
+        candles_1h[pair] = c
+        return c
+
     def _simulate(pair: str, direction: str, entry: float, tp1: float, sl: float,
                   opened_at, forward_h: int = 48) -> dict:
         if entry is None or sl is None:
             return {"ok": False, "error": "no entry/sl"}
-        candles = get_klines_any(pair, "15m", 500)
+        candles = _get_15m(pair)
         if not candles:
             return {"ok": False, "error": "no candles"}
         opened_ts_ms = int(opened_at.timestamp() * 1000) if hasattr(opened_at, "timestamp") else 0
         end_ms = opened_ts_ms + forward_h * 3600 * 1000
-        after = [c for c in candles if opened_ts_ms <= c["t"] <= end_ms]
-        if not after:
-            return {"ok": False, "error": "no candles in window"}
         is_long = direction == "LONG"
         risk = abs(entry - sl)
         if risk <= 0:
             return {"ok": False, "error": "zero risk"}
-        for c in after:
+        bar_count = 0
+        last_c = None
+        for c in candles:
+            if c["t"] < opened_ts_ms or c["t"] > end_ms:
+                continue
+            bar_count += 1
+            last_c = c
             hi, lo = c["h"], c["l"]
             if is_long:
                 tp_hit = tp1 and hi >= tp1
@@ -4175,25 +4196,27 @@ async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
             # SL первым — консервативная оценка
             if sl_hit:
                 return {"ok": True, "what": "SL", "exit": sl,
-                        "r": -1.0, "pnl_pct": round((sl - entry) / entry * 100 * (1 if is_long else -1), 2),
-                        "bars_held": after.index(c) + 1}
+                        "r": -1.0,
+                        "pnl_pct": round((sl - entry) / entry * 100 * (1 if is_long else -1), 2),
+                        "bars_held": bar_count}
             if tp_hit:
                 reward = abs(tp1 - entry)
                 return {"ok": True, "what": "TP", "exit": tp1,
                         "r": round(reward / risk, 2),
                         "pnl_pct": round((tp1 - entry) / entry * 100 * (1 if is_long else -1), 2),
-                        "bars_held": after.index(c) + 1}
-        # Всё ещё открыта → оцениваем по last close
-        last = after[-1]["c"]
+                        "bars_held": bar_count}
+        if bar_count == 0 or last_c is None:
+            return {"ok": False, "error": "no candles in window"}
+        last = last_c["c"]
         r = (last - entry) / risk if is_long else (entry - last) / risk
         return {"ok": True, "what": "OPEN", "exit": last,
                 "r": round(r, 3),
                 "pnl_pct": round((last - entry) / entry * 100 * (1 if is_long else -1), 2),
-                "bars_held": len(after)}
+                "bars_held": bar_count}
 
     def _atr_sl_tp(pair: str, direction: str, entry: float) -> tuple[float | None, float | None]:
         """Для anomaly/cluster без TP/SL — вычисляем ATR 1h × 1.5/2.5."""
-        candles = get_klines_any(pair, "1h", 30)
+        candles = _get_1h(pair)
         if not candles or len(candles) < 15:
             return None, None
         trs = []
