@@ -2519,10 +2519,18 @@ function renderAiResult(d) {
     <tbody id="ecTbody"></tbody>
   </table>
   <div id="ecMarketFooter" class="ec-market-footer"></div>
+
+  <!-- AI opinion section -->
+  <div style="margin-top:14px;display:flex;align-items:center;gap:10px;">
+    <button id="ecAiBtn" onclick="ecAskAi()" style="background:linear-gradient(135deg,rgba(123,92,255,0.22),rgba(0,212,255,0.1));color:#b89cff;border:1px solid rgba(123,92,255,0.5);border-radius:8px;padding:8px 18px;font-size:12px;font-family:var(--font-mono);font-weight:700;cursor:pointer;letter-spacing:0.05em;">🧠 AI мнение (Haiku, ~$0.001)</button>
+    <span style="font-size:10px;color:var(--muted);">Доп. анализ Claude Haiku с учётом контекста и ai_memory</span>
+  </div>
+  <div id="ecAiResult" style="display:none;margin-top:12px;padding:14px 16px;background:rgba(123,92,255,0.06);border:1px solid rgba(123,92,255,0.3);border-radius:10px;font-family:var(--font-mono);"></div>
 </div>
 
 <script>
   window._ecDirection = 'LONG';
+  window._ecLastData = null;
   function ecSetDir(d) {
     window._ecDirection = d;
     document.getElementById('ecDirLong').classList.toggle('active', d === 'LONG');
@@ -2584,8 +2592,64 @@ function renderAiResult(d) {
         <span><b>Funding:</b> ${m.avg_funding != null ? (m.avg_funding >= 0 ? '+' : '') + m.avg_funding.toFixed(3) + '%' : '—'}</span>
       `;
       resultBox.style.display = 'block';
+      // Сохраняем для AI вызова + скрываем старый AI-ответ
+      window._ecLastData = d;
+      document.getElementById('ecAiResult').style.display = 'none';
     } catch (e) {
       alert('Ошибка сети: ' + e.message);
+    } finally {
+      btn.textContent = origText; btn.disabled = false;
+    }
+  }
+
+  async function ecAskAi() {
+    if (!window._ecLastData) {
+      alert('Сначала нажми ПРОВЕРИТЬ');
+      return;
+    }
+    const d = window._ecLastData;
+    const btn = document.getElementById('ecAiBtn');
+    const resBox = document.getElementById('ecAiResult');
+    const origText = btn.textContent;
+    btn.textContent = '⏳ Haiku думает…'; btn.disabled = true;
+    resBox.style.display = 'block';
+    resBox.innerHTML = '<div style="color:#b89cff;">⏳ Claude Haiku анализирует контекст…</div>';
+    try {
+      const r = await fetch('/api/entry-checker/ai-opinion', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          pair: d.pair, direction: d.direction,
+          checks: d.checks, market: d.market, signal: d.signal,
+        }),
+      });
+      const ai = await r.json();
+      if (!ai.ok) {
+        resBox.innerHTML = `<div style="color:#ff4d6d;">❌ Ошибка AI: ${ai.error || '?'}</div>`;
+        return;
+      }
+      const verdictColors = {go:'#00e5a0', caution:'#ffa94d', skip:'#ff4d6d'};
+      const verdictLabels = {go:'✅ GO', caution:'⚠️ CAUTION', skip:'❌ SKIP'};
+      const vc = verdictColors[ai.verdict] || '#7a8ba6';
+      const vl = verdictLabels[ai.verdict] || ai.verdict;
+      let adjust = '';
+      if (ai.adjust_size_pct || ai.adjust_leverage) {
+        const parts = [];
+        if (ai.adjust_size_pct) parts.push(`размер ${ai.adjust_size_pct}%`);
+        if (ai.adjust_leverage) parts.push(`плечо ${ai.adjust_leverage}×`);
+        adjust = `<div style="margin-top:8px;font-size:11px;color:#00d4ff;">⚙️ Рекомендация: ${parts.join(' · ')}</div>`;
+      }
+      resBox.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+          <span style="font-size:16px;font-weight:800;color:${vc};">${vl}</span>
+          <span style="font-size:10px;color:var(--muted);">AI vs rule-based: ${d.verdict === ai.verdict ? 'согласен' : 'расходится'}</span>
+        </div>
+        <div style="color:var(--text);font-size:12px;line-height:1.5;">${ai.opinion || ''}</div>
+        ${adjust}
+        <div style="margin-top:8px;font-size:9px;color:var(--muted);">model: ${ai.model || ''}</div>
+      `;
+    } catch (e) {
+      resBox.innerHTML = `<div style="color:#ff4d6d;">❌ Ошибка сети: ${e.message}</div>`;
     } finally {
       btn.textContent = origText; btn.disabled = false;
     }

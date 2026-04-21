@@ -158,7 +158,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-optimize", "/api/backtest-optimize/status",
             "/api/backtest-entry-timing", "/api/backtest-entry-timing/status",
             "/api/market-phase", "/api/market-phase/history",
-            "/api/entry-checker",
+            "/api/entry-checker", "/api/entry-checker/ai-opinion",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
@@ -5594,6 +5594,90 @@ async def api_entry_checker(pair: str, direction: str = "LONG"):
         }
 
     return await asyncio.to_thread(_sync)
+
+
+@app.post("/api/entry-checker/ai-opinion")
+async def api_entry_checker_ai_opinion(payload: dict):
+    """Дополнительное AI-мнение (Haiku) для Entry Checker.
+    payload: {pair, direction, checks[], market, signal}.
+    Возвращает {opinion: str, verdict: go|caution|skip, adjust: {...}}.
+    """
+    from ai_client import get_ai_client
+    from config import ANTHROPIC_MODEL_FAST
+    import paper_trader as pt
+
+    pair = payload.get("pair", "")
+    direction = payload.get("direction", "")
+    checks = payload.get("checks", [])
+    market = payload.get("market", {})
+    signal = payload.get("signal", {})
+
+    # Сжатая сводка rule-based checks
+    checks_str = ""
+    for i, c in enumerate(checks, 1):
+        status_icon = {"ok": "✅", "warn": "⚠️", "bad": "❌"}.get(c.get("status"), "?")
+        checks_str += f"  {i}. {status_icon} {c.get('name','?')}: {c.get('comment','')}\n"
+
+    # ai_memory для контекста уроков
+    try:
+        mem = pt.get_ai_memory()
+        mem_str = ""
+        if mem.get("summary"):
+            mem_str = f"\nПАМЯТЬ AI (из закрытых сделок):\n  {mem['summary'][:400]}\n"
+            for l in (mem.get("top_lessons") or [])[:3]:
+                mem_str += f"  • {l[:200]}\n"
+    except Exception:
+        mem_str = ""
+
+    btc = market.get("btc_st", {})
+    prompt = (
+        f"Ты — опытный crypto-трейдер. Даёшь дополнительное мнение на вход после rule-based проверки.\n\n"
+        f"СДЕЛКА: {pair} · {direction}\n"
+        f"Сигнал: {signal.get('source','?')} ({signal.get('minutes_ago','?')} мин назад), "
+        f"entry={signal.get('entry')}, tp1={signal.get('tp1')}, sl={signal.get('sl')}\n\n"
+        f"ФАЗА РЫНКА: {market.get('phase_label', market.get('phase','?'))}\n"
+        f"BTC ST: 1h={btc.get('1h','?')} 4h={btc.get('4h','?')} 1d={btc.get('1d','?')} | "
+        f"ATR%: {market.get('atr_1h_pct')} | Funding: {market.get('avg_funding')}\n\n"
+        f"RULE-BASED ПРОВЕРКИ:\n{checks_str}\n"
+        f"{mem_str}"
+        f"\nТвоя задача — дать короткое (3-4 предложения) ДОПОЛНИТЕЛЬНОЕ мнение:\n"
+        f"- Согласен ли ты с rule-based результатом?\n"
+        f"- Есть ли нюансы которые rule-based упустил?\n"
+        f"- Какие риски или плюсы видишь?\n"
+        f"- Итоговый вердикт: GO / CAUTION / SKIP\n\n"
+        f"Ответь ТОЛЬКО JSON без markdown:\n"
+        f'{{"opinion": "3-4 предложения обоснования", "verdict": "go"|"caution"|"skip", '
+        f'"adjust_size_pct": число_рекомендуемого_размера_%, "adjust_leverage": число_плеча}}'
+    )
+
+    try:
+        client = get_ai_client()
+        msg = await asyncio.to_thread(
+            client.messages.create,
+            model=ANTHROPIC_MODEL_FAST,
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = msg.content[0].text.strip()
+        # Robust JSON parsing
+        import json as _json
+        import re as _re
+        try:
+            data = _json.loads(text)
+        except Exception:
+            m = _re.search(r"\{[\s\S]*\}", text)
+            data = _json.loads(m.group(0)) if m else {"opinion": text[:500], "verdict": "caution"}
+        return {
+            "ok": True,
+            "opinion": data.get("opinion", "")[:800],
+            "verdict": data.get("verdict", "caution"),
+            "adjust_size_pct": data.get("adjust_size_pct"),
+            "adjust_leverage": data.get("adjust_leverage"),
+            "model": ANTHROPIC_MODEL_FAST,
+        }
+    except Exception as e:
+        logging.getLogger(__name__).exception("[entry-checker ai] fail")
+        return {"ok": False, "error": str(e)[:200]}
 
 
 @app.get("/api/paper/be-audit")
