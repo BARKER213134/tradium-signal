@@ -2960,8 +2960,24 @@ async function loadPaperStatus() {
           const size = p.size_usdt ? `$${p.size_usdt}` : '';
           const price = p.live_price ? p.live_price : '—';
           // Индикаторы exit-management
-          const beTag = p.sl_moved_to_be ? '<span class="mono" style="background:rgba(0,229,160,0.2);color:#00e5a0;border:1px solid rgba(0,229,160,0.4);border-radius:3px;padding:1px 5px;font-size:9px;">BE</span>' : '';
+          // BE / BE+ / TRAIL bages
+          const beTag = p.sl_moved_to_be_plus
+            ? '<span class="mono" style="background:rgba(0,229,160,0.3);color:#00e5a0;border:1px solid rgba(0,229,160,0.6);border-radius:3px;padding:1px 5px;font-size:9px;" title="SL на entry+1% (защита прибыли)">BE+</span>'
+            : (p.sl_moved_to_be ? '<span class="mono" style="background:rgba(0,229,160,0.2);color:#00e5a0;border:1px solid rgba(0,229,160,0.4);border-radius:3px;padding:1px 5px;font-size:9px;">BE</span>' : '');
           const trailTag = p.sl_trailing ? '<span class="mono" style="background:rgba(0,212,255,0.2);color:#00d4ff;border:1px solid rgba(0,212,255,0.4);border-radius:3px;padding:1px 5px;font-size:9px;">TRAIL</span>' : '';
+          // TP ladder hits
+          const tpHits = p.tp_ladder_hits || [];
+          const partials = p.partial_closes || [];
+          const realizedPnl = p.realized_pnl_usdt || 0;
+          const remaining = p.remaining_fraction != null ? p.remaining_fraction : 1;
+          let ladderTag = '';
+          if (tpHits.length) {
+            const hitLabels = tpHits.map(h => h.replace('_PARTIAL',''));
+            ladderTag = `<span class="mono" style="background:rgba(255,169,77,0.2);color:#ffa94d;border:1px solid rgba(255,169,77,0.4);border-radius:3px;padding:1px 5px;font-size:9px;" title="Зафиксировано: $${realizedPnl.toFixed(2)} | Осталось: ${(remaining*100).toFixed(0)}%">🪜 ${hitLabels.join('→')}</span>`;
+          }
+          const realizedTag = (realizedPnl > 0.01)
+            ? `<span class="mono text-buy" style="font-size:10px;" title="Уже зафиксировано">💰 $${realizedPnl.toFixed(2)}</span>`
+            : '';
           return `<div class="at-pos" data-trade="${p.trade_id}" style="cursor:pointer;flex-wrap:wrap;" onclick="togglePaperChart(${idx})">
             <span class="mono text-accent fw-700" style="min-width:70px;">${pair}</span>
             <span>${dirE} ${p.direction}</span>
@@ -2970,7 +2986,7 @@ async function loadPaperStatus() {
             <span class="mono">Entry: ${p.entry}</span>
             <span class="mono text-muted js-live-price">Now: ${price}</span>
             <span class="mono ${pnlCls} fw-700 js-live-pnl">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%</span>
-            ${beTag}${trailTag}
+            ${ladderTag}${beTag}${trailTag}${realizedTag}
             <span class="mono text-muted" style="font-size:10px;">${p.source || ''}</span>
             <span class="mono text-buy" style="font-size:9px;">${tp}</span>
             <span class="mono text-sell" style="font-size:9px;">${sl}</span>

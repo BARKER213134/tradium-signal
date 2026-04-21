@@ -74,7 +74,7 @@ def get_open_positions() -> list:
     return list(trades.find({"status": "OPEN"}).sort("opened_at", -1))
 
 
-CLOSED_STATUSES = ["TP", "SL", "MANUAL", "BE", "TRAIL", "AI_CLOSE", "KILL_SWITCH"]
+CLOSED_STATUSES = ["TP", "SL", "MANUAL", "BE", "BE_PLUS", "TRAIL", "AI_CLOSE", "KILL_SWITCH"]
 
 
 def get_history(limit: int = 50) -> list:
@@ -274,6 +274,7 @@ def open_position(symbol: str, direction: str, entry: float, tp1: float, sl: flo
         "original_sl": sl,          # для истории (после breakeven/trail SL меняется)
         "leverage": leverage,
         "size_usdt": size_usdt,
+        "original_size_usdt": size_usdt,   # для расчёта абсолютных долей (TP ladder)
         "size_pct": size_pct,
         "status": "OPEN",
         "source": source,
@@ -282,9 +283,15 @@ def open_position(symbol: str, direction: str, entry: float, tp1: float, sl: flo
         # Exit management fields
         "max_favorable_pct": 0.0,   # лучший PnL % наблюдался за время позиции
         "sl_moved_to_be": False,    # SL подвинут в безубыток?
+        "sl_moved_to_be_plus": False,  # SL подвинут в BE+ (плюсовую зону)
         "sl_trailing": False,       # включён ли trailing stop?
         "last_ai_review_at": None,  # timestamp последнего AI-ревью
         "exit_events": [],          # лог событий: [{at, type, old_sl, new_sl, note}]
+        # TP ladder fields
+        "remaining_fraction": 1.0,        # какая доля позиции ещё открыта
+        "tp_ladder_hits": [],             # список сработавших ступеней ["TP1_PARTIAL", "TP2_PARTIAL"]
+        "partial_closes": [],             # лог частичных: [{at, fraction, exit_price, pnl_pct, pnl_usdt, reason}]
+        "realized_pnl_usdt": 0.0,         # суммарный PnL от уже закрытых частей
         "opened_at": _utcnow(),
         "closed_at": None,
         "exit_price": None,
@@ -296,8 +303,57 @@ def open_position(symbol: str, direction: str, entry: float, tp1: float, sl: flo
     return doc
 
 
+def _close_partial(trade_id: int, fraction: float, exit_price: float, reason: str) -> dict | None:
+    """Частично закрывает позицию. fraction ∈ (0, remaining_fraction].
+    Позиция остаётся OPEN, уменьшается remaining_fraction, накапливается realized_pnl_usdt.
+    """
+    trades, _ = _get_collections()
+    pos = trades.find_one({"trade_id": trade_id, "status": "OPEN"})
+    if not pos:
+        return None
+    current_rem = float(pos.get("remaining_fraction", 1.0))
+    fraction = min(fraction, current_rem)
+    if fraction <= 0.001:
+        return None
+
+    entry = pos["entry"]
+    direction = pos["direction"]
+    leverage = pos.get("leverage", 1)
+    original_size = float(pos.get("original_size_usdt") or pos.get("size_usdt", 0))
+    size_closed_usdt = original_size * fraction
+
+    raw_pnl_pct = ((exit_price - entry) / entry) * 100
+    if direction == "SHORT":
+        raw_pnl_pct = -raw_pnl_pct
+    pnl_pct = round(raw_pnl_pct * leverage, 2)
+    pnl_usdt = round(size_closed_usdt * pnl_pct / 100, 2)
+
+    new_rem = round(current_rem - fraction, 4)
+    new_tp_hits = list(pos.get("tp_ladder_hits", [])) + [reason]
+    new_partial = {
+        "at": _utcnow(), "fraction": round(fraction, 4),
+        "exit_price": exit_price,
+        "pnl_pct": pnl_pct, "pnl_usdt": pnl_usdt,
+        "reason": reason,
+    }
+    new_partials = list(pos.get("partial_closes", [])) + [new_partial]
+    new_realized = round(float(pos.get("realized_pnl_usdt") or 0) + pnl_usdt, 2)
+
+    trades.update_one({"trade_id": trade_id}, {"$set": {
+        "remaining_fraction": new_rem,
+        "tp_ladder_hits": new_tp_hits,
+        "partial_closes": new_partials,
+        "realized_pnl_usdt": new_realized,
+    }})
+    balance = get_balance()
+    _update_balance(balance + pnl_usdt)
+    logger.info(f"Paper PARTIAL #{trade_id}: {pos['symbol']} {reason} {fraction*100:.0f}% @ {exit_price} → ${pnl_usdt:+.2f} (cum realized=${new_realized:+.2f}, rem={new_rem:.2f})")
+    return {"trade_id": trade_id, "fraction": fraction, "pnl_usdt": pnl_usdt, "reason": reason,
+            "remaining": new_rem, "realized_pnl_usdt": new_realized}
+
+
 def close_position(trade_id: int, exit_price: float, reason: str = "TP"):
-    """Закрывает позицию и обновляет баланс."""
+    """Финально закрывает остаток позиции. Итоговый PnL = realized (от partial) + финальный остаток."""
     trades, _ = _get_collections()
     pos = trades.find_one({"trade_id": trade_id, "status": "OPEN"})
     if not pos:
@@ -306,32 +362,44 @@ def close_position(trade_id: int, exit_price: float, reason: str = "TP"):
     entry = pos["entry"]
     direction = pos["direction"]
     leverage = pos.get("leverage", 1)
-    size_usdt = pos.get("size_usdt", 0)
+    original_size = float(pos.get("original_size_usdt") or pos.get("size_usdt", 0))
+    remaining = float(pos.get("remaining_fraction", 1.0))
+    realized = float(pos.get("realized_pnl_usdt") or 0)
 
+    # PnL оставшейся доли
     raw_pnl_pct = ((exit_price - entry) / entry) * 100
     if direction == "SHORT":
         raw_pnl_pct = -raw_pnl_pct
-    pnl_pct = round(raw_pnl_pct * leverage, 2)
-    pnl_usdt = round(size_usdt * pnl_pct / 100, 2)
+    pnl_pct_final = round(raw_pnl_pct * leverage, 2)
+    pnl_usdt_remainder = round(original_size * remaining * pnl_pct_final / 100, 2)
+
+    # Итого по всей позиции
+    total_pnl_usdt = round(realized + pnl_usdt_remainder, 2)
+    # pnl_pct показываем как % от оригинального размера (для совместимости с UI)
+    total_pnl_pct = round(total_pnl_usdt / original_size * 100, 2) if original_size else 0
 
     trades.update_one({"trade_id": trade_id}, {"$set": {
         "status": reason,
         "exit_price": exit_price,
-        "pnl_pct": pnl_pct,
-        "pnl_usdt": pnl_usdt,
+        "pnl_pct": total_pnl_pct,       # итоговый % от исходного размера
+        "pnl_pct_final_leg": pnl_pct_final,  # % только по последней (оставшейся) части
+        "pnl_usdt": total_pnl_usdt,
+        "pnl_usdt_final_leg": pnl_usdt_remainder,
         "closed_at": _utcnow(),
+        "remaining_fraction": 0,
     }})
 
     balance = get_balance()
-    _update_balance(balance + pnl_usdt)
-    logger.info(f"Paper CLOSE #{trade_id}: {pos['symbol']} {reason} PnL={pnl_pct:+.2f}% ${pnl_usdt:+.2f}")
-    # Инвалидируем кеш learnings чтобы закрытая сделка сразу появилась в UI
+    _update_balance(balance + pnl_usdt_remainder)  # только финальная часть (partial уже добавлены)
+    logger.info(f"Paper CLOSE #{trade_id}: {pos['symbol']} {reason} final_leg={pnl_pct_final:+.2f}% "
+                f"(rem={remaining:.2f}) total=${total_pnl_usdt:+.2f} (realized ${realized:+.2f} + leg ${pnl_usdt_remainder:+.2f})")
     try:
         from cache_utils import paper_learnings_cache
         paper_learnings_cache.invalidate()
     except Exception:
         pass
-    return {"trade_id": trade_id, "pnl_pct": pnl_pct, "pnl_usdt": pnl_usdt, "reason": reason}
+    return {"trade_id": trade_id, "pnl_pct": total_pnl_pct, "pnl_usdt": total_pnl_usdt, "reason": reason,
+            "realized_pnl_usdt": realized, "final_leg_pnl_usdt": pnl_usdt_remainder}
 
 
 async def close_manual(trade_id: int) -> dict | None:
@@ -352,18 +420,33 @@ async def close_manual(trade_id: int) -> dict | None:
     return result
 
 
-# Параметры rule-based exit management (можно вынести в Mongo config)
+# Параметры rule-based exit management (TP ladder + BE+ + trailing).
 # Все пороги — в "raw" %, то есть без учёта leverage (процент движения цены).
-BREAKEVEN_TRIGGER_PCT = 1.0   # +1% движения в плюс → SL в безубыток
-TRAILING_TRIGGER_PCT = 2.0    # +2% движения → включаем trailing
-TRAILING_DISTANCE_PCT = 1.0   # отступ trailing-SL от максимума (в %)
+#
+# TP LADDER:
+#   +1.0%  → закрыть 30% позиции (зафиксировать первую прибыль)
+#   +2.0%  → закрыть ещё 30% (итого закрыто 60%, осталось 40%)
+#   +3.0%  → SL в entry + 1% (защищаем уже большую часть прибыли)
+#   +4.0%  → включаем trailing на 1.5% от максимума
+#
+# Это заменяет прежнюю простую логику (+1%→BE, +2%→trail). Теперь сделки
+# фиксируют прибыль поэтапно — психологически устойчивее к откатам.
+TP_LADDER = [
+    {"at_pct": 1.0, "close_fraction": 0.30, "name": "TP1_PARTIAL"},
+    {"at_pct": 2.0, "close_fraction": 0.30, "name": "TP2_PARTIAL"},
+]
+BE_PLUS_TRIGGER_PCT = 3.0       # при +3% raw-движения → двигаем SL вверх
+BE_PLUS_OFFSET_PCT  = 1.0       # SL ставим на entry +1% (для LONG) / entry -1% (для SHORT)
+TRAILING_TRIGGER_PCT = 4.0      # при +4% → trailing
+TRAILING_DISTANCE_PCT = 1.5     # отступ trailing-SL от максимума
 
 
 def check_positions(prices: dict):
-    """Проверяет открытые позиции. Делает 3 вещи на каждом тике:
-      1. Breakeven: при +1% движения в плюс → SL к entry (защита капитала)
-      2. Trailing: при +2% движения → SL идёт за ценой на расстоянии 1%
-      3. TP/SL hit → закрываем позицию
+    """Проверяет открытые позиции. На каждом тике:
+      1. TP ladder: +1%/30%, +2%/30% — частичные закрытия
+      2. BE+: при +3% двигаем SL на entry+1% (защита прибыли)
+      3. Trailing: при +4% включаем (1.5% отступ)
+      4. SL/TP hit → финальное закрытие оставшейся доли (remaining_fraction)
     """
     trades, _ = _get_collections()
     closed = []
@@ -383,56 +466,77 @@ def check_positions(prices: dict):
         raw_pnl = ((price - entry) / entry) * 100
         if not is_long:
             raw_pnl = -raw_pnl
-
-        # Обновляем max_favorable_pct
         max_fav = max(pos.get("max_favorable_pct", 0.0) or 0.0, raw_pnl)
+
         updates = {}
         events = []
         new_sl = sl
+        tp_hits_done = set(pos.get("tp_ladder_hits", []))
 
-        # ── 1. BREAKEVEN: SL в точку entry ──
-        if (not pos.get("sl_moved_to_be")) and max_fav >= BREAKEVEN_TRIGGER_PCT:
-            be_sl = entry
-            # Проверяем что новый SL лучше старого
+        # ── 1. TP LADDER — частичные закрытия ──
+        for step in TP_LADDER:
+            if step["name"] in tp_hits_done:
+                continue
+            if max_fav >= step["at_pct"]:
+                # используем текущую цену как exit для partial
+                partial_result = _close_partial(
+                    pos["trade_id"], step["close_fraction"], price, step["name"]
+                )
+                if partial_result:
+                    closed.append({**partial_result, "symbol": sym, "partial": True})
+                    tp_hits_done.add(step["name"])
+                    events.append({"at": _utcnow(), "type": step["name"],
+                                   "fraction": step["close_fraction"],
+                                   "note": f"+{max_fav:.2f}% → closed {int(step['close_fraction']*100)}%"})
+
+        # Перезагружаем pos после partial closes (remaining_fraction мог измениться)
+        pos = trades.find_one({"trade_id": pos["trade_id"], "status": "OPEN"})
+        if not pos:
+            continue  # вдруг весь закрыт (не должно при 30%+30%=60%, но safe)
+
+        # ── 2. BE+ : при +3% → SL на entry ± 1% (защищаем прибыль оставшейся доли) ──
+        if (not pos.get("sl_moved_to_be_plus")) and max_fav >= BE_PLUS_TRIGGER_PCT:
             if is_long:
-                if be_sl > (sl or -1):
-                    new_sl = be_sl
-                    events.append({"at": _utcnow(), "type": "BE", "old_sl": sl,
-                                   "new_sl": new_sl, "note": f"+{max_fav:.2f}% → SL to entry"})
-                    updates["sl_moved_to_be"] = True
-            else:  # SHORT
-                if be_sl < (sl or 9e12):
-                    new_sl = be_sl
-                    events.append({"at": _utcnow(), "type": "BE", "old_sl": sl,
-                                   "new_sl": new_sl, "note": f"+{max_fav:.2f}% → SL to entry"})
+                be_plus_sl = entry * (1 + BE_PLUS_OFFSET_PCT / 100.0)
+                if be_plus_sl > (new_sl or -1):
+                    events.append({"at": _utcnow(), "type": "BE_PLUS", "old_sl": sl,
+                                   "new_sl": be_plus_sl,
+                                   "note": f"+{max_fav:.2f}% → SL to entry+{BE_PLUS_OFFSET_PCT}%"})
+                    new_sl = be_plus_sl
+                    updates["sl_moved_to_be_plus"] = True
+                    updates["sl_moved_to_be"] = True  # совместимость со старой логикой
+            else:
+                be_plus_sl = entry * (1 - BE_PLUS_OFFSET_PCT / 100.0)
+                if be_plus_sl < (new_sl or 9e12):
+                    events.append({"at": _utcnow(), "type": "BE_PLUS", "old_sl": sl,
+                                   "new_sl": be_plus_sl,
+                                   "note": f"+{max_fav:.2f}% → SL to entry-{BE_PLUS_OFFSET_PCT}%"})
+                    new_sl = be_plus_sl
+                    updates["sl_moved_to_be_plus"] = True
                     updates["sl_moved_to_be"] = True
 
-        # ── 2. TRAILING: SL следует за ценой на TRAILING_DISTANCE ──
+        # ── 3. TRAILING — при +4% включаем 1.5% trail ──
         if max_fav >= TRAILING_TRIGGER_PCT:
             if is_long:
-                # Максимальная цена пока позиция открыта (приблизительно через max_fav)
                 max_price = entry * (1 + max_fav / 100.0)
                 trail_sl = max_price * (1 - TRAILING_DISTANCE_PCT / 100.0)
                 if trail_sl > (new_sl or -1):
                     events.append({"at": _utcnow(), "type": "TRAIL", "old_sl": new_sl,
-                                   "new_sl": trail_sl, "note": f"trail @ {max_price:.6g}"})
+                                   "new_sl": trail_sl, "note": f"trail @ {max_price:.6g} (-{TRAILING_DISTANCE_PCT}%)"})
                     new_sl = trail_sl
                     updates["sl_trailing"] = True
-            else:  # SHORT
+            else:
                 min_price = entry * (1 - max_fav / 100.0)
                 trail_sl = min_price * (1 + TRAILING_DISTANCE_PCT / 100.0)
                 if trail_sl < (new_sl or 9e12):
                     events.append({"at": _utcnow(), "type": "TRAIL", "old_sl": new_sl,
-                                   "new_sl": trail_sl, "note": f"trail @ {min_price:.6g}"})
+                                   "new_sl": trail_sl, "note": f"trail @ {min_price:.6g} (+{TRAILING_DISTANCE_PCT}%)"})
                     new_sl = trail_sl
                     updates["sl_trailing"] = True
 
         # Применяем updates в MongoDB
         if new_sl != sl or updates or max_fav != pos.get("max_favorable_pct", 0):
-            upd = {
-                "max_favorable_pct": max_fav,
-                **updates,
-            }
+            upd = {"max_favorable_pct": max_fav, **updates}
             if new_sl != sl:
                 upd["sl"] = new_sl
             if events:
@@ -441,26 +545,27 @@ def check_positions(prices: dict):
                     {"$set": upd, "$push": {"exit_events": {"$each": events}}},
                 )
                 for ev in events:
-                    logger.info(f"Paper #{pos['trade_id']} {sym} {ev['type']}: {ev.get('note','')} (old_sl={ev.get('old_sl')}, new_sl={ev.get('new_sl')})")
+                    logger.info(f"Paper #{pos['trade_id']} {sym} {ev['type']}: {ev.get('note','')}")
             else:
                 trades.update_one({"trade_id": pos["trade_id"]}, {"$set": upd})
-            sl = new_sl  # для проверки hit ниже
+            sl = new_sl
 
-        # ── 3. TP/SL hit ──
+        # ── 4. SL/TP hit → финальное закрытие оставшегося ──
         if is_long:
             if tp1 and price >= tp1:
                 r = close_position(pos["trade_id"], price, "TP")
                 if r: closed.append(r)
             elif sl and price <= sl:
-                # Определяем тип закрытия
                 reason = "SL"
                 if pos.get("sl_trailing"):
                     reason = "TRAIL"
+                elif pos.get("sl_moved_to_be_plus"):
+                    reason = "BE_PLUS"
                 elif pos.get("sl_moved_to_be") and abs(price - entry) / entry * 100 < 0.2:
-                    reason = "BE"  # закрылись в безубытке
+                    reason = "BE"
                 r = close_position(pos["trade_id"], price, reason)
                 if r: closed.append(r)
-        else:  # SHORT
+        else:
             if tp1 and price <= tp1:
                 r = close_position(pos["trade_id"], price, "TP")
                 if r: closed.append(r)
@@ -468,6 +573,8 @@ def check_positions(prices: dict):
                 reason = "SL"
                 if pos.get("sl_trailing"):
                     reason = "TRAIL"
+                elif pos.get("sl_moved_to_be_plus"):
+                    reason = "BE_PLUS"
                 elif pos.get("sl_moved_to_be") and abs(price - entry) / entry * 100 < 0.2:
                     reason = "BE"
                 r = close_position(pos["trade_id"], price, reason)
