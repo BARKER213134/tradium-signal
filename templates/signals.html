@@ -4745,8 +4745,10 @@ let _journalFiltered = [];
 let _lwcLoaded = false;
 let _coinSearchTimer = null;
 let _markerMap = new Map();
-let _coinTF = '1h';
-let _modalTF = '1h';
+// _coinTF / _modalTF — persist через localStorage, чтобы при переключении
+// между графиками TF сохранялся (была жалоба: всегда сбрасывается на 1h)
+let _coinTF = localStorage.getItem('tradium_coinTF') || '1h';
+let _modalTF = localStorage.getItem('tradium_modalTF') || '1h';
 let _lastCoinQuery = '';
 
 function _setActiveTF(barId, tf) {
@@ -4759,12 +4761,14 @@ function _setActiveTF(barId, tf) {
 
 function _setCoinTF(tf) {
   _coinTF = tf;
+  try { localStorage.setItem('tradium_coinTF', tf); } catch {}
   _setActiveTF('jCoinTFBar', tf);
   if (_lastCoinQuery) loadCoinChart(_lastCoinQuery);
 }
 
 function _setModalTF(tf) {
   _modalTF = tf;
+  try { localStorage.setItem('tradium_modalTF', tf); } catch {}
   _setActiveTF('jModalTFBar', tf);
   if (_currentJournalIdx >= 0) openJournalChart(_currentJournalIdx, tf);
 }
@@ -5455,7 +5459,9 @@ function jSort(field) {
 async function openJournalChart(idx, forceTF) {
   if (idx < 0 || idx >= _journalFiltered.length) return;
   _currentJournalIdx = idx;
-  if (!forceTF) _modalTF = '1h';  // reset TF when opening new signal
+  // НЕ сбрасываем TF на 1h — сохраняем выбранный пользователем (из localStorage).
+  // forceTF нужен для перезагрузки графика после _setModalTF (чтобы применить новый tf).
+  if (forceTF) _modalTF = forceTF;
   _setActiveTF('jModalTFBar', _modalTF);
   const s = _journalFiltered[idx];
   if (!s) return;
