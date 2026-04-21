@@ -770,6 +770,58 @@ async def ai_decide(signal_data: dict) -> dict:
         # rejections (code path до записи не доходит — early return)
         return {"enter": False, "reasoning": f"Максимум позиций ({MAX_POSITIONS}) уже открыто"}
 
+    # ═══════════════════════════════════════════════════════════
+    # HARD BLOCK: вход против SuperTrend
+    # ═══════════════════════════════════════════════════════════
+    # Причина: сделка ON SHORT 21.04 получила -26.5% — ST на 1h был UP
+    # (направление LONG), но мы открыли SHORT и сразу получили гигантскую
+    # зелёную свечу. Блокируем если:
+    #   1) текущее ST-состояние на 1h противоположно направлению сделки
+    #   2) был ST flip в противоположную сторону за последние 15 минут
+    #      (на VIP/MTF TF-ах, т.е. 15m/1h/4h — из collection _supertrend_signals)
+    symbol = signal_data.get("symbol", "")
+    direction = (signal_data.get("direction") or "").upper()
+    pair = signal_data.get("pair") or (symbol.replace("USDT", "/USDT") if "USDT" in symbol else symbol)
+
+    if direction in ("LONG", "SHORT") and pair:
+        # (1) Текущее ST-направление на 1h (свежий кеш, если нет — НЕ блокируем,
+        # чтоб не упасть в HTTP на hot-path и не плодить ложные отказы.
+        # Прогрев кеша делается в watcher._candles_prewarm_loop для топ-50 пар.)
+        try:
+            from supertrend import supertrend_state
+            st = supertrend_state(pair, "1h", cache_only=True)
+            if st and st.get("state"):
+                st_dir = "LONG" if st["state"] == "UP" else "SHORT"
+                if st_dir != direction:
+                    return {"enter": False,
+                            "reasoning": f"⛔ ST 1h = {st['state']} ({st_dir}), а сделка {direction} — против тренда"}
+        except Exception as _e:
+            logger.debug(f"[ST-block] supertrend_state fail for {pair}: {_e}")
+
+        # (2) Недавний flip в противоположную сторону (за последние 15 мин)
+        # по VIP/MTF/Daily — ищем в _supertrend_signals. Даже если ST-состояние
+        # совпадает, свежий разворот = нестабильный тренд → блокируем.
+        try:
+            from database import _supertrend_signals
+            from datetime import timedelta as _td
+            pair_norm = pair.replace("/", "").upper()
+            if pair_norm and not pair_norm.endswith("USDT"):
+                pair_norm = pair_norm + "USDT"
+            cutoff = _utcnow() - _td(minutes=15)
+            opposite = "LONG" if direction == "SHORT" else "SHORT"
+            recent = _supertrend_signals().find_one({
+                "pair_norm": pair_norm,
+                "direction": opposite,
+                "flip_at": {"$gte": cutoff},
+            })
+            if recent:
+                flip_tier = str(recent.get("tier", "?")).upper()
+                flip_tf = recent.get("tf") or recent.get("aligned_tfs") or ""
+                return {"enter": False,
+                        "reasoning": f"⛔ ST {flip_tier} flip в {opposite} (TF {flip_tf}) был <15 мин назад — не открываем {direction}"}
+        except Exception as _e:
+            logger.debug(f"[ST-block] recent flip check fail for {pair}: {_e}")
+
     # Формируем контекст
     open_str = ""
     for p in open_pos:
