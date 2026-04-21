@@ -591,6 +591,27 @@ def backtest_variants_for_pair(
                     if t2:
                         t2.pair = pair
                         _get("MTF_RETEST_REV").trades.append(t2)
+                # ── VIP_AND_MTF — MTF aligned + bot signal ±2ч (двойное подтверждение) ──
+                # Гипотеза: когда обе системы согласны — точность должна быть >50% WR
+                vip_conf_window_ms = 2 * 3600 * 1000
+                vip_conf = any(
+                    abs(sig["at_ms"] - st_bar["t"]) <= vip_conf_window_ms
+                    and sig["direction"] == direction
+                    for sig in bot_signals
+                )
+                if vip_conf:
+                    t3 = simulate_trade(st_1h, flip_idx, direction)
+                    if t3:
+                        t3.pair = pair
+                        _get("VIP_AND_MTF").trades.append(t3)
+                    # То же + retest+reversal — двойной фильтр + best entry
+                    rev_idx2 = _find_retest_and_reversal(st_1h, flip_idx, direction,
+                                                        max_wait_bars=24)
+                    if rev_idx2 is not None:
+                        t4 = simulate_trade_st_sl(st_1h, rev_idx2, direction)
+                        if t4:
+                            t4.pair = pair
+                            _get("VIP_AND_MTF_RETEST").trades.append(t4)
 
     return results
 
@@ -749,9 +770,11 @@ def run_backtest(days: int = 14, top_n: int = 200,
     PRIO = {
         "BASELINE": 0,
         "VIP_AS_IS": 1,
-        "VIP_RETEST_REV": 2,
-        "MTF_AS_IS": 3,
-        "MTF_RETEST_REV": 4,
+        "MTF_AS_IS": 2,
+        "VIP_AND_MTF": 3,          # двойное подтверждение (VIP ∧ MTF)
+        "VIP_AND_MTF_RETEST": 4,   # двойной фильтр + retest/reversal entry
+        "VIP_RETEST_REV": 5,
+        "MTF_RETEST_REV": 6,
     }
     def _key(x):
         name = x["name"]
