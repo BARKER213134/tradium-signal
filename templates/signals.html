@@ -2866,7 +2866,10 @@ safeInterval(loadConflicts, 30000);
 
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
     <div>
-      <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">Открытые позиции</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;">Открытые позиции</div>
+        <button id="atCloseAllBtn" onclick="closeAllPaperPositions()" style="background:rgba(255,77,109,0.1);color:#ff4d6d;border:1px solid rgba(255,77,109,0.5);border-radius:5px;padding:4px 10px;font-size:10px;font-family:var(--font-mono);font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:0.05em;" title="Закрывает ВСЕ открытые позиции по рыночной цене">✕ Закрыть всё</button>
+      </div>
       <div id="atPositions" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;min-height:100px;">
         <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет открытых позиций</div>
       </div>
@@ -3630,20 +3633,56 @@ async function togglePaperMode() {
 }
 
 async function closePaperPosition(tradeId, pair, direction, pnlPct) {
-  if (!tradeId) { alert('Нет trade_id'); return; }
-  const ok = confirm(`Закрыть позицию #${tradeId}?\n${pair} · ${direction} · PnL ${pnlPct >= 0 ? '+' : ''}${pnlPct}%\n\nСтатус будет MANUAL.`);
+  console.log('[closePaperPosition] called', {tradeId, pair, direction, pnlPct});
+  const tid = parseInt(tradeId);
+  if (!tid || isNaN(tid)) { alert('Нет trade_id (получено: ' + tradeId + ')'); return; }
+  const ok = confirm(`Закрыть позицию #${tid}?\n${pair} · ${direction} · PnL ${pnlPct >= 0 ? '+' : ''}${pnlPct}%\n\nСтатус будет MANUAL.`);
   if (!ok) return;
   try {
     const r = await fetch('/api/paper/close', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({trade_id: tradeId}),
+      body: JSON.stringify({trade_id: tid}),
     });
     const d = await r.json();
-    if (!d.ok) { alert('Ошибка: ' + (d.error || '?')); return; }
-    loadPaperStatus();
-    loadAILearnings();
-  } catch (e) { alert('Ошибка сети: ' + e.message); }
+    console.log('[closePaperPosition] response', d);
+    if (!d.ok) { alert('Ошибка закрытия: ' + (d.error || JSON.stringify(d))); return; }
+    // Пауза 400мс чтобы статус успел обновиться в БД
+    setTimeout(() => {
+      if (typeof loadPaperStatus === 'function') loadPaperStatus();
+      if (typeof loadAILearnings === 'function') loadAILearnings();
+    }, 400);
+  } catch (e) {
+    console.error('[closePaperPosition] network error', e);
+    alert('Ошибка сети: ' + e.message);
+  }
+}
+
+async function closeAllPaperPositions() {
+  const ok = confirm('Закрыть ВСЕ открытые позиции по текущим ценам?\n\nВсе сделки получат статус MANUAL.\nЭто действие необратимо.');
+  if (!ok) return;
+  const btn = document.getElementById('atCloseAllBtn');
+  const origText = btn ? btn.textContent : null;
+  if (btn) { btn.textContent = '⏳ Закрываю…'; btn.disabled = true; }
+  try {
+    const r = await fetch('/api/paper/close-all', {method: 'POST'});
+    const d = await r.json();
+    if (!d.ok) {
+      alert('Ошибка: ' + (d.error || '?'));
+    } else {
+      const total = d.total_count || 0;
+      const pnl = d.total_pnl_usdt || 0;
+      alert(`✓ Закрыто позиций: ${total}\nИтого PnL: $${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`);
+    }
+  } catch (e) {
+    alert('Ошибка сети: ' + e.message);
+  } finally {
+    if (btn) { btn.textContent = origText; btn.disabled = false; }
+    setTimeout(() => {
+      if (typeof loadPaperStatus === 'function') loadPaperStatus();
+      if (typeof loadAILearnings === 'function') loadAILearnings();
+    }, 500);
+  }
 }
 
 async function refreshAIMemory() {

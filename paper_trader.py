@@ -420,6 +420,42 @@ async def close_manual(trade_id: int) -> dict | None:
     return result
 
 
+async def close_all_manual() -> dict:
+    """Закрывает ВСЕ открытые позиции по текущим рыночным ценам.
+    Возвращает {closed: [{trade_id, symbol, pnl_pct, pnl_usdt}, ...], total_pnl_usdt, total_count}.
+    """
+    from exchange import get_prices_any
+    open_positions = get_open_positions()
+    if not open_positions:
+        return {"closed": [], "total_pnl_usdt": 0, "total_count": 0, "note": "no open positions"}
+
+    # Batch запрос цен для всех уникальных пар
+    pairs = list({p.get("pair") or p["symbol"].replace("USDT", "/USDT") for p in open_positions})
+    prices = await asyncio.to_thread(get_prices_any, pairs)
+
+    results = []
+    total_pnl = 0.0
+    for pos in open_positions:
+        trade_id = pos.get("trade_id")
+        if not trade_id:
+            continue
+        sym = pos.get("symbol", "")
+        cur = prices.get(sym)
+        if cur is None:
+            cur = pos.get("entry", 0)  # fallback
+        r = close_position(int(trade_id), cur, "MANUAL")
+        if r:
+            r["symbol"] = sym
+            results.append(r)
+            total_pnl += r.get("pnl_usdt", 0) or 0
+    logger.info(f"Paper CLOSE ALL: {len(results)} positions, total PnL=${total_pnl:+.2f}")
+    return {
+        "closed": results,
+        "total_pnl_usdt": round(total_pnl, 2),
+        "total_count": len(results),
+    }
+
+
 # Параметры rule-based exit management (TP ladder + BE+ + trailing).
 # Все пороги — в "raw" %, то есть без учёта leverage (процент движения цены).
 #

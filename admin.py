@@ -152,7 +152,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
-            "/api/paper/rejections", "/api/paper/be-audit",
+            "/api/paper/rejections", "/api/paper/be-audit", "/api/paper/close-all",
             "/api/paper/history",
             "/api/backtest-yesterday", "/api/backtest-yesterday/status",
             "/api/backtest-optimize", "/api/backtest-optimize/status",
@@ -1372,6 +1372,18 @@ async def api_paper_close(payload: dict):
         if not result:
             return {"ok": False, "error": "position not found or already closed"}
         return {"ok": True, "result": result}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/paper/close-all")
+async def api_paper_close_all():
+    """Закрывает ВСЕ открытые paper-позиции по текущим рыночным ценам.
+    Возвращает список закрытых + суммарный PnL."""
+    import paper_trader as pt
+    try:
+        result = await pt.close_all_manual()
+        return {"ok": True, **result}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
