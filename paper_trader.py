@@ -836,14 +836,8 @@ def get_prompt_preview() -> dict:
         "    ⚠️ anomaly     — многофакторная аномалия (score/15)\n"
         "    🎯 confluence  — 4-6 факторов совпали (STRONG=5+ 🔥=6)\n"
         "    💠 cluster     — 2+ источника ±8ч (NORMAL/STRONG/MEGA)\n"
-        "    👑 top_pick    — double-confirm (73% WR)\n"
+        "    👑 top_pick    — double-confirm\n"
         "    🌀 supertrend  — VIP / MTF / Daily\n"
-        "\n  SuperTrend бектест (2382 сделки, 14д):\n"
-        "    🏆 VIP SHORT: WR 58.8%, PF 2.95 — бери уверенно\n"
-        "    🔱 MTF LONG:  avg R +0.91, PF 2.55 — лучший long\n"
-        "    🧭 Daily LONG: WR 33.4% — средний\n"
-        "    ⚠️ Daily SHORT: EV -0.30R — ИЗБЕГАЙ\n"
-        "    ⚠️ MTF SHORT:  EV -0.12R — осторожно\n"
         "\n  Key Levels флаги в сигнале:\n"
         "    🌀🌀🌀 + 🔥 = ST aligned 3 TF + fresh flip → сильно\n"
         "    🏆 = VIP совпадение ±2ч → максимум\n"
@@ -860,9 +854,8 @@ def get_prompt_preview() -> dict:
         f"  - Cluster MEGA/STRONG → увеличенный size (+{mode['cluster_size_bonus']}%)\n"
         f"  - Top Pick → +{mode['top_pick_size_bonus']}% size, +30% lev\n"
         f"  - Не входи против Keltner когда он подтверждён\n"
-        f"  - Daily SHORT / MTF SHORT — скип или мало (отрицат. EV)\n"
-        f"  - VIP SHORT / MTF LONG — уверенно (лучшие в бектесте)\n"
-        f"  - ПРИМЕНЯЙ уроки из своей памяти\n"
+        f"  - ПРИМЕНЯЙ уроки из своей памяти (она обновляется ежедневно\n"
+        f"    на свежей статистике закрытых сделок)\n"
     )
 
     # ── Секция 6: Рынок (dynamic) ──
@@ -1099,14 +1092,8 @@ async def ai_decide(signal_data: dict) -> dict:
         "    ⚠️ anomaly     — многофакторная аномалия (score/15)\n"
         "    🎯 confluence  — 4-6 факторов совпали (STRONG=5+ 🔥=6)\n"
         "    💠 cluster     — 2+ источника ±8ч (NORMAL/STRONG/MEGA)\n"
-        "    👑 top_pick    — double-confirm (73% WR в бектесте)\n"
-        "    🌀 supertrend  — ST flip: VIP/MTF/Daily (новое!)\n"
-        "\n  SuperTrend tier инсайты (бектест 2382 сделки, 14д):\n"
-        "    🏆 VIP SHORT: WR 58.8%, PF 2.95 — отлично, бери уверенно\n"
-        "    🔱 MTF LONG:  avg R +0.91, PF 2.55 — лучший EV на long\n"
-        "    🧭 Daily LONG: WR 33.4% — средний, стандартный размер\n"
-        "    ⚠️ Daily SHORT: EV -0.30R — ИЗБЕГАЙ, убыточно\n"
-        "    ⚠️ MTF SHORT:  EV -0.12R — осторожно\n"
+        "    👑 top_pick    — double-confirm\n"
+        "    🌀 supertrend  — ST flip: VIP / MTF / Daily\n"
         "\n  Key Levels (уровни S/R в описании сигнала):\n"
         "    🌀🌀🌀 + 🔥 = ST aligned на 3 TF + fresh flip → сильный вход\n"
         "    🏆 = VIP совпадение (ST flip + bot signal ±2ч) → максимальный score\n"
@@ -1114,6 +1101,9 @@ async def ai_decide(signal_data: dict) -> dict:
         "    SL под S уровнем ✅ → защищён\n"
         "\n  Anti-cluster: если на паре конфликт LONG vs SHORT (противоречие\n"
         "    нескольких ботов) — система автоматически блокирует, ты не увидишь.\n"
+        "\n  ВАЖНО: Оценивай каждый сигнал по свежим данным (ai_memory, текущая\n"
+        "    фаза рынка, контекст ETH/BTC). НЕ опирайся на старые прошлонедельные\n"
+        "    цифры — они могли измениться. Твоя память обновляется ежедневно.\n"
     )
 
     prompt = (
@@ -1146,10 +1136,9 @@ async def ai_decide(signal_data: dict) -> dict:
         f"  - Плечо: {lev_min}-{lev_max}×\n"
         f"  - Ставь TP и SL на основе уровней (из Key Levels / сигнала)\n"
         f"  - Не входи если сигнал против Keltner (когда Keltner подтверждён)\n"
-        f"  - Cluster MEGA/STRONG (78.6% WR) — бери увеличенный размер\n"
-        f"  - ПРИМЕНЯЙ знания из своей памяти и бектест-инсайтов!\n"
-        f"  - Daily SHORT и MTF SHORT — осторожно или скип (отрицательный EV)\n"
-        f"  - VIP SHORT и MTF LONG — бери уверенно (лучшие в бектесте)\n\n"
+        f"  - Cluster MEGA/STRONG — увеличенный размер\n"
+        f"  - Опирайся на СВОЮ ПАМЯТЬ (обновляется ежедневно на свежих сделках),\n"
+        f"    а не на статические правила — рынок меняется неделя к неделе.\n\n"
         f"Ответь ТОЛЬКО JSON без markdown:\n"
         f'{{"enter": true/false, "leverage": {lev_min}-{lev_max}, '
         f'"size_pct": {size_min}-{size_max}, "tp1": цена, "sl": цена, "reasoning": "почему"}}'

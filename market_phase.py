@@ -37,26 +37,27 @@ PHASE_META = {
     "NEUTRAL":       {"emoji": "❓", "color": "#7a8ba6", "label": "Neutral"},
 }
 
-# Рекомендации по фазе (из результатов 7-дневного бектеста)
+# Рекомендации по фазе — общие принципы, без привязки к конкретным
+# стратегиям/WR-цифрам (чтобы не замораживать на прошлой неделе).
 PHASE_RECOMMENDATIONS = {
     "BULL_TREND": {
-        "take": ["MTF LONG (btc_up)", "Confluence factors≥5", "CV Перевёрнутый молот", "ai_score≥60"],
-        "avoid": ["VIP SHORT", "CV SHORT", "Confluence SHORT (в сильном тренде)"],
+        "take": ["LONG в направлении тренда", "Сигналы с подтверждением BTC UP", "Cluster/Top-pick с высоким score"],
+        "avoid": ["SHORT против сильного тренда", "Открывать контр-трендовые без retest"],
     },
     "BEAR_TREND": {
-        "take": ["VIP SHORT", "Confluence SHORT", "Cluster RISKY", "MTF LONG+btc_up (для контр-отскоков)"],
-        "avoid": ["MTF SHORT", "CV SHORT (всегда)", "Cluster STRONG", "VIP LONG"],
+        "take": ["SHORT в направлении тренда", "Cluster при подтверждении BTC DOWN", "Сильные сигналы с высоким score"],
+        "avoid": ["LONG против тренда", "Контр-отскоки без подтверждения разворота"],
     },
     "CHOP": {
-        "take": ["Cluster MEGA/STRONG (малый размер)", "CV Перевёрнутый молот (≥60 score)"],
-        "avoid": ["ST-сигналы любые (whipsaw)", "Confluence без factors≥5"],
+        "take": ["Только сильные сигналы (Cluster, VIP с double-confirm)", "Малый размер позиций"],
+        "avoid": ["ST-сигналы без подтверждения (whipsaw)", "Сигналы со слабым score"],
     },
     "VOLATILE": {
         "take": ["Только VIP с двойным подтверждением", "Cluster MEGA"],
-        "avoid": ["MTF", "CV (все паттерны)", "Anomaly без taker/OI"],
+        "avoid": ["Открывать позиции при конфликте TF", "Широкие стопы"],
     },
     "EUPHORIA": {
-        "take": ["Готовиться к SHORT", "Закрывать LONG с профитом"],
+        "take": ["Готовиться к SHORT", "Фиксировать прибыль LONG"],
         "avoid": ["Открывать новые LONG", "Увеличивать плечо"],
     },
     "CAPITULATION": {
@@ -65,7 +66,7 @@ PHASE_RECOMMENDATIONS = {
     },
     "NEUTRAL": {
         "take": ["Стандартные фильтры по каждому источнику"],
-        "avoid": ["CV SHORT всегда", "MTF SHORT всегда"],
+        "avoid": ["Большие позиции без чёткого подтверждения"],
     },
 }
 
