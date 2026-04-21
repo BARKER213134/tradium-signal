@@ -102,6 +102,7 @@ def compute_st_series(candles: list[dict], period: int, mult: float) -> list[dic
     n = len(candles)
     if n < period + 2:
         return []
+    opens = [c.get("o", c["c"]) for c in candles]
     closes = [c["c"] for c in candles]
     highs = [c["h"] for c in candles]
     lows = [c["l"] for c in candles]
@@ -151,6 +152,7 @@ def compute_st_series(candles: list[dict], period: int, mult: float) -> list[dic
     for i in range(n):
         out.append({
             "t": candles[i]["t"],
+            "open": opens[i],
             "close": closes[i],
             "high": highs[i],
             "low": lows[i],
@@ -180,6 +182,150 @@ def age_since_last_flip(st_series: list[dict], idx: int) -> Optional[int]:
         if st_series[j]["trend"] != 0 and st_series[j]["trend"] != cur:
             return idx - j
     return None
+
+
+# ── Retest + Reversal candle detector ─────────────────────────────────
+def _is_reversal_bar(bar: dict, prev_bar: dict, direction: str,
+                     wick_body_ratio: float = 1.5) -> bool:
+    """Разворотная свеча в сторону direction.
+
+    LONG (bullish reversal):
+      — close > open (зелёная) И
+      — (lower_wick >= wick_body_ratio × body (pin bar / hammer) ИЛИ
+         close > prev.open AND open <= prev.close (bullish engulfing))
+
+    SHORT (bearish reversal):
+      — close < open И
+      — (upper_wick >= wick_body_ratio × body (shooting star) ИЛИ
+         close < prev.open AND open >= prev.close (bearish engulfing))
+    """
+    o = bar.get("open", bar["close"])
+    h = bar["high"]
+    l = bar["low"]
+    c = bar["close"]
+    po = prev_bar.get("open", prev_bar["close"])
+    pc = prev_bar["close"]
+    body = abs(c - o)
+    prev_body = abs(pc - po)
+    if body <= 0:
+        return False
+    # минимальный body reversal-бара — 0.3% от цены (фильтр шума/додж)
+    min_body = c * 0.003
+    if body < min_body:
+        return False
+    if direction == "LONG":
+        if c <= o:
+            return False
+        lower_wick = min(o, c) - l
+        is_pin = lower_wick >= wick_body_ratio * body
+        # engulfing: reversal-бар поглощает prev body, т.е. body >= prev_body
+        # prev bar должен иметь вменяемое тело (не doji) — иначе "engulf doji" это шум
+        prev_not_doji = prev_body >= c * 0.002
+        is_engulf = (c > po) and (o <= pc) and (c > pc) and (body >= prev_body) and prev_not_doji
+        return is_pin or is_engulf
+    else:  # SHORT
+        if c >= o:
+            return False
+        upper_wick = h - max(o, c)
+        is_pin = upper_wick >= wick_body_ratio * body
+        prev_not_doji = prev_body >= c * 0.002
+        is_engulf = (c < po) and (o >= pc) and (c < pc) and (body >= prev_body) and prev_not_doji
+        return is_pin or is_engulf
+
+
+def _find_retest_and_reversal(
+    trig_st: list[dict],
+    flip_idx: int,
+    direction: str,
+    max_wait_bars: int = 24,
+    retest_tolerance_pct: float = 0.3,
+) -> Optional[int]:
+    """После ST flip на flip_idx ищем:
+      1. Retest — бар где low (LONG) / high (SHORT) коснулся ST линии
+         (± retest_tolerance_pct от ST value)
+      2. На следующих 1-3 барах — reversal candle
+    Возвращает индекс reversal-бара или None если не найдено за max_wait_bars.
+    """
+    n = len(trig_st)
+    is_long = direction == "LONG"
+    for i in range(flip_idx + 1, min(flip_idx + max_wait_bars + 1, n - 1)):
+        bar = trig_st[i]
+        st_val = bar.get("st")
+        if st_val is None:
+            continue
+        # Retest: цена коснулась ST линии
+        tol = st_val * retest_tolerance_pct / 100.0
+        if is_long:
+            touched = bar["low"] <= (st_val + tol)
+        else:
+            touched = bar["high"] >= (st_val - tol)
+        if not touched:
+            continue
+        # Ищем reversal на 1-3 следующих барах
+        for j in range(i + 1, min(i + 4, n)):
+            if j - 1 < 0:
+                continue
+            if _is_reversal_bar(trig_st[j], trig_st[j - 1], direction):
+                return j
+    return None
+
+
+def simulate_trade_st_sl(
+    st_series: list[dict],
+    entry_idx: int,
+    direction: str,
+    sl_buffer_pct: float = 0.3,
+    max_hold_bars: int = 48,
+) -> Optional[Trade]:
+    """Симуляция для retest+reversal стратегии: SL выставляется за ST уровнем
+    entry-бара (с буфером sl_buffer_pct). Trailing на flip."""
+    if entry_idx >= len(st_series) - 2 or entry_idx < 0:
+        return None
+    entry = st_series[entry_idx]
+    entry_price = entry["close"]
+    st_val = entry.get("st")
+    if st_val is None or entry_price <= 0:
+        return None
+    is_long = direction == "LONG"
+    buf = entry_price * sl_buffer_pct / 100.0
+    sl_price = (st_val - buf) if is_long else (st_val + buf)
+    if is_long and sl_price >= entry_price:
+        return None
+    if (not is_long) and sl_price <= entry_price:
+        return None
+    risk = abs(entry_price - sl_price)
+    if risk <= 0:
+        return None
+    trade = Trade(pair="", direction=direction,
+                  entry_ts=entry["t"], entry_price=entry_price, sl_price=sl_price)
+    max_idx = min(entry_idx + max_hold_bars, len(st_series) - 1)
+    for i in range(entry_idx + 1, max_idx + 1):
+        bar = st_series[i]
+        if is_long and bar["low"] <= sl_price:
+            trade.exit_ts = bar["t"]; trade.exit_price = sl_price
+            trade.exit_reason = "sl"; trade.r_multiple = -1.0
+            trade.pnl_pct = (sl_price - entry_price) / entry_price * 100
+            return trade
+        if (not is_long) and bar["high"] >= sl_price:
+            trade.exit_ts = bar["t"]; trade.exit_price = sl_price
+            trade.exit_reason = "sl"; trade.r_multiple = -1.0
+            trade.pnl_pct = (sl_price - entry_price) / entry_price * 100
+            return trade
+        if bar["trend"] != 0 and (
+            (is_long and bar["trend"] == -1) or (not is_long and bar["trend"] == 1)
+        ):
+            cl = bar["close"]
+            trade.exit_ts = bar["t"]; trade.exit_price = cl
+            trade.exit_reason = "trail_flip"
+            trade.r_multiple = (cl - entry_price) / risk if is_long else (entry_price - cl) / risk
+            trade.pnl_pct = (cl - entry_price) / entry_price * 100 * (1 if is_long else -1)
+            return trade
+    last = st_series[max_idx]
+    trade.exit_ts = last["t"]; trade.exit_price = last["close"]
+    trade.exit_reason = "timeout"
+    trade.r_multiple = (last["close"] - entry_price) / risk if is_long else (entry_price - last["close"]) / risk
+    trade.pnl_pct = (last["close"] - entry_price) / entry_price * 100 * (1 if is_long else -1)
+    return trade
 
 
 # ── Симуляция сделки ───────────────────────────────────────────────
@@ -351,23 +497,40 @@ def backtest_variants_for_pair(
         ("T2D_1H_4H_D",    "1h", ["4h", "1d"]),
     ]
 
-    # T2C_SIGCONF на 1h (для полноты; WR 57.7% уже знаем, но включаем для фиксации)
+    # ── VIP_AS_IS: ST 1h flip + bot signal ±2h same direction ──────
+    # (это наш реальный VIP — повторяем как продакшн классифицирует)
+    # + VIP_RETEST_REV — та же логика, но вход после retest + reversal bar
+    # Также для сравнения стандартные варианты (simulate_trade vs simulate_trade_st_sl).
     if st_1h:
-        flips = find_flips(st_1h)
+        flips_1h = find_flips(st_1h)
         window_ms = 2 * 3600 * 1000
-        for flip_idx in flips:
+        for flip_idx in flips_1h:
             st_bar = st_1h[flip_idx]
             direction = "LONG" if st_bar["trend"] == 1 else "SHORT"
-            sig_conf_ok = False
-            for sig in bot_signals:
-                if abs(sig["at_ms"] - st_bar["t"]) <= window_ms and sig["direction"] == direction:
-                    sig_conf_ok = True
-                    break
-            if sig_conf_ok:
+            # VIP: есть сигнал другого бота в окне ±2ч
+            vip_ok = any(
+                abs(sig["at_ms"] - st_bar["t"]) <= window_ms and sig["direction"] == direction
+                for sig in bot_signals
+            )
+            if vip_ok:
+                # ── VIP_AS_IS — вход на close флипа, стоп на ST/ATR (как продакшн) ──
                 t = simulate_trade(st_1h, flip_idx, direction)
                 if t:
                     t.pair = pair
-                    _get("T2C_SIGCONF").trades.append(t)
+                    _get("VIP_AS_IS").trades.append(t)
+                # T2C_SIGCONF — алиас (оставляем для обратной совместимости) ─
+                t2 = simulate_trade(st_1h, flip_idx, direction)
+                if t2:
+                    t2.pair = pair
+                    _get("T2C_SIGCONF").trades.append(t2)
+                # ── VIP_RETEST_REV: ждём retest ST + reversal-свеча ──
+                rev_idx = _find_retest_and_reversal(st_1h, flip_idx, direction,
+                                                    max_wait_bars=24)
+                if rev_idx is not None:
+                    t3 = simulate_trade_st_sl(st_1h, rev_idx, direction)
+                    if t3:
+                        t3.pair = pair
+                        _get("VIP_RETEST_REV").trades.append(t3)
 
     # ── MTF-варианты ──────────────────────────────────────────
     for name, trigger_tf, align_tfs in MTF_VARIANTS:
@@ -397,6 +560,37 @@ def backtest_variants_for_pair(
             if t:
                 t.pair = pair
                 _get(name).trades.append(t)
+
+    # ── MTF_AS_IS + MTF_RETEST_REV — продакшн-версия "Triple MTF" ─────
+    # Triple MTF в продакшне = ST 1h flip + 4h aligned + 1d aligned
+    if st_1h:
+        st_4h = st_by_tf.get("4h") or []
+        st_1d = st_by_tf.get("1d") or []
+        if st_4h and st_1d:
+            flips_1h = find_flips(st_1h)
+            for flip_idx in flips_1h:
+                st_bar = st_1h[flip_idx]
+                direction = "LONG" if st_bar["trend"] == 1 else "SHORT"
+                # 4h + 1d aligned на момент флипа
+                s4 = st_state_at_ts(st_4h, st_bar["t"])
+                sd = st_state_at_ts(st_1d, st_bar["t"])
+                if not s4 or not sd:
+                    continue
+                if s4["trend"] != st_bar["trend"] or sd["trend"] != st_bar["trend"]:
+                    continue
+                # ── MTF_AS_IS — вход на close флипа (как продакшн) ──
+                t = simulate_trade(st_1h, flip_idx, direction)
+                if t:
+                    t.pair = pair
+                    _get("MTF_AS_IS").trades.append(t)
+                # ── MTF_RETEST_REV — вход после retest + reversal ──
+                rev_idx = _find_retest_and_reversal(st_1h, flip_idx, direction,
+                                                    max_wait_bars=24)
+                if rev_idx is not None:
+                    t2 = simulate_trade_st_sl(st_1h, rev_idx, direction)
+                    if t2:
+                        t2.pair = pair
+                        _get("MTF_RETEST_REV").trades.append(t2)
 
     return results
 
@@ -551,9 +745,18 @@ def run_backtest(days: int = 14, top_n: int = 200,
     summary = []
     for name, vs in all_stats.items():
         summary.append(vs.summary())
-    # Сортировка: сначала BASELINE, потом по EV убыв.
+    # Сортировка: BASELINE → 4 "главных" варианта (VIP/MTF as-is + retest-rev) → остальные по EV
+    PRIO = {
+        "BASELINE": 0,
+        "VIP_AS_IS": 1,
+        "VIP_RETEST_REV": 2,
+        "MTF_AS_IS": 3,
+        "MTF_RETEST_REV": 4,
+    }
     def _key(x):
-        if x["name"] == "BASELINE": return (0, 0)
+        name = x["name"]
+        if name in PRIO:
+            return (0, PRIO[name])
         return (1, -(x.get("ev_per_trade", 0) or 0))
     summary.sort(key=_key)
 
