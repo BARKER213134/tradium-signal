@@ -156,6 +156,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/history",
             "/api/backtest-yesterday", "/api/backtest-yesterday/status",
             "/api/backtest-optimize", "/api/backtest-optimize/status",
+            "/api/backtest-entry-timing", "/api/backtest-entry-timing/status",
             "/api/market-phase", "/api/market-phase/history",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
@@ -4803,6 +4804,458 @@ async def api_backtest_optimize_start(payload: dict | None = None):
 @app.get("/api/backtest-optimize/status")
 async def api_backtest_optimize_status():
     return _bo_state
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BACKTEST ENTRY TIMING — сравнение 8 стратегий входа
+# IMMEDIATE | PULLBACK_0.3/0.5/1.0 | PULLBACK_0.5_FB | EMA20_5M | EMA20_5M_REV | ATR_HALF
+# ═══════════════════════════════════════════════════════════════════
+_bet_state: dict = {
+    "running": False, "started_at": None, "finished_at": None,
+    "progress": {"processed": 0, "total": 0, "current": ""},
+    "result": None, "error": None,
+}
+
+
+def _bet_collect_signals(hours: int) -> list[dict]:
+    """Собирает все сигналы за N часов — универсально (tradium/CV/anomaly/
+    confluence/cluster/supertrend)."""
+    from database import (_signals, _anomalies, _confluence, _clusters,
+                          _supertrend_signals, utcnow)
+    from datetime import timedelta
+    since = utcnow() - timedelta(hours=hours)
+    out = []
+
+    for s in _signals().find({"source": "tradium", "received_at": {"$gte": since}}):
+        at = s.get("pattern_triggered_at") or s.get("received_at")
+        if s.get("pair") and s.get("direction") in ("LONG", "SHORT"):
+            out.append({
+                "source": "tradium", "pair": s.get("pair"),
+                "direction": s.get("direction"),
+                "entry": s.get("entry"), "tp1": s.get("tp1"), "sl": s.get("sl"),
+                "at": at,
+            })
+    for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True,
+                              "pattern_triggered_at": {"$gte": since}}).limit(500):
+        if s.get("pair") and s.get("direction") in ("LONG", "SHORT"):
+            out.append({
+                "source": "cryptovizor", "pair": s.get("pair"),
+                "direction": s.get("direction"),
+                "entry": s.get("pattern_price") or s.get("entry"),
+                "tp1": s.get("dca2"), "sl": s.get("dca1"),
+                "at": s.get("pattern_triggered_at"),
+            })
+    for a in _anomalies().find({"detected_at": {"$gte": since}}).sort("score", -1).limit(300):
+        sym = (a.get("symbol") or "").upper()
+        pair = a.get("pair") or (sym.replace("USDT", "/USDT") if sym.endswith("USDT") else None)
+        if pair and a.get("direction") in ("LONG", "SHORT"):
+            out.append({
+                "source": "anomaly", "pair": pair,
+                "direction": a.get("direction"),
+                "entry": a.get("price"), "tp1": None, "sl": None,
+                "at": a.get("detected_at"),
+            })
+    for c in _confluence().find({"detected_at": {"$gte": since}}).sort("score", -1).limit(500):
+        if c.get("pair") and c.get("direction") in ("LONG", "SHORT"):
+            out.append({
+                "source": "confluence", "pair": c.get("pair"),
+                "direction": c.get("direction"),
+                "entry": c.get("price"), "tp1": c.get("r1"), "sl": c.get("s1"),
+                "at": c.get("detected_at"),
+            })
+    for cl in _clusters().find({"trigger_at": {"$gte": since}}):
+        if cl.get("pair") and cl.get("direction") in ("LONG", "SHORT"):
+            out.append({
+                "source": "cluster", "pair": cl.get("pair"),
+                "direction": cl.get("direction"),
+                "entry": cl.get("trigger_price"),
+                "tp1": cl.get("tp_price"), "sl": cl.get("sl_price"),
+                "at": cl.get("trigger_at"),
+            })
+    for s in _supertrend_signals().find({"flip_at": {"$gte": since},
+                                         "tier": {"$in": ["vip", "mtf"]}}).limit(400):
+        if s.get("pair") and s.get("direction") in ("LONG", "SHORT"):
+            out.append({
+                "source": f"supertrend_{s.get('tier','?')}",
+                "pair": s.get("pair"), "direction": s.get("direction"),
+                "entry": s.get("entry_price"),
+                "tp1": None, "sl": s.get("sl_price"),
+                "at": s.get("flip_at"),
+            })
+    return out
+
+
+def _bet_atr_sl_tp(candles_1h: list, direction: str, entry: float):
+    """ATR-based SL/TP если отсутствуют."""
+    if not candles_1h or len(candles_1h) < 15:
+        return None, None
+    trs = []
+    for i in range(1, len(candles_1h)):
+        c, pc = candles_1h[i], candles_1h[i-1]["c"]
+        trs.append(max(c["h"] - c["l"], abs(c["h"] - pc), abs(c["l"] - pc)))
+    atr = sum(trs[-14:]) / min(14, len(trs))
+    if direction == "LONG":
+        return entry - atr * 1.5, entry + atr * 2.5
+    return entry + atr * 1.5, entry - atr * 2.5
+
+
+def _bet_ema20(closes: list) -> list:
+    """EMA20 для массива closes."""
+    if len(closes) < 20:
+        return [None] * len(closes)
+    result = [None] * 19
+    ema = sum(closes[:20]) / 20
+    result.append(ema)
+    m = 2 / 21
+    for c in closes[20:]:
+        ema = c * m + ema * (1 - m)
+        result.append(ema)
+    return result
+
+
+def _bet_atr_5m(candles_5m: list, idx: int, period: int = 14):
+    """ATR 5m на баре idx."""
+    if idx < period:
+        return None
+    trs = []
+    for i in range(idx - period + 1, idx + 1):
+        if i <= 0:
+            continue
+        c, pc = candles_5m[i], candles_5m[i-1]["c"]
+        trs.append(max(c["h"] - c["l"], abs(c["h"] - pc), abs(c["l"] - pc)))
+    return sum(trs) / len(trs) if trs else None
+
+
+def _bet_is_reversal(bar: dict, prev_bar: dict, direction: str) -> bool:
+    """Bullish pin/engulf для LONG, bearish для SHORT."""
+    o = bar["o"]; h = bar["h"]; l = bar["l"]; c = bar["c"]
+    po = prev_bar["o"]; pc = prev_bar["c"]
+    body = abs(c - o)
+    prev_body = abs(pc - po)
+    if body <= 0 or body < c * 0.002:
+        return False
+    if direction == "LONG":
+        if c <= o: return False
+        lower_wick = min(o, c) - l
+        is_pin = lower_wick >= 1.5 * body
+        is_engulf = (c > po) and (o <= pc) and (c > pc) and (body >= prev_body) and (prev_body >= c * 0.001)
+        return is_pin or is_engulf
+    else:
+        if c >= o: return False
+        upper_wick = h - max(o, c)
+        is_pin = upper_wick >= 1.5 * body
+        is_engulf = (c < po) and (o >= pc) and (c < pc) and (body >= prev_body) and (prev_body >= c * 0.001)
+        return is_pin or is_engulf
+
+
+def _bet_simulate_tp_sl(candles_15m: list, start_ts_ms: int, direction: str,
+                         entry: float, tp: float, sl: float, forward_h: int) -> dict:
+    """Симулирует TP/SL на 15m от start_ts. Возвращает {what, r, pnl_pct}."""
+    if not candles_15m:
+        return {"ok": False}
+    end_ms = start_ts_ms + forward_h * 3600 * 1000
+    is_long = direction == "LONG"
+    risk = abs(entry - sl)
+    if risk <= 0:
+        return {"ok": False}
+    last_c = None
+    for c in candles_15m:
+        if c["t"] < start_ts_ms or c["t"] > end_ms:
+            continue
+        last_c = c
+        hi, lo = c["h"], c["l"]
+        if is_long:
+            if lo <= sl:
+                return {"ok": True, "what": "SL", "r": -1.0,
+                        "pnl_pct": round((sl - entry) / entry * 100, 2)}
+            if hi >= tp:
+                reward = abs(tp - entry)
+                return {"ok": True, "what": "TP", "r": round(reward / risk, 2),
+                        "pnl_pct": round((tp - entry) / entry * 100, 2)}
+        else:
+            if hi >= sl:
+                return {"ok": True, "what": "SL", "r": -1.0,
+                        "pnl_pct": round((sl - entry) / entry * 100 * -1, 2)}
+            if lo <= tp:
+                reward = abs(tp - entry)
+                return {"ok": True, "what": "TP", "r": round(reward / risk, 2),
+                        "pnl_pct": round((tp - entry) / entry * 100 * -1, 2)}
+    if not last_c:
+        return {"ok": False}
+    last = last_c["c"]
+    r = (last - entry) / risk if is_long else (entry - last) / risk
+    return {"ok": True, "what": "OPEN", "r": round(r, 3),
+            "pnl_pct": round((last - entry) / entry * 100 * (1 if is_long else -1), 2)}
+
+
+def _bet_find_entry(strategy: str, candles_5m: list, signal_ts_ms: int,
+                    signal_price: float, direction: str, timeout_min: int = 30,
+                    fallback_pct: float = 1.5) -> dict:
+    """Ищет точку входа согласно стратегии. Возвращает {executed, entry_price, entry_ts, skip_reason}."""
+    if not candles_5m:
+        return {"executed": False, "skip_reason": "no 5m candles"}
+    end_ms = signal_ts_ms + timeout_min * 60 * 1000
+    is_long = direction == "LONG"
+
+    # IMMEDIATE — entry сразу по signal_price, entry_ts = signal_ts
+    if strategy == "IMMEDIATE":
+        return {"executed": True, "entry_price": signal_price, "entry_ts": signal_ts_ms}
+
+    # Найти индекс первой свечи после сигнала
+    start_idx = None
+    for i, c in enumerate(candles_5m):
+        if c["t"] >= signal_ts_ms:
+            start_idx = i
+            break
+    if start_idx is None:
+        return {"executed": False, "skip_reason": "no candles after signal"}
+
+    # Pre-compute EMA20 (если нужна)
+    closes = [c["c"] for c in candles_5m]
+    ema20_arr = _bet_ema20(closes) if strategy in ("EMA20_5M", "EMA20_5M_REV") else None
+
+    # Pullback thresholds
+    if strategy.startswith("PULLBACK_"):
+        pct_str = strategy.split("_")[1].replace("FB", "")
+        try:
+            pct = float(pct_str)
+        except Exception:
+            pct = 0.5
+        target = signal_price * (1 - pct / 100.0) if is_long else signal_price * (1 + pct / 100.0)
+        fb_target = signal_price * (1 + fallback_pct / 100.0) if is_long else signal_price * (1 - fallback_pct / 100.0)
+        use_fallback = "FB" in strategy
+    elif strategy == "ATR_HALF":
+        atr = _bet_atr_5m(candles_5m, start_idx, 14)
+        if not atr:
+            return {"executed": False, "skip_reason": "no ATR"}
+        target = signal_price - 0.5 * atr if is_long else signal_price + 0.5 * atr
+
+    # Проходим свечи в окне
+    for i in range(start_idx, len(candles_5m)):
+        bar = candles_5m[i]
+        if bar["t"] > end_ms:
+            break
+        hi, lo = bar["h"], bar["l"]
+
+        if strategy.startswith("PULLBACK_") or strategy == "ATR_HALF":
+            if is_long and lo <= target:
+                return {"executed": True, "entry_price": target, "entry_ts": bar["t"]}
+            if (not is_long) and hi >= target:
+                return {"executed": True, "entry_price": target, "entry_ts": bar["t"]}
+            if strategy.endswith("_FB") and use_fallback:
+                if is_long and hi >= fb_target:
+                    # Fallback: цена сильно ушла вверх — вход по fb_target
+                    return {"executed": True, "entry_price": fb_target, "entry_ts": bar["t"],
+                            "fallback": True}
+                if (not is_long) and lo <= fb_target:
+                    return {"executed": True, "entry_price": fb_target, "entry_ts": bar["t"],
+                            "fallback": True}
+
+        elif strategy == "EMA20_5M":
+            e = ema20_arr[i] if i < len(ema20_arr) else None
+            if not e: continue
+            if is_long and lo <= e:
+                return {"executed": True, "entry_price": e, "entry_ts": bar["t"]}
+            if (not is_long) and hi >= e:
+                return {"executed": True, "entry_price": e, "entry_ts": bar["t"]}
+
+        elif strategy == "EMA20_5M_REV":
+            # Ждём (1) касание EMA20, затем (2) reversal-candle
+            e = ema20_arr[i] if i < len(ema20_arr) else None
+            if not e: continue
+            touched = (is_long and lo <= e) or ((not is_long) and hi >= e)
+            if touched:
+                # Смотрим следующие 1-3 бара на reversal
+                for j in range(i + 1, min(i + 4, len(candles_5m))):
+                    if candles_5m[j]["t"] > end_ms: break
+                    if j - 1 < 0: continue
+                    if _bet_is_reversal(candles_5m[j], candles_5m[j - 1], direction):
+                        return {"executed": True, "entry_price": candles_5m[j]["c"],
+                                "entry_ts": candles_5m[j]["t"]}
+
+    return {"executed": False, "skip_reason": "timeout"}
+
+
+def _backtest_entry_timing_sync(hours: int, forward_hours: int) -> dict:
+    """Главная функция бектеста 8 entry стратегий."""
+    from exchange import get_klines_any
+    import logging as _log
+    logger = _log.getLogger(__name__)
+
+    STRATEGIES = [
+        "IMMEDIATE",
+        "PULLBACK_0.3", "PULLBACK_0.5", "PULLBACK_1.0",
+        "PULLBACK_0.5_FB",
+        "EMA20_5M", "EMA20_5M_REV",
+        "ATR_HALF",
+    ]
+
+    signals = _bet_collect_signals(hours)
+    logger.info(f"[bet] собрано {len(signals)} сигналов")
+    _bet_state["progress"]["total"] = len(signals)
+
+    # Кеши свечей
+    cache_5m: dict = {}
+    cache_15m: dict = {}
+    cache_1h: dict = {}
+
+    def _get_5m(pair):
+        if pair in cache_5m: return cache_5m[pair]
+        # 5m × 24ч × 12 = ~3500 баров на 14 дней, берём 1000 (последние ~83ч)
+        c = get_klines_any(pair, "5m", 1000) or []
+        cache_5m[pair] = c
+        return c
+
+    def _get_15m(pair):
+        if pair in cache_15m: return cache_15m[pair]
+        c = get_klines_any(pair, "15m", 500) or []
+        cache_15m[pair] = c
+        return c
+
+    def _get_1h(pair):
+        if pair in cache_1h: return cache_1h[pair]
+        c = get_klines_any(pair, "1h", 30) or []
+        cache_1h[pair] = c
+        return c
+
+    # Per-strategy агрегаты
+    stats = {s: {"executed": 0, "skipped": 0, "fallback": 0,
+                 "wins": 0, "losses": 0, "open": 0,
+                 "sum_r": 0.0, "sum_pct": 0.0} for s in STRATEGIES}
+
+    processed = 0
+    for sig in signals:
+        processed += 1
+        _bet_state["progress"]["processed"] = processed
+        _bet_state["progress"]["current"] = sig.get("pair", "")
+
+        try:
+            pair = sig["pair"]
+            direction = sig["direction"]
+            signal_price = sig["entry"]
+            at = sig["at"]
+            if not (pair and signal_price and at):
+                continue
+            signal_ts_ms = int(at.timestamp() * 1000) if hasattr(at, "timestamp") else 0
+            if not signal_ts_ms:
+                continue
+
+            # TP/SL — если отсутствуют, ATR-based
+            tp1, sl = sig.get("tp1"), sig.get("sl")
+            if not sl:
+                sl_atr, tp_atr = _bet_atr_sl_tp(_get_1h(pair), direction, signal_price)
+                sl = sl_atr
+                if not tp1: tp1 = tp_atr
+            if not sl: continue
+            if not tp1:
+                _, tp_atr = _bet_atr_sl_tp(_get_1h(pair), direction, signal_price)
+                tp1 = tp_atr
+            if not tp1: continue
+
+            # Distance relative для пересчёта TP/SL от новой entry
+            tp_dist_pct = abs(tp1 - signal_price) / signal_price
+            sl_dist_pct = abs(sl - signal_price) / signal_price
+
+            candles_5m = _get_5m(pair)
+            candles_15m = _get_15m(pair)
+            if not candles_15m:
+                continue
+
+            for strat in STRATEGIES:
+                r = _bet_find_entry(strat, candles_5m, signal_ts_ms, signal_price, direction,
+                                    timeout_min=30, fallback_pct=1.5)
+                if not r.get("executed"):
+                    stats[strat]["skipped"] += 1
+                    continue
+                entry_p = r["entry_price"]
+                entry_ts = r["entry_ts"]
+                # Пересчёт TP/SL от нового entry (сохраняем distance)
+                if direction == "LONG":
+                    new_tp = entry_p * (1 + tp_dist_pct)
+                    new_sl = entry_p * (1 - sl_dist_pct)
+                else:
+                    new_tp = entry_p * (1 - tp_dist_pct)
+                    new_sl = entry_p * (1 + sl_dist_pct)
+                sim = _bet_simulate_tp_sl(candles_15m, entry_ts, direction,
+                                          entry_p, new_tp, new_sl, forward_hours)
+                if not sim.get("ok"):
+                    stats[strat]["skipped"] += 1
+                    continue
+                stats[strat]["executed"] += 1
+                if r.get("fallback"):
+                    stats[strat]["fallback"] += 1
+                if sim["what"] == "TP":
+                    stats[strat]["wins"] += 1
+                elif sim["what"] == "SL":
+                    stats[strat]["losses"] += 1
+                else:
+                    stats[strat]["open"] += 1
+                stats[strat]["sum_r"] += sim.get("r") or 0
+                stats[strat]["sum_pct"] += sim.get("pnl_pct") or 0
+        except Exception as _e:
+            logger.warning(f"[bet] sim fail {sig.get('source')} {sig.get('pair')}: {_e}")
+
+    # Формирование отчёта
+    rows = []
+    baseline_sum_r = stats.get("IMMEDIATE", {}).get("sum_r", 0)
+    for strat in STRATEGIES:
+        s = stats[strat]
+        closed = s["wins"] + s["losses"]
+        wr = round(s["wins"] / closed * 100, 1) if closed else 0
+        avg_r = round(s["sum_r"] / s["executed"], 3) if s["executed"] else 0
+        rows.append({
+            "name": strat,
+            "executed": s["executed"], "skipped": s["skipped"], "fallback": s["fallback"],
+            "wins": s["wins"], "losses": s["losses"], "open": s["open"],
+            "wr": wr, "avg_r_executed": avg_r,
+            "sum_r": round(s["sum_r"], 2), "sum_pct": round(s["sum_pct"], 2),
+            "vs_immediate_r": round(s["sum_r"] - baseline_sum_r, 2),
+        })
+
+    return {
+        "ok": True, "hours": hours, "forward_hours": forward_hours,
+        "total_signals": len(signals),
+        "pairs_5m_cached": len(cache_5m),
+        "strategies": rows,
+    }
+
+
+async def _run_backtest_entry_timing(hours: int, forward_hours: int):
+    from datetime import datetime as _dt
+    try:
+        result = await asyncio.to_thread(_backtest_entry_timing_sync, hours, forward_hours)
+        _bet_state["result"] = result
+    except Exception as e:
+        _bet_state["error"] = str(e)
+        logging.getLogger(__name__).exception("[backtest-entry-timing] crashed")
+    finally:
+        _bet_state["running"] = False
+        _bet_state["finished_at"] = _dt.utcnow().isoformat()
+
+
+@app.post("/api/backtest-entry-timing")
+async def api_backtest_entry_timing_start(payload: dict | None = None):
+    """Бектест 8 стратегий входа (IMMEDIATE vs PULLBACK vs EMA vs ATR).
+    payload: {"hours": 168, "forward_hours": 48}."""
+    from datetime import datetime as _dt
+    if _bet_state.get("running"):
+        return {"ok": False, "error": "already running", "state": _bet_state}
+    p = payload or {}
+    hours = int(p.get("hours", 168))
+    forward_hours = int(p.get("forward_hours", 48))
+    _bet_state.update({
+        "running": True, "started_at": _dt.utcnow().isoformat(),
+        "finished_at": None,
+        "progress": {"processed": 0, "total": 0, "current": ""},
+        "result": None, "error": None,
+    })
+    asyncio.create_task(_run_backtest_entry_timing(hours, forward_hours))
+    return {"ok": True, "started": True, "hours": hours, "forward_hours": forward_hours}
+
+
+@app.get("/api/backtest-entry-timing/status")
+async def api_backtest_entry_timing_status():
+    return _bet_state
 
 
 # ═══════════════════════════════════════════════════════════════════
