@@ -154,6 +154,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
             "/api/paper/rejections", "/api/paper/be-audit",
             "/api/backtest-yesterday", "/api/backtest-yesterday/status",
+            "/api/backtest-optimize", "/api/backtest-optimize/status",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
@@ -4400,6 +4401,394 @@ async def api_backtest_yesterday_start(payload: dict | None = None):
 @app.get("/api/backtest-yesterday/status")
 async def api_backtest_yesterday_status():
     return _by_state
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BACKTEST OPTIMIZE — прогон бектеста по одному источнику с разными
+# фильтрами. Возвращает табличку: фильтр → count/WR/avgR/PF/sumR.
+# ═══════════════════════════════════════════════════════════════════
+_bo_state: dict = {
+    "running": False, "started_at": None, "finished_at": None,
+    "progress": {"processed": 0, "total": 0, "current": ""},
+    "result": None, "error": None,
+    "source": None, "hours": 168, "forward_hours": 72,
+}
+
+
+def _simulate_signal(candles_15m: list, direction: str, entry: float,
+                      tp1: float, sl: float, opened_at, forward_h: int) -> dict:
+    """Одна симуляция: касание TP или SL на свечах 15m.
+    Возвращает {ok, what: TP|SL|OPEN, r, pnl_pct}."""
+    if not candles_15m or entry is None or sl is None:
+        return {"ok": False}
+    opened_ts_ms = int(opened_at.timestamp() * 1000) if hasattr(opened_at, "timestamp") else 0
+    end_ms = opened_ts_ms + forward_h * 3600 * 1000
+    is_long = direction == "LONG"
+    risk = abs(entry - sl)
+    if risk <= 0:
+        return {"ok": False}
+    bar_count = 0
+    last_c = None
+    for c in candles_15m:
+        if c["t"] < opened_ts_ms or c["t"] > end_ms:
+            continue
+        bar_count += 1
+        last_c = c
+        hi, lo = c["h"], c["l"]
+        if is_long:
+            tp_hit = tp1 and hi >= tp1
+            sl_hit = lo <= sl
+        else:
+            tp_hit = tp1 and lo <= tp1
+            sl_hit = hi >= sl
+        if sl_hit:
+            return {"ok": True, "what": "SL", "r": -1.0,
+                    "pnl_pct": round((sl - entry) / entry * 100 * (1 if is_long else -1), 2)}
+        if tp_hit:
+            reward = abs(tp1 - entry)
+            return {"ok": True, "what": "TP",
+                    "r": round(reward / risk, 2),
+                    "pnl_pct": round((tp1 - entry) / entry * 100 * (1 if is_long else -1), 2)}
+    if bar_count == 0 or last_c is None:
+        return {"ok": False}
+    last = last_c["c"]
+    r = (last - entry) / risk if is_long else (entry - last) / risk
+    return {"ok": True, "what": "OPEN", "r": round(r, 3),
+            "pnl_pct": round((last - entry) / entry * 100 * (1 if is_long else -1), 2)}
+
+
+def _atr_tp_sl(candles_1h: list, direction: str, entry: float) -> tuple[float | None, float | None]:
+    if not candles_1h or len(candles_1h) < 15:
+        return None, None
+    trs = []
+    for i in range(1, len(candles_1h)):
+        c, pc = candles_1h[i], candles_1h[i-1]["c"]
+        trs.append(max(c["h"] - c["l"], abs(c["h"] - pc), abs(c["l"] - pc)))
+    if not trs:
+        return None, None
+    atr = sum(trs[-14:]) / min(14, len(trs))
+    if direction == "LONG":
+        return entry - atr * 1.5, entry + atr * 2.5
+    return entry + atr * 1.5, entry - atr * 2.5
+
+
+def _btc_trend_at_ts(btc_1h: list, ts_ms: int) -> str:
+    """Грубый тренд: close[i] > close[i-3] → UP, иначе DOWN."""
+    if not btc_1h:
+        return "UNK"
+    for idx in range(len(btc_1h) - 1, -1, -1):
+        if btc_1h[idx]["t"] <= ts_ms:
+            if idx < 3:
+                return "UNK"
+            return "UP" if btc_1h[idx]["c"] > btc_1h[idx-3]["c"] else "DOWN"
+    return "UNK"
+
+
+def _agg_stats(sims: list[dict]) -> dict:
+    """Принимает список {what, r, pnl_pct, direction}. Возвращает агрегат."""
+    n = len(sims)
+    if n == 0:
+        return {"count": 0}
+    wins = sum(1 for s in sims if s.get("what") == "TP")
+    losses = sum(1 for s in sims if s.get("what") == "SL")
+    open_n = sum(1 for s in sims if s.get("what") == "OPEN")
+    closed = wins + losses
+    wr = round(wins / closed * 100, 1) if closed else 0.0
+    sum_r = round(sum(s.get("r") or 0 for s in sims), 2)
+    sum_pct = round(sum(s.get("pnl_pct") or 0 for s in sims), 1)
+    avg_r = round(sum_r / n, 3)
+    wr_sum = sum(s["r"] for s in sims if (s.get("r") or 0) > 0)
+    lr_sum = abs(sum(s["r"] for s in sims if (s.get("r") or 0) <= 0 and s.get("what") != "OPEN"))
+    pf = round(wr_sum / lr_sum, 2) if lr_sum > 0 else None
+    return {"count": n, "wins": wins, "losses": losses, "open": open_n,
+            "wr": wr, "avg_r": avg_r, "pf": pf,
+            "sum_r": sum_r, "sum_pct": sum_pct}
+
+
+def _backtest_optimize_sync(source: str, hours: int, forward_hours: int) -> dict:
+    """Главная функция. Источники: confluence, cluster, supertrend_vip,
+    supertrend_mtf, anomaly, cryptovizor."""
+    from database import (_signals, _anomalies, _confluence, _clusters,
+                          _supertrend_signals, utcnow)
+    from datetime import timedelta
+    from exchange import get_klines_any
+    import logging as _log
+    logger = _log.getLogger(__name__)
+    since = utcnow() - timedelta(hours=hours)
+
+    # 1. Собираем raw сигналы с полной мета-инфой для фильтров
+    raw: list[dict] = []
+    if source == "confluence":
+        for c in _confluence().find({"detected_at": {"$gte": since}}):
+            raw.append({
+                "pair": c.get("pair"),
+                "direction": c.get("direction"),
+                "entry": c.get("price"), "tp1": c.get("r1"), "sl": c.get("s1"),
+                "at": c.get("detected_at"),
+                "score": c.get("score") or 0,
+                "st_passed": bool(c.get("st_passed")),
+                "is_top_pick": bool(c.get("is_top_pick")),
+                "factors": len(c.get("factors", [])),
+                "pump_score": c.get("pump_score") or 0,
+            })
+    elif source == "cluster":
+        for cl in _clusters().find({"trigger_at": {"$gte": since}}):
+            raw.append({
+                "pair": cl.get("pair"),
+                "direction": cl.get("direction"),
+                "entry": cl.get("trigger_price"),
+                "tp1": cl.get("tp_price"), "sl": cl.get("sl_price"),
+                "at": cl.get("trigger_at"),
+                "strength": cl.get("strength", "NORMAL"),
+                "sources_count": cl.get("sources_count") or 0,
+                "signals_count": cl.get("signals_count") or 0,
+                "reversal_score": cl.get("reversal_score") or 0,
+            })
+    elif source in ("supertrend_vip", "supertrend_mtf"):
+        tier = "vip" if source == "supertrend_vip" else "mtf"
+        for s in _supertrend_signals().find({"flip_at": {"$gte": since}, "tier": tier}):
+            raw.append({
+                "pair": s.get("pair"),
+                "direction": s.get("direction"),
+                "entry": s.get("entry_price"), "tp1": None, "sl": s.get("sl_price"),
+                "at": s.get("flip_at"),
+                "aligned_tfs": s.get("aligned_tfs", []),
+                "aligned_bots_count": len(s.get("aligned_bots", [])),
+                "aligned_sources": list({ab.get("source", "?") for ab in s.get("aligned_bots", [])}),
+            })
+    elif source == "anomaly":
+        for a in _anomalies().find({"detected_at": {"$gte": since}}):
+            sym = (a.get("symbol") or "").upper()
+            pair = a.get("pair") or (sym.replace("USDT", "/USDT") if sym.endswith("USDT") else None)
+            raw.append({
+                "pair": pair,
+                "direction": a.get("direction"),
+                "entry": a.get("price"), "tp1": None, "sl": None,
+                "at": a.get("detected_at"),
+                "score": a.get("score") or 0,
+                "types": [x.get("type") for x in a.get("anomalies", [])],
+                "types_count": len(a.get("anomalies", [])),
+            })
+    elif source == "cryptovizor":
+        for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True,
+                                  "pattern_triggered_at": {"$gte": since}}):
+            raw.append({
+                "pair": s.get("pair"),
+                "direction": s.get("direction"),
+                "entry": s.get("pattern_price") or s.get("entry"),
+                "tp1": s.get("dca2"), "sl": s.get("dca1"),
+                "at": s.get("pattern_triggered_at"),
+                "pattern_name": s.get("pattern_name", "?"),
+                "ai_score": s.get("ai_score") or 0,
+                "st_passed": bool(s.get("st_passed")),
+            })
+    else:
+        return {"error": f"unknown source {source}"}
+
+    _bo_state["progress"]["total"] = len(raw)
+    logger.info(f"[backtest-optimize] {source}: собрано {len(raw)} сигналов")
+
+    # 2. Кеш свечей по pair + BTC 1h для context
+    candles_15m_cache: dict = {}
+    candles_1h_cache: dict = {}
+    btc_1h = get_klines_any("BTC/USDT", "1h", max(hours + 24, 200)) or []
+
+    def _get_15m(pair: str):
+        if pair in candles_15m_cache:
+            return candles_15m_cache[pair]
+        c = get_klines_any(pair, "15m", max(forward_hours * 4 + hours * 4, 700)) or []
+        candles_15m_cache[pair] = c
+        return c
+
+    def _get_1h(pair: str):
+        if pair in candles_1h_cache:
+            return candles_1h_cache[pair]
+        c = get_klines_any(pair, "1h", 30) or []
+        candles_1h_cache[pair] = c
+        return c
+
+    # 3. Симулируем каждый сигнал → прикрепляем результат
+    processed = 0
+    for sig in raw:
+        processed += 1
+        _bo_state["progress"]["processed"] = processed
+        _bo_state["progress"]["current"] = sig.get("pair", "")
+        try:
+            pair = sig.get("pair")
+            direction = sig.get("direction")
+            entry = sig.get("entry")
+            at = sig.get("at")
+            if not (pair and direction in ("LONG", "SHORT") and entry and at):
+                sig["_sim"] = {"ok": False}
+                continue
+            tp1, sl = sig.get("tp1"), sig.get("sl")
+            if not sl:
+                sl_atr, tp_atr = _atr_tp_sl(_get_1h(pair), direction, entry)
+                sl = sl_atr
+                if not tp1: tp1 = tp_atr
+            if not sl:
+                sig["_sim"] = {"ok": False}
+                continue
+            if not tp1:
+                _, tp_atr = _atr_tp_sl(_get_1h(pair), direction, entry)
+                tp1 = tp_atr
+            if not tp1:
+                sig["_sim"] = {"ok": False}
+                continue
+            sim = _simulate_signal(_get_15m(pair), direction, entry, tp1, sl, at, forward_hours)
+            # BTC trend на момент сигнала
+            at_ms = int(at.timestamp() * 1000) if hasattr(at, "timestamp") else 0
+            sig["_btc_trend"] = _btc_trend_at_ts(btc_1h, at_ms)
+            sig["_sim"] = sim
+        except Exception as _e:
+            sig["_sim"] = {"ok": False, "err": str(_e)}
+
+    # 4. Фильтры по источнику
+    good = [s for s in raw if s.get("_sim", {}).get("ok")]
+
+    def _apply(name: str, predicate, comment: str = "") -> dict:
+        filtered = [s for s in good if predicate(s)]
+        sims = [s["_sim"] for s in filtered]
+        stats = _agg_stats(sims)
+        stats["name"] = name
+        stats["comment"] = comment
+        # Пропорция LONG/SHORT для диагностики
+        if filtered:
+            longs = sum(1 for s in filtered if s.get("direction") == "LONG")
+            stats["long_pct"] = round(longs / len(filtered) * 100, 0)
+        return stats
+
+    rows = [_apply("BASELINE", lambda s: True, "все сигналы")]
+
+    if source == "confluence":
+        rows += [
+            _apply("score>=5", lambda s: s["score"] >= 5),
+            _apply("score>=6", lambda s: s["score"] >= 6),
+            _apply("score>=7", lambda s: s["score"] >= 7),
+            _apply("st_passed", lambda s: s["st_passed"]),
+            _apply("factors>=5", lambda s: s["factors"] >= 5),
+            _apply("factors>=6", lambda s: s["factors"] >= 6),
+            _apply("LONG only", lambda s: s["direction"] == "LONG"),
+            _apply("SHORT only", lambda s: s["direction"] == "SHORT"),
+            _apply("score>=6+st_passed", lambda s: s["score"] >= 6 and s["st_passed"]),
+            _apply("score>=6+top_pick", lambda s: s["score"] >= 6 and s["is_top_pick"]),
+            _apply("score>=6+st+TP", lambda s: s["score"] >= 6 and s["st_passed"] and s["is_top_pick"]),
+        ]
+    elif source == "cluster":
+        rows += [
+            _apply("NORMAL", lambda s: s["strength"] == "NORMAL"),
+            _apply("STRONG", lambda s: s["strength"] == "STRONG"),
+            _apply("MEGA", lambda s: s["strength"] == "MEGA"),
+            _apply("RISKY", lambda s: s["strength"] == "RISKY"),
+            _apply("sources>=3", lambda s: s["sources_count"] >= 3),
+            _apply("sources>=4", lambda s: s["sources_count"] >= 4),
+            _apply("rev_score>0", lambda s: s["reversal_score"] > 0),
+            _apply("LONG only", lambda s: s["direction"] == "LONG"),
+            _apply("SHORT only", lambda s: s["direction"] == "SHORT"),
+        ]
+    elif source in ("supertrend_vip", "supertrend_mtf"):
+        rows += [
+            _apply("LONG only", lambda s: s["direction"] == "LONG"),
+            _apply("SHORT only", lambda s: s["direction"] == "SHORT"),
+            _apply("aligned_bots>=2", lambda s: s["aligned_bots_count"] >= 2),
+            _apply("aligned_bots>=3", lambda s: s["aligned_bots_count"] >= 3),
+            _apply("+btc_aligned", lambda s: (s["direction"] == "LONG" and s["_btc_trend"] == "UP") or (s["direction"] == "SHORT" and s["_btc_trend"] == "DOWN")),
+            _apply("-btc_counter", lambda s: not ((s["direction"] == "LONG" and s["_btc_trend"] == "DOWN") or (s["direction"] == "SHORT" and s["_btc_trend"] == "UP"))),
+            _apply("with_cv", lambda s: "cryptovizor" in s.get("aligned_sources", [])),
+            _apply("with_conf", lambda s: "confluence" in s.get("aligned_sources", [])),
+        ]
+        if source == "supertrend_mtf":
+            rows.append(_apply("1h+4h+1d", lambda s: set(s.get("aligned_tfs", [])) >= {"1h", "4h", "1d"}))
+            rows.append(_apply("LONG+btc_up", lambda s: s["direction"] == "LONG" and s["_btc_trend"] == "UP"))
+            rows.append(_apply("SHORT+btc_down", lambda s: s["direction"] == "SHORT" and s["_btc_trend"] == "DOWN"))
+    elif source == "anomaly":
+        rows += [
+            _apply("score>=9", lambda s: s["score"] >= 9),
+            _apply("score>=11", lambda s: s["score"] >= 11),
+            _apply("score>=13", lambda s: s["score"] >= 13),
+            _apply("types>=2", lambda s: s["types_count"] >= 2),
+            _apply("types>=3", lambda s: s["types_count"] >= 3),
+            _apply("has_oi_spike", lambda s: "oi_spike" in s.get("types", [])),
+            _apply("has_funding", lambda s: "funding_extreme" in s.get("types", [])),
+            _apply("has_ls_ratio", lambda s: "ls_ratio_extreme" in s.get("types", [])),
+            _apply("has_taker", lambda s: "taker_imbalance" in s.get("types", [])),
+            _apply("has_volume", lambda s: "volume_spike" in s.get("types", [])),
+            _apply("LONG only", lambda s: s["direction"] == "LONG"),
+            _apply("SHORT only", lambda s: s["direction"] == "SHORT"),
+        ]
+    elif source == "cryptovizor":
+        # Топ паттернов из данных
+        from collections import Counter
+        pat_counts = Counter(s.get("pattern_name", "?") for s in good)
+        top_patterns = [p for p, _ in pat_counts.most_common(6)]
+        rows += [
+            _apply("st_passed", lambda s: s["st_passed"]),
+            _apply("ai_score>=60", lambda s: s["ai_score"] >= 60),
+            _apply("ai_score>=70", lambda s: s["ai_score"] >= 70),
+            _apply("ai_score>=80", lambda s: s["ai_score"] >= 80),
+            _apply("LONG only", lambda s: s["direction"] == "LONG"),
+            _apply("SHORT only", lambda s: s["direction"] == "SHORT"),
+            _apply("st_passed+score70", lambda s: s["st_passed"] and s["ai_score"] >= 70),
+            _apply("st_passed+score80", lambda s: s["st_passed"] and s["ai_score"] >= 80),
+        ]
+        for p in top_patterns:
+            rows.append(_apply(f"pattern={p[:14]}", lambda s, pp=p: s.get("pattern_name") == pp))
+
+    # 5. Возвращаем отсортированное по sum_r убыв (baseline в начале)
+    def _key(r):
+        if r["name"] == "BASELINE": return (0, 0)
+        return (1, -(r.get("sum_r") or 0))
+    rows.sort(key=_key)
+
+    return {
+        "ok": True, "source": source, "hours": hours, "forward_hours": forward_hours,
+        "raw_count": len(raw), "sim_ok_count": len(good),
+        "pairs_cached": len(candles_15m_cache),
+        "variants": rows,
+    }
+
+
+async def _run_backtest_optimize(source: str, hours: int, forward_hours: int):
+    from datetime import datetime as _dt
+    try:
+        result = await asyncio.to_thread(_backtest_optimize_sync, source, hours, forward_hours)
+        _bo_state["result"] = result
+    except Exception as e:
+        _bo_state["error"] = str(e)
+        logging.getLogger(__name__).exception("[backtest-optimize] crashed")
+    finally:
+        _bo_state["running"] = False
+        _bo_state["finished_at"] = _dt.utcnow().isoformat()
+
+
+@app.post("/api/backtest-optimize")
+async def api_backtest_optimize_start(payload: dict | None = None):
+    """Бектест с фильтрами для одного источника.
+    payload: {"source": "confluence|cluster|supertrend_vip|supertrend_mtf|anomaly|cryptovizor",
+              "hours": 168, "forward_hours": 72}
+    Статус через GET /api/backtest-optimize/status."""
+    from datetime import datetime as _dt
+    if _bo_state.get("running"):
+        return {"ok": False, "error": "already running", "state": _bo_state}
+    p = payload or {}
+    source = p.get("source") or "confluence"
+    hours = int(p.get("hours", 168))
+    forward_hours = int(p.get("forward_hours", 72))
+    _bo_state.update({
+        "running": True, "started_at": _dt.utcnow().isoformat(),
+        "finished_at": None,
+        "progress": {"processed": 0, "total": 0, "current": ""},
+        "result": None, "error": None,
+        "source": source, "hours": hours, "forward_hours": forward_hours,
+    })
+    asyncio.create_task(_run_backtest_optimize(source, hours, forward_hours))
+    return {"ok": True, "started": True, "source": source, "hours": hours,
+            "forward_hours": forward_hours}
+
+
+@app.get("/api/backtest-optimize/status")
+async def api_backtest_optimize_status():
+    return _bo_state
 
 
 @app.get("/api/paper/be-audit")
