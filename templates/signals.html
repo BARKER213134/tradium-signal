@@ -2618,34 +2618,12 @@ safeInterval(loadConflicts, 30000);
       <div id="atPositions" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;min-height:100px;">
         <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет открытых позиций</div>
       </div>
-      <!-- 🧠 AI Learnings — зелёная агрегированная сводка + кнопка refresh -->
+      <!-- 🛑 Лог отказов — почему не вошёл в сделку (rule-based причины) -->
       <div style="margin-top:16px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;">
-            🧠 AI Learnings <span style="color:var(--muted);font-size:9px;text-transform:none;letter-spacing:0;">— чему научился после сделок</span>
-          </div>
-          <button id="atRefreshBtn" onclick="refreshAIMemory()" title="Пересобрать сводку через Claude (анализ последних 50 сделок)" style="background:linear-gradient(135deg,rgba(0,229,160,0.2),rgba(0,212,255,0.1));color:#00e5a0;border:1px solid rgba(0,229,160,0.6);border-radius:6px;padding:5px 12px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;transition:all 0.15s;">🔄 Пересобрать</button>
-        </div>
-        <div id="atMemory" style="background:linear-gradient(135deg,rgba(0,229,160,0.06),rgba(0,212,255,0.03));border:1px solid rgba(0,229,160,0.22);border-radius:10px;padding:14px 18px;font-size:12px;color:var(--text);min-height:80px;">
-          <div style="color:var(--muted);font-size:11px;">Загрузка…</div>
-        </div>
-
-        <!-- 🤖 AI промт — гармошка. Динамический: меняется с ростом памяти -->
-        <div style="margin-top:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;">
-          <div id="atPromptHeader" onclick="toggleAIPrompt()" style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.02);user-select:none;">
-            <span id="atPromptArrow" style="transition:transform 0.2s;display:inline-block;font-size:10px;">▶</span>
-            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:600;">🤖 Промт AI для авто-торговли</span>
-            <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);">— меняется по мере обучения</span>
-            <span id="atPromptMeta" style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
-          </div>
-          <div id="atPromptBody" style="display:none;max-height:800px;overflow-y:auto;background:var(--dark-2);"></div>
-        </div>
-
-        <!-- 🛑 Лог отказов AI — почему не вошёл в сделку -->
-        <div style="margin-top:10px;border:1px solid rgba(255,77,109,0.25);border-radius:10px;overflow:hidden;">
+        <div style="border:1px solid rgba(255,77,109,0.25);border-radius:10px;overflow:hidden;">
           <div id="atRejHeader" onclick="toggleRejections()" style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;background:rgba(255,77,109,0.04);user-select:none;">
             <span id="atRejArrow" style="transition:transform 0.2s;display:inline-block;font-size:10px;">▶</span>
-            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:600;">🛑 Отказы AI</span>
+            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:600;">🛑 Отказы</span>
             <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);">— почему не вошёл в сделку</span>
             <span id="atRejMeta" style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
           </div>
@@ -3435,6 +3413,7 @@ async function closeAllPaperPositions() {
 
 async function refreshAIMemory() {
   const memDiv = document.getElementById('atMemory');
+  if (!memDiv) return;  // блок AI Learnings удалён
   const btn = document.getElementById('atRefreshBtn');
   const origText = btn ? btn.textContent : null;
   if (btn) {
