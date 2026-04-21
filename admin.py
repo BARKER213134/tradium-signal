@@ -153,6 +153,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
             "/api/paper/rejections", "/api/paper/be-audit",
+            "/api/paper/history",
             "/api/backtest-yesterday", "/api/backtest-yesterday/status",
             "/api/backtest-optimize", "/api/backtest-optimize/status",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
