@@ -22,6 +22,17 @@ TRADIUM_SETUP_TOPIC_ID = int(os.getenv("TRADIUM_SETUP_TOPIC_ID", "3204"))
 _vt = os.getenv("VERIFIED_TOPIC_ID", "").strip()
 VERIFIED_TOPIC_ID = int(_vt) if _vt.isdigit() else None
 
+# @topmonetabot — отдельный бот для ✨ verified entries
+# Если TOPMONETA_BOT_TOKEN задан — используем его (отдельный bot instance).
+# Если нет — fallback на главный BOT_TOKEN.
+TOPMONETA_BOT_TOKEN = os.getenv("TOPMONETA_BOT_TOKEN", "").strip()
+_tm_chat = os.getenv("TOPMONETA_CHAT_ID", "").strip()
+# поддержка положительных/отрицательных ID
+try:
+    TOPMONETA_CHAT_ID = int(_tm_chat) if _tm_chat and (_tm_chat.lstrip('-').isdigit()) else None
+except Exception:
+    TOPMONETA_CHAT_ID = None
+
 # Сколько секунд ждать график после текстового сообщения
 CHART_WAIT_SECONDS = int(os.getenv("CHART_WAIT_SECONDS", "5"))
 

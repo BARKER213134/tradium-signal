@@ -2155,6 +2155,29 @@ def _setup_bot10():
         logger.error(f"BOT10 init fail: {e}")
 
 
+# @topmonetabot — для ✨ verified entries. Lazy-инит один раз.
+_verified_bot_cache = {"bot": None, "token": None}
+
+def _get_verified_bot(token: str):
+    """Возвращает aiogram.Bot для @topmonetabot. Кеширует. None если токена нет."""
+    if not token:
+        return None
+    if _verified_bot_cache["token"] == token and _verified_bot_cache["bot"] is not None:
+        return _verified_bot_cache["bot"]
+    try:
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        _verified_bot_cache["bot"] = bot
+        _verified_bot_cache["token"] = token
+        logger.info("@topmonetabot (verified entries) initialized")
+        return bot
+    except Exception as e:
+        logger.error(f"@topmonetabot init fail: {e}")
+        return None
+
+
 def _fmt_price(v):
     """Округление цены под magnitude — без ужасных хвостов."""
     if v is None:
@@ -2917,11 +2940,16 @@ async def _paper_on_signal(signal_data: dict):
     # ── Verified Entry Checker (параллельно, не блокирует основной поток) ──
     try:
         global _bot, _admin_chat_id
-        from config import VERIFIED_TOPIC_ID
+        from config import (VERIFIED_TOPIC_ID, TOPMONETA_BOT_TOKEN,
+                            TOPMONETA_CHAT_ID)
         import verified_entry as ve
-        # fire-and-forget — основной поток сигналов не ждёт
+        # Если задан отдельный @topmonetabot — используем его, иначе fallback
+        # на главный _bot + _admin_chat_id.
+        verified_bot, verified_chat = _get_verified_bot(TOPMONETA_BOT_TOKEN), (TOPMONETA_CHAT_ID or _admin_chat_id)
+        if verified_bot is None:
+            verified_bot = _bot  # fallback
         asyncio.create_task(
-            ve.run_verified_check(signal_data, bot=_bot, chat_id=_admin_chat_id,
+            ve.run_verified_check(signal_data, bot=verified_bot, chat_id=verified_chat,
                                   topic_id=VERIFIED_TOPIC_ID)
         )
     except Exception:
