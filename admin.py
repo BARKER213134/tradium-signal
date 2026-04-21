@@ -4231,8 +4231,18 @@ async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
         return entry + atr * 1.5, entry - atr * 2.5
 
     def _sync():
+        import logging as _log
+        logger = _log.getLogger(__name__)
         since = utcnow() - timedelta(hours=hours)
         raw: list[dict] = []
+        fetch_errors: list[str] = []
+
+        def _safe_fetch(name, fn):
+            try:
+                fn()
+            except Exception as _e:
+                logger.exception(f"[backtest-yesterday] fetch {name} failed")
+                fetch_errors.append(f"{name}: {_e}")
 
         # 1. Tradium (все за период)
         for s in _signals().find({"source": "tradium", "received_at": {"$gte": since}}):
@@ -4266,8 +4276,10 @@ async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
                 "score": s.get("ai_score"),
             })
 
-        # 3. Anomaly — нет TP/SL, вычислим через ATR
-        for a in _anomalies().find({"detected_at": {"$gte": since}}):
+        # 3. Anomaly — нет TP/SL, вычислим через ATR. Топ-200 по score.
+        for a in _anomalies().find(
+            {"detected_at": {"$gte": since}}
+        ).sort("score", -1).limit(200):
             raw.append({
                 "source": "anomaly",
                 "pair": (a.get("pair") or a.get("symbol") or "").replace("USDT", "/USDT") if a.get("symbol", "").endswith("USDT") else a.get("pair"),
@@ -4279,8 +4291,10 @@ async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
                 "score": a.get("score"),
             })
 
-        # 4. Confluence
-        for c in _confluence().find({"detected_at": {"$gte": since}}):
+        # 4. Confluence — может быть 1000+ за сутки, ограничиваем топ-300 по score
+        for c in _confluence().find(
+            {"detected_at": {"$gte": since}}
+        ).sort("score", -1).limit(300):
             raw.append({
                 "source": "confluence",
                 "pair": c.get("pair"),
@@ -4328,8 +4342,10 @@ async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
         # Симулируем каждый сигнал
         items = []
         stats_by_source: dict = {}
+        sim_errors = 0
 
         for sig in raw:
+          try:
             pair = sig.get("pair")
             direction = sig.get("direction")
             entry = sig.get("entry")
@@ -4381,6 +4397,9 @@ async def api_backtest_yesterday(hours: int = 24, forward_hours: int = 48):
                 "r": sim.get("r"), "pnl_pct": sim.get("pnl_pct"),
                 "bars_held": sim.get("bars_held"),
             })
+          except Exception as _e:
+            sim_errors += 1
+            logger.warning(f"[backtest-yesterday] sim fail {sig.get('source')} {sig.get('symbol')}: {_e}")
 
         # Финализируем stats: WR, avg_r
         summary_rows = []
