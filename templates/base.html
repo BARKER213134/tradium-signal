@@ -1189,9 +1189,9 @@
         const firstTs = candles[0].time;
         const lastTs = candles[candles.length - 1].time;
         const tierCfg = {
-          vip:   { emoji: '🏆', color: '#ffd700', size: 2, label: 'VIP' },
-          mtf:   { emoji: '🔱', color: '#00e5a0', size: 2, label: 'Triple MTF' },
-          daily: { emoji: '🧭', color: '#3aa0ff', size: 1, label: 'Daily' },
+          vip:   { emoji: '🏆', color: '#ffd700', size: 2, label: 'VIP',  prio: 3 },
+          mtf:   { emoji: '🔱', color: '#00e5a0', size: 2, label: 'MTF',  prio: 2 },
+          daily: { emoji: '🧭', color: '#3aa0ff', size: 1, label: 'Daily', prio: 1 },
         };
         const nearest = (ts) => {
           let mc = null, minD = Infinity;
@@ -1201,7 +1201,9 @@
           }
           return mc;
         };
-        const out = [];
+        // Dedupe: на одну свечу+direction остаётся ОДИН маркер с высшим tier.
+        // Раньше VIP + MTF + Daily в окно одной свечи ложились стопкой 3 маркера.
+        const best = new Map();  // key = `${mc.time}|${dir}` → {item, cfg, count}
         for (const s of items) {
           if (!s.flip_at) continue;
           const ts = Math.floor(new Date(s.flip_at).getTime() / 1000);
@@ -1210,13 +1212,25 @@
           if (!mc) continue;
           const cfg = tierCfg[s.tier] || tierCfg.daily;
           const isLong = s.direction === 'LONG';
+          const key = `${mc.time}|${isLong ? 'L' : 'S'}`;
+          const existing = best.get(key);
+          if (!existing || cfg.prio > existing.cfg.prio) {
+            best.set(key, { mc, cfg, isLong, count: (existing?.count || 0) + 1 });
+          } else {
+            existing.count += 1;
+          }
+        }
+        const out = [];
+        for (const v of best.values()) {
+          // Если было несколько — к эмодзи добавляем ×N
+          const text = v.count > 1 ? `${v.cfg.emoji}×${v.count}` : v.cfg.emoji;
           out.push({
-            time: mc.time,
-            position: isLong ? 'belowBar' : 'aboveBar',
-            color: cfg.color,
-            shape: isLong ? 'arrowUp' : 'arrowDown',
-            text: cfg.emoji,
-            size: cfg.size,
+            time: v.mc.time,
+            position: v.isLong ? 'belowBar' : 'aboveBar',
+            color: v.cfg.color,
+            shape: v.isLong ? 'arrowUp' : 'arrowDown',
+            text: text,
+            size: v.cfg.size,
           });
         }
         return out;

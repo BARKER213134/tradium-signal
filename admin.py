@@ -1011,13 +1011,42 @@ _ST_BY_PAIR_TTL = 60.0
 @app.get("/api/supertrend-signals/by-pair")
 async def api_supertrend_signals_by_pair(pair: str, hours: int = 336):
     """Сигналы по одной паре — для рисования маркеров на графиках.
-    Кеш 60с — ST сигналы редкие, не меняются при смене TF на графике."""
+    Кеш 60с — ST сигналы редкие, не меняются при смене TF на графике.
+
+    Дедупликация: в окне 30 минут на одной паре+direction оставляем только
+    один сигнал с высшим tier (vip > mtf > daily). Раньше на графике
+    появлялась стопка 3-5 одинаковых 🏆 маркеров если VIP/MTF/Daily
+    сработали почти одновременно.
+    """
     key = f"{pair}|{hours}"
     now = time.time()
     hit = _st_by_pair_cache.get(key)
     if hit and (now - hit[0]) < _ST_BY_PAIR_TTL:
         return hit[1]
     resp = await api_supertrend_signals(tier="", pair=pair, hours=hours, limit=100)
+
+    # Dedupe по окну (direction, 30min bucket) — оставляем высший tier
+    tier_prio = {"vip": 3, "mtf": 2, "daily": 1}
+    best: dict = {}
+    for item in resp.get("items", []):
+        flip_at = item.get("flip_at")
+        if not flip_at:
+            continue
+        try:
+            from datetime import datetime as _dt
+            ts = _dt.fromisoformat(flip_at.replace("Z", "+00:00")).timestamp() \
+                 if isinstance(flip_at, str) else flip_at.timestamp()
+        except Exception:
+            continue
+        bucket = int(ts // 1800)  # 30-мин bucket
+        key2 = (item.get("direction"), bucket)
+        prio = tier_prio.get(item.get("tier"), 0)
+        ex = best.get(key2)
+        if (not ex) or prio > tier_prio.get(ex.get("tier"), 0):
+            best[key2] = item
+    deduped = sorted(best.values(), key=lambda x: x.get("flip_at", ""), reverse=True)
+    resp = {**resp, "items": deduped, "count": len(deduped), "deduped": True}
+
     _st_by_pair_cache[key] = (now, resp)
     if len(_st_by_pair_cache) > 300:
         for k in [k for k, v in _st_by_pair_cache.items() if (now - v[0]) > _ST_BY_PAIR_TTL * 2]:
@@ -6232,30 +6261,49 @@ def _compute_journal_sync():
 
     # SuperTrend signals (14 дней) — источник 'supertrend' с tier в pattern
     # ИСКЛЮЧАЕМ daily — их оставляем только на графиках (emoji 🧭) без журнала и бота
+    #
+    # Дедупликация: в окне 30 мин на одной паре+direction оставляем только
+    # один сигнал с высшим tier (vip > mtf). Раньше в журнале появлялись
+    # дубли когда VIP и MTF срабатывали почти одновременно.
     import calendar as _cal
     try:
         from database import _supertrend_signals as _sts
-        for s in _sts().find({
+        # Собираем все raw записи
+        raw_st = list(_sts().find({
             "flip_at": {"$gte": since_14d},
-            "tier": {"$in": ["vip", "mtf"]},  # daily исключены
-        }).sort("flip_at", -1).limit(1500):
+            "tier": {"$in": ["vip", "mtf"]},
+        }).sort("flip_at", -1).limit(1500))
+        # Dedupe: (pair_norm, direction, bucket_30min) → высший tier
+        tier_prio = {"vip": 3, "mtf": 2, "daily": 1}
+        best_st: dict = {}
+        for s in raw_st:
+            flip_at = s.get("flip_at")
+            if not flip_at:
+                continue
+            try:
+                bucket = int(flip_at.timestamp() // 1800)  # 30-мин bucket
+            except Exception:
+                continue
+            key = (s.get("pair_norm"), s.get("direction"), bucket)
+            prio = tier_prio.get(s.get("tier"), 0)
+            ex = best_st.get(key)
+            if (not ex) or prio > tier_prio.get(ex.get("tier"), 0):
+                best_st[key] = s
+        for s in best_st.values():
             at_dt = s.get("flip_at")
             tier = s.get("tier", "mtf")
             tier_emoji = {"vip": "🏆", "mtf": "🔱"}.get(tier, "🌀")
             tier_label = {"vip": "VIP", "mtf": "Triple MTF"}.get(tier, tier.upper())
             aligned_bots = s.get("aligned_bots", [])
             aligned_tfs = s.get("aligned_tfs", [])
-            # Pattern column: emoji + tier + aligned info
             if tier == "vip" and aligned_bots:
                 src_names = list({ab.get("source", "?") for ab in aligned_bots})[:3]
                 pattern = f"{tier_emoji} ST {tier_label} + {'+'.join(src_names)}"
             else:
                 pattern = f"{tier_emoji} ST {tier_label} ({'+'.join(aligned_tfs)})"
-            # Правильный UTC timestamp: calendar.timegm от naive UTC datetime,
-            # вместо .timestamp() который может подтягивать локальную TZ.
             if at_dt and hasattr(at_dt, "timetuple"):
                 at_ts = _cal.timegm(at_dt.timetuple())
-                at_iso = at_dt.isoformat() + "Z"  # явно UTC для frontend Date()
+                at_iso = at_dt.isoformat() + "Z"
             else:
                 at_ts = 0
                 at_iso = str(at_dt or "")
