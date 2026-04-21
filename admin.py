@@ -158,6 +158,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-optimize", "/api/backtest-optimize/status",
             "/api/backtest-entry-timing", "/api/backtest-entry-timing/status",
             "/api/market-phase", "/api/market-phase/history",
+            "/api/entry-checker",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
@@ -5274,6 +5275,325 @@ async def api_market_phase_history(hours: int = 72):
     """История смен фазы за последние N часов."""
     import market_phase as mp
     return {"items": await asyncio.to_thread(mp.get_phase_history, hours)}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ENTRY CHECKER — 8-пунктовая проверка перед ручным входом
+# ═══════════════════════════════════════════════════════════════════
+@app.get("/api/entry-checker")
+async def api_entry_checker(pair: str, direction: str = "LONG"):
+    """Проверяет можно ли входить в пару. 8 проверок:
+    1. Market phase compatibility
+    2. Активный сигнал на пару (в последние 4ч)
+    3. ST 1h aligned с направлением
+    4. Key Levels (SL под S / TP до R)
+    5. R:R из сигнала
+    6. Volume / OI
+    7. Диверсификация (сколько уже открыто в то же направление)
+    8. Рекомендованный size/leverage по фазе
+    """
+    from database import (_signals, _anomalies, _confluence, _clusters,
+                          _supertrend_signals, _key_levels, utcnow)
+    from datetime import timedelta
+    from supertrend import supertrend_state
+    import market_phase as mp
+    import paper_trader as pt
+
+    direction = (direction or "LONG").upper()
+    if direction not in ("LONG", "SHORT"):
+        return {"ok": False, "error": "direction must be LONG or SHORT"}
+    raw_pair = pair.strip().upper()
+    pair_slash = raw_pair.replace("USDT", "/USDT") if ("USDT" in raw_pair and "/" not in raw_pair) else raw_pair
+    pair_norm = pair_slash.replace("/", "")
+    if not pair_norm.endswith("USDT"):
+        pair_norm = pair_norm + "USDT"
+
+    def _sync():
+        since = utcnow() - timedelta(hours=4)
+
+        # ── 2. Ищем свежий сигнал на пару ──
+        # Пробуем все источники, берём самый свежий
+        found = None
+        for col, q, time_field, name in [
+            (_signals(), {"source": "tradium", "pair": pair_slash, "received_at": {"$gte": since}}, "received_at", "tradium"),
+            (_signals(), {"source": "cryptovizor", "pattern_triggered": True, "pair": pair_slash, "pattern_triggered_at": {"$gte": since}}, "pattern_triggered_at", "cryptovizor"),
+            (_confluence(), {"$or": [{"pair": pair_slash}, {"symbol": pair_norm}], "detected_at": {"$gte": since}}, "detected_at", "confluence"),
+            (_anomalies(), {"$or": [{"pair": pair_slash}, {"symbol": pair_norm}], "detected_at": {"$gte": since}}, "detected_at", "anomaly"),
+            (_clusters(), {"pair": pair_slash, "trigger_at": {"$gte": since}}, "trigger_at", "cluster"),
+            (_supertrend_signals(), {"pair_norm": pair_norm, "flip_at": {"$gte": since}, "tier": {"$in": ["vip", "mtf"]}}, "flip_at", "supertrend"),
+        ]:
+            try:
+                doc = col.find_one(q, sort=[(time_field, -1)])
+                if doc:
+                    doc["_source_name"] = name
+                    doc["_time_field"] = time_field
+                    if found is None or doc.get(time_field) > found.get(found["_time_field"], utcnow() - timedelta(days=999)):
+                        found = doc
+            except Exception:
+                pass
+
+        if not found:
+            return {
+                "ok": False,
+                "error": f"Нет активного сигнала на {pair_slash}",
+                "hint": "Сначала дождись сигнала на эту пару (в последние 4 часа). Проверь вкладку Журнал.",
+            }
+
+        sig_source = found["_source_name"]
+        sig_dir = (found.get("direction") or "").upper()
+        sig_entry = found.get("entry") or found.get("price") or found.get("pattern_price") or found.get("trigger_price") or found.get("entry_price")
+        sig_tp = found.get("tp1") or found.get("r1") or found.get("dca2") or found.get("tp_price")
+        sig_sl = found.get("sl") or found.get("s1") or found.get("dca1") or found.get("sl_price")
+        sig_score = found.get("ai_score") or found.get("score") or found.get("reversal_score")
+        sig_pattern = found.get("pattern_name") or found.get("pattern")
+        sig_time = found.get(found["_time_field"])
+        minutes_ago = int((utcnow() - sig_time).total_seconds() / 60) if sig_time else 999
+        tier = found.get("tier")
+
+        checks = []
+
+        # ── 1. Market Phase ──
+        phase_data = mp.get_market_phase()
+        phase = phase_data.get("phase", "NEUTRAL")
+        phase_label = phase_data.get("label", phase)
+        phase_emoji = phase_data.get("emoji", "❓")
+        # Правила direction × phase
+        if phase == "BULL_TREND":
+            if direction == "SHORT":
+                checks.append({"name": "Market Phase", "status": "warn",
+                               "comment": f"{phase_emoji} {phase_label}: идёшь SHORT против тренда", "value": f"phase={phase}"})
+            else:
+                checks.append({"name": "Market Phase", "status": "ok",
+                               "comment": f"{phase_emoji} {phase_label}: LONG совпадает с трендом", "value": f"phase={phase}"})
+        elif phase == "BEAR_TREND":
+            if direction == "LONG":
+                checks.append({"name": "Market Phase", "status": "warn",
+                               "comment": f"{phase_emoji} {phase_label}: LONG против тренда (только на контр-отскок)", "value": f"phase={phase}"})
+            else:
+                checks.append({"name": "Market Phase", "status": "ok",
+                               "comment": f"{phase_emoji} {phase_label}: SHORT совпадает с трендом", "value": f"phase={phase}"})
+        elif phase == "CHOP":
+            checks.append({"name": "Market Phase", "status": "warn",
+                           "comment": f"{phase_emoji} CHOP: малые сайзы, макс 1-2 позы, whipsaw risk", "value": f"phase={phase}"})
+        elif phase == "VOLATILE":
+            checks.append({"name": "Market Phase", "status": "bad",
+                           "comment": f"{phase_emoji} VOLATILE: только VIP с double-confirm или Cluster MEGA", "value": f"phase={phase}"})
+        elif phase in ("EUPHORIA",):
+            checks.append({"name": "Market Phase", "status": "warn" if direction == "SHORT" else "bad",
+                           "comment": f"{phase_emoji} EUPHORIA: готовься к развороту, LONG опасно", "value": f"phase={phase}"})
+        elif phase == "CAPITULATION":
+            checks.append({"name": "Market Phase", "status": "ok" if direction == "LONG" else "bad",
+                           "comment": f"{phase_emoji} CAPITULATION: LONG на отскок (мало), SHORT опасно", "value": f"phase={phase}"})
+        else:
+            checks.append({"name": "Market Phase", "status": "warn",
+                           "comment": f"{phase_emoji} {phase_label}: нет чёткой фазы", "value": f"phase={phase}"})
+
+        # ── 2. Свежий сигнал есть ──
+        tier_str = f" · tier={tier}" if tier else ""
+        score_str = f" · score={sig_score}" if sig_score is not None else ""
+        checks.append({
+            "name": "Свежий сигнал",
+            "status": "ok" if sig_dir == direction else "bad",
+            "comment": (f"{sig_source}{tier_str}, {minutes_ago} мин назад{score_str}"
+                        if sig_dir == direction
+                        else f"⚠ Сигнал был {sig_dir}, а ты выбрал {direction} — направление не совпадает!"),
+            "value": f"pattern={sig_pattern}" if sig_pattern else "",
+        })
+
+        # ── 3. ST 1h aligned ──
+        st_state = "UNK"
+        try:
+            st = supertrend_state(pair_slash, "1h", cache_only=False)
+            if st and st.get("state"):
+                st_state = st["state"]
+        except Exception:
+            pass
+        st_dir = "LONG" if st_state == "UP" else ("SHORT" if st_state == "DOWN" else "?")
+        if st_state == "UNK":
+            checks.append({"name": "ST 1h aligned", "status": "warn",
+                           "comment": "Не удалось получить ST 1h", "value": ""})
+        elif st_dir == direction:
+            checks.append({"name": "ST 1h aligned", "status": "ok",
+                           "comment": f"ST 1h = {st_state} ({st_dir}) — совпадает с входом", "value": ""})
+        else:
+            checks.append({"name": "ST 1h aligned", "status": "bad",
+                           "comment": f"⛔ ST 1h = {st_state} ({st_dir}) — вход {direction} ПРОТИВ тренда 1h", "value": ""})
+
+        # ── 4. Key Levels (ближайшие S/R) ──
+        try:
+            kl_since = utcnow() - timedelta(hours=168)  # 7д окно
+            kls = list(_key_levels().find({"pair_norm": pair_norm, "detected_at": {"$gte": kl_since}}))
+            has_sl_protected = False
+            tp_warning = False
+            if kls and sig_entry and sig_sl and sig_tp:
+                if direction == "LONG":
+                    # SL защищён если под support
+                    supports = [k for k in kls if k.get("event") in ("new_support", "entered_support")]
+                    resistances = [k for k in kls if k.get("event") in ("new_resistance", "entered_resistance")]
+                    # Есть support между sl и entry? (ниже entry, выше sl или около sl)
+                    for k in supports:
+                        lvl = k.get("zone_low") or k.get("current_price") or 0
+                        if sig_sl < lvl < sig_entry + (sig_entry * 0.005):
+                            has_sl_protected = True; break
+                    # Resistance между entry и tp? (TP ⚠ если над ним)
+                    for k in resistances:
+                        lvl = k.get("zone_high") or k.get("current_price") or 0
+                        if sig_entry < lvl < sig_tp:
+                            tp_warning = True; break
+                else:  # SHORT
+                    resistances = [k for k in kls if k.get("event") in ("new_resistance", "entered_resistance")]
+                    supports = [k for k in kls if k.get("event") in ("new_support", "entered_support")]
+                    for k in resistances:
+                        lvl = k.get("zone_high") or k.get("current_price") or 0
+                        if sig_entry - (sig_entry * 0.005) < lvl < sig_sl:
+                            has_sl_protected = True; break
+                    for k in supports:
+                        lvl = k.get("zone_low") or k.get("current_price") or 0
+                        if sig_tp < lvl < sig_entry:
+                            tp_warning = True; break
+            if not kls:
+                checks.append({"name": "Key Levels", "status": "warn",
+                               "comment": "Нет Key Levels данных за 7 дней на этой паре", "value": ""})
+            elif has_sl_protected and not tp_warning:
+                checks.append({"name": "Key Levels", "status": "ok",
+                               "comment": f"SL защищён уровнем ✅, TP до сопротивления ✅ ({len(kls)} уровней)", "value": ""})
+            elif has_sl_protected and tp_warning:
+                checks.append({"name": "Key Levels", "status": "warn",
+                               "comment": f"SL защищён ✅, но TP за уровнем ⚠ — TP может не дойти", "value": ""})
+            elif not has_sl_protected and not tp_warning:
+                checks.append({"name": "Key Levels", "status": "warn",
+                               "comment": f"SL без поддержки уровнем ⚠ ({len(kls)} KL данных)", "value": ""})
+            else:
+                checks.append({"name": "Key Levels", "status": "bad",
+                               "comment": f"SL не защищён И TP за уровнем — плохой setup", "value": ""})
+        except Exception:
+            checks.append({"name": "Key Levels", "status": "warn",
+                           "comment": "Ошибка проверки уровней", "value": ""})
+
+        # ── 5. R:R из сигнала ──
+        rr = None
+        if sig_entry and sig_tp and sig_sl:
+            risk = abs(sig_entry - sig_sl)
+            reward = abs(sig_tp - sig_entry)
+            if risk > 0:
+                rr = round(reward / risk, 2)
+        if rr is None:
+            checks.append({"name": "R:R", "status": "warn",
+                           "comment": "Нет TP/SL в сигнале — посчитать невозможно", "value": ""})
+        elif rr >= 2.0:
+            checks.append({"name": "R:R", "status": "ok",
+                           "comment": f"R:R = 1:{rr} — отличное соотношение", "value": f"entry={sig_entry}, tp={sig_tp}, sl={sig_sl}"})
+        elif rr >= 1.5:
+            checks.append({"name": "R:R", "status": "ok",
+                           "comment": f"R:R = 1:{rr} — приемлемо (мин 1.5)", "value": f"entry={sig_entry}, tp={sig_tp}, sl={sig_sl}"})
+        elif rr >= 1.0:
+            checks.append({"name": "R:R", "status": "warn",
+                           "comment": f"R:R = 1:{rr} — слабое (<1.5)", "value": f"entry={sig_entry}, tp={sig_tp}, sl={sig_sl}"})
+        else:
+            checks.append({"name": "R:R", "status": "bad",
+                           "comment": f"R:R = 1:{rr} — плохое, не окупает риск", "value": f"entry={sig_entry}, tp={sig_tp}, sl={sig_sl}"})
+
+        # ── 6. Volume / OI ──
+        try:
+            from anomaly_scanner import _batch_cache
+            vol_spike = (_batch_cache.get("volume_spike") or {}).get(pair_norm)
+            oi_ch = (_batch_cache.get("oi_change") or {}).get(pair_norm)
+            funding = (_batch_cache.get("funding") or {}).get(pair_norm)
+            vol_str = f"Vol×{vol_spike:.1f}" if vol_spike else "Vol×?"
+            oi_str = f"OI {oi_ch:+.1f}%" if oi_ch is not None else "OI ?"
+            fund_str = f"funding {funding:+.3f}%" if funding is not None else ""
+            detail = f"{vol_str} · {oi_str} {fund_str}".strip()
+            # Критерий: Vol×≥1.5 OR OI±≥1%
+            oi_ok = (oi_ch is not None and abs(oi_ch) >= 1.0)
+            vol_ok = (vol_spike is not None and vol_spike >= 1.5)
+            if vol_ok and oi_ok:
+                checks.append({"name": "Volume / OI", "status": "ok",
+                               "comment": "Движение поддержано объёмом и OI", "value": detail})
+            elif vol_ok or oi_ok:
+                checks.append({"name": "Volume / OI", "status": "warn",
+                               "comment": "Частичное подтверждение (только один из факторов)", "value": detail})
+            elif vol_spike is None:
+                checks.append({"name": "Volume / OI", "status": "warn",
+                               "comment": "Нет данных в кеше (попробуй через пару мин)", "value": detail})
+            else:
+                checks.append({"name": "Volume / OI", "status": "bad",
+                               "comment": "Движение без объёма/OI — слабое", "value": detail})
+        except Exception:
+            checks.append({"name": "Volume / OI", "status": "warn",
+                           "comment": "Ошибка получения vol/OI данных", "value": ""})
+
+        # ── 7. Диверсификация ──
+        try:
+            open_pos = pt.get_open_positions()
+            same_dir = sum(1 for p in open_pos if (p.get("direction") or "").upper() == direction)
+            opp_dir = sum(1 for p in open_pos if (p.get("direction") or "").upper() != direction)
+            on_this_pair = sum(1 for p in open_pos if (p.get("symbol") or "").upper() == pair_norm)
+            if on_this_pair > 0:
+                checks.append({"name": "Диверсификация", "status": "bad",
+                               "comment": f"Уже открыта позиция на {pair_norm} — не дублируй", "value": ""})
+            elif same_dir >= 4:
+                checks.append({"name": "Диверсификация", "status": "bad",
+                               "comment": f"⛔ Уже {same_dir} позиций в {direction} — макс 3-4 в одну сторону", "value": ""})
+            elif same_dir >= 3:
+                checks.append({"name": "Диверсификация", "status": "warn",
+                               "comment": f"Уже 3 позиций в {direction} — риск концентрации", "value": ""})
+            else:
+                checks.append({"name": "Диверсификация", "status": "ok",
+                               "comment": f"Открыто {same_dir} в {direction} · {opp_dir} в противоположную сторону — ок", "value": ""})
+        except Exception:
+            checks.append({"name": "Диверсификация", "status": "warn",
+                           "comment": "Не удалось получить список позиций", "value": ""})
+
+        # ── 8. Reco размер / плечо ──
+        size_reco = {"BULL_TREND": "5-10%", "BEAR_TREND": "5-10%", "CHOP": "2-4%",
+                     "VOLATILE": "1-3%", "EUPHORIA": "3-5%", "CAPITULATION": "3-5%"}.get(phase, "3-5%")
+        lev_reco = {"BULL_TREND": "5-10×", "BEAR_TREND": "5-10×", "CHOP": "3-5×",
+                    "VOLATILE": "2-4×", "EUPHORIA": "3-5×", "CAPITULATION": "3-5×"}.get(phase, "3-5×")
+        checks.append({"name": "Рекомендованный размер/плечо", "status": "ok",
+                       "comment": f"Для фазы {phase}: размер {size_reco}, плечо {lev_reco}", "value": ""})
+
+        # ── Подсчёт итога ──
+        n_bad = sum(1 for c in checks if c["status"] == "bad")
+        n_warn = sum(1 for c in checks if c["status"] == "warn")
+        n_ok = sum(1 for c in checks if c["status"] == "ok")
+        if n_bad >= 2:
+            verdict = "skip"
+            summary = f"❌ {n_bad} красных флагов. Слишком много негативов — лучше пропустить."
+        elif n_bad == 1 and n_warn >= 3:
+            verdict = "skip"
+            summary = f"❌ 1 блокер + {n_warn} предупреждений — риск слишком высок."
+        elif n_bad == 1:
+            verdict = "caution"
+            summary = f"⚠️ 1 красный флаг. Можно входить только если понимаешь риск и уменьшишь размер."
+        elif n_warn >= 3:
+            verdict = "caution"
+            summary = f"⚠️ {n_warn} предупреждений. Осторожно, малый сайз."
+        else:
+            verdict = "go"
+            summary = f"✅ Всё выглядит хорошо ({n_ok} OK, {n_warn} warn). Входи согласно рекомендации."
+
+        return {
+            "ok": True,
+            "pair": pair_slash,
+            "direction": direction,
+            "verdict": verdict,
+            "summary": summary,
+            "checks": checks,
+            "signal": {
+                "source": sig_source,
+                "direction": sig_dir,
+                "entry": sig_entry, "tp1": sig_tp, "sl": sig_sl,
+                "minutes_ago": minutes_ago,
+            },
+            "market": {
+                "phase": phase, "phase_label": phase_label, "phase_emoji": phase_emoji,
+                "btc_st": phase_data.get("metrics", {}).get("btc_st", {}),
+                "atr_1h_pct": phase_data.get("metrics", {}).get("atr_1h_pct"),
+                "avg_funding": phase_data.get("metrics", {}).get("avg_funding"),
+            },
+        }
+
+    return await asyncio.to_thread(_sync)
 
 
 @app.get("/api/paper/be-audit")

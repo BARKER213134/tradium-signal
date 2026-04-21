@@ -108,6 +108,7 @@ BOTS = [
     # /signals?bot=conflicts работает, данные детектируются в фоне через
     # anti_cluster_detector. Включить обратно: раскомментировать строку.
     {"id": "coin_analysis", "label": "🧠 AI Анализ", "category": "crypto"},
+    {"id": "entry_checker", "label": "🎯 Entry Checker", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
     {"id": "forex_fvg", "label": "Forex FVG 1H", "category": "stocks"},

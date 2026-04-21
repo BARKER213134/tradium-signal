@@ -2453,6 +2453,145 @@ function renderAiResult(d) {
 }
 </script>
 
+{% elif bot == 'entry_checker' %}
+<!-- ── Entry Checker: чек-лист перед открытием сделки вручную ─── -->
+<style>
+  .ec-hero { background:linear-gradient(135deg,rgba(0,229,160,0.06),rgba(0,212,255,0.04)); border:1px solid rgba(0,229,160,0.15); border-radius:14px; padding:20px 24px; margin-bottom:20px; }
+  .ec-hero-title { font-size:22px; font-weight:800; background:linear-gradient(135deg,#00e5a0,#00d4ff); -webkit-background-clip:text; background-clip:text; color:transparent; margin-bottom:4px; }
+  .ec-hero-desc { font-size:12px; color:var(--muted); line-height:1.5; }
+  .ec-form { display:flex; gap:10px; align-items:center; margin-bottom:14px; flex-wrap:wrap; }
+  .ec-form input { background:var(--dark-2); border:1px solid var(--border); border-radius:8px; padding:10px 14px; color:var(--text); font-family:var(--font-mono); font-size:14px; min-width:200px; }
+  .ec-form .dir-btn { padding:10px 18px; border:2px solid var(--border); border-radius:8px; font-family:var(--font-mono); font-weight:700; font-size:12px; background:var(--dark-2); color:var(--muted); cursor:pointer; letter-spacing:0.05em; }
+  .ec-form .dir-btn.active.long { border-color:#00e5a0; color:#00e5a0; background:rgba(0,229,160,0.1); }
+  .ec-form .dir-btn.active.short { border-color:#ff4d6d; color:#ff4d6d; background:rgba(255,77,109,0.1); }
+  .ec-form .run { background:linear-gradient(135deg,#00e5a0,#00d4ff); color:#0b0d12; border:none; border-radius:8px; padding:10px 22px; font-weight:800; font-family:var(--font-mono); cursor:pointer; letter-spacing:0.05em; }
+  .ec-form .run:disabled { opacity:0.5; cursor:wait; }
+  .ec-verdict { padding:18px 20px; border-radius:10px; margin-bottom:16px; font-family:var(--font-mono); display:none; }
+  .ec-verdict.go { background:rgba(0,229,160,0.1); border:2px solid #00e5a0; }
+  .ec-verdict.caution { background:rgba(255,169,77,0.1); border:2px solid #ffa94d; }
+  .ec-verdict.skip { background:rgba(255,77,109,0.1); border:2px solid #ff4d6d; }
+  .ec-verdict.error { background:rgba(255,77,109,0.06); border:2px solid rgba(255,77,109,0.4); }
+  .ec-verdict-title { font-size:18px; font-weight:800; margin-bottom:4px; }
+  .ec-verdict.go .ec-verdict-title { color:#00e5a0; }
+  .ec-verdict.caution .ec-verdict-title { color:#ffa94d; }
+  .ec-verdict.skip .ec-verdict-title { color:#ff4d6d; }
+  .ec-verdict-desc { font-size:12px; color:var(--text); }
+  .ec-table { width:100%; border-collapse:collapse; font-family:var(--font-mono); font-size:12px; }
+  .ec-table th { text-align:left; padding:8px 10px; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:0.08em; font-size:10px; border-bottom:1px solid var(--border); }
+  .ec-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:top; }
+  .ec-status { font-size:18px; }
+  .ec-status.ok { color:#00e5a0; }
+  .ec-status.warn { color:#ffa94d; }
+  .ec-status.bad { color:#ff4d6d; }
+  .ec-check-name { font-weight:700; color:var(--text); }
+  .ec-check-value { color:var(--muted); font-size:11px; }
+  .ec-market-footer { background:var(--dark-2); border:1px solid var(--border); border-radius:8px; padding:12px 16px; margin-top:14px; font-family:var(--font-mono); font-size:11px; color:var(--muted); display:flex; gap:20px; flex-wrap:wrap; }
+</style>
+
+<div class="ec-hero">
+  <div class="ec-hero-title">🎯 Entry Checker</div>
+  <div class="ec-hero-desc">
+    Вставь пару и направление — система проверит по 8 пунктам чек-листа и скажет
+    можно входить или нет. <b>Требуется активный сигнал на эту пару</b> в последние 4 часа
+    (иначе отказ — сначала дождись сигнала).
+  </div>
+</div>
+
+<div class="ec-form">
+  <input id="ecPair" type="text" placeholder="BTC/USDT, FILUSDT, ADA..." onkeydown="if(event.key==='Enter')ecCheck()">
+  <button class="dir-btn long active" id="ecDirLong" onclick="ecSetDir('LONG')">📈 LONG</button>
+  <button class="dir-btn short" id="ecDirShort" onclick="ecSetDir('SHORT')">📉 SHORT</button>
+  <button class="run" id="ecRunBtn" onclick="ecCheck()">▶ ПРОВЕРИТЬ</button>
+</div>
+
+<div id="ecVerdict" class="ec-verdict"></div>
+
+<div id="ecResultBox" style="display:none;">
+  <table class="ec-table">
+    <thead>
+      <tr>
+        <th style="width:30px;">#</th>
+        <th>Проверка</th>
+        <th style="width:50px;text-align:center;">Статус</th>
+        <th>Комментарий</th>
+      </tr>
+    </thead>
+    <tbody id="ecTbody"></tbody>
+  </table>
+  <div id="ecMarketFooter" class="ec-market-footer"></div>
+</div>
+
+<script>
+  window._ecDirection = 'LONG';
+  function ecSetDir(d) {
+    window._ecDirection = d;
+    document.getElementById('ecDirLong').classList.toggle('active', d === 'LONG');
+    document.getElementById('ecDirShort').classList.toggle('active', d === 'SHORT');
+  }
+  function ecRenderStatus(s) {
+    if (s === 'ok') return '<span class="ec-status ok">✅</span>';
+    if (s === 'warn') return '<span class="ec-status warn">⚠️</span>';
+    return '<span class="ec-status bad">❌</span>';
+  }
+  async function ecCheck() {
+    const pair = (document.getElementById('ecPair').value || '').trim().toUpperCase();
+    if (!pair) { alert('Введи пару (например BTC/USDT или FILUSDT)'); return; }
+    const btn = document.getElementById('ecRunBtn');
+    const origText = btn.textContent;
+    btn.textContent = '⏳ Проверяю…'; btn.disabled = true;
+    try {
+      const r = await fetch(`/api/entry-checker?pair=${encodeURIComponent(pair)}&direction=${window._ecDirection}`);
+      const d = await r.json();
+      const verdict = document.getElementById('ecVerdict');
+      const resultBox = document.getElementById('ecResultBox');
+      if (!d.ok) {
+        verdict.className = 'ec-verdict error';
+        verdict.style.display = 'block';
+        verdict.innerHTML = `<div class="ec-verdict-title">❌ ${d.error || 'Ошибка проверки'}</div>
+          <div class="ec-verdict-desc">${d.hint || 'Проверь корректность пары или дождись свежего сигнала.'}</div>`;
+        resultBox.style.display = 'none';
+        return;
+      }
+      // Вердикт
+      verdict.className = 'ec-verdict ' + d.verdict;
+      verdict.style.display = 'block';
+      const verdictLabels = {go:'✅ МОЖНО ВХОДИТЬ', caution:'⚠️ С ОСТОРОЖНОСТЬЮ', skip:'❌ НЕ РЕКОМЕНДУЕТСЯ'};
+      verdict.innerHTML = `
+        <div class="ec-verdict-title">${verdictLabels[d.verdict] || d.verdict} — ${pair} · ${window._ecDirection}</div>
+        <div class="ec-verdict-desc">${d.summary || ''}</div>
+      `;
+      // Таблица
+      const tbody = document.getElementById('ecTbody');
+      tbody.innerHTML = (d.checks || []).map((c, i) => `
+        <tr>
+          <td class="ec-check-value">${i+1}</td>
+          <td><div class="ec-check-name">${c.name}</div></td>
+          <td style="text-align:center;">${ecRenderStatus(c.status)}</td>
+          <td>
+            <div>${c.comment || ''}</div>
+            ${c.value ? `<div class="ec-check-value">${c.value}</div>` : ''}
+          </td>
+        </tr>
+      `).join('');
+      // Футер с рыночными метриками
+      const m = d.market || {};
+      const btc = m.btc_st || {};
+      const fmt = s => s === 'UP' ? '↑' : s === 'DOWN' ? '↓' : '—';
+      document.getElementById('ecMarketFooter').innerHTML = `
+        <span><b>Фаза:</b> ${m.phase_emoji || ''} ${m.phase_label || m.phase || '—'}</span>
+        <span><b>BTC:</b> 1h${fmt(btc['1h'])} 4h${fmt(btc['4h'])} 1d${fmt(btc['1d'])}</span>
+        <span><b>ATR%:</b> ${m.atr_1h_pct != null ? m.atr_1h_pct.toFixed(2) : '—'}</span>
+        <span><b>Funding:</b> ${m.avg_funding != null ? (m.avg_funding >= 0 ? '+' : '') + m.avg_funding.toFixed(3) + '%' : '—'}</span>
+      `;
+      resultBox.style.display = 'block';
+    } catch (e) {
+      alert('Ошибка сети: ' + e.message);
+    } finally {
+      btn.textContent = origText; btn.disabled = false;
+    }
+  }
+</script>
+
 {% elif bot == 'conflicts' %}
 <!-- ── Anti-cluster / Divergence Detector ──────────────────────────── -->
 <style>
