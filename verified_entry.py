@@ -83,6 +83,28 @@ def check_entry(pair: str, direction: str,
     tier = found.get("tier")
     minutes_ago = int((utcnow() - sig_time).total_seconds() / 60) if sig_time else 0
 
+    # ── ATR fallback для TP/SL если их нет в сигнале (anomaly/supertrend и т.п.) ──
+    tp_sl_source = "signal"
+    if sig_entry and (not sig_tp or not sig_sl):
+        try:
+            from exchange import get_klines_any
+            candles_1h = get_klines_any(pair_slash, "1h", 30) or []
+            if candles_1h and len(candles_1h) >= 15:
+                trs = []
+                for i in range(1, len(candles_1h)):
+                    c, pc = candles_1h[i], candles_1h[i-1]["c"]
+                    trs.append(max(c["h"] - c["l"], abs(c["h"] - pc), abs(c["l"] - pc)))
+                atr = sum(trs[-14:]) / min(14, len(trs))
+                if direction == "LONG":
+                    if not sig_sl: sig_sl = sig_entry - atr * 1.5
+                    if not sig_tp: sig_tp = sig_entry + atr * 2.5
+                else:
+                    if not sig_sl: sig_sl = sig_entry + atr * 1.5
+                    if not sig_tp: sig_tp = sig_entry - atr * 2.5
+                tp_sl_source = "ATR×1.5/2.5"
+        except Exception:
+            logger.debug("[verified] ATR TP/SL fallback fail", exc_info=True)
+
     checks = []
 
     # ── 1. Market Phase ──
@@ -132,16 +154,21 @@ def check_entry(pair: str, direction: str,
 
     # ── 3. ST 1h aligned ──
     st_state = "UNK"
-    try:
-        st = supertrend_state(pair_slash, "1h", cache_only=False)
-        if st and st.get("state"):
-            st_state = st["state"]
-    except Exception:
-        pass
+    st_err = None
+    # Пробуем 2 раза: 1) cache hit если прогрето, 2) с HTTP fetch если нет
+    for attempt in range(2):
+        try:
+            st = supertrend_state(pair_slash, "1h", cache_only=(attempt == 0))
+            if st and st.get("state"):
+                st_state = st["state"]
+                break
+        except Exception as _e:
+            st_err = str(_e)[:60]
     st_dir = "LONG" if st_state == "UP" else ("SHORT" if st_state == "DOWN" else "?")
     if st_state == "UNK":
+        reason = f" ({st_err})" if st_err else " (пара не найдена на Binance или нет свечей)"
         checks.append({"name": "ST 1h aligned", "status": "warn",
-                       "comment": "Не удалось получить ST 1h", "value": ""})
+                       "comment": f"Не удалось получить ST 1h{reason}", "value": ""})
     elif st_dir == direction:
         checks.append({"name": "ST 1h aligned", "status": "ok",
                        "comment": f"ST 1h = {st_state} — совпадает", "value": ""})
@@ -203,20 +230,18 @@ def check_entry(pair: str, direction: str,
         reward = abs(sig_tp - sig_entry)
         if risk > 0:
             rr = round(reward / risk, 2)
+    src_note = f" (TP/SL: {tp_sl_source})"
+    val_str = f"entry={sig_entry}, tp={round(sig_tp,6) if sig_tp else '?'}, sl={round(sig_sl,6) if sig_sl else '?'}"
     if rr is None:
-        checks.append({"name": "R:R", "status": "warn", "comment": "Нет TP/SL в сигнале", "value": ""})
+        checks.append({"name": "R:R", "status": "warn", "comment": "Не удалось вычислить TP/SL", "value": ""})
     elif rr >= 2.0:
-        checks.append({"name": "R:R", "status": "ok", "comment": f"R:R = 1:{rr} — отлично",
-                       "value": f"entry={sig_entry}, tp={sig_tp}, sl={sig_sl}"})
+        checks.append({"name": "R:R", "status": "ok", "comment": f"R:R = 1:{rr} — отлично{src_note}", "value": val_str})
     elif rr >= 1.5:
-        checks.append({"name": "R:R", "status": "ok", "comment": f"R:R = 1:{rr} — приемлемо",
-                       "value": f"entry={sig_entry}, tp={sig_tp}, sl={sig_sl}"})
+        checks.append({"name": "R:R", "status": "ok", "comment": f"R:R = 1:{rr} — приемлемо{src_note}", "value": val_str})
     elif rr >= 1.0:
-        checks.append({"name": "R:R", "status": "warn", "comment": f"R:R = 1:{rr} — слабое",
-                       "value": f"entry={sig_entry}, tp={sig_tp}, sl={sig_sl}"})
+        checks.append({"name": "R:R", "status": "warn", "comment": f"R:R = 1:{rr} — слабое{src_note}", "value": val_str})
     else:
-        checks.append({"name": "R:R", "status": "bad", "comment": f"R:R = 1:{rr} — плохое",
-                       "value": f"entry={sig_entry}, tp={sig_tp}, sl={sig_sl}"})
+        checks.append({"name": "R:R", "status": "bad", "comment": f"R:R = 1:{rr} — плохое{src_note}", "value": val_str})
 
     # ── 6. Volume / OI ──
     try:
@@ -224,9 +249,24 @@ def check_entry(pair: str, direction: str,
         vol_spike = (_batch_cache.get("volume_spike") or {}).get(pair_norm)
         oi_ch = (_batch_cache.get("oi_change") or {}).get(pair_norm)
         funding = (_batch_cache.get("funding") or {}).get(pair_norm)
+
+        # Fallback: если нет в batch-кеше — вытягиваем напрямую с Binance Futures
+        if vol_spike is None or oi_ch is None:
+            try:
+                from exchange import check_pump_potential
+                pump = check_pump_potential(pair_norm)
+                if vol_spike is None:
+                    vol_spike = pump.get("volume_spike")
+                if oi_ch is None:
+                    oi_ch = pump.get("oi_change")
+                if funding is None:
+                    funding = pump.get("funding")
+            except Exception:
+                logger.debug("[verified] pump fallback fail", exc_info=True)
+
         vol_str = f"Vol×{vol_spike:.1f}" if vol_spike else "Vol×?"
         oi_str = f"OI {oi_ch:+.1f}%" if oi_ch is not None else "OI ?"
-        fund_str = f"funding {funding:+.3f}%" if funding is not None else ""
+        fund_str = f"funding {funding:+.3f}%" if funding else ""
         detail = f"{vol_str} · {oi_str} {fund_str}".strip()
         oi_ok = (oi_ch is not None and abs(oi_ch) >= 1.0)
         vol_ok = (vol_spike is not None and vol_spike >= 1.5)
@@ -234,10 +274,10 @@ def check_entry(pair: str, direction: str,
             checks.append({"name": "Volume / OI", "status": "ok", "comment": "Движение с объёмом и OI", "value": detail})
         elif vol_ok or oi_ok:
             checks.append({"name": "Volume / OI", "status": "warn", "comment": "Частичное подтверждение", "value": detail})
-        elif vol_spike is None:
-            checks.append({"name": "Volume / OI", "status": "warn", "comment": "Нет данных в кеше", "value": detail})
+        elif vol_spike is None and oi_ch is None:
+            checks.append({"name": "Volume / OI", "status": "warn", "comment": "Нет данных (пара не на фьючах Binance?)", "value": detail})
         else:
-            checks.append({"name": "Volume / OI", "status": "bad", "comment": "Без объёма/OI", "value": detail})
+            checks.append({"name": "Volume / OI", "status": "bad", "comment": "Без объёма/OI — слабое движение", "value": detail})
     except Exception:
         checks.append({"name": "Volume / OI", "status": "warn", "comment": "Err", "value": ""})
 
