@@ -691,6 +691,12 @@ def init_db():
         mp.create_index("at", expireAfterSeconds=60*86400, name="ttl_60d")
         mp.create_index([("at", DESCENDING)])
 
+        # Verified Entries (Entry Checker авто-проверка сигналов) — TTL 30д
+        vs = _get_db().verified_signals
+        vs.create_index("created_at", expireAfterSeconds=30*86400, name="ttl_30d")
+        vs.create_index([("pair_norm", ASCENDING), ("direction", ASCENDING), ("created_at", DESCENDING)])
+        vs.create_index([("created_at", DESCENDING)])
+
         # Paper AI rejections — лог отказов от сделок (TTL 7 дней)
         try:
             rej = _get_db().paper_rejections

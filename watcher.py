@@ -2910,7 +2910,23 @@ async def _paper_on_signal(signal_data: dict):
     Paper → ai_decide + запись в MongoDB (симуляция).
     Testnet/Real → live_trader с обязательной safety-проверкой + (опционально)
                     подтверждение в BOT11.
+
+    Плюс: параллельно запускает Verified Entry Checker (rule-based 8 проверок),
+    и если verdict=GO шлёт в @topmonetabot с эмоджи ✨.
     """
+    # ── Verified Entry Checker (параллельно, не блокирует основной поток) ──
+    try:
+        global _bot, _admin_chat_id
+        from config import VERIFIED_TOPIC_ID
+        import verified_entry as ve
+        # fire-and-forget — основной поток сигналов не ждёт
+        asyncio.create_task(
+            ve.run_verified_check(signal_data, bot=_bot, chat_id=_admin_chat_id,
+                                  topic_id=VERIFIED_TOPIC_ID)
+        )
+    except Exception:
+        logger.debug("[verified-check] schedule fail", exc_info=True)
+
     try:
         # Определяем текущий режим
         try:

@@ -1222,6 +1222,59 @@
         return out;
       };
 
+      // ─── Verified Entries (Entry Checker авто-проверка) ─────────────
+      // ✨ маркеры на графиках, подтягиваются из /api/verified-signals
+      window._verifiedCache = window._verifiedCache || {};
+      window._fetchVerifiedSignals = async function(pair, hours = 168) {
+        if (!pair) return [];
+        const key = `${pair}_${hours}`;
+        const c = window._verifiedCache[key];
+        if (c && (Date.now() - c.at) < 30000) return c.items;
+        try {
+          const r = await fetch(`/api/verified-signals?pair=${encodeURIComponent(pair)}&hours=${hours}`);
+          const d = await r.json();
+          const items = (d && d.items) ? d.items : [];
+          window._verifiedCache[key] = { at: Date.now(), items };
+          return items;
+        } catch (e) {
+          console.warn('[verified] fetch fail', e);
+          return [];
+        }
+      };
+
+      window._addVerifiedMarkers = function(candles, items) {
+        if (!candles || !candles.length || !items || !items.length) return [];
+        const firstTs = candles[0].time;
+        const lastTs = candles[candles.length - 1].time;
+        const nearest = (ts) => {
+          let mc = null, minD = Infinity;
+          for (const c of candles) {
+            const diff = Math.abs(c.time - ts);
+            if (diff < minD) { minD = diff; mc = c; }
+          }
+          return mc;
+        };
+        const out = [];
+        for (const v of items) {
+          const ts = v.created_at_ts || Math.floor(new Date(v.created_at).getTime() / 1000);
+          if (!ts || ts < firstTs - 3600 || ts > lastTs + 3600 * 2) continue;
+          const mc = nearest(ts);
+          if (!mc) continue;
+          const isLong = v.direction === 'LONG';
+          // Caution verdict помечаем ⚠️✨ оранжевым, GO — белым ✨
+          const isCaution = v.verdict === 'caution';
+          out.push({
+            time: mc.time,
+            position: isLong ? 'belowBar' : 'aboveBar',
+            color: isCaution ? '#ffa94d' : '#b89cff',
+            shape: isLong ? 'arrowUp' : 'arrowDown',
+            text: isCaution ? '⚠️✨' : '✨',
+            size: 2,
+          });
+        }
+        return out;
+      };
+
       // Fetch KL для конкретной пары (с кешем 30с)
       window._klCache = window._klCache || {};
       window._fetchKeyLevels = async function(pair, hours = 48) {
@@ -2245,11 +2298,11 @@ async function _renderLwcSignalChart(containerId, opts) {
   }
   series.setMarkers(markers);
 
-  // Накопительные маркеры: KC и KL async + ST sync flip-стрелки + ST-signals
-  let _msM = [], _klM = [], _stSigM = [];
+  // Накопительные маркеры: KC и KL async + ST sync flip-стрелки + ST-signals + Verified ✨
+  let _msM = [], _klM = [], _stSigM = [], _verM = [];
   const _stFlips = (_stResult && _stResult.flipMarkers) ? _stResult.flipMarkers : [];
   const _applyAll = () => {
-    series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlips, ..._stSigM].sort((a,b) => a.time - b.time));
+    series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlips, ..._stSigM, ..._verM].sort((a,b) => a.time - b.time));
   };
   // Сразу применяем ST-стрелки (они уже посчитаны синхронно)
   if (_stFlips.length) _applyAll();
@@ -2258,6 +2311,14 @@ async function _renderLwcSignalChart(containerId, opts) {
     window._fetchStSignals(opts.symbol, 336).then(stSigs => {
       if (!stSigs || !stSigs.length) return;
       _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
+      _applyAll();
+    }).catch(() => {});
+  }
+  // Async: Verified Entries → ✨ маркеры
+  if (window._fetchVerifiedSignals && window._addVerifiedMarkers && opts.symbol && d.candles.length) {
+    window._fetchVerifiedSignals(opts.symbol, 168).then(verItems => {
+      if (!verItems || !verItems.length) return;
+      _verM = window._addVerifiedMarkers(d.candles, verItems) || [];
       _applyAll();
     }).catch(() => {});
   }

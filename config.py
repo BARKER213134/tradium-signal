@@ -17,6 +17,10 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
 SOURCE_GROUP_ID = int(os.getenv("SOURCE_GROUP_ID", "-1002423680272"))
 # Топик (форум) внутри группы с Trade Setup Screener — только отсюда парсим сетапы
 TRADIUM_SETUP_TOPIC_ID = int(os.getenv("TRADIUM_SETUP_TOPIC_ID", "3204"))
+# Топик для ✨ Verified Entries (Entry Checker автопроверка)
+# Если не задан — шлём в общую ленту форума (без thread_id)
+_vt = os.getenv("VERIFIED_TOPIC_ID", "").strip()
+VERIFIED_TOPIC_ID = int(_vt) if _vt.isdigit() else None
 
 # Сколько секунд ждать график после текстового сообщения
 CHART_WAIT_SECONDS = int(os.getenv("CHART_WAIT_SECONDS", "5"))
