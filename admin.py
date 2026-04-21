@@ -3142,7 +3142,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
             "tab": tab, "stats": {}, "summary": None,
             "pages": 1, "page": 1, "pairs": [],
             "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
-            "eth_ctx": _sync_eth_ctx(), "st_eth": _sync_kc_eth(),
+            "eth_ctx": _sync_eth_ctx(cache_only=True), "st_eth": _sync_kc_eth(cache_only=True),
         })
 
     # API для аномалий
@@ -3187,7 +3187,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
                 "tab": cv_tab, "stats": {}, "summary": None,
                 "pages": 1, "page": 1, "pairs": [],
                 "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
-                "eth_ctx": _sync_eth_ctx(), "st_eth": _sync_kc_eth(),
+                "eth_ctx": _sync_eth_ctx(cache_only=True), "st_eth": _sync_kc_eth(cache_only=True),
             })
         sort_field = Signal.pattern_triggered_at if cv_tab in ("active", "ai_signal") else Signal.received_at
         signals = query.order_by(desc(sort_field)).limit(200).all()
@@ -3199,7 +3199,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
             "tab": cv_tab, "stats": {}, "summary": None,
             "pages": 1, "page": 1, "pairs": [],
             "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
-            "eth_ctx": _sync_eth_ctx(), "st_eth": _sync_kc_eth(),
+            "eth_ctx": _sync_eth_ctx(cache_only=True), "st_eth": _sync_kc_eth(cache_only=True),
         })
 
     # ── Фильтр по вкладке ──
@@ -3300,7 +3300,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
         "filter_direction": direction,
         "filter_has_chart": has_chart,
         "pairs": pairs,
-        "eth_ctx": _sync_eth_ctx(), "st_eth": _sync_kc_eth(),
+        "eth_ctx": _sync_eth_ctx(cache_only=True), "st_eth": _sync_kc_eth(cache_only=True),
     })
 
 

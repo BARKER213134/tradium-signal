@@ -316,12 +316,16 @@ def _calc_keltner(candles, period=20, multiplier=2.0):
     return "NEUTRAL"
 
 
-def get_keltner_eth() -> dict:
-    """Keltner Channel ETH 1h: direction (LONG/SHORT/NEUTRAL), confirmed. Кеш 5 мин."""
+def get_keltner_eth(cache_only: bool = False) -> dict:
+    """Keltner Channel ETH 1h: direction (LONG/SHORT/NEUTRAL), confirmed. Кеш 5 мин.
+    cache_only=True — при холодном кеше возвращает placeholder мгновенно
+    (не делает HTTP). Используется в hot-path рендера /signals."""
     global _kc_cache, _kc_cache_ts
     now = time.time()
     if _kc_cache and (now - _kc_cache_ts) < _KC_TTL:
         return _kc_cache
+    if cache_only:
+        return {"direction": "NEUTRAL", "confirmed": False, "cached": False}
 
     try:
         candles = get_klines_any("ETH/USDT", "1h", limit=50)
@@ -449,12 +453,18 @@ _eth_ctx_ts: float = 0
 _ETH_CTX_TTL = 300  # 5 мин — снижаем нагрузку на рендер /signals
 
 
-def get_eth_market_context() -> dict:
-    """Возвращает ETH 1h%, BTC 1h%, ETH/BTC тренд. Кеш 5 мин."""
+def get_eth_market_context(cache_only: bool = False) -> dict:
+    """Возвращает ETH 1h%, BTC 1h%, ETH/BTC тренд. Кеш 5 мин.
+    cache_only=True — при холодном кеше сразу возвращает placeholder.
+    Используется в hot-path рендера /signals чтобы не блокировать
+    страницу на 10+сек HTTP к Binance при первом открытии после старта."""
     global _eth_ctx_cache, _eth_ctx_ts
     now = time.time()
     if _eth_ctx_cache and (now - _eth_ctx_ts) < _ETH_CTX_TTL:
         return _eth_ctx_cache
+    if cache_only:
+        return {"eth_1h": 0, "btc_1h": 0, "eth_btc": "—",
+                "eth_price": 0, "btc_price": 0, "cached": False}
 
     ctx = {"eth_1h": 0, "btc_1h": 0, "eth_btc": "—", "eth_price": 0, "btc_price": 0}
     try:
