@@ -5632,6 +5632,17 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
                  "sum_r": 0.0, "sum_pct": 0.0}
              for s in ("IMMEDIATE", "ST30M_FRESH", "ST30M_ALIGNED")}
 
+    # Статистика ST 30m direction на момент CV (для проверки гипотезы
+    # "CV LONG всегда приходит под ST 30m")
+    st_at_cv_stats = {
+        "LONG_at_st_up":    0,  # CV LONG пришёл когда ST 30m = UP (подтверждение)
+        "LONG_at_st_down":  0,  # CV LONG пришёл когда ST 30m = DOWN (против ST)
+        "LONG_at_st_unk":   0,  # ST 30m неизвестен
+        "SHORT_at_st_up":   0,
+        "SHORT_at_st_down": 0,
+        "SHORT_at_st_unk":  0,
+    }
+
     processed = 0
     for s in raw:
         processed += 1
@@ -5716,6 +5727,15 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
         # ST состояние на момент CV
         st_at_cv = st_state_at_ts(st_series, pat_ms)
         already_aligned = st_at_cv and st_at_cv.get("trend") == target_trend
+        # Статистика: в какую сторону ST 30m был в момент CV
+        if st_at_cv and st_at_cv.get("trend"):
+            trend_at = st_at_cv.get("trend")
+            st_state_at = "up" if trend_at == 1 else "down"
+            key = f"{direction}_at_st_{st_state_at}"
+            if key in st_at_cv_stats:
+                st_at_cv_stats[key] += 1
+        else:
+            st_at_cv_stats[f"{direction}_at_st_unk"] += 1
 
         # Поиск flip'а в окне [pat_at .. pat_at+10ч]
         fresh_flip_idx = None
@@ -5782,6 +5802,7 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
         "invalidated_by_newer": len(invalid_ids),
         "pairs_cached_30m": len(c_30m),
         "strategies": rows,
+        "st_at_cv_stats": st_at_cv_stats,
     }
 
 
