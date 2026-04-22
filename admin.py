@@ -6174,10 +6174,41 @@ _bstf_state: dict = {
 }
 
 
-def _backtest_st_flips_sync(days: int, max_pairs: int) -> dict:
+def _rsi_wilder(closes: list, period: int = 14) -> list:
+    """RSI(Wilder). Возвращает list той же длины что closes, первые period+1
+    позиций = None."""
+    n = len(closes)
+    if n < period + 2:
+        return [None] * n
+    gains = [0.0] * n
+    losses = [0.0] * n
+    for i in range(1, n):
+        ch = closes[i] - closes[i-1]
+        if ch > 0: gains[i] = ch
+        elif ch < 0: losses[i] = -ch
+    rsi: list = [None] * n
+    avg_g = sum(gains[1:period+1]) / period
+    avg_l = sum(losses[1:period+1]) / period
+    rsi[period] = 100.0 if avg_l == 0 else 100.0 - 100.0 / (1 + avg_g / avg_l)
+    for i in range(period + 1, n):
+        avg_g = (avg_g * (period - 1) + gains[i]) / period
+        avg_l = (avg_l * (period - 1) + losses[i]) / period
+        rsi[i] = 100.0 if avg_l == 0 else 100.0 - 100.0 / (1 + avg_g / avg_l)
+    return rsi
+
+
+def _backtest_st_flips_sync(days: int, max_pairs: int,
+                            tf_filter: str | None = None,
+                            rsi_min_long: float | None = None,
+                            rsi_max_short: float | None = None) -> dict:
     """Для каждого TF: перебираем пары, находим все ST flip'ы, симулируем
     bidirectional (LONG на UP flip, SHORT на DOWN flip). Выход = противоположный
-    flip. Risk = |entry - ST_value| на баре входа. R = (exit-entry)/risk."""
+    flip. Risk = |entry - ST_value| на баре входа. R = (exit-entry)/risk.
+
+    Опциональные фильтры:
+      tf_filter — "1h"/"30m"/etc, если указан — только этот TF
+      rsi_min_long — минимальный RSI(14) на баре входа для LONG (skip если ниже)
+      rsi_max_short — максимальный RSI(14) для SHORT (skip если выше)"""
     from exchange import get_klines_any
     from backtest_supertrend import compute_st_series
     from anomaly_scanner import get_all_futures_pairs
@@ -6193,6 +6224,9 @@ def _backtest_st_flips_sync(days: int, max_pairs: int) -> dict:
         ("4h",  10, 3.0),
         ("1d",  14, 3.0),
     ]
+    if tf_filter:
+        TFS = [t for t in TFS if t[0] == tf_filter]
+    use_rsi = rsi_min_long is not None or rsi_max_short is not None
 
     all_pairs = get_all_futures_pairs() or []
     # Берём первые max_pairs (по порядку exchangeInfo — там разнообразие)
@@ -6204,6 +6238,8 @@ def _backtest_st_flips_sync(days: int, max_pairs: int) -> dict:
     processed = 0
 
     for tf, period, mult in TFS:
+        rsi_skipped = 0
+        rsi_passed = 0
         tf_trades = []
         pair_sums: list = []  # [{pair, r, pct, n}]
         for pair in pairs:
@@ -6223,6 +6259,8 @@ def _backtest_st_flips_sync(days: int, max_pairs: int) -> dict:
             st_series = compute_st_series(candles, period, mult)
             if not st_series:
                 continue
+            # RSI(14) по тем же свечам
+            rsi_arr = _rsi_wilder([c["close"] for c in candles], 14) if use_rsi else None
 
             open_pos = None
             pair_r = 0.0
@@ -6253,8 +6291,23 @@ def _backtest_st_flips_sync(days: int, max_pairs: int) -> dict:
                     pair_pct += pct
                     pair_n += 1
                     tf_trades.append(r_mult)
-                # Open new pos on this flip
+                # RSI-фильтр на открытие
                 side = "L" if cur["trend"] == 1 else "S"
+                if use_rsi:
+                    rsi_v = rsi_arr[i] if rsi_arr and i < len(rsi_arr) else None
+                    if rsi_v is None:
+                        open_pos = None
+                        continue
+                    if side == "L" and rsi_min_long is not None and rsi_v < rsi_min_long:
+                        rsi_skipped += 1
+                        open_pos = None
+                        continue
+                    if side == "S" and rsi_max_short is not None and rsi_v > rsi_max_short:
+                        rsi_skipped += 1
+                        open_pos = None
+                        continue
+                    rsi_passed += 1
+                # Open new pos on this flip
                 open_pos = {
                     "entry": cur["close"],
                     "sl": cur.get("st"),
@@ -6313,20 +6366,26 @@ def _backtest_st_flips_sync(days: int, max_pairs: int) -> dict:
             "sharpe_like": round(sharpe_like, 3),
             "top3": [{"pair": p["pair"], "r": round(p["r"], 2), "n": p["n"]} for p in top3],
             "bot3": [{"pair": p["pair"], "r": round(p["r"], 2), "n": p["n"]} for p in bot3],
+            "rsi_skipped": rsi_skipped,
+            "rsi_passed": rsi_passed,
         }
 
     return {
         "ok": True,
         "days": days,
         "pairs_tested": len(pairs),
+        "tf_filter": tf_filter,
+        "rsi_min_long": rsi_min_long,
+        "rsi_max_short": rsi_max_short,
         "tfs": results,
     }
 
 
-async def _run_backtest_st_flips(days: int, max_pairs: int):
+async def _run_backtest_st_flips(days: int, max_pairs: int, tf_filter, rsi_min_long, rsi_max_short):
     from datetime import datetime as _dt
     try:
-        result = await asyncio.to_thread(_backtest_st_flips_sync, days, max_pairs)
+        result = await asyncio.to_thread(_backtest_st_flips_sync, days, max_pairs,
+                                         tf_filter, rsi_min_long, rsi_max_short)
         _bstf_state["result"] = result
     except Exception as e:
         _bstf_state["error"] = str(e)
@@ -6338,19 +6397,29 @@ async def _run_backtest_st_flips(days: int, max_pairs: int):
 
 @app.post("/api/backtest-st-flips")
 async def api_backtest_st_flips_start(payload: dict | None = None):
+    """payload: {days, max_pairs, tf?, rsi_min_long?, rsi_max_short?}
+    Пример: {"days":30,"max_pairs":200,"tf":"1h","rsi_min_long":49,"rsi_max_short":51}"""
     from datetime import datetime as _dt
     if _bstf_state.get("running"):
         return {"ok": False, "error": "already running", "state": _bstf_state}
-    days = int((payload or {}).get("days", 30))
-    max_pairs = int((payload or {}).get("max_pairs", 100))
+    p = payload or {}
+    days = int(p.get("days", 30))
+    max_pairs = int(p.get("max_pairs", 100))
+    tf_filter = p.get("tf")
+    rsi_min_long = p.get("rsi_min_long")
+    rsi_max_short = p.get("rsi_max_short")
+    rsi_min_long = float(rsi_min_long) if rsi_min_long is not None else None
+    rsi_max_short = float(rsi_max_short) if rsi_max_short is not None else None
     _bstf_state.update({
         "running": True, "started_at": _dt.utcnow().isoformat(),
         "finished_at": None,
         "progress": {"processed": 0, "total": 0, "current": ""},
         "result": None, "error": None,
+        "tf_filter": tf_filter, "rsi_min_long": rsi_min_long, "rsi_max_short": rsi_max_short,
     })
-    asyncio.create_task(_run_backtest_st_flips(days, max_pairs))
-    return {"ok": True, "started": True, "days": days, "max_pairs": max_pairs}
+    asyncio.create_task(_run_backtest_st_flips(days, max_pairs, tf_filter, rsi_min_long, rsi_max_short))
+    return {"ok": True, "started": True, "days": days, "max_pairs": max_pairs,
+            "tf": tf_filter, "rsi_min_long": rsi_min_long, "rsi_max_short": rsi_max_short}
 
 
 @app.get("/api/backtest-st-flips/status")
