@@ -2938,6 +2938,7 @@ async function _drawPaperHistChart(idx) {
     series.setData(d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
     const _stResHist = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
+    if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
 
     // ── Маркеры ──
     const markers = [];
@@ -3202,6 +3203,7 @@ async function _renderPaperChart(idx, tf) {
     series.setData(d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
     const _stResLive = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: area }) : null;
+    if (window._addRSI) window._addRSI(chart, d.candles, { anchor: area });
 
     // Маркеры: entry позиции + все сигналы по паре за 48ч (все источники)
     const nearestP = (ts) => {
@@ -4967,6 +4969,7 @@ async function loadCoinChart(coin) {
     series.setData(d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _coinTF);
     const _stResCoin = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, _coinTF, { anchor: chartDiv }) : null;
+    if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
     if (window._prefetchOtherTFs && sym) window._prefetchOtherTFs(sym, _coinTF, 200);
 
     // Все маркеры + tooltip map
@@ -5637,6 +5640,7 @@ async function openJournalChart(idx, forceTF) {
     series.setData(d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _modalTF);
     const _stResJ = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, _modalTF, { anchor: container }) : null;
+    if (window._addRSI) window._addRSI(chart, d.candles, { anchor: container });
     if (window._prefetchOtherTFs && sym) window._prefetchOtherTFs(sym, _modalTF, 200);
 
     // Маркеры: все сигналы по монете из _journalData (уже включают cluster/paper/все)

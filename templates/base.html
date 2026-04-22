@@ -1082,6 +1082,115 @@
         }
       };
 
+      // ─── RSI (14, Wilder) в нижней панели графика ────────────────
+      // Оверлейная price-scale 'rsi' со scaleMargins top:0.82 — RSI
+      // рисуется в нижних ~18% области графика, не мешая свечам.
+      // Линии 30/50/70, бадж в левом верхнем углу под ST.
+      //
+      // Usage:
+      //   window._addRSI(chart, candles, { anchor: chartDiv, period: 14 })
+      window._calcRSI = function(candles, period) {
+        period = period || 14;
+        if (!candles || candles.length < period + 2) return null;
+        const n = candles.length;
+        const closes = candles.map(c => c.close);
+        const gains = [0], losses = [0];
+        for (let i = 1; i < n; i++) {
+          const ch = closes[i] - closes[i-1];
+          gains.push(ch > 0 ?  ch : 0);
+          losses.push(ch < 0 ? -ch : 0);
+        }
+        const rsi = new Array(n).fill(null);
+        let avgG = 0, avgL = 0;
+        for (let i = 1; i <= period; i++) { avgG += gains[i]; avgL += losses[i]; }
+        avgG /= period; avgL /= period;
+        rsi[period] = avgL === 0 ? 100 : (100 - 100 / (1 + avgG / avgL));
+        for (let i = period + 1; i < n; i++) {
+          avgG = (avgG * (period - 1) + gains[i]) / period;
+          avgL = (avgL * (period - 1) + losses[i]) / period;
+          rsi[i] = avgL === 0 ? 100 : (100 - 100 / (1 + avgG / avgL));
+        }
+        return rsi;
+      };
+
+      window._addRSI = function(chart, candles, opts) {
+        opts = opts || {};
+        if (!chart || !candles || candles.length < 16) return null;
+        const period = opts.period || 14;
+        const rsi = window._calcRSI(candles, period);
+        if (!rsi) return null;
+        try {
+          const series = chart.addLineSeries({
+            color: '#b28bff',
+            lineWidth: 1,
+            priceScaleId: 'rsi',
+            priceLineVisible: false,
+            lastValueVisible: true,
+            crosshairMarkerVisible: false,
+          });
+          // TradingView-style панель: свечи сверху ~75%, RSI снизу ~23%,
+          // с небольшим визуальным зазором.
+          try {
+            chart.priceScale('right').applyOptions({
+              scaleMargins: { top: 0.04, bottom: 0.27 },
+            });
+          } catch (_) {}
+          try {
+            chart.priceScale('rsi').applyOptions({
+              scaleMargins: { top: 0.78, bottom: 0.02 },
+              borderVisible: false,
+            });
+          } catch (_) {}
+          const data = [];
+          for (let i = 0; i < candles.length; i++) {
+            if (rsi[i] != null) data.push({ time: candles[i].time, value: rsi[i] });
+          }
+          series.setData(data);
+          // Уровни 30/50/70
+          try {
+            series.createPriceLine({ price: 70, color: '#ff4d6d', lineWidth: 1,
+              lineStyle: 2, axisLabelVisible: false, title: '70' });
+            series.createPriceLine({ price: 50, color: '#4a5568', lineWidth: 1,
+              lineStyle: 2, axisLabelVisible: false, title: '50' });
+            series.createPriceLine({ price: 30, color: '#00e5a0', lineWidth: 1,
+              lineStyle: 2, axisLabelVisible: false, title: '30' });
+          } catch (_) {}
+          // Бадж
+          let badgeEl = null;
+          const anchor = opts.anchor;
+          const last = rsi[rsi.length - 1];
+          if (anchor && anchor.nodeType === 1 && last != null) {
+            const old = anchor.querySelector('.rsi-badge');
+            if (old) old.remove();
+            if (getComputedStyle(anchor).position === 'static') {
+              anchor.style.position = 'relative';
+            }
+            badgeEl = document.createElement('div');
+            badgeEl.className = 'rsi-badge';
+            const color = last >= 70 ? '#ff4d6d' : (last <= 30 ? '#00e5a0' : '#b28bff');
+            badgeEl.innerHTML = `RSI ${period} · <span style="color:${color};font-weight:600">${last.toFixed(1)}</span>`;
+            badgeEl.style.cssText = [
+              'position:absolute','top:22px','left:8px','z-index:5',
+              'background:rgba(10,14,20,0.72)','color:#cfd3dc',
+              'font-family:var(--font-mono, ui-monospace, monospace)',
+              'font-size:10px','padding:2px 7px','border-radius:4px',
+              'border:1px solid #1a1e2a','pointer-events:none','user-select:none',
+            ].join(';');
+            anchor.appendChild(badgeEl);
+          }
+          return {
+            series, value: last, badgeEl,
+            cleanup: () => {
+              try { chart.removeSeries(series); } catch (_) {}
+              if (badgeEl) badgeEl.remove();
+            },
+          };
+        } catch (e) {
+          console.warn('[RSI] failed', e);
+          return null;
+        }
+      };
+
       // ─── SuperTrend enrich badge для журнала ─────────────────────
       // Получает массив flags и возвращает HTML <span> с эмоджи
       //   aligned_1h/4h/d → 🌀 N раз
@@ -2253,6 +2362,7 @@ async function _renderLwcSignalChart(containerId, opts) {
   if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
   // SuperTrend (клиентский расчёт, бадж в левом верхнем углу chartDiv)
   const _stResult = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
+  if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
   if (window._prefetchOtherTFs && opts.symbol) window._prefetchOtherTFs(opts.symbol, tf, 150);
 
   // Markers:
@@ -2671,6 +2781,7 @@ async function _renderFvgChart(area, sig, tf) {
   series.setData(d.candles);
   if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
   const _stResFvg = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
+  if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
 
   // FVG zone
   const fvgColor = sig.direction === 'bullish' ? 'rgba(0,229,160,0.75)' : 'rgba(255,77,109,0.75)';
