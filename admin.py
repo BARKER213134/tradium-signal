@@ -5587,7 +5587,8 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
     logger = _log.getLogger(__name__)
 
     since = utcnow() - timedelta(days=days)
-    TIMEOUT_H = 10
+    # Параметры принимаются из payload через _bcst_state.
+    TIMEOUT_H = int(_bcst_state.get("timeout_h", 10))
     BUFFER_PCT = 0.3
     MAX_HOLD_H = 24
 
@@ -5606,8 +5607,8 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
     for s in raw:
         p = s.get("pair") or ""
         by_pair[p].append(s)
-    # Для каждой пары: если разрыв между CV < TIMEOUT_H часов → старый
-    # инвалидируется (на момент прихода нового мы переключаемся на него)
+    # Если между двумя CV на той же паре разрыв < TIMEOUT_H → старый
+    # инвалидируется (ждём flip уже по новому сигналу).
     invalid_ids = set()
     for p, sigs in by_pair.items():
         sigs.sort(key=lambda x: x.get("pattern_triggered_at") or 0)
@@ -5616,6 +5617,7 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
             next_t = sigs[i+1].get("pattern_triggered_at")
             if cur_t and next_t and (next_t - cur_t) < timedelta(hours=TIMEOUT_H):
                 invalid_ids.add(id(sigs[i]))
+    logger.info(f"[bcst] timeout={TIMEOUT_H}h, invalid_ids={len(invalid_ids)}")
 
     # Кеши свечей
     c_30m: dict = {}
@@ -5864,19 +5866,22 @@ async def _run_backtest_cv_st30m(days: int):
 
 @app.post("/api/backtest-cv-st30m")
 async def api_backtest_cv_st30m_start(payload: dict | None = None):
-    """Бектест CV сигналов × ST 30m confirm. Read-only, прод не трогаем."""
+    """Бектест CV сигналов × ST 30m confirm. Read-only, прод не трогаем.
+    payload: {days: 7, timeout_h: 24} — таймаут ожидания flip ST 30m."""
     from datetime import datetime as _dt
     if _bcst_state.get("running"):
         return {"ok": False, "error": "already running", "state": _bcst_state}
     days = int((payload or {}).get("days", 7))
+    timeout_h = int((payload or {}).get("timeout_h", 10))
     _bcst_state.update({
         "running": True, "started_at": _dt.utcnow().isoformat(),
         "finished_at": None,
         "progress": {"processed": 0, "total": 0, "current": ""},
         "result": None, "error": None,
+        "timeout_h": timeout_h,
     })
     asyncio.create_task(_run_backtest_cv_st30m(days))
-    return {"ok": True, "started": True, "days": days}
+    return {"ok": True, "started": True, "days": days, "timeout_h": timeout_h}
 
 
 @app.get("/api/backtest-cv-st30m/status")
