@@ -137,14 +137,35 @@ def check_entry(pair: str, direction: str,
     phase = phase_data.get("phase", "NEUTRAL")
     phase_label = phase_data.get("label", phase)
     phase_emoji = phase_data.get("emoji", "❓")
+    # В сильном тренде контр-трендовый вход разрешаем ТОЛЬКО для
+    # Cluster STRONG/MEGA (статистически самые сильные сигналы для разворота).
+    # Всё остальное — жёсткий bad (блокирует в paper_trader.on_signal).
+    sig_source_for_phase = (found.get("_source_name") or found.get("source") or "").lower()
+    sig_strength = found.get("cluster_strength", "")
+    is_strong_cluster = (sig_source_for_phase == "cluster" and sig_strength in ("STRONG", "MEGA"))
+
     if phase == "BULL_TREND":
-        status = "warn" if direction == "SHORT" else "ok"
-        comment = (f"{phase_emoji} {phase_label}: SHORT против тренда" if status == "warn"
-                   else f"{phase_emoji} {phase_label}: LONG совпадает с трендом")
+        if direction == "SHORT":
+            if is_strong_cluster:
+                status = "warn"
+                comment = f"{phase_emoji} {phase_label}: SHORT против тренда (Cluster {sig_strength} — разрешено)"
+            else:
+                status = "bad"
+                comment = f"⛔ {phase_emoji} {phase_label}: SHORT против тренда запрещён (только Cluster STRONG/MEGA)"
+        else:
+            status = "ok"
+            comment = f"{phase_emoji} {phase_label}: LONG совпадает с трендом"
     elif phase == "BEAR_TREND":
-        status = "warn" if direction == "LONG" else "ok"
-        comment = (f"{phase_emoji} {phase_label}: LONG против тренда (только контр-отскок)"
-                   if status == "warn" else f"{phase_emoji} {phase_label}: SHORT совпадает с трендом")
+        if direction == "LONG":
+            if is_strong_cluster:
+                status = "warn"
+                comment = f"{phase_emoji} {phase_label}: LONG против тренда (Cluster {sig_strength} — разрешено)"
+            else:
+                status = "bad"
+                comment = f"⛔ {phase_emoji} {phase_label}: LONG против тренда запрещён (только Cluster STRONG/MEGA)"
+        else:
+            status = "ok"
+            comment = f"{phase_emoji} {phase_label}: SHORT совпадает с трендом"
     elif phase == "CHOP":
         status = "warn"
         comment = f"{phase_emoji} CHOP: малые сайзы, whipsaw risk"
