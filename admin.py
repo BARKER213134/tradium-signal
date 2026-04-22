@@ -160,6 +160,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-entry-timing", "/api/backtest-entry-timing/status",
             "/api/backtest-st-proximity", "/api/backtest-st-proximity/status",
             "/api/backtest-cv-st30m", "/api/backtest-cv-st30m/status",
+            "/api/backtest-st-flips", "/api/backtest-st-flips/status",
             "/api/market-phase", "/api/market-phase/history",
             "/api/entry-checker", "/api/entry-checker/ai-opinion", "/api/verified-signals",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
@@ -6159,6 +6160,202 @@ async def api_backtest_cv_st30m_start(payload: dict | None = None):
 @app.get("/api/backtest-cv-st30m/status")
 async def api_backtest_cv_st30m_status():
     return _bcst_state
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BACKTEST ST FLIPS — чистая стратегия "вход на flip UP, выход на flip DOWN"
+# Тестируем 5 TF (15m/30m/1h/4h/1d) на всех фьючерсных парах
+# за N дней. Цель: найти самый стабильный TF.
+# ═══════════════════════════════════════════════════════════════════
+_bstf_state: dict = {
+    "running": False, "started_at": None, "finished_at": None,
+    "progress": {"processed": 0, "total": 0, "current": ""},
+    "result": None, "error": None,
+}
+
+
+def _backtest_st_flips_sync(days: int, max_pairs: int) -> dict:
+    """Для каждого TF: перебираем пары, находим все ST flip'ы, симулируем
+    bidirectional (LONG на UP flip, SHORT на DOWN flip). Выход = противоположный
+    flip. Risk = |entry - ST_value| на баре входа. R = (exit-entry)/risk."""
+    from exchange import get_klines_any
+    from backtest_supertrend import compute_st_series
+    from anomaly_scanner import get_all_futures_pairs
+    import statistics as _stats
+    import logging as _log
+    import time as _time
+    logger = _log.getLogger(__name__)
+
+    TFS = [
+        ("15m", 7,  2.0),
+        ("30m", 7,  2.5),
+        ("1h",  10, 3.0),
+        ("4h",  10, 3.0),
+        ("1d",  14, 3.0),
+    ]
+
+    all_pairs = get_all_futures_pairs() or []
+    # Берём первые max_pairs (по порядку exchangeInfo — там разнообразие)
+    pairs = all_pairs[:max_pairs]
+    since_ms = int((_time.time() - days * 86400) * 1000)
+
+    _bstf_state["progress"]["total"] = len(pairs) * len(TFS)
+    results: dict = {}
+    processed = 0
+
+    for tf, period, mult in TFS:
+        tf_trades = []
+        pair_sums: list = []  # [{pair, r, pct, n}]
+        for pair in pairs:
+            processed += 1
+            _bstf_state["progress"]["processed"] = processed
+            _bstf_state["progress"]["current"] = f"{tf} {pair}"
+            try:
+                candles = get_klines_any(pair, tf, 500) or []
+            except Exception:
+                continue
+            if not candles or len(candles) < 30:
+                continue
+            # Фильтруем по окну в днях
+            candles = [c for c in candles if c["t"] >= since_ms]
+            if len(candles) < 30:
+                continue
+            st_series = compute_st_series(candles, period, mult)
+            if not st_series:
+                continue
+
+            open_pos = None
+            pair_r = 0.0
+            pair_pct = 0.0
+            pair_n = 0
+            for i in range(1, len(st_series)):
+                prev, cur = st_series[i-1], st_series[i]
+                if not (prev.get("trend") and cur.get("trend")):
+                    continue
+                if prev["trend"] == cur["trend"]:
+                    continue
+                # FLIP detected
+                # Close existing pos at cur.close
+                if open_pos is not None:
+                    exit_p = cur["close"]
+                    e = open_pos["entry"]
+                    sl = open_pos["sl"]
+                    risk = abs(e - sl) if sl else 0
+                    if risk <= 0:
+                        risk = abs(e) * 0.01  # fallback 1%
+                    if open_pos["side"] == "L":
+                        r_mult = (exit_p - e) / risk
+                        pct = (exit_p - e) / e * 100
+                    else:
+                        r_mult = (e - exit_p) / risk
+                        pct = (e - exit_p) / e * 100
+                    pair_r += r_mult
+                    pair_pct += pct
+                    pair_n += 1
+                    tf_trades.append(r_mult)
+                # Open new pos on this flip
+                side = "L" if cur["trend"] == 1 else "S"
+                open_pos = {
+                    "entry": cur["close"],
+                    "sl": cur.get("st"),
+                    "side": side,
+                    "idx": i,
+                }
+            # Закрываем по последней свече (для справедливого учёта open позиций)
+            if open_pos is not None:
+                last_bar = st_series[-1]
+                e = open_pos["entry"]; sl = open_pos["sl"]
+                risk = abs(e - sl) if sl else 0
+                if risk <= 0: risk = abs(e) * 0.01
+                exit_p = last_bar["close"]
+                if open_pos["side"] == "L":
+                    r_mult = (exit_p - e) / risk
+                    pct = (exit_p - e) / e * 100
+                else:
+                    r_mult = (e - exit_p) / risk
+                    pct = (e - exit_p) / e * 100
+                pair_r += r_mult; pair_pct += pct; pair_n += 1
+                tf_trades.append(r_mult)
+
+            if pair_n > 0:
+                pair_sums.append({"pair": pair, "r": pair_r, "pct": pair_pct, "n": pair_n})
+
+        n_trades = len(tf_trades)
+        wins = sum(1 for r in tf_trades if r > 0)
+        losses = sum(1 for r in tf_trades if r <= 0)
+        avg_r = sum(tf_trades) / n_trades if n_trades else 0.0
+        sum_r = sum(tf_trades)
+        wr = wins / n_trades * 100 if n_trades else 0.0
+
+        # "Стабильность": доля пар с положительным sum_R
+        pairs_positive = sum(1 for p in pair_sums if p["r"] > 0)
+        pairs_total = len(pair_sums)
+        pair_rs = [p["r"] for p in pair_sums]
+        std_r = _stats.stdev(pair_rs) if len(pair_rs) > 1 else 0.0
+        mean_r = _stats.mean(pair_rs) if pair_rs else 0.0
+        sharpe_like = mean_r / std_r if std_r > 0 else 0.0
+
+        top3 = sorted(pair_sums, key=lambda x: -x["r"])[:3]
+        bot3 = sorted(pair_sums, key=lambda x: x["r"])[:3]
+
+        results[tf] = {
+            "period": period, "mult": mult,
+            "trades": n_trades,
+            "wins": wins, "losses": losses,
+            "wr": round(wr, 1),
+            "avg_r": round(avg_r, 3),
+            "sum_r": round(sum_r, 2),
+            "pairs_total": pairs_total,
+            "pairs_positive": pairs_positive,
+            "pairs_positive_pct": round(pairs_positive / pairs_total * 100, 1) if pairs_total else 0.0,
+            "mean_pair_r": round(mean_r, 2),
+            "std_pair_r": round(std_r, 2),
+            "sharpe_like": round(sharpe_like, 3),
+            "top3": [{"pair": p["pair"], "r": round(p["r"], 2), "n": p["n"]} for p in top3],
+            "bot3": [{"pair": p["pair"], "r": round(p["r"], 2), "n": p["n"]} for p in bot3],
+        }
+
+    return {
+        "ok": True,
+        "days": days,
+        "pairs_tested": len(pairs),
+        "tfs": results,
+    }
+
+
+async def _run_backtest_st_flips(days: int, max_pairs: int):
+    from datetime import datetime as _dt
+    try:
+        result = await asyncio.to_thread(_backtest_st_flips_sync, days, max_pairs)
+        _bstf_state["result"] = result
+    except Exception as e:
+        _bstf_state["error"] = str(e)
+        logging.getLogger(__name__).exception("[bstf] crashed")
+    finally:
+        _bstf_state["running"] = False
+        _bstf_state["finished_at"] = _dt.utcnow().isoformat()
+
+
+@app.post("/api/backtest-st-flips")
+async def api_backtest_st_flips_start(payload: dict | None = None):
+    from datetime import datetime as _dt
+    if _bstf_state.get("running"):
+        return {"ok": False, "error": "already running", "state": _bstf_state}
+    days = int((payload or {}).get("days", 30))
+    max_pairs = int((payload or {}).get("max_pairs", 100))
+    _bstf_state.update({
+        "running": True, "started_at": _dt.utcnow().isoformat(),
+        "finished_at": None,
+        "progress": {"processed": 0, "total": 0, "current": ""},
+        "result": None, "error": None,
+    })
+    asyncio.create_task(_run_backtest_st_flips(days, max_pairs))
+    return {"ok": True, "started": True, "days": days, "max_pairs": max_pairs}
+
+
+@app.get("/api/backtest-st-flips/status")
+async def api_backtest_st_flips_status():
+    return _bstf_state
 
 
 # ═══════════════════════════════════════════════════════════════════
