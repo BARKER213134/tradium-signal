@@ -6260,7 +6260,7 @@ def _backtest_st_flips_sync(days: int, max_pairs: int,
             if not st_series:
                 continue
             # RSI(14) по тем же свечам
-            rsi_arr = _rsi_wilder([c["close"] for c in candles], 14) if use_rsi else None
+            rsi_arr = _rsi_wilder([c["c"] for c in candles], 14) if use_rsi else None
 
             open_pos = None
             pair_r = 0.0
