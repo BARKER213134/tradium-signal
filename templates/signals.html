@@ -663,6 +663,11 @@ async function toggleCluster(rowId, symbol) {
   const row = document.getElementById(rowId);
   if (!row) return;
   if (row.dataset.open === '1') {
+    // Свёртка — dispose WebGL контекста (фикс 5+ графиков тормозят)
+    const idx0 = rowId.replace('cl_','');
+    const tvDiv = document.getElementById('antv_'+idx0);
+    if (tvDiv && window._disposeChart) window._disposeChart(tvDiv);
+    if (tvDiv) tvDiv.dataset.loaded = '';  // позволяет перерисовать при след. открытии
     row.style.display = 'none';
     row.dataset.open = '0';
     return;
@@ -1271,7 +1276,13 @@ async function toggleClusterChart(idx, symbol) {
   _lastClTg = now;
   const tr = document.getElementById('clch'+idx);
   const area = document.getElementById('clchA'+idx);
-  if (tr.style.display !== 'none') { tr.style.display='none'; return; }
+  if (tr.style.display !== 'none') {
+    // Свёртка — dispose WebGL контекста
+    if (area && window._disposeChart) window._disposeChart(area);
+    if (area) area.dataset.loaded = '';  // разрешить перерисовку при след. открытии
+    tr.style.display='none';
+    return;
+  }
   tr.style.display='table-row';
   if (area.dataset.loaded) return;
   area.dataset.loaded = '1';
@@ -3115,6 +3126,9 @@ async function togglePaperChart(idx) {
   const div = document.getElementById('paperChart'+idx);
   if (!div) return;
   if (div.style.display !== 'none') {
+    // Свёртка — освобождаем WebGL контекст (фикс: 5+ графиков тормозили).
+    const area = document.getElementById('paperChartArea'+idx);
+    if (area && window._disposeChart) window._disposeChart(area);
     div.style.display = 'none';
     return;
   }
@@ -3169,8 +3183,10 @@ async function _renderPaperChart(idx, tf) {
     }
 
     const area = document.getElementById('paperChartArea'+idx);
+    // Важно: dispose ПЕРЕД innerHTML='' — иначе WebGL контекст остаётся висеть
+    if (window._disposeChart) window._disposeChart(area);
     area.innerHTML = '';
-    // safe: _createChartSafe удаляет старый chart в этом div (fix leak на переключении TF в paper)
+    // _createChartSafe сам делает dispose, но страхуемся
     const chart = window._createChartSafe(area, {
       layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
       grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
@@ -4749,7 +4765,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
         <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
         <button onclick="if(_currentJournalIdx<_journalFiltered.length-1)openJournalChart(_currentJournalIdx+1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">▶</button>
         <span style="font-size:9px;color:var(--muted);margin-left:4px;">A/D</span>
-        <button onclick="document.getElementById('journalChartModal').classList.remove('open')" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;padding:0 8px;">×</button>
+        <button onclick="closeJournalChartModal()" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;padding:0 8px;">×</button>
       </div>
     </div>
     <div id="jChartContainer" style="height:calc(100% - 48px);"></div>
@@ -5534,6 +5550,14 @@ function jSort(field) {
   });
   _jPage = 1;
   renderJournalPage();
+}
+
+function closeJournalChartModal() {
+  // Освобождаем WebGL контекст перед закрытием (предотвращает утечку)
+  const container = document.getElementById('jChartContainer');
+  if (container && window._disposeChart) window._disposeChart(container);
+  const modal = document.getElementById('journalChartModal');
+  if (modal) modal.classList.remove('open');
 }
 
 async function openJournalChart(idx, forceTF) {
