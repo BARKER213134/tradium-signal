@@ -453,7 +453,9 @@ def is_duplicate(pair_norm: str, direction: str, hours: int = 1) -> bool:
 # RECORD TO DB
 # ───────────────────────────────────────────────────────────────────
 def record_verified(result: dict) -> str | None:
-    """Пишет в коллекцию verified_signals. Возвращает _id или None."""
+    """Пишет в коллекцию verified_signals. Возвращает _id или None.
+    После записи инвалидирует journal_cache чтобы новый verified сразу
+    был виден в UI (иначе 45с TTL держал старый ответ)."""
     try:
         from database import _get_db, utcnow
         col = _get_db().verified_signals
@@ -479,6 +481,12 @@ def record_verified(result: dict) -> str | None:
             "btc_st": market.get("btc_st"),
         }
         r = col.insert_one(doc)
+        # Инвалидация journal_cache — свежий verified появится в UI сразу
+        try:
+            from cache_utils import journal_cache
+            journal_cache.invalidate("journal_all")
+        except Exception:
+            pass
         return str(r.inserted_id) if r else None
     except Exception:
         logger.exception("[verified] record fail")

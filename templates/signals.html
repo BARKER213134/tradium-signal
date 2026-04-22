@@ -4684,6 +4684,8 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="confluence">🎯 Confluence</option>
     <option value="cluster">💠 Cluster</option>
     <option value="paper">🤖 Paper Trade</option>
+    <option value="supertrend">🌀 SuperTrend</option>
+    <option value="verified">✨ Verified</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все</option>
@@ -5292,7 +5294,7 @@ function filterJournal() {
       else conf_medium++;
     }
   }
-  const names = {tradium: '📡 Tradium', cryptovizor: '🚀 CV', anomaly: '⚠ Аном', confluence: '🎯 Conf', paper: '🤖 Paper', cluster: '💠 Cluster'};
+  const names = {tradium: '📡 Tradium', cryptovizor: '🚀 CV', anomaly: '⚠ Аном', confluence: '🎯 Conf', paper: '🤖 Paper', cluster: '💠 Cluster', supertrend: '🌀 ST', verified: '✨ Verified'};
   const statsEl = document.getElementById('jSourceStats');
   if (statsEl) {
     statsEl.innerHTML = Object.entries(stats).map(([k, v]) => {
@@ -5478,8 +5480,15 @@ function renderJournal(items, startIdx) {
     const srcBadge = window.sigIcon
       ? window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: isStrong})
       : ((s.is_top_pick ? '👑 ' : (isStrong ? '⭐ ' : '')) +
-         ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠', confluence:'🎯'}[s.source] || '•'));
-    const srcName = s.source === 'tradium' ? 'Tradium' : s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐' : 'Confluence') : s.source === 'paper' ? 'Paper' : s.source === 'cluster' ? 'Cluster' : 'CV';
+         ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠', confluence:'🎯', supertrend:'🌀', verified:'✨'}[s.source] || '•'));
+    const srcName = s.source === 'tradium' ? 'Tradium'
+      : s.source === 'anomaly' ? 'Аномалия'
+      : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐' : 'Confluence')
+      : s.source === 'paper' ? 'Paper'
+      : s.source === 'cluster' ? 'Cluster'
+      : s.source === 'supertrend' ? ('ST ' + (s.st_tier ? s.st_tier.toUpperCase() : ''))
+      : s.source === 'verified' ? 'Verified'
+      : 'CV';
     const stFail = s.st_passed === false;
     const stPass = s.st_passed === true;
     const pumpHigh = (s.pump_score || 0) >= 2;
