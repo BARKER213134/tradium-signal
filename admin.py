@@ -5589,7 +5589,7 @@ async def api_entry_checker(pair: str, direction: str = "LONG"):
     if not result.get("ok"):
         return JSONResponse(
             {"ok": False, "error": result.get("error", "unknown"),
-             "hint": "Сначала дождись свежего сигнала на эту пару (за последние 4 часа)."},
+             "hint": "Сначала дождись свежего сигнала (за 8ч для Tradium/CV/Anomaly/Confluence/Cluster, 12ч для SuperTrend всех tier)."},
             headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
         )
     return JSONResponse(

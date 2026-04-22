@@ -64,19 +64,23 @@ def check_entry(pair: str, direction: str,
         return cached[1]
 
     # ── Сигнал: берём переданный или ищем свежий в Mongo ──
+    # Окно 8ч для большинства + 12ч для SuperTrend daily (они редкие).
+    # Включаем все ST tiers включая daily (раньше только vip/mtf).
     if provided_signal:
         found = dict(provided_signal)
         sig_time = utcnow()
     else:
-        since = utcnow() - timedelta(hours=4)
+        since_8h = utcnow() - timedelta(hours=8)
+        since_12h = utcnow() - timedelta(hours=12)
         found = None
         for col, q, tf, name in [
-            (_signals(), {"source": "tradium", "pair": pair_slash, "received_at": {"$gte": since}}, "received_at", "tradium"),
-            (_signals(), {"source": "cryptovizor", "pattern_triggered": True, "pair": pair_slash, "pattern_triggered_at": {"$gte": since}}, "pattern_triggered_at", "cryptovizor"),
-            (_confluence(), {"$or": [{"pair": pair_slash}, {"symbol": pair_norm}], "detected_at": {"$gte": since}}, "detected_at", "confluence"),
-            (_anomalies(), {"$or": [{"pair": pair_slash}, {"symbol": pair_norm}], "detected_at": {"$gte": since}}, "detected_at", "anomaly"),
-            (_clusters(), {"pair": pair_slash, "trigger_at": {"$gte": since}}, "trigger_at", "cluster"),
-            (_supertrend_signals(), {"pair_norm": pair_norm, "flip_at": {"$gte": since}, "tier": {"$in": ["vip", "mtf"]}}, "flip_at", "supertrend"),
+            (_signals(), {"source": "tradium", "pair": pair_slash, "received_at": {"$gte": since_8h}}, "received_at", "tradium"),
+            (_signals(), {"source": "cryptovizor", "pattern_triggered": True, "pair": pair_slash, "pattern_triggered_at": {"$gte": since_8h}}, "pattern_triggered_at", "cryptovizor"),
+            (_confluence(), {"$or": [{"pair": pair_slash}, {"symbol": pair_norm}], "detected_at": {"$gte": since_8h}}, "detected_at", "confluence"),
+            (_anomalies(), {"$or": [{"pair": pair_slash}, {"symbol": pair_norm}], "detected_at": {"$gte": since_8h}}, "detected_at", "anomaly"),
+            (_clusters(), {"pair": pair_slash, "trigger_at": {"$gte": since_8h}}, "trigger_at", "cluster"),
+            # SuperTrend: vip/mtf/daily ВСЕ, окно 12ч (daily редкие)
+            (_supertrend_signals(), {"pair_norm": pair_norm, "flip_at": {"$gte": since_12h}, "tier": {"$in": ["vip", "mtf", "daily"]}}, "flip_at", "supertrend"),
         ]:
             try:
                 doc = col.find_one(q, sort=[(tf, -1)])
