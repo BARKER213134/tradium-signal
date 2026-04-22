@@ -4683,6 +4683,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jTopPickBtn" onclick="_toggleTopPicks()" title="Только Top Picks — сигналы подтверждённые STRONG Confluence" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">👑 Top · OFF</button>
   <button id="jStVipBtn" onclick="_toggleStTier('vip')" title="Только 🏆 VIP SuperTrend: ST flip + сигнал другого бота ±2ч (WR 60%, PF 3.6)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;">🏆 VIP · OFF</button>
   <button id="jStMtfBtn" onclick="_toggleStTier('mtf')" title="Только 🔱 Triple MTF: ST 1h flip + 4h + 1d aligned (EV +0.68R, PF 2.15)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;">🔱 MTF · OFF</button>
+  <button id="jAllSpecialBtn" onclick="_toggleAllSpecial()" title="ВСЁ особое: Strong (Conf≥5, Anom≥70, CV pattern, Cluster MEGA/STRONG, Tradium triggered) + Top Pick + VIP + MTF + Cluster" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">🔥 Все · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
 </div>
 
@@ -5201,6 +5202,14 @@ function filterJournal() {
       if (s.source !== 'supertrend') return false;
       if (s.st_tier !== window._journalStTier) return false;
     }
+    // "Все особое" — объединяет Strong + Top Pick + VIP + MTF + Cluster
+    if (window._journalAllSpecial) {
+      const isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
+      const isTopPick = !!s.is_top_pick;
+      const isVipMtf = s.source === 'supertrend' && (s.st_tier === 'vip' || s.st_tier === 'mtf');
+      const isCluster = s.source === 'cluster';
+      if (!(isStrong || isTopPick || isVipMtf || isCluster)) return false;
+    }
     return true;
   });
   // Apply current sort
@@ -5333,6 +5342,43 @@ function _toggleStrongOnly() {
   const scrollY = window.scrollY;
   filterJournal();
   // После рендера восстанавливаем (requestAnimationFrame чтобы после layout)
+  requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
+}
+
+function _toggleAllSpecial() {
+  window._journalAllSpecial = !window._journalAllSpecial;
+  const btn = document.getElementById('jAllSpecialBtn');
+  if (btn) {
+    if (window._journalAllSpecial) {
+      btn.style.background = 'linear-gradient(135deg, rgba(255,140,50,0.15), rgba(255,0,128,0.10))';
+      btn.style.borderColor = '#ff8c32';
+      btn.style.color = '#ff8c32';
+      btn.textContent = '🔥 Все · ON';
+    } else {
+      btn.style.background = 'none';
+      btn.style.borderColor = 'var(--border)';
+      btn.style.color = 'var(--muted)';
+      btn.textContent = '🔥 Все · OFF';
+    }
+  }
+  // При включении "Все" — выключаем другие эксклюзивные фильтры чтобы не
+  // пересекались (иначе Strong+Top выдаст пересечение, а не объединение)
+  if (window._journalAllSpecial) {
+    window._journalStrongOnly = false;
+    window._journalTopPickOnly = false;
+    window._journalStTier = null;
+    // Обновить UI других кнопок
+    const sb = document.getElementById('jStrongOnlyBtn');
+    if (sb) { sb.style.background='none'; sb.style.borderColor='var(--border)'; sb.style.color='var(--muted)'; sb.textContent='⭐ Strong · OFF'; }
+    const tb = document.getElementById('jTopPickBtn');
+    if (tb) { tb.style.background='none'; tb.style.borderColor='var(--border)'; tb.style.color='var(--muted)'; tb.textContent='👑 Top · OFF'; }
+    const vb = document.getElementById('jStVipBtn');
+    if (vb) { vb.style.background='none'; vb.style.borderColor='var(--border)'; vb.style.color='var(--muted)'; vb.textContent='🏆 VIP · OFF'; }
+    const mb = document.getElementById('jStMtfBtn');
+    if (mb) { mb.style.background='none'; mb.style.borderColor='var(--border)'; mb.style.color='var(--muted)'; mb.textContent='🔱 MTF · OFF'; }
+  }
+  const scrollY = window.scrollY;
+  filterJournal();
   requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
 }
 
