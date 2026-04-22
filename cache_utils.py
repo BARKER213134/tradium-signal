@@ -73,7 +73,7 @@ class AsyncTTLCache:
 
 
 # ── Глобальные инстансы для admin.py ──
-journal_cache = AsyncTTLCache(ttl=15)       # /api/journal — 15с (мгновенная инвалидация при push от источников)
+journal_cache = AsyncTTLCache(ttl=20)       # /api/journal — 20с (мгновенная инвалидация при push от источников, сбалансировано с UI polling)
 kl_enrich_cache = AsyncTTLCache(ttl=30)     # /api/key-levels/enrich — обогащение идёт сразу после журнала
 journal_by_symbol_cache = AsyncTTLCache(ttl=60)  # /api/journal/by-symbol
 top_picks_cache = AsyncTTLCache(ttl=60)     # /api/top-picks

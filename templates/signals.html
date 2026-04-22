@@ -5801,10 +5801,11 @@ document.addEventListener('keydown', (e) => {
 });
 
 loadJournal();
-// 15с polling — компромисс между "увидеть сигнал быстро" и "не убивать main thread
-// при открытых графиках". journal_cache на бэке тоже 15с, invalidate при каждом
-// новом сигнале из source invalidate'нутых (verified, supertrend, cluster, ...)
-safeInterval(loadJournal, 15000);
+// 20с polling: 15с убивал main thread при 5+ открытых графиках (×3 POST per poll
+// + 3400 строк tbody innerHTML). 30с был слишком медленно. 20с — компромисс.
+// При новом invalidate'нутом сигнале cache на бэке сразу свежий,
+// UI подтянет в течение ≤20с.
+safeInterval(loadJournal, 20000);
 </script>
 
 {% elif bot == 'cryptovizor' %}
