@@ -1312,13 +1312,16 @@ def _calc_position_params(signal_data: dict, phase: str, verdict: str,
     source = (signal_data.get("source") or "").lower()
     tier = (signal_data.get("tier") or signal_data.get("st_tier") or "").lower()
 
-    # Бонусы за силу источника
+    # Бонусы за силу источника — НЕ применяем если verdict=caution
+    # (каузус DYDX #58: top_pick × 1.3 plev + size+3 + CAUTION×0.5 size дал
+    # плечо 12 при 1 red flag → сделка -37%. Лучше не усиливать подозрительные)
     is_cluster = signal_data.get("is_cluster") or source == "cluster"
     strength = signal_data.get("cluster_strength", "NORMAL")
     is_top_pick = bool(signal_data.get("is_top_pick"))
     is_vip = tier == "vip" or source == "supertrend_vip"
+    apply_boosts = (verdict != "caution")  # на caution бустеры не даём
 
-    if is_cluster:
+    if apply_boosts and is_cluster:
         try:
             from cluster_detector import get_config as _cc
             cfg = _cc()
@@ -1337,11 +1340,11 @@ def _calc_position_params(signal_data: dict, phase: str, verdict: str,
                 notes.append("cluster")
         except Exception:
             pass
-    elif is_top_pick:
+    elif apply_boosts and is_top_pick:
         leverage = int(round(leverage * 1.3))
         size_pct += mode_cfg["top_pick_size_bonus"]
         notes.append("TOP PICK")
-    elif is_vip:
+    elif apply_boosts and is_vip:
         size_pct += 1
         notes.append("VIP")
 
@@ -1362,10 +1365,13 @@ def _calc_position_params(signal_data: dict, phase: str, verdict: str,
         pass
     # BULL/BEAR — оставляем средний
 
-    # CAUTION verdict — половина
+    # CAUTION verdict — ×0.5 и по размеру, и по плечу
+    # (раньше ×0.5 был только size — при top_pick boost до 12× плеча
+    # это давало notional 108% депозита при 1 red flag)
     if verdict == "caution":
         size_pct *= 0.5
-        notes.append("CAUTION×0.5")
+        leverage = max(lev_min, int(round(leverage * 0.5)))
+        notes.append("CAUTION×0.5(size+lev)")
 
     # Clamp в диапазон mode
     size_pct = max(size_min, min(size_max, size_pct))
