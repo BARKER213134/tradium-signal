@@ -5636,13 +5636,49 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
         FRESH_KEY, ALIGNED_KEY = "ST30M_FRESH", "ST30M_ALIGNED"
 
     BASE_KEY = "BASE_FLIP_30M" if ST_TF == "30m" else "BASE_FLIP_1H"
+    STRICT_KEY = "BASE_STRICT"        # ≥4 bars, 0.5% gap, breakout close
+    STRICT_VOL_KEY = "BASE_STRICT_VOL"  # STRICT + volume spike 1.5×
+    IMPHASE_KEY = "IMMEDIATE_PHASE"     # IMMEDIATE минус BEAR/CAPITULATION
 
     # Stats
     stats = {s: {"executed": 0, "skipped": 0, "timeout": 0, "invalidated": 0,
                  "wins": 0, "losses": 0, "open": 0,
                  "sum_r": 0.0, "sum_pct": 0.0,
-                 "no_base": 0, "base_ok": 0}
-             for s in ("IMMEDIATE", FRESH_KEY, ALIGNED_KEY, BASE_KEY)}
+                 "no_base": 0, "base_ok": 0, "phase_skip": 0, "vol_skip": 0}
+             for s in ("IMMEDIATE", FRESH_KEY, ALIGNED_KEY, BASE_KEY,
+                       STRICT_KEY, STRICT_VOL_KEY, IMPHASE_KEY)}
+
+    # BTC 4h для фильтра фаз (упрощённый proxy: EMA20 slope + drawdown)
+    btc_4h = get_klines_any("BTCUSDT", "4h", 500) or []
+    btc_ema20: list = []
+    if btc_4h:
+        k = 2.0 / (20 + 1)
+        ema = btc_4h[0]["c"]
+        for c in btc_4h:
+            ema = c["c"] * k + ema * (1 - k)
+            btc_ema20.append({"t": c["t"], "c": c["c"], "ema": ema})
+
+    def _is_bad_phase(ts_ms: int) -> bool:
+        """True если фаза похожа на BEAR_TREND или CAPITULATION на момент ts."""
+        if not btc_ema20:
+            return False
+        # Последний BTC 4h бар на момент ts
+        idx = None
+        for i in range(len(btc_ema20) - 1, -1, -1):
+            if btc_ema20[i]["t"] <= ts_ms:
+                idx = i; break
+        if idx is None or idx < 10:
+            return False
+        cur = btc_ema20[idx]
+        prev = btc_ema20[idx - 5]
+        # BEAR: close < EMA20 и EMA20 снижается
+        bear = cur["c"] < cur["ema"] and cur["ema"] < prev["ema"]
+        # CAPITULATION: BTC упал > 7% за последние 48ч (12 баров 4h)
+        past_idx = max(0, idx - 12)
+        past = btc_4h[past_idx]["c"]
+        drawdown = (cur["c"] - past) / past * 100 if past > 0 else 0
+        capit = drawdown <= -7.0
+        return bear or capit
 
     # Статистика ST 30m direction на момент CV (для проверки гипотезы
     # "CV LONG всегда приходит под ST 30m")
@@ -5708,6 +5744,17 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
                     elif what == "SL": st_im["losses"] += 1
                     else: st_im["open"] += 1
                     st_im["sum_r"] += r_mult; st_im["sum_pct"] += pnl_pct
+
+                    # IMMEDIATE_PHASE: тот же результат, но пропускаем BEAR/CAPITULATION
+                    if _is_bad_phase(pat_ms):
+                        stats[IMPHASE_KEY]["phase_skip"] += 1
+                    else:
+                        st_ph = stats[IMPHASE_KEY]
+                        st_ph["executed"] += 1
+                        if what == "TP": st_ph["wins"] += 1
+                        elif what == "SL": st_ph["losses"] += 1
+                        else: st_ph["open"] += 1
+                        st_ph["sum_r"] += r_mult; st_ph["sum_pct"] += pnl_pct
 
         # ── 2+3) FRESH / ALIGNED ──
         # Инвалидированные пропускаем для обоих ST-стратегий
@@ -5829,6 +5876,74 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
                     else:
                         stats[BASE_KEY]["no_base"] += 1
 
+        # ── BASE_STRICT: ≥4 bars, ≥0.5% gap, flip-бар закрывается выше max(base highs) ──
+        # + BASE_STRICT_VOL: тот же критерий + volume spike на flip-баре
+        if fresh_flip_idx is None:
+            stats[STRICT_KEY]["timeout"] += 1
+            stats[STRICT_VOL_KEY]["timeout"] += 1
+        else:
+            window2 = []
+            for j in range(len(st_series)):
+                b = st_series[j]
+                if b["t"] < pat_ms:
+                    continue
+                if j >= fresh_flip_idx:
+                    break
+                window2.append((j, b["low"], b["high"]))
+            flip_bar = st_series[fresh_flip_idx]
+            flip_close = flip_bar["close"]
+            passed_strict = False
+            sl_strict = None
+            ref_high_or_low = None  # для breakout-подтверждения
+            if len(window2) >= 5:
+                if is_long:
+                    cap_idx, cap_val, _ = min(window2, key=lambda x: x[1])
+                    base_bars2 = [(i, lo, hi) for (i, lo, hi) in window2
+                                  if i > cap_idx and lo > cap_val * 1.005]
+                    if len(base_bars2) >= 4:
+                        base_max_high = max(hi for (_, _, hi) in base_bars2)
+                        higher_low = min(lo for (_, lo, _) in base_bars2)
+                        # Breakout confirmation
+                        if flip_close > base_max_high:
+                            sl_strict = higher_low * (1 - BUFFER_PCT / 100.0)
+                            ref_high_or_low = higher_low
+                            passed_strict = True
+                else:
+                    cap_idx, _, cap_val = max(window2, key=lambda x: x[2])
+                    base_bars2 = [(i, lo, hi) for (i, lo, hi) in window2
+                                  if i > cap_idx and hi < cap_val * 0.995]
+                    if len(base_bars2) >= 4:
+                        base_min_low = min(lo for (_, lo, _) in base_bars2)
+                        lower_high = max(hi for (_, _, hi) in base_bars2)
+                        if flip_close < base_min_low:
+                            sl_strict = lower_high * (1 + BUFFER_PCT / 100.0)
+                            ref_high_or_low = lower_high
+                            passed_strict = True
+
+            if not passed_strict:
+                stats[STRICT_KEY]["no_base"] += 1
+                stats[STRICT_VOL_KEY]["no_base"] += 1
+            else:
+                stats[STRICT_KEY]["base_ok"] += 1
+                _simulate_base_flip_trade(stats[STRICT_KEY], st_series, fresh_flip_idx,
+                                          is_long, sl_strict, MAX_HOLD_H, BARS_PER_HOUR)
+                # Volume filter: flip-бар vol > avg(last 10) × 1.5
+                vol_ok = False
+                try:
+                    flip_vol = float(cand_st[fresh_flip_idx].get("v") or 0.0)
+                    vols = [float(cand_st[k].get("v") or 0.0)
+                            for k in range(max(0, fresh_flip_idx - 10), fresh_flip_idx)]
+                    avg_vol = sum(vols) / len(vols) if vols else 0.0
+                    vol_ok = avg_vol > 0 and flip_vol > avg_vol * 1.5
+                except Exception:
+                    vol_ok = False
+                if vol_ok:
+                    stats[STRICT_VOL_KEY]["base_ok"] += 1
+                    _simulate_base_flip_trade(stats[STRICT_VOL_KEY], st_series, fresh_flip_idx,
+                                              is_long, sl_strict, MAX_HOLD_H, BARS_PER_HOUR)
+                else:
+                    stats[STRICT_VOL_KEY]["vol_skip"] += 1
+
     # Формируем отчёт
     rows = []
     for name, st in stats.items():
@@ -5851,6 +5966,8 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
             "skipped": st["skipped"],
             "no_base": st.get("no_base", 0),
             "base_ok": st.get("base_ok", 0),
+            "phase_skip": st.get("phase_skip", 0),
+            "vol_skip": st.get("vol_skip", 0),
         })
 
     return {
