@@ -5635,11 +5635,14 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
         BARS_PER_HOUR = 2
         FRESH_KEY, ALIGNED_KEY = "ST30M_FRESH", "ST30M_ALIGNED"
 
+    BASE_KEY = "BASE_FLIP_30M" if ST_TF == "30m" else "BASE_FLIP_1H"
+
     # Stats
     stats = {s: {"executed": 0, "skipped": 0, "timeout": 0, "invalidated": 0,
                  "wins": 0, "losses": 0, "open": 0,
-                 "sum_r": 0.0, "sum_pct": 0.0}
-             for s in ("IMMEDIATE", FRESH_KEY, ALIGNED_KEY)}
+                 "sum_r": 0.0, "sum_pct": 0.0,
+                 "no_base": 0, "base_ok": 0}
+             for s in ("IMMEDIATE", FRESH_KEY, ALIGNED_KEY, BASE_KEY)}
 
     # Статистика ST 30m direction на момент CV (для проверки гипотезы
     # "CV LONG всегда приходит под ST 30m")
@@ -5783,6 +5786,49 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
         else:
             stats[ALIGNED_KEY]["timeout"] += 1
 
+        # ── BASE_FLIP: flip + структура (higher low / lower high между CV и flip) ──
+        if fresh_flip_idx is None:
+            stats[BASE_KEY]["timeout"] += 1
+        else:
+            # Собираем бары [pat_ms .. flip_idx)
+            window = []
+            for j in range(len(st_series)):
+                b = st_series[j]
+                if b["t"] < pat_ms:
+                    continue
+                if j >= fresh_flip_idx:
+                    break
+                window.append((j, b.get("low") or b.get("l"), b.get("high") or b.get("h")))
+            if len(window) < 3:
+                stats[BASE_KEY]["no_base"] += 1
+            else:
+                if is_long:
+                    # capitulation = самый низкий low; после него ≥2 бара с low > cap*(1+0.2%)
+                    cap_idx, cap_val, _ = min(window, key=lambda x: x[1])
+                    base_bars = [(i, lo, hi) for (i, lo, hi) in window
+                                 if i > cap_idx and lo > cap_val * 1.002]
+                    if len(base_bars) >= 2:
+                        higher_low = min(lo for (_, lo, _) in base_bars)
+                        sl_override = higher_low * (1 - BUFFER_PCT / 100.0)
+                        stats[BASE_KEY]["base_ok"] += 1
+                        _simulate_base_flip_trade(stats[BASE_KEY], st_series, fresh_flip_idx,
+                                                  True, sl_override, MAX_HOLD_H, BARS_PER_HOUR)
+                    else:
+                        stats[BASE_KEY]["no_base"] += 1
+                else:
+                    # зеркально: capitulation = самый высокий high; ≥2 бара с high < cap*(1-0.2%)
+                    cap_idx, _, cap_val = max(window, key=lambda x: x[2])
+                    base_bars = [(i, lo, hi) for (i, lo, hi) in window
+                                 if i > cap_idx and hi < cap_val * 0.998]
+                    if len(base_bars) >= 2:
+                        lower_high = max(hi for (_, _, hi) in base_bars)
+                        sl_override = lower_high * (1 + BUFFER_PCT / 100.0)
+                        stats[BASE_KEY]["base_ok"] += 1
+                        _simulate_base_flip_trade(stats[BASE_KEY], st_series, fresh_flip_idx,
+                                                  False, sl_override, MAX_HOLD_H, BARS_PER_HOUR)
+                    else:
+                        stats[BASE_KEY]["no_base"] += 1
+
     # Формируем отчёт
     rows = []
     for name, st in stats.items():
@@ -5803,6 +5849,8 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
             "timeout": st["timeout"],
             "invalidated": st["invalidated"],
             "skipped": st["skipped"],
+            "no_base": st.get("no_base", 0),
+            "base_ok": st.get("base_ok", 0),
         })
 
     return {
@@ -5876,6 +5924,77 @@ def _simulate_st30m_trade(st_dict: dict, st_series: list, entry_idx: int,
 
     st_dict["executed"] += 1
     if what == "SL": st_dict["losses"] += 1
+    elif what == "TRAIL" and r_mult > 0: st_dict["wins"] += 1
+    elif what == "TRAIL": st_dict["losses"] += 1
+    else: st_dict["open"] += 1
+    st_dict["sum_r"] += r_mult
+    st_dict["sum_pct"] += pnl_pct
+
+
+def _simulate_base_flip_trade(st_dict: dict, st_series: list, entry_idx: int,
+                              is_long: bool, sl_override: float, max_hold_h: int,
+                              bars_per_hour: int = 2, tp_r: float = 3.0):
+    """Симуляция BASE_FLIP: entry = close[entry_idx], SL = структурный
+    (higher_low/lower_high ± buffer), TP = +tp_r по R, или exit на opposite flip."""
+    if entry_idx >= len(st_series) - 2:
+        st_dict["skipped"] += 1
+        return
+    entry_bar = st_series[entry_idx]
+    entry = entry_bar["close"]
+    sl = sl_override
+    if is_long and sl >= entry:
+        st_dict["skipped"] += 1
+        return
+    if (not is_long) and sl <= entry:
+        st_dict["skipped"] += 1
+        return
+    risk = abs(entry - sl)
+    if risk <= 0:
+        st_dict["skipped"] += 1
+        return
+    tp = entry + tp_r * risk if is_long else entry - tp_r * risk
+
+    max_bars = max_hold_h * bars_per_hour
+    end_idx = min(entry_idx + max_bars, len(st_series) - 1)
+    target_trend = 1 if is_long else -1
+    what = "OPEN"; r_mult = 0.0; pnl_pct = 0.0
+    last_bar = None
+    for i in range(entry_idx + 1, end_idx + 1):
+        bar = st_series[i]
+        last_bar = bar
+        hi, lo, cl = bar["high"], bar["low"], bar["close"]
+        # SL
+        if is_long and lo <= sl:
+            what = "SL"; r_mult = -1.0
+            pnl_pct = (sl - entry) / entry * 100
+            break
+        if (not is_long) and hi >= sl:
+            what = "SL"; r_mult = -1.0
+            pnl_pct = (sl - entry) / entry * 100 * -1
+            break
+        # TP (+tp_r)
+        if is_long and hi >= tp:
+            what = "TP"; r_mult = tp_r
+            pnl_pct = (tp - entry) / entry * 100
+            break
+        if (not is_long) and lo <= tp:
+            what = "TP"; r_mult = tp_r
+            pnl_pct = (tp - entry) / entry * 100 * -1
+            break
+        # Opposite flip → trail-exit
+        if bar.get("trend") and bar["trend"] != target_trend:
+            what = "TRAIL"
+            r_mult = (cl - entry) / risk if is_long else (entry - cl) / risk
+            pnl_pct = (cl - entry) / entry * 100 * (1 if is_long else -1)
+            break
+    if what == "OPEN" and last_bar:
+        last_c = last_bar["close"]
+        r_mult = (last_c - entry) / risk if is_long else (entry - last_c) / risk
+        pnl_pct = (last_c - entry) / entry * 100 * (1 if is_long else -1)
+
+    st_dict["executed"] += 1
+    if what == "TP": st_dict["wins"] += 1
+    elif what == "SL": st_dict["losses"] += 1
     elif what == "TRAIL" and r_mult > 0: st_dict["wins"] += 1
     elif what == "TRAIL": st_dict["losses"] += 1
     else: st_dict["open"] += 1
