@@ -6547,7 +6547,8 @@ def _compute_journal_sync():
             if (not ex) or prio > tier_prio.get(ex.get("tier"), 0):
                 best_st[key] = s
         for s in best_st.values():
-            at_dt = s.get("flip_at")
+            flip_dt = s.get("flip_at")
+            created_dt = s.get("created_at")
             tier = s.get("tier", "mtf")
             tier_emoji = {"vip": "🏆", "mtf": "🔱"}.get(tier, "🌀")
             tier_label = {"vip": "VIP", "mtf": "Triple MTF"}.get(tier, tier.upper())
@@ -6558,12 +6559,18 @@ def _compute_journal_sync():
                 pattern = f"{tier_emoji} ST {tier_label} + {'+'.join(src_names)}"
             else:
                 pattern = f"{tier_emoji} ST {tier_label} ({'+'.join(aligned_tfs)})"
-            if at_dt and hasattr(at_dt, "timetuple"):
-                at_ts = _cal.timegm(at_dt.timetuple())
-                at_iso = at_dt.isoformat() + "Z"
+            # Сортировка по created_at (когда сигнал появился в системе и улетел в бота),
+            # а не по flip_at (время бара = может быть час назад, из-за чего сигнал
+            # проваливался вниз в журнале хотя в бот пришёл только что).
+            sort_dt = created_dt or flip_dt
+            if sort_dt and hasattr(sort_dt, "timetuple"):
+                at_ts = _cal.timegm(sort_dt.timetuple())
+                at_iso = sort_dt.isoformat() + "Z"
             else:
                 at_ts = 0
-                at_iso = str(at_dt or "")
+                at_iso = str(sort_dt or "")
+            # flip_at нужен для графика (маркер на конкретной свече)
+            flip_iso = flip_dt.isoformat() + "Z" if (flip_dt and hasattr(flip_dt, "timetuple")) else None
             items.append({
                 "source": "supertrend",
                 "symbol": s.get("pair_norm", ""),
@@ -6583,6 +6590,7 @@ def _compute_journal_sync():
                 "aligned_bots_count": len(aligned_bots),
                 "at": at_iso,
                 "at_ts": at_ts,
+                "flip_at": flip_iso,  # для графика (отдельно от сортировки)
             })
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] supertrend fetch fail: {e}")
