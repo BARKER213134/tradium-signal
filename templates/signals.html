@@ -2996,9 +2996,9 @@ async function _drawPaperHistChart(idx) {
     });
     markers.sort((a, b) => a.time - b.time);
     // Накопительные маркеры: KC и KL не затирают друг друга, ST flip-стрелки сразу, + ST-signals
-    let _msM = [], _klM = [], _stSigM = [];
+    let _msM = [], _klM = [], _stSigM = [], _verM = [];
     const _stFlipsHist = (_stResHist && _stResHist.flipMarkers) ? _stResHist.flipMarkers : [];
-    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsHist, ..._stSigM].sort((a,b) => a.time - b.time));
+    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsHist, ..._stSigM, ..._verM].sort((a,b) => a.time - b.time));
     _applyAll();
     // Market state overlay (KC + Reversal)
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
@@ -3021,6 +3021,14 @@ async function _drawPaperHistChart(idx) {
       window._fetchStSignals(h.symbol, 336).then(stSigs => {
         if (!stSigs || !stSigs.length) return;
         _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
+        _applyAll();
+      }).catch(() => {});
+    }
+    // Verified Entries (✨) — маркеры от Entry Checker автоматической проверки
+    if (window._fetchVerifiedSignals && window._addVerifiedMarkers && h.symbol && d.candles.length) {
+      window._fetchVerifiedSignals(h.symbol, 168).then(verItems => {
+        if (!verItems || !verItems.length) return;
+        _verM = window._addVerifiedMarkers(d.candles, verItems) || [];
         _applyAll();
       }).catch(() => {});
     }
@@ -3235,9 +3243,9 @@ async function _renderPaperChart(idx, tf) {
     }
     markers.sort((a,b) => a.time - b.time);
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу + ST-signals
-    let _msM = [], _klM = [], _stSigM = [];
+    let _msM = [], _klM = [], _stSigM = [], _verM = [];
     const _stFlipsLive = (_stResLive && _stResLive.flipMarkers) ? _stResLive.flipMarkers : [];
-    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsLive, ..._stSigM].sort((a,b) => a.time - b.time));
+    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsLive, ..._stSigM, ..._verM].sort((a,b) => a.time - b.time));
     _applyAll();
     // Market state overlay (KC + Reversal)
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
@@ -3260,6 +3268,14 @@ async function _renderPaperChart(idx, tf) {
       window._fetchStSignals(p.symbol, 336).then(stSigs => {
         if (!stSigs || !stSigs.length) return;
         _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
+        _applyAll();
+      }).catch(() => {});
+    }
+    // Verified Entries (✨) — маркеры от Entry Checker автоматической проверки
+    if (window._fetchVerifiedSignals && window._addVerifiedMarkers && p.symbol && d.candles.length) {
+      window._fetchVerifiedSignals(p.symbol, 168).then(verItems => {
+        if (!verItems || !verItems.length) return;
+        _verM = window._addVerifiedMarkers(d.candles, verItems) || [];
         _applyAll();
       }).catch(() => {});
     }
@@ -4683,7 +4699,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jTopPickBtn" onclick="_toggleTopPicks()" title="Только Top Picks — сигналы подтверждённые STRONG Confluence" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">👑 Top · OFF</button>
   <button id="jStVipBtn" onclick="_toggleStTier('vip')" title="Только 🏆 VIP SuperTrend: ST flip + сигнал другого бота ±2ч (WR 60%, PF 3.6)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;">🏆 VIP · OFF</button>
   <button id="jStMtfBtn" onclick="_toggleStTier('mtf')" title="Только 🔱 Triple MTF: ST 1h flip + 4h + 1d aligned (EV +0.68R, PF 2.15)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;">🔱 MTF · OFF</button>
-  <button id="jAllSpecialBtn" onclick="_toggleAllSpecial()" title="ВСЁ особое: Strong + 👑 Top Pick + 🏆 VIP + 🔱 MTF + 💠 Cluster + 🤖 Paper + ⚠️ Anomaly" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">🔥 Все · OFF</button>
+  <button id="jAllSpecialBtn" onclick="_toggleAllSpecial()" title="ВСЁ особое: ⭐ Strong + 👑 Top Pick + 🏆 VIP + 🔱 MTF + 💠 Cluster + 🤖 Paper + ⚠️ Anomaly + ✨ Verified" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">🔥 Все · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
 </div>
 
@@ -4775,7 +4791,14 @@ function _setModalTF(tf) {
 }
 
 function _srcLabel(src) {
-  return src === 'tradium' ? '📡 Tradium' : src === 'anomaly' ? '⚠️ Аномалия' : src === 'confluence' ? '🎯 Confluence' : src === 'paper' ? '🤖 Paper Trade' : src === 'cluster' ? '💠 Cluster' : '🚀 Cryptovizor';
+  if (src === 'tradium')    return '📡 Tradium';
+  if (src === 'anomaly')    return '⚠️ Аномалия';
+  if (src === 'confluence') return '🎯 Confluence';
+  if (src === 'paper')      return '🤖 Paper Trade';
+  if (src === 'cluster')    return '💠 Cluster';
+  if (src === 'supertrend') return '🌀 SuperTrend';
+  if (src === 'verified')   return '✨ Verified';
+  return '🚀 Cryptovizor';
 }
 function _fmtPrice(v) { return v != null ? String(v) : '—'; }
 
@@ -5004,7 +5027,7 @@ async function loadCoinChart(coin) {
     }
     unique.sort((a, b) => a.time - b.time);
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу, + ST-signals
-    let _msM = [], _klM = [], _stSigM = [];
+    let _msM = [], _klM = [], _stSigM = [], _verM = [];
     const _stFlipsCoin = (_stResCoin && _stResCoin.flipMarkers) ? _stResCoin.flipMarkers : [];
     const _applyAll = () => series.setMarkers([...unique, ..._msM, ..._klM, ..._stFlipsCoin, ..._stSigM].sort((a,b) => a.time - b.time));
     _applyAll();
@@ -5013,6 +5036,14 @@ async function loadCoinChart(coin) {
       window._fetchStSignals(sym, 336).then(stSigs => {
         if (!stSigs || !stSigs.length) return;
         _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
+        _applyAll();
+      }).catch(() => {});
+    }
+    // Verified Entries (✨) — маркеры от Entry Checker автоматической проверки
+    if (window._fetchVerifiedSignals && window._addVerifiedMarkers && sym && d.candles.length) {
+      window._fetchVerifiedSignals(sym, 168).then(verItems => {
+        if (!verItems || !verItems.length) return;
+        _verM = window._addVerifiedMarkers(d.candles, verItems) || [];
         _applyAll();
       }).catch(() => {});
     }
@@ -5202,7 +5233,7 @@ function filterJournal() {
       if (s.source !== 'supertrend') return false;
       if (s.st_tier !== window._journalStTier) return false;
     }
-    // "Все особое" — Strong + Top Pick + VIP + MTF + Cluster + Paper + Anomaly
+    // "Все особое" — Strong + Top + VIP + MTF + Cluster + Paper + Anomaly + Verified
     if (window._journalAllSpecial) {
       const isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
       const isTopPick = !!s.is_top_pick;
@@ -5210,7 +5241,8 @@ function filterJournal() {
       const isCluster = s.source === 'cluster';
       const isPaper = s.source === 'paper';
       const isAnomaly = s.source === 'anomaly';
-      if (!(isStrong || isTopPick || isVipMtf || isCluster || isPaper || isAnomaly)) return false;
+      const isVerified = s.source === 'verified';
+      if (!(isStrong || isTopPick || isVipMtf || isCluster || isPaper || isAnomaly || isVerified)) return false;
     }
     return true;
   });
@@ -5657,9 +5689,9 @@ async function openJournalChart(idx, forceTF) {
     }
     markers.sort((a,b) => a.time - b.time);
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу + ST-signals
-    let _msM = [], _klM = [], _stSigM = [];
+    let _msM = [], _klM = [], _stSigM = [], _verM = [];
     const _stFlipsJ = (_stResJ && _stResJ.flipMarkers) ? _stResJ.flipMarkers : [];
-    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsJ, ..._stSigM].sort((a,b) => a.time - b.time));
+    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsJ, ..._stSigM, ..._verM].sort((a,b) => a.time - b.time));
     _applyAll();
     // Market state overlay (KC + Reversal)
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
@@ -5682,6 +5714,14 @@ async function openJournalChart(idx, forceTF) {
       window._fetchStSignals(sym, 336).then(stSigs => {
         if (!stSigs || !stSigs.length) return;
         _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
+        _applyAll();
+      }).catch(() => {});
+    }
+    // Verified Entries (✨) — маркеры от Entry Checker автоматической проверки
+    if (window._fetchVerifiedSignals && window._addVerifiedMarkers && sym && d.candles.length) {
+      window._fetchVerifiedSignals(sym, 168).then(verItems => {
+        if (!verItems || !verItems.length) return;
+        _verM = window._addVerifiedMarkers(d.candles, verItems) || [];
         _applyAll();
       }).catch(() => {});
     }

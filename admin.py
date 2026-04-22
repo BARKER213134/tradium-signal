@@ -6587,6 +6587,46 @@ def _compute_journal_sync():
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] supertrend fetch fail: {e}")
 
+    # ✨ Verified Entries (авто-проверка Entry Checker — отправлено в @topmonetabot)
+    try:
+        from database import _get_db
+        vcol = _get_db().verified_signals
+        for v in vcol.find({"created_at": {"$gte": since_14d}}).sort("created_at", -1).limit(500):
+            at_dt = v.get("created_at")
+            verdict = v.get("verdict", "go")
+            emoji = "⚠️✨" if verdict == "caution" else "✨"
+            vlabel = "VERIFIED" if verdict == "go" else "VERIFIED (caution)"
+            src_tag = v.get("signal_source") or "?"
+            tier = v.get("signal_tier")
+            if tier: src_tag += f"/{tier}"
+            pattern_txt = f"{emoji} {vlabel} ({src_tag})"
+            counts = v.get("counts") or {}
+            pair_raw = v.get("pair") or ""
+            pair_norm = v.get("pair_norm") or pair_raw.replace("/", "").upper()
+            items.append({
+                "source": "verified",
+                "symbol": pair_norm,
+                "pair": pair_raw,
+                "direction": v.get("direction", ""),
+                "entry": v.get("entry"),
+                "tp1": v.get("tp1"),
+                "sl": v.get("sl"),
+                "pattern": pattern_txt,
+                "score": v.get("signal_score"),
+                "st_passed": None,
+                "pump_score": 0,
+                "is_top_pick": False,
+                "top_pick_confirmations_count": 0,
+                "verified_verdict": verdict,
+                "verified_counts": counts,
+                "rr": v.get("rr"),
+                "phase": v.get("phase"),
+                "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
+                "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+            })
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] verified fetch fail: {e}")
+
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
     return {"items": items}
