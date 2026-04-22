@@ -158,6 +158,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-yesterday", "/api/backtest-yesterday/status",
             "/api/backtest-optimize", "/api/backtest-optimize/status",
             "/api/backtest-entry-timing", "/api/backtest-entry-timing/status",
+            "/api/backtest-st-proximity", "/api/backtest-st-proximity/status",
             "/api/market-phase", "/api/market-phase/history",
             "/api/entry-checker", "/api/entry-checker/ai-opinion", "/api/verified-signals",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
@@ -5300,6 +5301,262 @@ async def api_backtest_entry_timing_start(payload: dict | None = None):
 @app.get("/api/backtest-entry-timing/status")
 async def api_backtest_entry_timing_status():
     return _bet_state
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BACKTEST ST PROXIMITY TO 4H SUPERTREND
+# Гипотеза: ST 1h flip близко к 4h ST линии → высокий WR (отскок от уровня).
+# Бакеты расстояния от entry до 4h ST value: ≤0.3 / 0.3-0.5 / 0.5-0.7 /
+# 0.7-1.0 / 1.0-2.0 / >2.0%. Direction=LONG/SHORT считаем отдельно.
+# ═══════════════════════════════════════════════════════════════════
+_bsp_state: dict = {
+    "running": False, "started_at": None, "finished_at": None,
+    "progress": {"processed": 0, "total": 0, "current": ""},
+    "result": None, "error": None,
+}
+
+
+def _backtest_st_proximity_sync(days: int, forward_hours: int) -> dict:
+    """Главная sync-функция бектеста ST 1h × distance to 4h ST."""
+    from database import _supertrend_signals, utcnow
+    from exchange import get_klines_any
+    from backtest_supertrend import compute_st_series, st_state_at_ts
+    from datetime import timedelta
+    import logging as _log
+    logger = _log.getLogger(__name__)
+
+    since = utcnow() - timedelta(days=days)
+    raw = list(_supertrend_signals().find({
+        "flip_at": {"$gte": since},
+        "tier": {"$in": ["vip", "mtf"]},
+    }).sort("flip_at", -1))
+    logger.info(f"[bsp] собрано {len(raw)} ST signals")
+    _bsp_state["progress"]["total"] = len(raw)
+
+    # Кеши свечей по паре
+    c_4h: dict = {}
+    c_15m: dict = {}
+    c_1h: dict = {}
+    st_4h_series: dict = {}
+
+    BUCKETS = [
+        ("≤0.3%",    0.0, 0.3),
+        ("0.3-0.5%", 0.3, 0.5),
+        ("0.5-0.7%", 0.5, 0.7),
+        ("0.7-1.0%", 0.7, 1.0),
+        ("1.0-2.0%", 1.0, 2.0),
+        (">2.0%",    2.0, 10000.0),
+    ]
+
+    # stats[bucket][direction] = {n, wins, losses, open, sum_r}
+    stats = {b[0]: {"LONG":  {"n": 0, "wins": 0, "losses": 0, "open": 0, "sum_r": 0.0, "sum_pct": 0.0},
+                    "SHORT": {"n": 0, "wins": 0, "losses": 0, "open": 0, "sum_r": 0.0, "sum_pct": 0.0}}
+             for b in BUCKETS}
+
+    processed = 0
+    skipped_no_4h = 0
+    skipped_no_15m = 0
+    skipped_no_sl = 0
+
+    for s in raw:
+        processed += 1
+        _bsp_state["progress"]["processed"] = processed
+        pair = s.get("pair")
+        direction = s.get("direction")
+        flip_at = s.get("flip_at")
+        entry = s.get("entry_price")
+        sl = s.get("sl_price")
+        if not (pair and direction in ("LONG", "SHORT") and flip_at and entry):
+            continue
+        _bsp_state["progress"]["current"] = pair
+
+        # 4h candles + ST 4h series
+        if pair not in c_4h:
+            c_4h[pair] = get_klines_any(pair, "4h", 200) or []
+        cand_4h = c_4h[pair]
+        if not cand_4h or len(cand_4h) < 15:
+            skipped_no_4h += 1
+            continue
+        if pair not in st_4h_series:
+            st_4h_series[pair] = compute_st_series(cand_4h, period=10, mult=3.0)
+        st_4h = st_4h_series[pair]
+        if not st_4h:
+            skipped_no_4h += 1
+            continue
+
+        # 4h ST value в момент flip_at
+        try:
+            flip_ms = int(flip_at.timestamp() * 1000)
+        except Exception:
+            continue
+        st_bar = st_state_at_ts(st_4h, flip_ms)
+        if (not st_bar) or st_bar.get("st") is None:
+            skipped_no_4h += 1
+            continue
+        st_4h_value = st_bar["st"]
+        distance_pct = abs(entry - st_4h_value) / entry * 100
+
+        # Определяем bucket
+        bucket_name = None
+        for name, lo, hi in BUCKETS:
+            if lo <= distance_pct < hi:
+                bucket_name = name
+                break
+        if not bucket_name:
+            continue
+
+        # SL: из сигнала или ATR fallback на 1h
+        if not sl:
+            if pair not in c_1h:
+                c_1h[pair] = get_klines_any(pair, "1h", 30) or []
+            cand_1h = c_1h[pair]
+            if cand_1h and len(cand_1h) >= 15:
+                trs = []
+                for i in range(1, len(cand_1h)):
+                    c, pc = cand_1h[i], cand_1h[i-1]["c"]
+                    trs.append(max(c["h"]-c["l"], abs(c["h"]-pc), abs(c["l"]-pc)))
+                atr = sum(trs[-14:]) / min(14, len(trs))
+                sl = entry - atr * 1.5 if direction == "LONG" else entry + atr * 1.5
+        if not sl:
+            skipped_no_sl += 1
+            continue
+
+        # TP = entry + 2R (R:R 1:2 — стандарт)
+        risk = abs(entry - sl)
+        if risk <= 0:
+            continue
+        tp = entry + 2 * risk if direction == "LONG" else entry - 2 * risk
+
+        # Симуляция на 15m
+        if pair not in c_15m:
+            c_15m[pair] = get_klines_any(pair, "15m", 600) or []
+        cand_15m = c_15m[pair]
+        if not cand_15m:
+            skipped_no_15m += 1
+            continue
+
+        end_ms = flip_ms + forward_hours * 3600 * 1000
+        is_long = direction == "LONG"
+        r_mult = 0.0
+        pnl_pct = 0.0
+        what = "OPEN"
+        hit_found = False
+        last_c = None
+        for c in cand_15m:
+            if c["t"] < flip_ms or c["t"] > end_ms:
+                continue
+            last_c = c
+            hi, lo = c["h"], c["l"]
+            if is_long:
+                if lo <= sl:
+                    r_mult = -1.0; what = "SL"
+                    pnl_pct = (sl - entry) / entry * 100
+                    hit_found = True; break
+                if hi >= tp:
+                    r_mult = 2.0; what = "TP"
+                    pnl_pct = (tp - entry) / entry * 100
+                    hit_found = True; break
+            else:
+                if hi >= sl:
+                    r_mult = -1.0; what = "SL"
+                    pnl_pct = (sl - entry) / entry * 100 * -1
+                    hit_found = True; break
+                if lo <= tp:
+                    r_mult = 2.0; what = "TP"
+                    pnl_pct = (tp - entry) / entry * 100 * -1
+                    hit_found = True; break
+        if not hit_found:
+            if not last_c:
+                continue  # нет свечей в окне
+            last_price = last_c["c"]
+            r_mult = (last_price - entry) / risk if is_long else (entry - last_price) / risk
+            pnl_pct = (last_price - entry) / entry * 100 * (1 if is_long else -1)
+            what = "OPEN"
+
+        b = stats[bucket_name][direction]
+        b["n"] += 1
+        if what == "TP":
+            b["wins"] += 1
+        elif what == "SL":
+            b["losses"] += 1
+        else:
+            b["open"] += 1
+        b["sum_r"] += r_mult
+        b["sum_pct"] += pnl_pct
+
+    # Формируем результат
+    rows = []
+    total_n = 0
+    total_sum_r = 0.0
+    for bname, _, _ in BUCKETS:
+        for dirn in ("LONG", "SHORT"):
+            st = stats[bname][dirn]
+            closed = st["wins"] + st["losses"]
+            wr = round(st["wins"] / closed * 100, 1) if closed else 0.0
+            avg_r = round(st["sum_r"] / st["n"], 3) if st["n"] else 0.0
+            # PF
+            # Для PF нужны выигрышные и убыточные отдельно — в sum_r это уже суммы; приближение:
+            pf = round(abs(st["wins"] * 2) / max(abs(st["losses"] * 1), 1), 2) if st["losses"] else None
+            rows.append({
+                "bucket": bname, "direction": dirn,
+                "n": st["n"], "wins": st["wins"], "losses": st["losses"], "open": st["open"],
+                "wr": wr, "avg_r": avg_r, "pf": pf,
+                "sum_r": round(st["sum_r"], 2),
+                "sum_pct": round(st["sum_pct"], 1),
+            })
+            total_n += st["n"]
+            total_sum_r += st["sum_r"]
+
+    return {
+        "ok": True, "days": days, "forward_hours": forward_hours,
+        "total_signals": len(raw),
+        "simulated": total_n,
+        "skipped_no_4h": skipped_no_4h,
+        "skipped_no_15m": skipped_no_15m,
+        "skipped_no_sl": skipped_no_sl,
+        "pairs_cached": len(c_4h),
+        "total_sum_r": round(total_sum_r, 2),
+        "rows": rows,
+    }
+
+
+async def _run_backtest_st_proximity(days: int, forward_hours: int):
+    from datetime import datetime as _dt
+    try:
+        result = await asyncio.to_thread(_backtest_st_proximity_sync, days, forward_hours)
+        _bsp_state["result"] = result
+    except Exception as e:
+        _bsp_state["error"] = str(e)
+        logging.getLogger(__name__).exception("[backtest-st-proximity] crashed")
+    finally:
+        _bsp_state["running"] = False
+        _bsp_state["finished_at"] = _dt.utcnow().isoformat()
+
+
+@app.post("/api/backtest-st-proximity")
+async def api_backtest_st_proximity_start(payload: dict | None = None):
+    """Бектест ST 1h flips по расстоянию до 4h ST линии.
+    payload: {days: 14, forward_hours: 48}
+    Background task — статус через GET /api/backtest-st-proximity/status."""
+    from datetime import datetime as _dt
+    if _bsp_state.get("running"):
+        return {"ok": False, "error": "already running", "state": _bsp_state}
+    p = payload or {}
+    days = int(p.get("days", 14))
+    forward_hours = int(p.get("forward_hours", 48))
+    _bsp_state.update({
+        "running": True, "started_at": _dt.utcnow().isoformat(),
+        "finished_at": None,
+        "progress": {"processed": 0, "total": 0, "current": ""},
+        "result": None, "error": None,
+    })
+    asyncio.create_task(_run_backtest_st_proximity(days, forward_hours))
+    return {"ok": True, "started": True, "days": days, "forward_hours": forward_hours}
+
+
+@app.get("/api/backtest-st-proximity/status")
+async def api_backtest_st_proximity_status():
+    return _bsp_state
 
 
 # ═══════════════════════════════════════════════════════════════════
