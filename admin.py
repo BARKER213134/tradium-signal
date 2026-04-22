@@ -162,6 +162,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-cv-st30m", "/api/backtest-cv-st30m/status",
             "/api/backtest-st-flips", "/api/backtest-st-flips/status",
             "/api/st-flips-debug",
+            "/api/backtest-triple", "/api/backtest-triple/status",
             "/api/market-phase", "/api/market-phase/history",
             "/api/entry-checker", "/api/entry-checker/ai-opinion", "/api/verified-signals",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
@@ -6478,6 +6479,440 @@ async def api_st_flips_debug(pair: str = "BTCUSDT", tf: str = "1h", limit: int =
         },
         "recent_flips": flips_tail,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BACKTEST TRIPLE — 3 стратегии на основе ST + RSI + TSI:
+#  S1 PULLBACK        — ST trend + TSI confirm + RSI oversold reentry
+#  S2 TSI_LEAD        — TSI crosses 0 → wait ≤6 bars ST flip → entry
+#  S3 CV_TSI_FILTER   — CV IMMEDIATE + skip if TSI deeply contra
+# ═══════════════════════════════════════════════════════════════════
+_btri_state: dict = {
+    "running": False, "started_at": None, "finished_at": None,
+    "progress": {"processed": 0, "total": 0, "current": ""},
+    "result": None, "error": None,
+}
+
+
+def _ema_list(arr: list, period: int) -> list:
+    n = len(arr)
+    if n == 0: return []
+    out = [None] * n
+    k = 2.0 / (period + 1)
+    out[0] = arr[0] if arr[0] is not None else 0.0
+    for i in range(1, n):
+        v = arr[i] if arr[i] is not None else 0.0
+        out[i] = v * k + out[i-1] * (1 - k)
+    return out
+
+
+def _tsi_series(closes: list, long_p: int = 25, short_p: int = 13) -> list:
+    n = len(closes)
+    if n < long_p + short_p + 2:
+        return [None] * n
+    pc = [0.0] * n
+    apc = [0.0] * n
+    for i in range(1, n):
+        pc[i] = closes[i] - closes[i-1]
+        apc[i] = abs(pc[i])
+    pc1 = _ema_list(pc, long_p)
+    pc2 = _ema_list(pc1, short_p)
+    apc1 = _ema_list(apc, long_p)
+    apc2 = _ema_list(apc1, short_p)
+    out = [None] * n
+    for i in range(n):
+        if apc2[i] and abs(apc2[i]) > 1e-12:
+            out[i] = 100.0 * pc2[i] / apc2[i]
+    return out
+
+
+def _backtest_triple_sync(days: int, max_pairs: int) -> dict:
+    """Запускает 3 стратегии на 1h таймфрейме. Все стратегии bidirectional.
+    Risk: |entry - SL| где SL структурный (ST value или базовый low/high) ± 0.3%.
+    R = (exit - entry) / risk."""
+    from exchange import get_klines_any
+    from backtest_supertrend import compute_st_series
+    from anomaly_scanner import get_all_futures_pairs
+    from database import _signals, utcnow
+    from datetime import timedelta
+    import statistics as _stats
+    import time as _time
+    import logging as _log
+    logger = _log.getLogger(__name__)
+
+    BUFFER_PCT = 0.3
+    ST_PERIOD, ST_MULT = 10, 3.0  # 1h пресет
+    since_ms = int((_time.time() - days * 86400) * 1000)
+
+    all_pairs = get_all_futures_pairs() or []
+    pairs = all_pairs[:max_pairs]
+
+    # ── Stats для S1, S2 ──
+    s_init = lambda: {"executed": 0, "wins": 0, "losses": 0, "open": 0,
+                      "sum_r": 0.0, "sum_pct": 0.0,
+                      "skipped_filter": 0, "skipped_data": 0,
+                      "pair_sums": []}
+    S1 = s_init(); S2 = s_init()
+
+    # ── S3 подготовка: берём CV сигналы ──
+    cv_since = utcnow() - timedelta(days=days)
+    raw_cv = list(_signals().find({
+        "source": "cryptovizor", "pattern_triggered": True,
+        "pattern_triggered_at": {"$gte": cv_since},
+    }).sort("pattern_triggered_at", 1))
+    S3 = s_init()
+    S3["total_cv"] = len(raw_cv)
+
+    # Cache: TSI по парам на 1h (чтобы S3 мог брать TSI в момент CV)
+    tsi_cache_1h: dict = {}  # pair -> (candles, tsi_series)
+
+    def _get_1h_data(pair: str):
+        """Вернуть (candles, st_series, rsi, tsi) с кешем."""
+        if pair in tsi_cache_1h:
+            return tsi_cache_1h[pair]
+        try:
+            c = get_klines_any(pair, "1h", 500) or []
+        except Exception:
+            tsi_cache_1h[pair] = (None, None, None, None)
+            return tsi_cache_1h[pair]
+        if not c or len(c) < 60:
+            tsi_cache_1h[pair] = (None, None, None, None)
+            return tsi_cache_1h[pair]
+        c = [x for x in c if x["t"] >= since_ms - 40 * 3600 * 1000]  # небольшой backfill
+        if len(c) < 60:
+            tsi_cache_1h[pair] = (None, None, None, None)
+            return tsi_cache_1h[pair]
+        sts = compute_st_series(c, ST_PERIOD, ST_MULT)
+        cls = [x["c"] for x in c]
+        rsi = _rsi_wilder(cls, 14)
+        tsi = _tsi_series(cls, 25, 13)
+        tsi_cache_1h[pair] = (c, sts, rsi, tsi)
+        return tsi_cache_1h[pair]
+
+    _btri_state["progress"]["total"] = len(pairs) + len(raw_cv)
+    processed = 0
+
+    # ══════════════════════════════════════════════════════════
+    # S1 + S2 на всех парах
+    # ══════════════════════════════════════════════════════════
+    for pair in pairs:
+        processed += 1
+        _btri_state["progress"]["processed"] = processed
+        _btri_state["progress"]["current"] = f"S1S2 {pair}"
+        c, sts, rsi, tsi = _get_1h_data(pair)
+        if not c or not sts or not rsi or not tsi:
+            S1["skipped_data"] += 1; S2["skipped_data"] += 1
+            continue
+
+        # ── S1 PULLBACK ─────────────────────────────────────
+        # LONG:  ST=UP, TSI>0 & rising, RSI 30-45, RSI[i]>RSI[i-1]
+        # SHORT: ST=DN, TSI<0 & falling, RSI 55-70, RSI[i]<RSI[i-1]
+        # Entry: close триггер-бара. SL: ST value ∓ 0.3%.
+        # Exit: ST flip OR TSI crosses zero OR +3R.
+        s1_r = 0.0; s1_pct = 0.0; s1_n = 0
+        open_pos = None
+        for i in range(30, len(sts)):
+            bar = sts[i]
+            if bar["t"] < since_ms: continue
+            # Close existing by exits
+            if open_pos is not None:
+                is_long = open_pos["side"] == "L"
+                hi, lo, cl = bar["high"], bar["low"], bar["close"]
+                exit_r = None; exit_pct = None
+                if is_long and lo <= open_pos["sl"]:
+                    exit_r = -1.0
+                    exit_pct = (open_pos["sl"] - open_pos["entry"]) / open_pos["entry"] * 100
+                elif (not is_long) and hi >= open_pos["sl"]:
+                    exit_r = -1.0
+                    exit_pct = (open_pos["entry"] - open_pos["sl"]) / open_pos["entry"] * 100
+                elif is_long and hi >= open_pos["tp"]:
+                    exit_r = 3.0
+                    exit_pct = (open_pos["tp"] - open_pos["entry"]) / open_pos["entry"] * 100
+                elif (not is_long) and lo <= open_pos["tp"]:
+                    exit_r = 3.0
+                    exit_pct = (open_pos["entry"] - open_pos["tp"]) / open_pos["entry"] * 100
+                else:
+                    # ST flip или TSI cross 0 против — exit at close
+                    st_flipped = (is_long and bar["trend"] == -1) or ((not is_long) and bar["trend"] == 1)
+                    tsi_cross = tsi[i] is not None and (
+                        (is_long and tsi[i] < 0) or ((not is_long) and tsi[i] > 0))
+                    if st_flipped or tsi_cross:
+                        if is_long:
+                            exit_r = (cl - open_pos["entry"]) / open_pos["risk"]
+                            exit_pct = (cl - open_pos["entry"]) / open_pos["entry"] * 100
+                        else:
+                            exit_r = (open_pos["entry"] - cl) / open_pos["risk"]
+                            exit_pct = (open_pos["entry"] - cl) / open_pos["entry"] * 100
+                if exit_r is not None:
+                    S1["executed"] += 1
+                    if exit_r >= 3.0 - 1e-6: S1["wins"] += 1
+                    elif exit_r <= -1.0 + 1e-6: S1["losses"] += 1
+                    elif exit_r > 0: S1["wins"] += 1
+                    else: S1["losses"] += 1
+                    S1["sum_r"] += exit_r; S1["sum_pct"] += exit_pct
+                    s1_r += exit_r; s1_pct += exit_pct; s1_n += 1
+                    open_pos = None
+
+            if open_pos is not None:
+                continue
+
+            # Entry-check на этом баре
+            r_now = rsi[i]; t_now = tsi[i]
+            r_prev = rsi[i-1] if i >= 1 else None
+            t_prev = tsi[i-1] if i >= 1 else None
+            if r_now is None or t_now is None or r_prev is None or t_prev is None:
+                continue
+            trend = bar["trend"]; st_val = bar.get("st")
+            if not trend or not st_val: continue
+            # LONG setup
+            if trend == 1 and t_now > 0 and t_now > t_prev and 30 <= r_now <= 45 and r_now > r_prev:
+                entry = bar["close"]; sl = st_val * (1 - BUFFER_PCT / 100)
+                if sl < entry:
+                    risk = entry - sl; tp = entry + 3 * risk
+                    open_pos = {"side": "L", "entry": entry, "sl": sl, "tp": tp, "risk": risk}
+            # SHORT setup
+            elif trend == -1 and t_now < 0 and t_now < t_prev and 55 <= r_now <= 70 and r_now < r_prev:
+                entry = bar["close"]; sl = st_val * (1 + BUFFER_PCT / 100)
+                if sl > entry:
+                    risk = sl - entry; tp = entry - 3 * risk
+                    open_pos = {"side": "S", "entry": entry, "sl": sl, "tp": tp, "risk": risk}
+
+        if s1_n > 0: S1["pair_sums"].append({"pair": pair, "r": s1_r, "n": s1_n})
+
+        # ── S2 TSI_LEAD ──────────────────────────────────────
+        # TSI crosses 0 → wait ≤6 bars ST flip → entry.
+        # SL: min(low)/max(high) в окне ± 0.3%. Exit: TSI cross back OR opposite ST flip.
+        s2_r = 0.0; s2_pct = 0.0; s2_n = 0
+        open_pos = None
+        i = 1
+        while i < len(sts):
+            bar = sts[i]
+            if bar["t"] < since_ms: i += 1; continue
+            # Manage open first
+            if open_pos is not None:
+                is_long = open_pos["side"] == "L"
+                hi, lo, cl = bar["high"], bar["low"], bar["close"]
+                exit_r = None; exit_pct = None
+                if is_long and lo <= open_pos["sl"]:
+                    exit_r = -1.0; exit_pct = (open_pos["sl"] - open_pos["entry"]) / open_pos["entry"] * 100
+                elif (not is_long) and hi >= open_pos["sl"]:
+                    exit_r = -1.0; exit_pct = (open_pos["entry"] - open_pos["sl"]) / open_pos["entry"] * 100
+                elif is_long and hi >= open_pos["tp"]:
+                    exit_r = 3.0; exit_pct = (open_pos["tp"] - open_pos["entry"]) / open_pos["entry"] * 100
+                elif (not is_long) and lo <= open_pos["tp"]:
+                    exit_r = 3.0; exit_pct = (open_pos["entry"] - open_pos["tp"]) / open_pos["entry"] * 100
+                else:
+                    tsi_back = tsi[i] is not None and (
+                        (is_long and tsi[i] < 0) or ((not is_long) and tsi[i] > 0))
+                    st_against = (is_long and bar["trend"] == -1) or ((not is_long) and bar["trend"] == 1)
+                    if tsi_back or st_against:
+                        if is_long:
+                            exit_r = (cl - open_pos["entry"]) / open_pos["risk"]
+                            exit_pct = (cl - open_pos["entry"]) / open_pos["entry"] * 100
+                        else:
+                            exit_r = (open_pos["entry"] - cl) / open_pos["risk"]
+                            exit_pct = (open_pos["entry"] - cl) / open_pos["entry"] * 100
+                if exit_r is not None:
+                    S2["executed"] += 1
+                    if exit_r >= 3.0 - 1e-6: S2["wins"] += 1
+                    elif exit_r <= -1.0 + 1e-6: S2["losses"] += 1
+                    elif exit_r > 0: S2["wins"] += 1
+                    else: S2["losses"] += 1
+                    S2["sum_r"] += exit_r; S2["sum_pct"] += exit_pct
+                    s2_r += exit_r; s2_pct += exit_pct; s2_n += 1
+                    open_pos = None
+
+            if open_pos is not None:
+                i += 1; continue
+
+            # TSI zero-crossing detection
+            if tsi[i] is None or tsi[i-1] is None:
+                i += 1; continue
+            bullish_cross = tsi[i-1] <= 0 and tsi[i] > 0
+            bearish_cross = tsi[i-1] >= 0 and tsi[i] < 0
+            if not (bullish_cross or bearish_cross):
+                i += 1; continue
+            dir_long = bullish_cross
+            # Look forward up to 6 bars for matching ST flip
+            flip_idx = None
+            for j in range(i, min(i + 7, len(sts))):
+                prev = sts[j-1] if j >= 1 else None
+                cur = sts[j]
+                if prev and cur and prev.get("trend") and cur.get("trend"):
+                    if dir_long and prev["trend"] == -1 and cur["trend"] == 1:
+                        flip_idx = j; break
+                    if (not dir_long) and prev["trend"] == 1 and cur["trend"] == -1:
+                        flip_idx = j; break
+            if flip_idx is None:
+                S2["skipped_filter"] += 1
+                i += 1; continue
+            # Entry на flip-баре
+            flip_bar = sts[flip_idx]
+            entry = flip_bar["close"]
+            # SL: min(low) / max(high) в окне [i..flip_idx] ± 0.3%
+            window = sts[i:flip_idx+1]
+            if dir_long:
+                w_low = min(b["low"] for b in window)
+                sl = w_low * (1 - BUFFER_PCT / 100)
+                if sl >= entry:
+                    S2["skipped_filter"] += 1; i = flip_idx + 1; continue
+                risk = entry - sl; tp = entry + 3 * risk
+                open_pos = {"side": "L", "entry": entry, "sl": sl, "tp": tp, "risk": risk}
+            else:
+                w_high = max(b["high"] for b in window)
+                sl = w_high * (1 + BUFFER_PCT / 100)
+                if sl <= entry:
+                    S2["skipped_filter"] += 1; i = flip_idx + 1; continue
+                risk = sl - entry; tp = entry - 3 * risk
+                open_pos = {"side": "S", "entry": entry, "sl": sl, "tp": tp, "risk": risk}
+            i = flip_idx + 1
+        if s2_n > 0: S2["pair_sums"].append({"pair": pair, "r": s2_r, "n": s2_n})
+
+    # ══════════════════════════════════════════════════════════
+    # S3 CV + TSI filter — запускаем на CV сигналах
+    # ══════════════════════════════════════════════════════════
+    for sig in raw_cv:
+        processed += 1
+        _btri_state["progress"]["processed"] = processed
+        pair = sig.get("pair"); direction = sig.get("direction")
+        pat_at = sig.get("pattern_triggered_at")
+        entry_cv = sig.get("pattern_price") or sig.get("entry")
+        tp_cv = sig.get("dca2"); sl_cv = sig.get("dca1")
+        if not (pair and direction in ("LONG", "SHORT") and pat_at and entry_cv and tp_cv and sl_cv):
+            S3["skipped_data"] += 1; continue
+        _btri_state["progress"]["current"] = f"S3 {pair}"
+        # TSI в момент CV
+        c, sts, rsi, tsi = _get_1h_data(pair)
+        if not c or not tsi:
+            S3["skipped_data"] += 1; continue
+        pat_ms = int(pat_at.timestamp() * 1000)
+        tsi_at = None
+        for k in range(len(c) - 1, -1, -1):
+            if c[k]["t"] <= pat_ms:
+                tsi_at = tsi[k]; break
+        if tsi_at is None:
+            S3["skipped_data"] += 1; continue
+        # TSI фильтр: LONG skip если TSI <= -25, SHORT skip если TSI >= 25
+        is_long = direction == "LONG"
+        if is_long and tsi_at <= -25:
+            S3["skipped_filter"] += 1; continue
+        if (not is_long) and tsi_at >= 25:
+            S3["skipped_filter"] += 1; continue
+        # IMMEDIATE симуляция на 15m свечах (pattern_price / dca2 / dca1)
+        try:
+            cand_15m = get_klines_any(pair, "15m", 500) or []
+        except Exception:
+            S3["skipped_data"] += 1; continue
+        if not cand_15m:
+            S3["skipped_data"] += 1; continue
+        risk_cv = abs(entry_cv - sl_cv)
+        if risk_cv <= 0:
+            S3["skipped_data"] += 1; continue
+        end_ms = pat_ms + 48 * 3600 * 1000
+        what = "OPEN"; r_mult = 0.0; pnl_pct = 0.0
+        last_c = None
+        for cc in cand_15m:
+            if cc["t"] < pat_ms or cc["t"] > end_ms: continue
+            last_c = cc
+            hi, lo = cc["h"], cc["l"]
+            if is_long:
+                if lo <= sl_cv:
+                    what = "SL"; r_mult = -1.0
+                    pnl_pct = (sl_cv - entry_cv) / entry_cv * 100; break
+                if hi >= tp_cv:
+                    r_mult = abs(tp_cv - entry_cv) / risk_cv; what = "TP"
+                    pnl_pct = (tp_cv - entry_cv) / entry_cv * 100; break
+            else:
+                if hi >= sl_cv:
+                    what = "SL"; r_mult = -1.0
+                    pnl_pct = (sl_cv - entry_cv) / entry_cv * 100 * -1; break
+                if lo <= tp_cv:
+                    r_mult = abs(tp_cv - entry_cv) / risk_cv; what = "TP"
+                    pnl_pct = (tp_cv - entry_cv) / entry_cv * 100 * -1; break
+        if last_c is None:
+            S3["skipped_data"] += 1; continue
+        if what == "OPEN":
+            last_p = last_c["c"]
+            r_mult = (last_p - entry_cv) / risk_cv if is_long else (entry_cv - last_p) / risk_cv
+            pnl_pct = (last_p - entry_cv) / entry_cv * 100 * (1 if is_long else -1)
+        S3["executed"] += 1
+        if what == "TP": S3["wins"] += 1
+        elif what == "SL": S3["losses"] += 1
+        else: S3["open"] += 1
+        S3["sum_r"] += r_mult; S3["sum_pct"] += pnl_pct
+
+    def _fmt(stats: dict, name: str) -> dict:
+        n = stats["executed"]
+        closed = stats["wins"] + stats["losses"]
+        wr = round(stats["wins"] / closed * 100, 1) if closed else 0.0
+        avg_r = round(stats["sum_r"] / n, 3) if n else 0.0
+        pair_rs = [p["r"] for p in stats.get("pair_sums", [])]
+        pairs_positive = sum(1 for r in pair_rs if r > 0)
+        pairs_total = len(pair_rs)
+        std_r = _stats.stdev(pair_rs) if len(pair_rs) > 1 else 0.0
+        mean_r = _stats.mean(pair_rs) if pair_rs else 0.0
+        top3 = sorted(stats.get("pair_sums", []), key=lambda x: -x["r"])[:3]
+        bot3 = sorted(stats.get("pair_sums", []), key=lambda x: x["r"])[:3]
+        return {
+            "name": name, "executed": n,
+            "wins": stats["wins"], "losses": stats["losses"], "open": stats["open"],
+            "wr": wr, "avg_r": avg_r,
+            "sum_r": round(stats["sum_r"], 2),
+            "sum_pct": round(stats["sum_pct"], 1),
+            "skipped_filter": stats["skipped_filter"],
+            "skipped_data": stats["skipped_data"],
+            "pairs_positive": pairs_positive, "pairs_total": pairs_total,
+            "pairs_positive_pct": round(pairs_positive / pairs_total * 100, 1) if pairs_total else 0.0,
+            "mean_pair_r": round(mean_r, 2), "std_pair_r": round(std_r, 2),
+            "top3": [{"pair": p["pair"], "r": round(p["r"], 2), "n": p["n"]} for p in top3],
+            "bot3": [{"pair": p["pair"], "r": round(p["r"], 2), "n": p["n"]} for p in bot3],
+        }
+
+    return {
+        "ok": True, "days": days, "pairs_tested": len(pairs),
+        "total_cv_signals": S3.get("total_cv", 0),
+        "strategies": [
+            _fmt(S1, "S1_PULLBACK"),
+            _fmt(S2, "S2_TSI_LEAD"),
+            _fmt(S3, "S3_CV_TSI_FILTER"),
+        ],
+    }
+
+
+async def _run_backtest_triple(days: int, max_pairs: int):
+    from datetime import datetime as _dt
+    try:
+        result = await asyncio.to_thread(_backtest_triple_sync, days, max_pairs)
+        _btri_state["result"] = result
+    except Exception as e:
+        _btri_state["error"] = str(e)
+        logging.getLogger(__name__).exception("[btri] crashed")
+    finally:
+        _btri_state["running"] = False
+        _btri_state["finished_at"] = _dt.utcnow().isoformat()
+
+
+@app.post("/api/backtest-triple")
+async def api_backtest_triple_start(payload: dict | None = None):
+    from datetime import datetime as _dt
+    if _btri_state.get("running"):
+        return {"ok": False, "error": "already running", "state": _btri_state}
+    p = payload or {}
+    days = int(p.get("days", 7))
+    max_pairs = int(p.get("max_pairs", 200))
+    _btri_state.update({
+        "running": True, "started_at": _dt.utcnow().isoformat(),
+        "finished_at": None,
+        "progress": {"processed": 0, "total": 0, "current": ""},
+        "result": None, "error": None,
+    })
+    asyncio.create_task(_run_backtest_triple(days, max_pairs))
+    return {"ok": True, "started": True, "days": days, "max_pairs": max_pairs}
+
+
+@app.get("/api/backtest-triple/status")
+async def api_backtest_triple_status():
+    return _btri_state
 
 
 # ═══════════════════════════════════════════════════════════════════
