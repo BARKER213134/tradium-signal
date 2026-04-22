@@ -161,6 +161,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-st-proximity", "/api/backtest-st-proximity/status",
             "/api/backtest-cv-st30m", "/api/backtest-cv-st30m/status",
             "/api/backtest-st-flips", "/api/backtest-st-flips/status",
+            "/api/st-flips-debug",
             "/api/market-phase", "/api/market-phase/history",
             "/api/entry-checker", "/api/entry-checker/ai-opinion", "/api/verified-signals",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
@@ -6425,6 +6426,58 @@ async def api_backtest_st_flips_start(payload: dict | None = None):
 @app.get("/api/backtest-st-flips/status")
 async def api_backtest_st_flips_status():
     return _bstf_state
+
+
+@app.get("/api/st-flips-debug")
+async def api_st_flips_debug(pair: str = "BTCUSDT", tf: str = "1h", limit: int = 10):
+    """Debug: вернуть последние N flip'ов по паре с ST/RSI значениями.
+    Чтобы вручную сверить с TradingView — правильно ли мы читаем индикаторы."""
+    from exchange import get_klines_any
+    from backtest_supertrend import compute_st_series
+    from datetime import datetime as _dt
+    PRESETS = {"15m": (7, 2.0), "30m": (7, 2.5), "1h": (10, 3.0),
+               "4h": (10, 3.0), "1d": (14, 3.0)}
+    period, mult = PRESETS.get(tf.lower(), (10, 3.0))
+    candles = await asyncio.to_thread(get_klines_any, pair, tf, 500)
+    if not candles:
+        return {"ok": False, "error": "no candles"}
+    st_series = compute_st_series(candles, period, mult)
+    rsi_arr = _rsi_wilder([c["c"] for c in candles], 14)
+    flips = []
+    for i in range(1, len(st_series)):
+        prev, cur = st_series[i-1], st_series[i]
+        if not (prev.get("trend") and cur.get("trend")): continue
+        if prev["trend"] == cur["trend"]: continue
+        flips.append({
+            "idx": i,
+            "time_utc": _dt.utcfromtimestamp(cur["t"] / 1000).isoformat(),
+            "direction": "UP" if cur["trend"] == 1 else "DOWN",
+            "open":   round(cur["open"], 6),
+            "high":   round(cur["high"], 6),
+            "low":    round(cur["low"], 6),
+            "close":  round(cur["close"], 6),
+            "st_value": round(cur["st"], 6) if cur.get("st") else None,
+            "atr":    round(cur["atr"], 6) if cur.get("atr") else None,
+            "rsi_14": round(rsi_arr[i], 2) if rsi_arr and i < len(rsi_arr) and rsi_arr[i] is not None else None,
+        })
+    flips_tail = flips[-limit:]
+    # Последний бар (current state)
+    last = st_series[-1]
+    last_rsi = rsi_arr[-1] if rsi_arr else None
+    return {
+        "ok": True,
+        "pair": pair, "tf": tf, "preset": {"period": period, "mult": mult},
+        "bars_total": len(candles),
+        "flips_total": len(flips),
+        "last_bar": {
+            "time_utc": _dt.utcfromtimestamp(last["t"] / 1000).isoformat(),
+            "close": round(last["close"], 6),
+            "trend": "UP" if last["trend"] == 1 else ("DOWN" if last["trend"] == -1 else "—"),
+            "st_value": round(last["st"], 6) if last.get("st") else None,
+            "rsi_14": round(last_rsi, 2) if last_rsi is not None else None,
+        },
+        "recent_flips": flips_tail,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════
