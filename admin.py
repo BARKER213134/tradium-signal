@@ -5589,6 +5589,9 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
     since = utcnow() - timedelta(days=days)
     # Параметры принимаются из payload через _bcst_state.
     TIMEOUT_H = int(_bcst_state.get("timeout_h", 10))
+    ST_TF = str(_bcst_state.get("st_tf", "30m")).lower()
+    if ST_TF not in ("30m", "1h"):
+        ST_TF = "30m"
     BUFFER_PCT = 0.3
     MAX_HOLD_H = 24
 
@@ -5620,17 +5623,23 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
     logger.info(f"[bcst] timeout={TIMEOUT_H}h, invalid_ids={len(invalid_ids)}")
 
     # Кеши свечей
-    c_30m: dict = {}
+    c_st: dict = {}  # свечи под ST (30m или 1h)
     c_15m: dict = {}
-    st_30m_cache: dict = {}
-    ST_PERIOD = 7
-    ST_MULT = 2.5  # наш пресет 30m
+    st_cache: dict = {}
+    if ST_TF == "1h":
+        ST_PERIOD, ST_MULT = 10, 3.0   # пресет 1h
+        BARS_PER_HOUR = 1
+        FRESH_KEY, ALIGNED_KEY = "ST1H_FRESH", "ST1H_ALIGNED"
+    else:
+        ST_PERIOD, ST_MULT = 7, 2.5    # пресет 30m
+        BARS_PER_HOUR = 2
+        FRESH_KEY, ALIGNED_KEY = "ST30M_FRESH", "ST30M_ALIGNED"
 
     # Stats
     stats = {s: {"executed": 0, "skipped": 0, "timeout": 0, "invalidated": 0,
                  "wins": 0, "losses": 0, "open": 0,
                  "sum_r": 0.0, "sum_pct": 0.0}
-             for s in ("IMMEDIATE", "ST30M_FRESH", "ST30M_ALIGNED")}
+             for s in ("IMMEDIATE", FRESH_KEY, ALIGNED_KEY)}
 
     # Статистика ST 30m direction на момент CV (для проверки гипотезы
     # "CV LONG всегда приходит под ST 30m")
@@ -5697,27 +5706,27 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
                     else: st_im["open"] += 1
                     st_im["sum_r"] += r_mult; st_im["sum_pct"] += pnl_pct
 
-        # ── 2+3) ST30M_FRESH / ST30M_ALIGNED ──
+        # ── 2+3) FRESH / ALIGNED ──
         # Инвалидированные пропускаем для обоих ST-стратегий
         if id(s) in invalid_ids:
-            stats["ST30M_FRESH"]["invalidated"] += 1
-            stats["ST30M_ALIGNED"]["invalidated"] += 1
+            stats[FRESH_KEY]["invalidated"] += 1
+            stats[ALIGNED_KEY]["invalidated"] += 1
             continue
 
-        # Загружаем 30m свечи + ST 30m серию
-        if pair not in c_30m:
-            c_30m[pair] = get_klines_any(pair, "30m", 500) or []
-        cand_30m = c_30m[pair]
-        if not cand_30m or len(cand_30m) < 20:
-            stats["ST30M_FRESH"]["skipped"] += 1
-            stats["ST30M_ALIGNED"]["skipped"] += 1
+        # Загружаем свечи + ST серию под выбранный TF
+        if pair not in c_st:
+            c_st[pair] = get_klines_any(pair, ST_TF, 500) or []
+        cand_st = c_st[pair]
+        if not cand_st or len(cand_st) < 20:
+            stats[FRESH_KEY]["skipped"] += 1
+            stats[ALIGNED_KEY]["skipped"] += 1
             continue
-        if pair not in st_30m_cache:
-            st_30m_cache[pair] = compute_st_series(cand_30m, ST_PERIOD, ST_MULT)
-        st_series = st_30m_cache[pair]
+        if pair not in st_cache:
+            st_cache[pair] = compute_st_series(cand_st, ST_PERIOD, ST_MULT)
+        st_series = st_cache[pair]
         if not st_series:
-            stats["ST30M_FRESH"]["skipped"] += 1
-            stats["ST30M_ALIGNED"]["skipped"] += 1
+            stats[FRESH_KEY]["skipped"] += 1
+            stats[ALIGNED_KEY]["skipped"] += 1
             continue
 
         is_long = direction == "LONG"
@@ -5751,15 +5760,15 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
 
         # FRESH: только если есть свежий flip
         if fresh_flip_idx is not None:
-            _simulate_st30m_trade(stats["ST30M_FRESH"], st_series, fresh_flip_idx, is_long,
-                                  BUFFER_PCT, MAX_HOLD_H)
+            _simulate_st30m_trade(stats[FRESH_KEY], st_series, fresh_flip_idx, is_long,
+                                  BUFFER_PCT, MAX_HOLD_H, BARS_PER_HOUR)
         else:
-            stats["ST30M_FRESH"]["timeout"] += 1
+            stats[FRESH_KEY]["timeout"] += 1
 
         # ALIGNED: flip ИЛИ уже в сторону
         if fresh_flip_idx is not None:
-            _simulate_st30m_trade(stats["ST30M_ALIGNED"], st_series, fresh_flip_idx, is_long,
-                                  BUFFER_PCT, MAX_HOLD_H)
+            _simulate_st30m_trade(stats[ALIGNED_KEY], st_series, fresh_flip_idx, is_long,
+                                  BUFFER_PCT, MAX_HOLD_H, BARS_PER_HOUR)
         elif already_aligned:
             # берём бар на момент CV (first >= pat_ms) как entry
             entry_idx = None
@@ -5767,12 +5776,12 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
                 if st_series[i]["t"] >= pat_ms:
                     entry_idx = i; break
             if entry_idx is not None:
-                _simulate_st30m_trade(stats["ST30M_ALIGNED"], st_series, entry_idx, is_long,
-                                      BUFFER_PCT, MAX_HOLD_H)
+                _simulate_st30m_trade(stats[ALIGNED_KEY], st_series, entry_idx, is_long,
+                                      BUFFER_PCT, MAX_HOLD_H, BARS_PER_HOUR)
             else:
-                stats["ST30M_ALIGNED"]["skipped"] += 1
+                stats[ALIGNED_KEY]["skipped"] += 1
         else:
-            stats["ST30M_ALIGNED"]["timeout"] += 1
+            stats[ALIGNED_KEY]["timeout"] += 1
 
     # Формируем отчёт
     rows = []
@@ -5798,16 +5807,18 @@ def _backtest_cv_st30m_sync(days: int) -> dict:
 
     return {
         "ok": True, "days": days,
+        "st_tf": ST_TF, "timeout_h": TIMEOUT_H,
         "total_cv_signals": len(raw),
         "invalidated_by_newer": len(invalid_ids),
-        "pairs_cached_30m": len(c_30m),
+        "pairs_cached": len(c_st),
         "strategies": rows,
         "st_at_cv_stats": st_at_cv_stats,
     }
 
 
 def _simulate_st30m_trade(st_dict: dict, st_series: list, entry_idx: int,
-                          is_long: bool, buffer_pct: float, max_hold_h: int):
+                          is_long: bool, buffer_pct: float, max_hold_h: int,
+                          bars_per_hour: int = 2):
     """Симуляция: entry = close[entry_idx], SL = st_value∓buffer,
     exit = opposite flip close или после max_hold_h."""
     if entry_idx >= len(st_series) - 2:
@@ -5834,7 +5845,7 @@ def _simulate_st30m_trade(st_dict: dict, st_series: list, entry_idx: int,
         st_dict["skipped"] += 1
         return
 
-    max_bars = max_hold_h * 2  # 30m → 2 бара в час
+    max_bars = max_hold_h * bars_per_hour  # 30m→2, 1h→1
     end_idx = min(entry_idx + max_bars, len(st_series) - 1)
     target_trend = 1 if is_long else -1
     what = "OPEN"; r_mult = 0.0; pnl_pct = 0.0
@@ -5894,15 +5905,19 @@ async def api_backtest_cv_st30m_start(payload: dict | None = None):
         return {"ok": False, "error": "already running", "state": _bcst_state}
     days = int((payload or {}).get("days", 7))
     timeout_h = int((payload or {}).get("timeout_h", 10))
+    st_tf = str((payload or {}).get("st_tf", "30m")).lower()
+    if st_tf not in ("30m", "1h"):
+        st_tf = "30m"
     _bcst_state.update({
         "running": True, "started_at": _dt.utcnow().isoformat(),
         "finished_at": None,
         "progress": {"processed": 0, "total": 0, "current": ""},
         "result": None, "error": None,
         "timeout_h": timeout_h,
+        "st_tf": st_tf,
     })
     asyncio.create_task(_run_backtest_cv_st30m(days))
-    return {"ok": True, "started": True, "days": days, "timeout_h": timeout_h}
+    return {"ok": True, "started": True, "days": days, "timeout_h": timeout_h, "st_tf": st_tf}
 
 
 @app.get("/api/backtest-cv-st30m/status")
