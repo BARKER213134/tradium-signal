@@ -1811,6 +1811,12 @@ async def _check_anomalies():
         _anomalies().insert_one(doc)
         anomaly_scan_state["found"] += 1
         results.append(r)
+        # Invalidate journal cache — anomaly сразу появляется в UI
+        try:
+            from cache_utils import journal_cache
+            journal_cache.invalidate("journal_all")
+        except Exception:
+            pass
         logger.info(f"Anomaly: {r['symbol']} score={r['score']} dir={r['direction']} ST={'✅' if st_passed else '❌'}")
 
         # Алерт только если ST подтверждён
@@ -2040,6 +2046,12 @@ async def _check_confluence():
         insert_res = _confluence().insert_one(doc)
         confluence_scan_state["found"] += 1
         results.append(r)
+        # Invalidate journal cache — confluence сразу появляется в UI
+        try:
+            from cache_utils import journal_cache
+            journal_cache.invalidate("journal_all")
+        except Exception:
+            pass
         logger.info(f"Confluence: {r['symbol']} score={r['score']} {r['strength']} {r['direction']} ST={'✅' if st_passed else '❌'}")
 
         # Алерт в BOT4 только если ST подтверждён и score >= 5 (минимум STRONG).

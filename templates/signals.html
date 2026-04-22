@@ -5801,10 +5801,10 @@ document.addEventListener('keydown', (e) => {
 });
 
 loadJournal();
-// 30с вместо 10с: каждый poll делает 3 POST (journal+KL-enrich+ST-enrich)
-// и 3× innerHTML tbody из 3400 строк — при 5+ открытых графиках это убивает main thread.
-// WebSocket broadcast всё равно даёт мгновенный пуш при новых сигналах.
-safeInterval(loadJournal, 30000);
+// 15с polling — компромисс между "увидеть сигнал быстро" и "не убивать main thread
+// при открытых графиках". journal_cache на бэке тоже 15с, invalidate при каждом
+// новом сигнале из source invalidate'нутых (verified, supertrend, cluster, ...)
+safeInterval(loadJournal, 15000);
 </script>
 
 {% elif bot == 'cryptovizor' %}

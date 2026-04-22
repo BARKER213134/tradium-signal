@@ -364,6 +364,12 @@ def create_cluster(pair: str, direction: str, signals_in_cluster: list, at: date
         "created_at": utcnow(),
     }
     _clusters().insert_one(doc)
+    # Invalidate journal cache — cluster сразу появляется в UI
+    try:
+        from cache_utils import journal_cache
+        journal_cache.invalidate("journal_all")
+    except Exception:
+        pass
 
     # Top Pick detection (кластер + STRONG Confluence ≤ 48h в том же направлении)
     try:
