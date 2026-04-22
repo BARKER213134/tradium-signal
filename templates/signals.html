@@ -5045,7 +5045,7 @@ async function loadCoinChart(coin) {
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу, + ST-signals
     let _msM = [], _klM = [], _stSigM = [], _verM = [];
     const _stFlipsCoin = (_stResCoin && _stResCoin.flipMarkers) ? _stResCoin.flipMarkers : [];
-    const _applyAll = () => series.setMarkers([...unique, ..._msM, ..._klM, ..._stFlipsCoin, ..._stSigM].sort((a,b) => a.time - b.time));
+    const _applyAll = () => series.setMarkers([...unique, ..._msM, ..._klM, ..._stFlipsCoin, ..._stSigM, ..._verM].sort((a,b) => a.time - b.time));
     _applyAll();
     // ST-signals markers
     if (window._fetchStSignals && window._addStSignalMarkers && sym && d.candles.length) {
