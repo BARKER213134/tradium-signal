@@ -159,6 +159,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-optimize", "/api/backtest-optimize/status",
             "/api/backtest-entry-timing", "/api/backtest-entry-timing/status",
             "/api/backtest-st-proximity", "/api/backtest-st-proximity/status",
+            "/api/backtest-cv-st30m", "/api/backtest-cv-st30m/status",
             "/api/market-phase", "/api/market-phase/history",
             "/api/entry-checker", "/api/entry-checker/ai-opinion", "/api/verified-signals",
             "/api/live/status", "/api/live/set-mode", "/api/live/set-preset",
@@ -5557,6 +5558,330 @@ async def api_backtest_st_proximity_start(payload: dict | None = None):
 @app.get("/api/backtest-st-proximity/status")
 async def api_backtest_st_proximity_status():
     return _bsp_state
+
+
+# ═══════════════════════════════════════════════════════════════════
+# BACKTEST CV × ST 30m CONFIRM
+# Гипотеза: вместо открытия по CV pattern сразу — ждать flip ST 30m в
+# сторону CV сигнала. Если flip не случился за 10ч → пропускаем.
+# Сравниваем 3 стратегии: IMMEDIATE / ST30M_FRESH / ST30M_ALIGNED.
+# ═══════════════════════════════════════════════════════════════════
+_bcst_state: dict = {
+    "running": False, "started_at": None, "finished_at": None,
+    "progress": {"processed": 0, "total": 0, "current": ""},
+    "result": None, "error": None,
+}
+
+
+def _backtest_cv_st30m_sync(days: int) -> dict:
+    """Бектест 3 стратегий входа по CV сигналам:
+      1) IMMEDIATE    — открываем сразу по pattern_price (baseline)
+      2) ST30M_FRESH  — ждём свежий flip ST 30m в сторону CV (10ч timeout)
+      3) ST30M_ALIGNED — flip ИЛИ уже в сторону на момент CV
+    """
+    from database import _signals, utcnow
+    from exchange import get_klines_any
+    from backtest_supertrend import compute_st_series, st_state_at_ts
+    from datetime import timedelta
+    import logging as _log
+    logger = _log.getLogger(__name__)
+
+    since = utcnow() - timedelta(days=days)
+    TIMEOUT_H = 10
+    BUFFER_PCT = 0.3
+    MAX_HOLD_H = 24
+
+    # CV сигналы с pattern_triggered (только они открывают позиции)
+    raw = list(_signals().find({
+        "source": "cryptovizor",
+        "pattern_triggered": True,
+        "pattern_triggered_at": {"$gte": since},
+    }).sort("pattern_triggered_at", 1))
+    _bcst_state["progress"]["total"] = len(raw)
+    logger.info(f"[bcst] собрано {len(raw)} CV signals")
+
+    # Группируем по паре для анти-дубля (новый CV → старый инвалидируется)
+    from collections import defaultdict
+    by_pair: dict = defaultdict(list)
+    for s in raw:
+        p = s.get("pair") or ""
+        by_pair[p].append(s)
+    # Для каждой пары: если разрыв между CV < TIMEOUT_H часов → старый
+    # инвалидируется (на момент прихода нового мы переключаемся на него)
+    invalid_ids = set()
+    for p, sigs in by_pair.items():
+        sigs.sort(key=lambda x: x.get("pattern_triggered_at") or 0)
+        for i in range(len(sigs) - 1):
+            cur_t = sigs[i].get("pattern_triggered_at")
+            next_t = sigs[i+1].get("pattern_triggered_at")
+            if cur_t and next_t and (next_t - cur_t) < timedelta(hours=TIMEOUT_H):
+                invalid_ids.add(id(sigs[i]))
+
+    # Кеши свечей
+    c_30m: dict = {}
+    c_15m: dict = {}
+    st_30m_cache: dict = {}
+    ST_PERIOD = 7
+    ST_MULT = 2.5  # наш пресет 30m
+
+    # Stats
+    stats = {s: {"executed": 0, "skipped": 0, "timeout": 0, "invalidated": 0,
+                 "wins": 0, "losses": 0, "open": 0,
+                 "sum_r": 0.0, "sum_pct": 0.0}
+             for s in ("IMMEDIATE", "ST30M_FRESH", "ST30M_ALIGNED")}
+
+    processed = 0
+    for s in raw:
+        processed += 1
+        _bcst_state["progress"]["processed"] = processed
+        pair = s.get("pair")
+        direction = s.get("direction")
+        pat_at = s.get("pattern_triggered_at")
+        entry_cv = s.get("pattern_price") or s.get("entry")
+        tp1_cv = s.get("dca2")
+        sl_cv = s.get("dca1")
+        if not (pair and direction in ("LONG", "SHORT") and pat_at and entry_cv):
+            for st in stats.values(): st["skipped"] += 1
+            continue
+        _bcst_state["progress"]["current"] = pair
+
+        pat_ms = int(pat_at.timestamp() * 1000)
+
+        # ── 1) IMMEDIATE — открываем по pattern_price сразу ──
+        risk_cv = abs(entry_cv - sl_cv) if (sl_cv and entry_cv) else None
+        if risk_cv and tp1_cv:
+            if pair not in c_15m:
+                c_15m[pair] = get_klines_any(pair, "15m", 500) or []
+            cand_15m = c_15m[pair]
+            if cand_15m:
+                end_ms = pat_ms + 48 * 3600 * 1000
+                is_long = direction == "LONG"
+                what = "OPEN"; r_mult = 0; pnl_pct = 0.0
+                last_c = None
+                for c in cand_15m:
+                    if c["t"] < pat_ms or c["t"] > end_ms: continue
+                    last_c = c
+                    hi, lo = c["h"], c["l"]
+                    if is_long:
+                        if lo <= sl_cv: what = "SL"; r_mult = -1.0; pnl_pct = (sl_cv-entry_cv)/entry_cv*100; break
+                        if hi >= tp1_cv:
+                            r_mult = abs(tp1_cv-entry_cv)/risk_cv; what = "TP"
+                            pnl_pct = (tp1_cv-entry_cv)/entry_cv*100; break
+                    else:
+                        if hi >= sl_cv: what = "SL"; r_mult = -1.0; pnl_pct = (sl_cv-entry_cv)/entry_cv*100 * -1; break
+                        if lo <= tp1_cv:
+                            r_mult = abs(tp1_cv-entry_cv)/risk_cv; what = "TP"
+                            pnl_pct = (tp1_cv-entry_cv)/entry_cv*100 * -1; break
+                if last_c:
+                    if what == "OPEN":
+                        last = last_c["c"]
+                        r_mult = (last-entry_cv)/risk_cv if is_long else (entry_cv-last)/risk_cv
+                        pnl_pct = (last-entry_cv)/entry_cv*100 * (1 if is_long else -1)
+                    st_im = stats["IMMEDIATE"]
+                    st_im["executed"] += 1
+                    if what == "TP": st_im["wins"] += 1
+                    elif what == "SL": st_im["losses"] += 1
+                    else: st_im["open"] += 1
+                    st_im["sum_r"] += r_mult; st_im["sum_pct"] += pnl_pct
+
+        # ── 2+3) ST30M_FRESH / ST30M_ALIGNED ──
+        # Инвалидированные пропускаем для обоих ST-стратегий
+        if id(s) in invalid_ids:
+            stats["ST30M_FRESH"]["invalidated"] += 1
+            stats["ST30M_ALIGNED"]["invalidated"] += 1
+            continue
+
+        # Загружаем 30m свечи + ST 30m серию
+        if pair not in c_30m:
+            c_30m[pair] = get_klines_any(pair, "30m", 500) or []
+        cand_30m = c_30m[pair]
+        if not cand_30m or len(cand_30m) < 20:
+            stats["ST30M_FRESH"]["skipped"] += 1
+            stats["ST30M_ALIGNED"]["skipped"] += 1
+            continue
+        if pair not in st_30m_cache:
+            st_30m_cache[pair] = compute_st_series(cand_30m, ST_PERIOD, ST_MULT)
+        st_series = st_30m_cache[pair]
+        if not st_series:
+            stats["ST30M_FRESH"]["skipped"] += 1
+            stats["ST30M_ALIGNED"]["skipped"] += 1
+            continue
+
+        is_long = direction == "LONG"
+        target_trend = 1 if is_long else -1
+        timeout_ms = pat_ms + TIMEOUT_H * 3600 * 1000
+
+        # ST состояние на момент CV
+        st_at_cv = st_state_at_ts(st_series, pat_ms)
+        already_aligned = st_at_cv and st_at_cv.get("trend") == target_trend
+
+        # Поиск flip'а в окне [pat_at .. pat_at+10ч]
+        fresh_flip_idx = None
+        for i in range(len(st_series)):
+            bar = st_series[i]
+            if bar["t"] < pat_ms: continue
+            if bar["t"] > timeout_ms: break
+            if bar["trend"] != target_trend: continue
+            prev = st_series[i-1] if i > 0 else None
+            if prev and prev.get("trend") and prev["trend"] != target_trend:
+                fresh_flip_idx = i
+                break
+
+        # FRESH: только если есть свежий flip
+        if fresh_flip_idx is not None:
+            _simulate_st30m_trade(stats["ST30M_FRESH"], st_series, fresh_flip_idx, is_long,
+                                  BUFFER_PCT, MAX_HOLD_H)
+        else:
+            stats["ST30M_FRESH"]["timeout"] += 1
+
+        # ALIGNED: flip ИЛИ уже в сторону
+        if fresh_flip_idx is not None:
+            _simulate_st30m_trade(stats["ST30M_ALIGNED"], st_series, fresh_flip_idx, is_long,
+                                  BUFFER_PCT, MAX_HOLD_H)
+        elif already_aligned:
+            # берём бар на момент CV (first >= pat_ms) как entry
+            entry_idx = None
+            for i in range(len(st_series)):
+                if st_series[i]["t"] >= pat_ms:
+                    entry_idx = i; break
+            if entry_idx is not None:
+                _simulate_st30m_trade(stats["ST30M_ALIGNED"], st_series, entry_idx, is_long,
+                                      BUFFER_PCT, MAX_HOLD_H)
+            else:
+                stats["ST30M_ALIGNED"]["skipped"] += 1
+        else:
+            stats["ST30M_ALIGNED"]["timeout"] += 1
+
+    # Формируем отчёт
+    rows = []
+    for name, st in stats.items():
+        closed = st["wins"] + st["losses"]
+        wr = round(st["wins"] / closed * 100, 1) if closed else 0.0
+        avg_r = round(st["sum_r"] / st["executed"], 3) if st["executed"] else 0.0
+        # PF
+        wins_r = sum_losses_r = 0
+        # Приблизительно: PF = wins × avg_win / losses × avg_loss, но у нас только sum_r
+        pf = None  # упрощённо
+        rows.append({
+            "name": name,
+            "executed": st["executed"],
+            "wins": st["wins"], "losses": st["losses"], "open": st["open"],
+            "wr": wr, "avg_r": avg_r,
+            "sum_r": round(st["sum_r"], 2),
+            "sum_pct": round(st["sum_pct"], 1),
+            "timeout": st["timeout"],
+            "invalidated": st["invalidated"],
+            "skipped": st["skipped"],
+        })
+
+    return {
+        "ok": True, "days": days,
+        "total_cv_signals": len(raw),
+        "invalidated_by_newer": len(invalid_ids),
+        "pairs_cached_30m": len(c_30m),
+        "strategies": rows,
+    }
+
+
+def _simulate_st30m_trade(st_dict: dict, st_series: list, entry_idx: int,
+                          is_long: bool, buffer_pct: float, max_hold_h: int):
+    """Симуляция: entry = close[entry_idx], SL = st_value∓buffer,
+    exit = opposite flip close или после max_hold_h."""
+    if entry_idx >= len(st_series) - 2:
+        st_dict["skipped"] += 1
+        return
+    entry_bar = st_series[entry_idx]
+    entry = entry_bar["close"]
+    st_val = entry_bar.get("st")
+    if st_val is None:
+        st_dict["skipped"] += 1
+        return
+    if is_long:
+        sl = st_val * (1 - buffer_pct / 100.0)
+        if sl >= entry:
+            st_dict["skipped"] += 1
+            return
+    else:
+        sl = st_val * (1 + buffer_pct / 100.0)
+        if sl <= entry:
+            st_dict["skipped"] += 1
+            return
+    risk = abs(entry - sl)
+    if risk <= 0:
+        st_dict["skipped"] += 1
+        return
+
+    max_bars = max_hold_h * 2  # 30m → 2 бара в час
+    end_idx = min(entry_idx + max_bars, len(st_series) - 1)
+    target_trend = 1 if is_long else -1
+    what = "OPEN"; r_mult = 0.0; pnl_pct = 0.0
+    last_bar = None
+    for i in range(entry_idx + 1, end_idx + 1):
+        bar = st_series[i]
+        last_bar = bar
+        hi, lo, cl = bar["high"], bar["low"], bar["close"]
+        # SL
+        if is_long and lo <= sl:
+            what = "SL"; r_mult = -1.0
+            pnl_pct = (sl - entry) / entry * 100
+            break
+        if (not is_long) and hi >= sl:
+            what = "SL"; r_mult = -1.0
+            pnl_pct = (sl - entry) / entry * 100 * -1
+            break
+        # Opposite flip → exit
+        if bar.get("trend") and bar["trend"] != target_trend:
+            what = "TRAIL"
+            r_mult = (cl - entry) / risk if is_long else (entry - cl) / risk
+            pnl_pct = (cl - entry) / entry * 100 * (1 if is_long else -1)
+            break
+    if what == "OPEN" and last_bar:
+        last_c = last_bar["close"]
+        r_mult = (last_c - entry) / risk if is_long else (entry - last_c) / risk
+        pnl_pct = (last_c - entry) / entry * 100 * (1 if is_long else -1)
+
+    st_dict["executed"] += 1
+    if what == "SL": st_dict["losses"] += 1
+    elif what == "TRAIL" and r_mult > 0: st_dict["wins"] += 1
+    elif what == "TRAIL": st_dict["losses"] += 1
+    else: st_dict["open"] += 1
+    st_dict["sum_r"] += r_mult
+    st_dict["sum_pct"] += pnl_pct
+
+
+async def _run_backtest_cv_st30m(days: int):
+    from datetime import datetime as _dt
+    try:
+        result = await asyncio.to_thread(_backtest_cv_st30m_sync, days)
+        _bcst_state["result"] = result
+    except Exception as e:
+        _bcst_state["error"] = str(e)
+        logging.getLogger(__name__).exception("[bcst] crashed")
+    finally:
+        _bcst_state["running"] = False
+        _bcst_state["finished_at"] = _dt.utcnow().isoformat()
+
+
+@app.post("/api/backtest-cv-st30m")
+async def api_backtest_cv_st30m_start(payload: dict | None = None):
+    """Бектест CV сигналов × ST 30m confirm. Read-only, прод не трогаем."""
+    from datetime import datetime as _dt
+    if _bcst_state.get("running"):
+        return {"ok": False, "error": "already running", "state": _bcst_state}
+    days = int((payload or {}).get("days", 7))
+    _bcst_state.update({
+        "running": True, "started_at": _dt.utcnow().isoformat(),
+        "finished_at": None,
+        "progress": {"processed": 0, "total": 0, "current": ""},
+        "result": None, "error": None,
+    })
+    asyncio.create_task(_run_backtest_cv_st30m(days))
+    return {"ok": True, "started": True, "days": days}
+
+
+@app.get("/api/backtest-cv-st30m/status")
+async def api_backtest_cv_st30m_status():
+    return _bcst_state
 
 
 # ═══════════════════════════════════════════════════════════════════
