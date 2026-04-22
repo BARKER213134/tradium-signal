@@ -299,24 +299,50 @@ def check_entry(pair: str, direction: str,
     except Exception:
         checks.append({"name": "Volume / OI", "status": "warn", "comment": "Err", "value": ""})
 
-    # ── 7. Диверсификация ──
+    # ── 7. Диверсификация (адаптивно по фазе) ──
+    # В BULL/BEAR — разрешено больше позиций в направлении тренда (trend-riding).
+    # В CHOP/VOLATILE — строже, чтобы не словить whipsaw.
+    # В тренде против тренда (BULL + SHORT или BEAR + LONG) — ещё строже.
     try:
         open_pos = pt.get_open_positions()
         same_dir = sum(1 for p in open_pos if (p.get("direction") or "").upper() == direction)
         opp_dir = sum(1 for p in open_pos if (p.get("direction") or "").upper() != direction)
         on_this_pair = sum(1 for p in open_pos if (p.get("symbol") or "").upper() == pair_norm)
+
+        # Определяем лимит по фазе + совпадение с трендом
+        trend_up = phase == "BULL_TREND"
+        trend_down = phase == "BEAR_TREND"
+        with_trend = (trend_up and direction == "LONG") or (trend_down and direction == "SHORT")
+        counter_trend = (trend_up and direction == "SHORT") or (trend_down and direction == "LONG")
+
+        if phase in ("BULL_TREND", "BEAR_TREND"):
+            if with_trend:
+                warn_at, bad_at = 6, 8    # по тренду — до 8 позиций
+            elif counter_trend:
+                warn_at, bad_at = 2, 3    # против тренда — строго
+            else:
+                warn_at, bad_at = 4, 6
+        elif phase == "VOLATILE":
+            warn_at, bad_at = 2, 3
+        elif phase == "CHOP":
+            warn_at, bad_at = 3, 5
+        else:  # NEUTRAL / EUPHORIA / CAPITULATION
+            warn_at, bad_at = 3, 5
+
         if on_this_pair > 0:
             checks.append({"name": "Диверсификация", "status": "bad",
                            "comment": f"Уже открыта позиция на {pair_norm}", "value": ""})
-        elif same_dir >= 4:
+        elif same_dir >= bad_at:
+            dir_tag = "по тренду" if with_trend else ("против тренда" if counter_trend else "")
             checks.append({"name": "Диверсификация", "status": "bad",
-                           "comment": f"Уже {same_dir} в {direction} — макс 3-4", "value": ""})
-        elif same_dir >= 3:
+                           "comment": f"Уже {same_dir} в {direction} {dir_tag} — макс {bad_at-1} для фазы {phase}", "value": ""})
+        elif same_dir >= warn_at:
             checks.append({"name": "Диверсификация", "status": "warn",
-                           "comment": f"3 позиции в {direction}", "value": ""})
+                           "comment": f"{same_dir} в {direction} (предел {bad_at-1} для {phase})", "value": ""})
         else:
+            extra = f" ({phase} → лимит {bad_at-1})" if phase in ("BULL_TREND","BEAR_TREND","CHOP","VOLATILE") else ""
             checks.append({"name": "Диверсификация", "status": "ok",
-                           "comment": f"{same_dir} в {direction} · {opp_dir} противоп.", "value": ""})
+                           "comment": f"{same_dir} в {direction} · {opp_dir} противоп.{extra}", "value": ""})
     except Exception:
         checks.append({"name": "Диверсификация", "status": "warn", "comment": "Err", "value": ""})
 
