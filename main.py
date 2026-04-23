@@ -10,27 +10,22 @@ from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT2_BOT_TOKEN, B
 
 
 def _bootstrap_session():
-    """Session можно восстановить из:
-    1) env TELETHON_SESSION_B64 (быстро, но ограничен размером)
-    2) MongoDB collection 'system' документ _id='telethon_session'
+    """Session восстанавливается с приоритетом:
+    1) MongoDB collection 'system' документ _id='telethon_session' —
+       живое хранилище, авто-обновляется через _persist_session_to_mongo
+       при каждой успешной авторизации. Всегда свежее всех других
+       источников.
+    2) env TELETHON_SESSION_B64 — fallback когда Mongo пуст (первый запуск).
+
+    Было: env был приоритетом 1 → при устаревшем env'е Mongo-копия
+    игнорировалась и Railway поднимал сломанную сессию.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     session_path = os.path.join(here, "session_userbot.session")
     if os.path.exists(session_path):
         return
 
-    # 1) env var
-    b64 = os.getenv("TELETHON_SESSION_B64")
-    if b64:
-        try:
-            with open(session_path, "wb") as f:
-                f.write(base64.b64decode(b64))
-            logging.info(f"✅ Session восстановлен из TELETHON_SESSION_B64 ({len(b64)} chars)")
-            return
-        except Exception as e:
-            logging.error(f"TELETHON_SESSION_B64 decode failed: {e}")
-
-    # 2) MongoDB
+    # 1) MongoDB (primary — всегда актуальнее env)
     try:
         from database import _get_db
         col = _get_db().system
@@ -42,6 +37,19 @@ def _bootstrap_session():
             return
     except Exception as e:
         logging.error(f"Mongo session load failed: {e}")
+
+    # 2) env var — fallback когда Mongo пуст (редко, только при первом
+    # деплое). При успешном старте userbot сохранит сессию в Mongo,
+    # и следующие рестарты пойдут через Mongo.
+    b64 = os.getenv("TELETHON_SESSION_B64")
+    if b64:
+        try:
+            with open(session_path, "wb") as f:
+                f.write(base64.b64decode(b64))
+            logging.info(f"✅ Session восстановлен из TELETHON_SESSION_B64 ({len(b64)} chars)")
+            return
+        except Exception as e:
+            logging.error(f"TELETHON_SESSION_B64 decode failed: {e}")
 
 
 def _persist_session_to_mongo():
