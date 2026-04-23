@@ -1463,11 +1463,11 @@
       // ─── CV+ST Flip observation — маркеры на графиках ───────────────
       // ⏳ на cv_triggered_at (WAITING/TIMEOUT), 💥 на flip_at (FLIPPED)
       window._cvFlipCache = window._cvFlipCache || {};
-      window._fetchCvFlips = async function(pair, hours = 168) {
+      window._fetchCvFlips = async function(pair, hours = 72) {
         if (!pair) return [];
         const key = `${pair}_${hours}`;
         const c = window._cvFlipCache[key];
-        if (c && (Date.now() - c.at) < 30000) return c.items;
+        if (c && (Date.now() - c.at) < 120000) return c.items;
         try {
           const r = await fetch(`/api/cv-flips?pair=${encodeURIComponent(pair)}&hours=${hours}&state=all`);
           const d = await r.json();

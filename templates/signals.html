@@ -3442,7 +3442,7 @@ async function _drawPaperHistChart(idx) {
     }
     // CV+ST Flip markers (⏳/💥)
     if (window._fetchCvFlips && window._addCvFlipMarkers && h.symbol && d.candles.length) {
-      window._fetchCvFlips(h.symbol, 336).then(cvf => {
+      window._fetchCvFlips(h.symbol, 72).then(cvf => {
         if (!cvf || !cvf.length) return;
         _cvFlipM = window._addCvFlipMarkers(d.candles, cvf) || [];
         _applyAll();
@@ -3703,7 +3703,7 @@ async function _renderPaperChart(idx, tf) {
       }).catch(() => {});
     }
     if (window._fetchCvFlips && window._addCvFlipMarkers && p.symbol && d.candles.length) {
-      window._fetchCvFlips(p.symbol, 336).then(cvf => {
+      window._fetchCvFlips(p.symbol, 72).then(cvf => {
         if (!cvf || !cvf.length) return;
         _cvFlipM = window._addCvFlipMarkers(d.candles, cvf) || [];
         _applyAll();
@@ -5491,7 +5491,7 @@ async function loadCoinChart(coin) {
       }).catch(() => {});
     }
     if (window._fetchCvFlips && window._addCvFlipMarkers && sym && d.candles.length) {
-      window._fetchCvFlips(sym, 336).then(cvf => {
+      window._fetchCvFlips(sym, 72).then(cvf => {
         if (!cvf || !cvf.length) return;
         _cvFlipM = window._addCvFlipMarkers(d.candles, cvf) || [];
         _applyAll();
@@ -6193,7 +6193,7 @@ async function openJournalChart(idx, forceTF) {
       }).catch(() => {});
     }
     if (window._fetchCvFlips && window._addCvFlipMarkers && sym && d.candles.length) {
-      window._fetchCvFlips(sym, 336).then(cvf => {
+      window._fetchCvFlips(sym, 72).then(cvf => {
         if (!cvf || !cvf.length) return;
         _cvFlipM = window._addCvFlipMarkers(d.candles, cvf) || [];
         _applyAll();

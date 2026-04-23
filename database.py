@@ -730,6 +730,8 @@ def init_db():
         cvf.create_index([("pair", ASCENDING), ("state", ASCENDING)])
         cvf.create_index([("cv_triggered_at", DESCENDING)])
         cvf.create_index("cv_signal_id", unique=True, sparse=True)
+        # Быстрый поиск по паре для /api/cv-flips?pair=X (маркеры на графиках)
+        cvf.create_index([("pair", ASCENDING), ("cv_triggered_at", DESCENDING)])
 
         # Live trades (реальные сделки Binance)
         lt = _live_trades()
