@@ -1128,16 +1128,15 @@
             lastValueVisible: true,
             crosshairMarkerVisible: false,
           });
-          // TradingView-style: свечи 0-52%, RSI 54-75%, TSI 77-98%
-          // (раскладка рассчитана на наличие TSI — тоже добавляем на все графики)
+          // Layout без TSI: свечи 0-70%, RSI 72-98%. TSI отключён.
           try {
             chart.priceScale('right').applyOptions({
-              scaleMargins: { top: 0.02, bottom: 0.48 },
+              scaleMargins: { top: 0.02, bottom: 0.30 },
             });
           } catch (_) {}
           try {
             chart.priceScale('rsi').applyOptions({
-              scaleMargins: { top: 0.54, bottom: 0.25 },
+              scaleMargins: { top: 0.72, bottom: 0.02 },
               borderVisible: false,
             });
           } catch (_) {}
@@ -1146,12 +1145,12 @@
             if (rsi[i] != null) data.push({ time: candles[i].time, value: rsi[i] });
           }
           series.setData(data);
-          // Уровни 30/50/70
+          // Уровни 30/50/70. Линия 50 — красная (явный mid-line по запросу).
           try {
             series.createPriceLine({ price: 70, color: '#ff4d6d', lineWidth: 1,
               lineStyle: 2, axisLabelVisible: false, title: '70' });
-            series.createPriceLine({ price: 50, color: '#4a5568', lineWidth: 1,
-              lineStyle: 2, axisLabelVisible: false, title: '50' });
+            series.createPriceLine({ price: 50, color: '#ff4d6d', lineWidth: 1,
+              lineStyle: 0, axisLabelVisible: false, title: '50' });
             series.createPriceLine({ price: 30, color: '#00e5a0', lineWidth: 1,
               lineStyle: 2, axisLabelVisible: false, title: '30' });
           } catch (_) {}
@@ -1232,6 +1231,11 @@
       };
 
       window._addTSI = function(chart, candles, opts) {
+        // TSI отключён по запросу пользователя — панель TSI больше не
+        // рисуется. Функция сохранена (на будущее) но всегда возвращает
+        // null; все вызовы window._addTSI(...) становятся no-op.
+        return null;
+        // eslint-disable-next-line no-unreachable
         opts = opts || {};
         if (!chart || !candles || candles.length < 40) return null;
         const longP  = opts.longP  || 25;
