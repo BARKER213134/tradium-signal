@@ -77,12 +77,15 @@ BOT10_BOT_TOKEN = os.getenv("BOT10_BOT_TOKEN", "")
 # по подтверждению. Токен задаётся в Railway когда готовы к live.
 BOT11_BOT_TOKEN = os.getenv("BOT11_BOT_TOKEN", "")
 
-# BOT_CV_FLIP — CV + SuperTrend 30m flip observation notifications.
-# Отдельный бот. Если токен/chat_id не задан — watcher просто не шлёт
-# в Telegram, journal/графики работают.
-BOT_CV_FLIP_TOKEN = os.getenv("BOT_CV_FLIP_TOKEN", "")
+# BOT12 — CV + SuperTrend 30m flip observation notifications.
+# Если BOT12_BOT_TOKEN не задан — watcher просто не шлёт в Telegram,
+# journal/графики работают. Chat_id по умолчанию = ADMIN_CHAT_ID
+# (алерты идут в общий админский чат как у остальных ботов);
+# CV_FLIP_CHAT_ID — опциональный override если хочешь отдельный чат.
+BOT12_BOT_TOKEN = os.getenv("BOT12_BOT_TOKEN", "")
 _cv_flip_chat = os.getenv("CV_FLIP_CHAT_ID", "").strip()
-CV_FLIP_CHAT_ID = int(_cv_flip_chat) if _cv_flip_chat.lstrip("-").isdigit() else 0
+CV_FLIP_CHAT_ID = (int(_cv_flip_chat) if _cv_flip_chat.lstrip("-").isdigit()
+                   else ADMIN_CHAT_ID)
 
 # ═════ Binance Futures API для реальной торговли ═════
 # API keys — создавать с минимальными правами (только futures trade, без withdraw)

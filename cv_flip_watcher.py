@@ -236,9 +236,10 @@ async def _scan_waiting():
 
 async def _send_telegram(pair: str, direction: str, price: float,
                          flip_at: datetime, pattern: str):
-    """Telegram alert в BOT_CV_FLIP_TOKEN — graceful skip если не настроен."""
-    from config import BOT_CV_FLIP_TOKEN, CV_FLIP_CHAT_ID
-    if not BOT_CV_FLIP_TOKEN or not CV_FLIP_CHAT_ID:
+    """Telegram alert в BOT12_BOT_TOKEN — graceful skip если не настроен.
+    Chat_id по умолчанию = ADMIN_CHAT_ID (см. config.CV_FLIP_CHAT_ID)."""
+    from config import BOT12_BOT_TOKEN, CV_FLIP_CHAT_ID
+    if not BOT12_BOT_TOKEN or not CV_FLIP_CHAT_ID:
         return
     try:
         import httpx
@@ -250,7 +251,7 @@ async def _send_telegram(pair: str, direction: str, price: float,
             f"Flip @ <b>{price}</b>\n"
             f"At: <code>{flip_at.strftime('%Y-%m-%d %H:%M UTC')}</code>"
         )
-        url = f"https://api.telegram.org/bot{BOT_CV_FLIP_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{BOT12_BOT_TOKEN}/sendMessage"
         async with httpx.AsyncClient(timeout=10) as c:
             await c.post(
                 url,
