@@ -1,10 +1,14 @@
 """CV + SuperTrend 30m Flip watcher — observation-only.
 
-Для каждого CV сигнала (source=cryptovizor, pattern_triggered=True):
-  1. Сразу создаётся дубль в cv_flip_signals со state=WAITING
-     (виден в journal сразу).
+Следим за ВСЕМИ сообщениями от CryptoVizor (по received_at), не ждём
+pattern_triggered. Как только сигнал появился в боте — начинаем ждать
+flip ST 30m в ту же сторону.
+
+Для каждого CV сигнала (source=cryptovizor):
+  1. Сразу создаётся дубль в cv_flip_signals со state=WAITING, где
+     cv_triggered_at = received_at CV сообщения.
   2. Periodic scan (30 сек) — по каждому WAITING-дублю:
-     - Если прошло >TIMEOUT_H часов от cv_triggered_at без flip → state=TIMEOUT.
+     - Если прошло >TIMEOUT_H часов без flip → state=TIMEOUT.
      - Если пришёл более новый CV на ту же пару → state=INVALIDATED.
      - Если на 30m свечах после cv_triggered_at был ≥MIN_BARS_UNDER_ST
        закрытых баров с ST-трендом против CV, и затем ST flip в сторону CV
@@ -39,7 +43,8 @@ def _to_utc_ts(d: datetime) -> float:
 
 
 async def _create_waiting_duplicates():
-    """Для каждого CV сигнала за последние TIMEOUT_H часов без дубля — создать WAITING."""
+    """Для каждого CV сигнала за последние TIMEOUT_H часов без дубля — создать WAITING.
+    Фильтр по received_at (момент прихода сообщения в бота), не по pattern_triggered_at."""
     from database import _signals, _cv_flip_signals, utcnow
     since = utcnow() - timedelta(hours=TIMEOUT_H)
     cv_col = _signals()
@@ -49,11 +54,10 @@ async def _create_waiting_duplicates():
     for cv in cv_col.find(
         {
             "source": "cryptovizor",
-            "pattern_triggered": True,
-            "pattern_triggered_at": {"$gte": since},
+            "received_at": {"$gte": since},
         },
         {"_id": 1, "pair": 1, "direction": 1, "pattern_name": 1,
-         "pattern_triggered_at": 1},
+         "received_at": 1},
     ):
         sid = str(cv["_id"])
         if dup_col.find_one({"cv_signal_id": sid}, {"_id": 1}):
@@ -62,14 +66,16 @@ async def _create_waiting_duplicates():
         if direction not in ("LONG", "SHORT"):
             continue
         pair = cv.get("pair") or ""
-        if not pair:
+        received_at = cv.get("received_at")
+        if not pair or received_at is None:
             continue
         now = utcnow()
         doc = {
             "cv_signal_id": sid,
             "pair": pair,
             "direction": direction,
-            "cv_triggered_at": cv.get("pattern_triggered_at"),
+            # cv_triggered_at = когда сигнал появился в боте (received_at)
+            "cv_triggered_at": received_at,
             "cv_pattern_name": cv.get("pattern_name") or "",
             "state": "WAITING",
             "flip_at": None,
@@ -116,9 +122,8 @@ async def _check_doc(doc, closed_candles, st_series, now_dt, dup_col):
     newer = _signals().find_one(
         {
             "source": "cryptovizor",
-            "pattern_triggered": True,
             "pair": pair,
-            "pattern_triggered_at": {"$gt": cv_at},
+            "received_at": {"$gt": cv_at},
         },
         {"_id": 1},
     )

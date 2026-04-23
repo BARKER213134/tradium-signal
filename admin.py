@@ -1104,11 +1104,12 @@ async def api_supertrend_signals(tier: str = "", pair: str = "",
 def _cv_flip_backfill_sync(hours: int = 48) -> dict:
     """Одноразовый backfill cv_flip_signals за последние N часов.
 
-    Для каждого CV signal (source=cryptovizor, pattern_triggered=True):
-      1. Upsert WAITING-дубль (если ещё нет)
+    Для каждого CV signal (source=cryptovizor, любой):
+      1. Upsert WAITING-дубль (если ещё нет), cv_triggered_at = received_at
+         — т.е. следим за любым сообщением из CV-бота, не ждём pattern_triggered.
       2. Грузит 30m свечи пары и ищет flip ST(7, 2.5) в сторону CV
-         (MIN_BARS_UNDER_ST=1, timeout 24ч от cv_triggered_at) —
-         такой же алгоритм как в cv_flip_watcher.
+         (MIN_BARS_UNDER_ST=1, timeout 24ч от received_at) — тот же
+         алгоритм что в cv_flip_watcher.
       3. Финализирует state: FLIPPED / TIMEOUT / INVALIDATED / WAITING.
     """
     from database import _signals, _cv_flip_signals, utcnow
@@ -1129,12 +1130,11 @@ def _cv_flip_backfill_sync(hours: int = 48) -> dict:
 
     cv_list = list(cv_col.find({
         "source": "cryptovizor",
-        "pattern_triggered": True,
-        "pattern_triggered_at": {"$gte": since},
+        "received_at": {"$gte": since},
     }, {
         "_id": 1, "pair": 1, "direction": 1, "pattern_name": 1,
-        "pattern_triggered_at": 1,
-    }).sort("pattern_triggered_at", 1))
+        "received_at": 1,
+    }).sort("received_at", 1))
 
     created = updated = skipped = 0
     counters = {"WAITING": 0, "FLIPPED": 0, "TIMEOUT": 0, "INVALIDATED": 0}
@@ -1154,7 +1154,7 @@ def _cv_flip_backfill_sync(hours: int = 48) -> dict:
         sid = str(cv["_id"])
         direction = (cv.get("direction") or "").upper()
         pair = cv.get("pair") or ""
-        cv_at = cv.get("pattern_triggered_at")
+        cv_at = cv.get("received_at")
         if direction not in ("LONG", "SHORT") or not pair or cv_at is None:
             skipped += 1
             continue
@@ -1183,8 +1183,8 @@ def _cv_flip_backfill_sync(hours: int = 48) -> dict:
             continue
 
         newer = cv_col.find_one({
-            "source": "cryptovizor", "pattern_triggered": True,
-            "pair": pair, "pattern_triggered_at": {"$gt": cv_at},
+            "source": "cryptovizor",
+            "pair": pair, "received_at": {"$gt": cv_at},
         }, {"_id": 1})
         if newer:
             dup_col.update_one({"_id": doc_id},
