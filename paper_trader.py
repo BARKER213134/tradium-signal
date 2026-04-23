@@ -1402,6 +1402,15 @@ async def on_signal(signal_data: dict):
     if not pair or direction not in ("LONG", "SHORT"):
         return None
 
+    # ── 0. Source blacklist ──────────────────────────────────────
+    # supertrend отключён: на истории 92 сделок давал PnL -172 USDT
+    # (R:R 0.81, WR 48%) при 50 сделках из 92, тянул всю систему в минус.
+    # Без него: +161 USDT / R:R 1.32 / WR 62% на остальных источниках.
+    if source == "supertrend":
+        logger.info(f"Paper SKIP (source=supertrend disabled): {symbol} {direction}")
+        _log_rejection_sync(signal_data, "⛔ supertrend source disabled (убыточен на истории)")
+        return None
+
     # ── 1. Anti-cluster guard ──
     try:
         from anti_cluster_detector import detect_conflict
