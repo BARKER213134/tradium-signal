@@ -893,6 +893,15 @@
       window._createChartSafe = function(container, opts) {
         window._disposeChart(container);
         const chart = LightweightCharts.createChart(container, opts);
+        // Применяем scaleMargins СРАЗУ — до того как свечи получат setData.
+        // Иначе: свечи рендерятся на всю высоту → потом _addRSI меняет
+        // margins → chart пересчитывает → визуальный "прыжок" свечей.
+        // Свечи: 0-70% вертикали, RSI: 72-98% (layout без TSI).
+        try {
+          chart.priceScale('right').applyOptions({
+            scaleMargins: { top: 0.02, bottom: 0.30 },
+          });
+        } catch (_) {}
         container._lwcChart = chart;
         return chart;
       };
@@ -1128,12 +1137,8 @@
             lastValueVisible: true,
             crosshairMarkerVisible: false,
           });
-          // Layout без TSI: свечи 0-70%, RSI 72-98%. TSI отключён.
-          try {
-            chart.priceScale('right').applyOptions({
-              scaleMargins: { top: 0.02, bottom: 0.30 },
-            });
-          } catch (_) {}
+          // Layout без TSI: свечи 0-70% уже установлены в _createChartSafe
+          // (чтобы не было shift'а). Здесь только rsi scale.
           try {
             chart.priceScale('rsi').applyOptions({
               scaleMargins: { top: 0.72, bottom: 0.02 },
