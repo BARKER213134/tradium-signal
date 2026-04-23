@@ -107,6 +107,15 @@ def _supertrend_signals() -> Collection:
     return _get_db().supertrend_signals
 
 
+def _cv_flip_signals() -> Collection:
+    """CV + SuperTrend 30m Flip observation signals.
+
+    Lifecycle: приход CV (source=cryptovizor) → WAITING →
+    (FLIPPED | TIMEOUT | INVALIDATED). Только наблюдение, paper_trader
+    не открывает сделок на этот источник. Watcher: cv_flip_watcher."""
+    return _get_db().cv_flip_signals
+
+
 def _live_trades() -> Collection:
     """Реальные сделки (Binance Futures через ccxt). Аналог paper_trades
     но с exchange_order_id, exchange_fills, real PnL. Режим testnet|real
@@ -713,6 +722,14 @@ def init_db():
         sts.create_index([("pair_norm", ASCENDING), ("flip_at", DESCENDING)])
         sts.create_index([("pair_norm", ASCENDING), ("tier", ASCENDING), ("flip_at", ASCENDING)], unique=True, name="uniq_flip")
         sts.create_index("id", unique=True, sparse=True)
+
+        # CV+ST Flip observation
+        cvf = _cv_flip_signals()
+        cvf.create_index("created_at", expireAfterSeconds=60*86400, name="ttl_60d")
+        cvf.create_index([("state", ASCENDING), ("cv_triggered_at", DESCENDING)])
+        cvf.create_index([("pair", ASCENDING), ("state", ASCENDING)])
+        cvf.create_index([("cv_triggered_at", DESCENDING)])
+        cvf.create_index("cv_signal_id", unique=True, sparse=True)
 
         # Live trades (реальные сделки Binance)
         lt = _live_trades()

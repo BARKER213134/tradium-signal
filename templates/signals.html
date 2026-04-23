@@ -1238,7 +1238,7 @@ function renderClusters(items) {
     tb.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Нет кластеров</td></tr>';
     return;
   }
-  const srcIcons = {cryptovizor:'🚀',tradium:'📡',anomaly:'⚠️',confluence:'🎯',cluster:'💠'};
+  const srcIcons = {cryptovizor:'🚀',tradium:'📡',anomaly:'⚠️',confluence:'🎯',cluster:'💠',cv_flip:'⏳'};
   tb.innerHTML = items.map((c, i) => {
     const t = c.trigger_at ? new Date(c.trigger_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
     const pair = (c.pair || '').replace('/USDT','');
@@ -3214,7 +3214,7 @@ async function _renderPaperChart(idx, tf) {
       for (const c of d.candles) { const diff = Math.abs(c.time - ts); if (diff < minD) { minD = diff; mc = c; } }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠'};
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳'};
     const entryTs = p.opened_at ? Math.floor(new Date(p.opened_at).getTime()/1000) : 0;
     const mainMc = nearestP(entryTs);
     const isLong = p.direction === 'LONG';
@@ -4690,6 +4690,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="paper">🤖 Paper Trade</option>
     <option value="supertrend">🌀 SuperTrend</option>
     <option value="verified">✨ Verified</option>
+    <option value="cv_flip">⏳ Flip Supertrend</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все</option>
@@ -4820,7 +4821,15 @@ function _srcLabel(src) {
   if (src === 'cluster')    return '💠 Cluster';
   if (src === 'supertrend') return '🌀 SuperTrend';
   if (src === 'verified')   return '✨ Verified';
+  if (src === 'cv_flip')    return '⏳ Flip Supertrend';
   return '🚀 Cryptovizor';
+}
+function _cvFlipStateIcon(state) {
+  // CV+ST Flip lifecycle icon для бейджа в journal
+  if (state === 'FLIPPED')     return '💥';
+  if (state === 'TIMEOUT')     return '❌';
+  if (state === 'INVALIDATED') return '🚫';
+  return '⏳';  // WAITING default
 }
 function _fmtPrice(v) { return v != null ? String(v) : '—'; }
 
@@ -5658,7 +5667,7 @@ async function openJournalChart(idx, forceTF) {
       }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠'};
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳'};
     const modalMarkerMap = new Map();
 
     // Базовая строка для сопоставления символа: нормализуем к "BTCUSDT"

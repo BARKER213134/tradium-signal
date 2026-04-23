@@ -22,8 +22,20 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app):
-    """Гарантирует запуск watcher/userbot/bots."""
+    """Гарантирует запуск watcher/userbot/bots.
+
+    DEV_MODE=1 в .env → пропускаем запуск Telethon userbot, watcher, bot'ов.
+    Нужно когда локальный запуск идёт параллельно с Railway — две копии
+    userbot с одной Telegram-сессией вызывают дисконнекты и дубли алертов.
+    UI / админка / бектесты работают как обычно.
+    """
     _bg_tasks = []
+    dev_mode = (os.getenv("DEV_MODE", "").strip() == "1")
+    if dev_mode:
+        print("[LIFESPAN] DEV_MODE=1 → userbot/watcher/bots НЕ запускаются "
+              "(UI + backtests available, Telethon idle)", flush=True)
+        yield
+        return
     try:
         # Ждём 3с — main.py мог уже вызвать setup() но gather() ещё не запустил tasks
         await asyncio.sleep(3)
@@ -60,6 +72,14 @@ async def lifespan(app):
             _bg_tasks.append(asyncio.create_task(start_watcher()))
             if bot2:
                 _bg_tasks.append(asyncio.create_task(start_bot2()))
+
+            # CV + SuperTrend 30m flip observation watcher (observation-only)
+            try:
+                from cv_flip_watcher import start_cv_flip_watcher
+                _bg_tasks.append(asyncio.create_task(start_cv_flip_watcher()))
+            except Exception as _e:
+                print(f"[LIFESPAN] cv_flip_watcher start skipped: {_e}", flush=True)
+
             print(f"[LIFESPAN] {len(_bg_tasks)} tasks launched", flush=True)
         else:
             print("[LIFESPAN] Watcher already running, skipping", flush=True)
@@ -1005,6 +1025,40 @@ async def api_supertrend_signals(tier: str = "", pair: str = "",
         items.append(doc)
     return {"ok": True, "count": len(items), "items": items,
             "tier": tier, "pair": pair, "hours": hours}
+
+
+@app.get("/api/cv-flips")
+async def api_cv_flips(state: str = "all", pair: str = "",
+                       hours: int = 72, limit: int = 500):
+    """CV+ST Flip observation feed для journal.
+
+    state ∈ {all, WAITING, FLIPPED, TIMEOUT, INVALIDATED}
+    hours — окно от cv_triggered_at
+    """
+    from database import _cv_flip_signals, utcnow
+    from datetime import timedelta
+    since = utcnow() - timedelta(hours=hours)
+    query: dict = {"cv_triggered_at": {"$gte": since}}
+    if state and state.lower() != "all":
+        query["state"] = state.upper()
+    if pair:
+        p = pair.replace("/", "").upper()
+        if p.endswith("USDT") and "/" not in pair:
+            # пользователь передал как 'BTCUSDT'; наш pair хранится 'BTC/USDT'
+            base = p[:-4]
+            query["$or"] = [{"pair": pair}, {"pair": f"{base}/USDT"}]
+        else:
+            query["pair"] = pair
+    items = []
+    for doc in _cv_flip_signals().find(query).sort("cv_triggered_at", -1).limit(limit):
+        doc["_id"] = str(doc.get("_id"))
+        for k in ("cv_triggered_at", "flip_at", "created_at", "updated_at"):
+            v = doc.get(k)
+            if hasattr(v, "isoformat"):
+                doc[k] = v.isoformat()
+        items.append(doc)
+    return {"ok": True, "count": len(items), "items": items,
+            "state": state, "pair": pair, "hours": hours}
 
 
 # Серверный кеш для /api/supertrend-signals/by-pair (TTL 60с)
