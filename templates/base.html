@@ -1520,10 +1520,12 @@
               }
             }
           }
-          // Маркер 2: flip_at — 💥 (только FLIPPED). size=1 — стрелка
-          // минимальная (LWC не даёт раздельно управлять размером text'а:
-          // emoji отрисуется близко к стандартному размеру независимо
-          // от size, а стрелка меньше = emoji визуально доминирует).
+          // Маркер 2: flip_at — 💥 FLIP (только FLIPPED).
+          // Используем shape='circle' (компактнее чем стрелка) + size=3 +
+          // расширенный text '💥 FLIP' — физически занимает больше места
+          // на канвасе, яркий цвет делает маркер видимым на фоне
+          // ST-маркеров и свечей. В LWC размер emoji привязан к
+          // общему size, отдельно не конфигурируется.
           if (state === 'FLIPPED' && s.flip_at) {
             const flipTs = Math.floor(new Date(s.flip_at).getTime() / 1000);
             if (flipTs >= firstTs - 3600 && flipTs <= lastTs + 3600 * 2) {
@@ -1532,10 +1534,10 @@
                 out.push({
                   time: mc.time,
                   position: isLong ? 'belowBar' : 'aboveBar',
-                  color: '#ff5ea1',
-                  shape: isLong ? 'arrowUp' : 'arrowDown',
-                  text: '💥',
-                  size: 1,
+                  color: '#ff0080',
+                  shape: 'circle',
+                  text: '💥 FLIP',
+                  size: 3,
                 });
               }
             }
