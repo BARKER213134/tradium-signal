@@ -666,6 +666,8 @@ def init_db():
     col.create_index([("source", ASCENDING), ("pattern_triggered", ASCENDING), ("pattern_triggered_at", DESCENDING)])
     col.create_index([("is_top_pick", ASCENDING), ("source", ASCENDING)])
     col.create_index([("pair", ASCENDING), ("direction", ASCENDING), ("source", ASCENDING)])
+    # Chart-overlay queries: выборка по паре + сортировка по времени
+    col.create_index([("pair", ASCENDING), ("received_at", DESCENDING)])
 
     # Anomalies — direction queries
     an.create_index([("pair", ASCENDING), ("direction", ASCENDING), ("detected_at", DESCENDING)])

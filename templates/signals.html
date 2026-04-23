@@ -3414,7 +3414,16 @@ async function _drawPaperHistChart(idx) {
     // Накопительные маркеры: KC и KL не затирают друг друга, ST flip-стрелки сразу, + ST-signals
     let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [];
     const _stFlipsHist = (_stResHist && _stResHist.flipMarkers) ? _stResHist.flipMarkers : [];
-    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsHist, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+    // Debounce re-render: 5 независимых fetch'ей резолвятся в течение ~1с,
+    // каждый вызывает _applyAll — раньше было 5 setMarkers подряд, теперь 1.
+    let _applyTimer = null;
+    const _applyAll = () => {
+      if (_applyTimer) return;
+      _applyTimer = setTimeout(() => {
+        _applyTimer = null;
+        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsHist, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+      }, 60);
+    };
     _applyAll();
     // Market state overlay (KC + Reversal)
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
@@ -3676,7 +3685,14 @@ async function _renderPaperChart(idx, tf) {
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу + ST-signals
     let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [];
     const _stFlipsLive = (_stResLive && _stResLive.flipMarkers) ? _stResLive.flipMarkers : [];
-    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsLive, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+    let _applyTimer = null;
+    const _applyAll = () => {
+      if (_applyTimer) return;
+      _applyTimer = setTimeout(() => {
+        _applyTimer = null;
+        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsLive, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+      }, 60);
+    };
     _applyAll();
     // Market state overlay (KC + Reversal)
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
@@ -5480,7 +5496,14 @@ async function loadCoinChart(coin) {
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу, + ST-signals
     let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [];
     const _stFlipsCoin = (_stResCoin && _stResCoin.flipMarkers) ? _stResCoin.flipMarkers : [];
-    const _applyAll = () => series.setMarkers([...unique, ..._msM, ..._klM, ..._stFlipsCoin, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+    let _applyTimer = null;
+    const _applyAll = () => {
+      if (_applyTimer) return;
+      _applyTimer = setTimeout(() => {
+        _applyTimer = null;
+        series.setMarkers([...unique, ..._msM, ..._klM, ..._stFlipsCoin, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+      }, 60);
+    };
     _applyAll();
     // ST-signals markers
     if (window._fetchStSignals && window._addStSignalMarkers && sym && d.candles.length) {
@@ -6166,7 +6189,14 @@ async function openJournalChart(idx, forceTF) {
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу + ST-signals
     let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [];
     const _stFlipsJ = (_stResJ && _stResJ.flipMarkers) ? _stResJ.flipMarkers : [];
-    const _applyAll = () => series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsJ, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+    let _applyTimer = null;
+    const _applyAll = () => {
+      if (_applyTimer) return;
+      _applyTimer = setTimeout(() => {
+        _applyTimer = null;
+        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsJ, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+      }, 60);
+    };
     _applyAll();
     // Market state overlay (KC + Reversal)
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {

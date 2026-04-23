@@ -1394,7 +1394,7 @@
         if (!pair) return [];
         const key = `${pair}_${hours}`;
         const c = window._stSigCache[key];
-        if (c && (Date.now() - c.at) < 30000) return c.items;
+        if (c && (Date.now() - c.at) < 120000) return c.items;
         try {
           const r = await fetch(`/api/supertrend-signals/by-pair?pair=${encodeURIComponent(pair)}&hours=${hours}`);
           const d = await r.json();
@@ -1548,7 +1548,7 @@
         if (!pair) return [];
         const key = `${pair}_${hours}`;
         const c = window._verifiedCache[key];
-        if (c && (Date.now() - c.at) < 30000) return c.items;
+        if (c && (Date.now() - c.at) < 120000) return c.items;
         try {
           const r = await fetch(`/api/verified-signals?pair=${encodeURIComponent(pair)}&hours=${hours}`);
           const d = await r.json();
@@ -1600,7 +1600,7 @@
         if (!pair) return [];
         const key = `${pair}_${hours}`;
         const c = window._klCache[key];
-        if (c && (Date.now() - c.at) < 30000) return c.items;
+        if (c && (Date.now() - c.at) < 120000) return c.items;
         try {
           const r = await fetch(`/api/key-levels/recent?pair=${encodeURIComponent(pair)}&hours=${hours}`);
           const d = await r.json();
@@ -1666,12 +1666,13 @@
         return out;
       };
 
-      // Fetch helper — кешируется на 15 сек
+      // Fetch helper — кешируется на 90 сек
+      // (были 15с: слишком агрессивно, market events меняются редко)
       window._fetchMarketEvents = async function(firstTs, lastTs) {
         const cacheKey = `${firstTs}_${lastTs}`;
         window._meCache = window._meCache || {};
         const cached = window._meCache[cacheKey];
-        if (cached && (Date.now() - cached.at < 15000)) return cached.events;
+        if (cached && (Date.now() - cached.at < 90000)) return cached.events;
         try {
           const r = await fetch(`/api/market-events?since_ts=${firstTs}&until_ts=${lastTs}`);
           const d = await r.json();
