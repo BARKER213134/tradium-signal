@@ -3400,6 +3400,37 @@ async def api_reversal_meter():
         return {"error": str(e), "traceback": traceback.format_exc()[-2000:]}
 
 
+@app.post("/api/userbot/reload-session")
+async def api_userbot_reload_session():
+    """Форсированная перезагрузка session_userbot.session из Mongo.
+    Использовать когда в Mongo залита свежая сессия, а файл в контейнере
+    устаревший — без этого нужен был бы полный redeploy.
+
+    После записи файла принудительно отключаем текущий клиент;
+    supervisor auto-reconnect'ится и подхватит обновлённую сессию."""
+    from database import _get_db
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    session_path = os.path.join(here, "session_userbot.session")
+    doc = _get_db().system.find_one({"_id": "telethon_session"})
+    if not doc or "data" not in doc:
+        return {"ok": False, "error": "No session document in Mongo"}
+    try:
+        with open(session_path, "wb") as f:
+            f.write(doc["data"])
+    except Exception as e:
+        return {"ok": False, "error": f"write failed: {e}"}
+    forced = False
+    try:
+        from userbot import _tg_client
+        if _tg_client and _tg_client.is_connected():
+            await _tg_client.disconnect()
+            forced = True
+    except Exception:
+        pass
+    return {"ok": True, "session_bytes": len(doc["data"]), "forced_reconnect": forced}
+
+
 @app.get("/api/userbot-status")
 async def api_userbot_status():
     """Диагностика userbot: подключён ли Telethon, когда был последний сигнал из каждого канала."""
