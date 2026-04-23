@@ -8573,18 +8573,53 @@ def warm_candles_cache(symbol: str, tf: str, limit: int = 200) -> bool:
 
 @app.get("/api/journal-candles")
 async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
-    """Свечи для Lightweight Charts. Сервер-кеш по TTL per TF.
-    При cache-miss запускает background fetch остальных TF для той же пары,
-    чтоб последующее переключение TF было мгновенным."""
+    """Свечи для Lightweight Charts. Сервер-кеш по TTL per TF со
+    stale-while-revalidate: если в кеше есть expired-запись не старше
+    STALE_MAX×TTL — сразу возвращаем её + фоном обновляем. Холодный
+    запрос к Binance (1-3с) больше не блокирует открытие графика —
+    юзер видит чуть устаревшие (максимум minutes old) свечи мгновенно,
+    свежие подъедут при следующем открытии.
+
+    При cache-miss (ничего нет вообще) — как раньше, ждём Binance.
+    Background prefetch остальных TF запускается всегда при miss.
+    """
     from exchange import get_klines_any
     key = f"{symbol}|{tf}|{limit}"
     now = time.time()
     ttl = _CANDLES_TTL_BY_TF.get((tf or "").lower(), _CANDLES_TTL_DEFAULT)
+    STALE_MAX = 5.0  # 5×TTL — считаем stale, но ещё приемлемо
     hit = _candles_cache.get(key)
+    pair = symbol.replace("USDT", "/USDT") if "USDT" in symbol else symbol
+
+    async def _bg_prefetch_other_tfs():
+        for other_tf in ["15m", "30m", "1h", "4h", "1d"]:
+            if other_tf == (tf or "").lower():
+                continue
+            try:
+                await asyncio.to_thread(warm_candles_cache, symbol, other_tf, limit)
+            except Exception:
+                pass
+
+    async def _bg_refresh_current():
+        """Фоновое обновление текущего TF (stale-while-revalidate)."""
+        try:
+            await asyncio.to_thread(warm_candles_cache, symbol, tf, limit)
+        except Exception:
+            pass
+
+    # Fresh cache hit
     if hit and (now - hit[0]) < ttl:
         return {"ok": True, "candles": hit[1], "cached": True}
 
-    pair = symbol.replace("USDT", "/USDT") if "USDT" in symbol else symbol
+    # Stale hit (есть данные, но expired) — мгновенно возвращаем + фоном обновляем
+    if hit and (now - hit[0]) < ttl * STALE_MAX:
+        try:
+            asyncio.create_task(_bg_refresh_current())
+        except Exception:
+            pass
+        return {"ok": True, "candles": hit[1], "stale": True}
+
+    # Hard miss — ждём Binance
     candles = await asyncio.to_thread(get_klines_any, pair, tf, limit)
     if not candles:
         return {"ok": False, "error": "no data"}
@@ -8599,21 +8634,13 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
             "volume": c.get("v", 0),
         })
     _candles_cache[key] = (now, data)
-    # Lazy eviction старых записей
+    # Lazy eviction старых записей (>STALE_MAX×TTL точно бесполезны)
     if len(_candles_cache) > 500:
-        for k in [k for k, v in _candles_cache.items() if (now - v[0]) > ttl * 2]:
+        for k in [k for k, v in _candles_cache.items() if (now - v[0]) > ttl * STALE_MAX]:
             _candles_cache.pop(k, None)
     # Background prefetch остальных TF — юзер вероятнее всего переключит
-    async def _bg_prefetch():
-        for other_tf in ["15m", "30m", "1h", "4h", "1d"]:
-            if other_tf == (tf or "").lower():
-                continue
-            try:
-                await asyncio.to_thread(warm_candles_cache, symbol, other_tf, limit)
-            except Exception:
-                pass
     try:
-        asyncio.create_task(_bg_prefetch())
+        asyncio.create_task(_bg_prefetch_other_tfs())
     except Exception:
         pass
     return {"ok": True, "candles": data}
