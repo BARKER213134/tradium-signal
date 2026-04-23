@@ -5632,10 +5632,13 @@ async function loadJournal() {
     if (!_journalFirstLoad && items.length) {
       const currentIds = new Set(items.map(_signalKey));
       const newSignals = items.filter(s => !_journalPrevIds.has(_signalKey(s)));
-      if (newSignals.length > 0 && newSignals.length < 50) {
+      // cv_flip — observation канал (+ Telegram-алерт), не звоним на него
+      // и не учитываем в anti-spam лимите (50+ после backfill глушили beep)
+      const newForSound = newSignals.filter(s => s.source !== 'cv_flip');
+      if (newForSound.length > 0 && newForSound.length < 50) {
         _playSignalSound();
-        _showJournalToast(newSignals);
-        // Mark new signal keys for row highlighting
+        _showJournalToast(newForSound);
+        // Mark new signal keys for row highlighting (все новые, включая cv_flip)
         window._newSignalKeys = new Set(newSignals.map(_signalKey));
         setTimeout(() => { window._newSignalKeys = null; }, 4000);
       }
