@@ -284,31 +284,25 @@ def _fmt_pct(v: float) -> str:
 async def _send_telegram(pair: str, direction: str, entry: float, sl: float,
                          tp1: float, tp2: float, tp3: float, risk_pct: float,
                          flip_at: datetime, cv_at: datetime | None):
-    """Telegram alert в BOT12_BOT_TOKEN — graceful skip если не настроен."""
+    """Telegram alert в BOT12_BOT_TOKEN — graceful skip если не настроен.
+    sl/tp/risk_pct не отображаются в сообщении (только сохраняются в doc
+    для UI/journal), чтобы сигнал был читаем одной строкой."""
     from config import BOT12_BOT_TOKEN, CV_FLIP_CHAT_ID
     if not BOT12_BOT_TOKEN or not CV_FLIP_CHAT_ID:
         return
     try:
         import httpx
         dir_e = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
-        sign = 1 if direction == "LONG" else -1
-        sl_pct = ((sl - entry) / entry) * 100.0 if entry else 0.0
-        tp1_pct = ((tp1 - entry) / entry) * 100.0 if entry else 0.0
-        tp2_pct = ((tp2 - entry) / entry) * 100.0 if entry else 0.0
-        tp3_pct = ((tp3 - entry) / entry) * 100.0 if entry else 0.0
         waited = ""
         if isinstance(cv_at, datetime):
             dt = (flip_at - cv_at).total_seconds() / 60.0
             waited = f"  ({dt:.0f} мин от CV)"
+        # <code>...</code> вокруг pair делает тикер тапабельным для копирования
+        # в Telegram (tap-to-copy). Entry тоже в <code> по той же причине.
         text = (
             f"💥 <b>CV+ST Flip</b> · {dir_e}\n"
-            f"<b>{pair}</b> · ST 30m\n\n"
-            f"Entry: <code>{_fmt_price(entry)}</code>\n"
-            f"SL:    <code>{_fmt_price(sl)}</code> ({_fmt_pct(sl_pct)})\n"
-            f"TP1:   <code>{_fmt_price(tp1)}</code> ({_fmt_pct(tp1_pct)}) · 1R\n"
-            f"TP2:   <code>{_fmt_price(tp2)}</code> ({_fmt_pct(tp2_pct)}) · 2R\n"
-            f"TP3:   <code>{_fmt_price(tp3)}</code> ({_fmt_pct(tp3_pct)}) · 3R\n\n"
-            f"R: {risk_pct:.2f}% · R:R до TP3 = 1:3\n"
+            f"<code>{pair}</code> · ST 30m\n\n"
+            f"Entry: <code>{_fmt_price(entry)}</code>\n\n"
             f"Flip @ <code>{flip_at.strftime('%Y-%m-%d %H:%M UTC')}</code>{waited}\n\n"
             f"<i>observation-only, в автоторговлю не идёт</i>"
         )
