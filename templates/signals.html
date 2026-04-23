@@ -2006,11 +2006,261 @@ async function runBacktest() {
 
 
 {% elif bot == 'cv_flip' %}
-<!-- ── Flip Supertrend: CV + ST 30m flip observation канал ─────── -->
+<!-- ════════════ ⏳💥 Flip Supertrend — 4 суб-вкладки состояний ════════════ -->
+<div class="strategy-box">
+  <div class="strat-icon">⏳</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · CV + SuperTrend 30m Flip (observation-only)</div>
+    CryptoVizor сигнал → watcher ждёт ≥1 закрытый 30m бар → <b>flip ST(7, 2.5)</b> в ту же сторону → <b>💥 FLIPPED</b>.
+    Timeout <b>24ч</b>. Entry = close flip-бара, SL = ST value, TP1/2/3 = 1R/2R/3R.
+    Не попадает в paper_trader — только журнал, графики и Telegram <b>@BOT12</b>.
+  </div>
+</div>
+
+<!-- Таб-панель состояний -->
+<div class="tab-subbar" style="display:flex;gap:8px;margin:14px 0;padding:4px;background:var(--dark);border:1px solid var(--border);border-radius:10px;">
+  <button id="cvf-sub-all" class="cvf-sub-btn active" onclick="_cvfSwitchState('all')"
+          style="flex:1;background:linear-gradient(135deg,rgba(255,184,77,0.2),rgba(255,94,161,0.08));color:#ffb84d;border:1px solid rgba(255,184,77,0.55);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">
+    Все
+  </button>
+  <button id="cvf-sub-WAITING" class="cvf-sub-btn" onclick="_cvfSwitchState('WAITING')"
+          style="flex:1;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">
+    ⏳ Waiting
+  </button>
+  <button id="cvf-sub-FLIPPED" class="cvf-sub-btn" onclick="_cvfSwitchState('FLIPPED')"
+          style="flex:1;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">
+    💥 Flipped
+  </button>
+  <button id="cvf-sub-TIMEOUT" class="cvf-sub-btn" onclick="_cvfSwitchState('TIMEOUT')"
+          style="flex:1;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">
+    ❌ Timeout
+  </button>
+  <button id="cvf-sub-INVALIDATED" class="cvf-sub-btn" onclick="_cvfSwitchState('INVALIDATED')"
+          style="flex:1;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">
+    🚫 Invalidated
+  </button>
+</div>
+
+<!-- Статистика -->
+<div id="cvf-stats" style="display:flex;gap:12px;margin-bottom:12px;font-size:12px;color:var(--muted);font-family:var(--font-mono);flex-wrap:wrap;">
+  <span>Загрузка…</span>
+</div>
+
+<!-- Фильтры + backfill -->
+<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+  <select id="cvf-filter-hours" onchange="_cvfLoad()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="24" selected>Последние 24ч</option>
+    <option value="48">Последние 48ч</option>
+    <option value="72">Последние 3д</option>
+    <option value="168">Последние 7д</option>
+  </select>
+  <select id="cvf-filter-dir" onchange="_cvfLoad()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">Все направления</option>
+    <option value="LONG">Только LONG</option>
+    <option value="SHORT">Только SHORT</option>
+  </select>
+  <input id="cvf-filter-pair" type="text" placeholder="Пара (напр. BTC)" oninput="_cvfDebouncedLoad()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);width:150px;">
+  <button onclick="_cvfLoad(true)" style="background:var(--accent);color:#000;border:none;border-radius:6px;padding:5px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">↻ Обновить</button>
+  <button id="cvfBackfillBtn" onclick="_cvfBackfill()" style="background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.4);border-radius:6px;padding:5px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;margin-left:auto;">🔄 Backfill 48ч</button>
+  <span id="cvfBackfillMsg" style="font-size:11px;color:var(--muted);font-family:var(--font-mono);"></span>
+</div>
+
+<!-- Таблица сигналов -->
+<div class="table-wrap" style="max-height:600px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;">
+  <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:var(--font-mono);">
+    <thead style="position:sticky;top:0;background:var(--dark);z-index:2;">
+      <tr style="border-bottom:2px solid var(--border);">
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">CV at</th>
+        <th style="padding:8px;text-align:center;color:var(--muted);font-weight:600;">State</th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Пара</th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Dir</th>
+        <th style="padding:8px;text-align:right;color:var(--muted);font-weight:600;">Entry</th>
+        <th style="padding:8px;text-align:right;color:var(--muted);font-weight:600;">SL</th>
+        <th style="padding:8px;text-align:right;color:var(--muted);font-weight:600;">R%</th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Flip at</th>
+        <th style="padding:8px;text-align:center;color:var(--muted);font-weight:600;">Waited</th>
+      </tr>
+    </thead>
+    <tbody id="cvf-tbody">
+      <tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted);">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
 <style>
-  .cvf-hero { background:linear-gradient(135deg,rgba(255,200,80,0.06),rgba(255,80,160,0.04)); border:1px solid rgba(255,200,80,0.15); border-radius:14px; padding:18px 22px; margin-bottom:18px; }
-  .cvf-title { font-size:22px; font-weight:800; background:linear-gradient(135deg,#ffb84d,#ff5ea1); -webkit-background-clip:text; background-clip:text; color:transparent; margin-bottom:4px; }
-  .cvf-sub { color:var(--muted); font-size:12px; }
+  .cvf-state-WAITING { color:#ffb84d; }
+  .cvf-state-FLIPPED { color:#00e5a0; font-weight:700; }
+  .cvf-state-TIMEOUT { color:#8a8a8a; }
+  .cvf-state-INVALIDATED { color:#8a8a8a; }
+  .cvf-dir-LONG { color:var(--buy, #00e5a0); font-weight:700; }
+  .cvf-dir-SHORT { color:var(--sell, #ff5ea1); font-weight:700; }
+  .cvf-pair { cursor:pointer; font-weight:700; color:var(--text); }
+  .cvf-pair:hover { color:#00e5a0; }
+</style>
+
+<script>
+let _cvfCurrentState = 'all';
+let _cvfLoadTimer = null;
+let _cvfCache = [];
+
+function _cvfDebouncedLoad() {
+  clearTimeout(_cvfLoadTimer);
+  _cvfLoadTimer = setTimeout(_cvfLoad, 400);
+}
+
+function _cvfSwitchState(state) {
+  _cvfCurrentState = state;
+  document.querySelectorAll('.cvf-sub-btn').forEach(b => {
+    b.classList.remove('active');
+    b.style.background = 'transparent';
+    b.style.color = 'var(--muted)';
+    b.style.border = '1px solid var(--border)';
+  });
+  const abtn = document.getElementById('cvf-sub-' + state);
+  if (abtn) {
+    abtn.classList.add('active');
+    const colors = {
+      all:         { bg:'linear-gradient(135deg,rgba(255,184,77,0.2),rgba(255,94,161,0.08))', c:'#ffb84d', bd:'rgba(255,184,77,0.55)' },
+      WAITING:     { bg:'linear-gradient(135deg,rgba(255,184,77,0.2),rgba(255,94,161,0.08))', c:'#ffb84d', bd:'rgba(255,184,77,0.55)' },
+      FLIPPED:     { bg:'linear-gradient(135deg,rgba(0,229,160,0.2),rgba(0,200,140,0.08))', c:'#00e5a0', bd:'rgba(0,229,160,0.55)' },
+      TIMEOUT:     { bg:'linear-gradient(135deg,rgba(138,138,138,0.2),rgba(100,100,100,0.08))', c:'#aaa', bd:'rgba(138,138,138,0.55)' },
+      INVALIDATED: { bg:'linear-gradient(135deg,rgba(138,138,138,0.2),rgba(100,100,100,0.08))', c:'#aaa', bd:'rgba(138,138,138,0.55)' },
+    };
+    const cfg = colors[state];
+    abtn.style.background = cfg.bg;
+    abtn.style.color = cfg.c;
+    abtn.style.border = '1px solid ' + cfg.bd;
+  }
+  _cvfRender();
+}
+
+async function _cvfLoad(forceRefresh) {
+  const hours = document.getElementById('cvf-filter-hours').value;
+  const tbody = document.getElementById('cvf-tbody');
+  tbody.innerHTML = '<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted);">Загрузка…</td></tr>';
+  try {
+    const r = await fetch(`/api/cv-flips?state=all&hours=${hours}&limit=500`);
+    const j = await r.json();
+    _cvfCache = j.items || [];
+    _cvfRenderStats();
+    _cvfRender();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--sell);">Ошибка: ${e.message}</td></tr>`;
+  }
+}
+
+function _cvfRenderStats() {
+  const counts = { WAITING:0, FLIPPED:0, TIMEOUT:0, INVALIDATED:0 };
+  for (const d of _cvfCache) {
+    const s = d.state || 'WAITING';
+    if (counts.hasOwnProperty(s)) counts[s]++;
+  }
+  const total = _cvfCache.length;
+  document.getElementById('cvf-stats').innerHTML =
+    `<span>Всего: <b style="color:var(--text)">${total}</b></span>` +
+    `<span>⏳ Waiting: <b style="color:#ffb84d">${counts.WAITING}</b></span>` +
+    `<span>💥 Flipped: <b style="color:#00e5a0">${counts.FLIPPED}</b></span>` +
+    `<span>❌ Timeout: <b style="color:#aaa">${counts.TIMEOUT}</b></span>` +
+    `<span>🚫 Invalidated: <b style="color:#aaa">${counts.INVALIDATED}</b></span>` +
+    `<span style="margin-left:auto;color:var(--muted);">за последние ${document.getElementById('cvf-filter-hours').value}ч</span>`;
+}
+
+function _cvfFmtPrice(v) {
+  if (v == null) return '—';
+  const a = Math.abs(v);
+  if (a >= 1000) return v.toFixed(2);
+  if (a >= 1) return v.toFixed(4);
+  if (a >= 0.01) return v.toFixed(5);
+  return v.toFixed(8);
+}
+function _cvfFmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}.${pad(d.getMonth()+1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function _cvfWaited(cvIso, flipIso) {
+  if (!cvIso || !flipIso) return '—';
+  const min = Math.round((new Date(flipIso) - new Date(cvIso)) / 60000);
+  if (min < 60) return `${min}м`;
+  return `${Math.floor(min/60)}ч ${min%60}м`;
+}
+
+function _cvfRender() {
+  const tbody = document.getElementById('cvf-tbody');
+  const dirFilter = document.getElementById('cvf-filter-dir').value;
+  const pairFilter = (document.getElementById('cvf-filter-pair').value || '').toUpperCase();
+  let list = _cvfCache;
+  if (_cvfCurrentState !== 'all') list = list.filter(x => x.state === _cvfCurrentState);
+  if (dirFilter) list = list.filter(x => x.direction === dirFilter);
+  if (pairFilter) list = list.filter(x => (x.pair || '').toUpperCase().includes(pairFilter));
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--muted);">Нет сигналов по фильтрам</td></tr>';
+    return;
+  }
+  const stateIcons = { WAITING:'⏳', FLIPPED:'💥', TIMEOUT:'❌', INVALIDATED:'🚫' };
+  tbody.innerHTML = list.map(d => {
+    const state = d.state || 'WAITING';
+    const dir = d.direction || '';
+    const pair = d.pair || '';
+    const pairShort = pair.replace('/USDT', '');
+    const pairEsc = pair.replace(/'/g, "\\'");
+    const entry = _cvfFmtPrice(d.entry || d.flip_price);
+    const sl = _cvfFmtPrice(d.sl);
+    const rp = d.risk_pct != null ? `${d.risk_pct.toFixed(2)}%` : '—';
+    const cvAt = _cvfFmtTime(d.cv_triggered_at);
+    const flipAt = state === 'FLIPPED' ? _cvfFmtTime(d.flip_at) : '—';
+    const waited = state === 'FLIPPED' ? _cvfWaited(d.cv_triggered_at, d.flip_at) : '—';
+    const dirE = dir === 'LONG' ? '🟢' : '🔴';
+    return `<tr onclick="window.openChartModal && window.openChartModal('${pairEsc}')"
+      style="border-bottom:1px solid var(--border);cursor:pointer;"
+      onmouseover="this.style.background='rgba(255,255,255,0.03)'"
+      onmouseout="this.style.background='transparent'">
+      <td style="padding:6px 8px;color:var(--muted);">${cvAt}</td>
+      <td style="padding:6px 8px;text-align:center;" class="cvf-state-${state}">${stateIcons[state]} ${state}</td>
+      <td style="padding:6px 8px;" class="cvf-pair">${pairShort}</td>
+      <td style="padding:6px 8px;" class="cvf-dir-${dir}">${dirE} ${dir}</td>
+      <td style="padding:6px 8px;text-align:right;">${entry}</td>
+      <td style="padding:6px 8px;text-align:right;color:var(--muted);">${sl}</td>
+      <td style="padding:6px 8px;text-align:right;">${rp}</td>
+      <td style="padding:6px 8px;color:var(--muted);">${flipAt}</td>
+      <td style="padding:6px 8px;text-align:center;color:var(--muted);">${waited}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function _cvfBackfill() {
+  const btn = document.getElementById('cvfBackfillBtn');
+  const msg = document.getElementById('cvfBackfillMsg');
+  btn.disabled = true; btn.textContent = 'Обработка…';
+  msg.textContent = 'грузим 30m свечи и считаем flip\'ы…';
+  try {
+    const r = await fetch('/api/cv-flip-backfill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hours: 48 }),
+    });
+    const j = await r.json();
+    const st = j.states || {};
+    msg.innerHTML = `готово: ${j.cv_total} CV (создано ${j.created}, обновлено ${j.updated}). ` +
+                    `⏳ ${st.WAITING||0} · 💥 ${st.FLIPPED||0} · ❌ ${st.TIMEOUT||0} · 🚫 ${st.INVALIDATED||0}`;
+    await _cvfLoad(true);
+  } catch (e) {
+    msg.textContent = `ошибка: ${e.message || e}`;
+  } finally {
+    btn.disabled = false; btn.textContent = '🔄 Backfill 48ч';
+  }
+}
+
+_cvfLoad();
+safeInterval(_cvfLoad, 60 * 1000);
+</script>
+
+
+{% elif bot == 'entry_checker' %}
+<!-- ── Entry Checker: чек-лист перед открытием сделки вручную ─── -->
+<style>
+  .ec-hero { background:linear-gradient(135deg,rgba(0,229,160,0.06),rgba(0,212,255,0.04)); border:1px solid rgba(0,229,160,0.15); border-radius:14px; padding:20px 24px; margin-bottom:20px; }
   .cvf-tabs { display:flex; gap:6px; margin:12px 0 14px; flex-wrap:wrap; }
   .cvf-tab { padding:6px 14px; border-radius:8px; border:1px solid var(--border); background:var(--dark); color:var(--muted); font-size:12px; font-family:var(--font-mono); cursor:pointer; }
   .cvf-tab.active { background:rgba(255,184,77,0.15); color:#ffb84d; border-color:rgba(255,184,77,0.4); }

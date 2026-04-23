@@ -1027,6 +1027,196 @@ async def api_supertrend_signals(tier: str = "", pair: str = "",
             "tier": tier, "pair": pair, "hours": hours}
 
 
+def _cv_flip_backfill_sync(hours: int = 48) -> dict:
+    """Одноразовый backfill cv_flip_signals за последние N часов.
+
+    Для каждого CV signal (source=cryptovizor, pattern_triggered=True):
+      1. Upsert WAITING-дубль (если ещё нет)
+      2. Грузит 30m свечи пары и ищет flip ST(7, 2.5) в сторону CV
+         (MIN_BARS_UNDER_ST=1, timeout 24ч от cv_triggered_at) —
+         такой же алгоритм как в cv_flip_watcher.
+      3. Финализирует state: FLIPPED / TIMEOUT / INVALIDATED / WAITING.
+    """
+    from database import _signals, _cv_flip_signals, utcnow
+    from exchange import get_klines_any
+    from backtest_supertrend import compute_st_series
+    from datetime import timedelta
+    import datetime as _dt
+
+    hours = max(1, min(hours, 168))
+    ST_PERIOD, ST_MULT = 7, 2.5
+    MIN_BARS_UNDER_ST = 1
+    TIMEOUT_H = 24
+    since = utcnow() - timedelta(hours=hours)
+    now = utcnow()
+
+    cv_col = _signals()
+    dup_col = _cv_flip_signals()
+
+    cv_list = list(cv_col.find({
+        "source": "cryptovizor",
+        "pattern_triggered": True,
+        "pattern_triggered_at": {"$gte": since},
+    }, {
+        "_id": 1, "pair": 1, "direction": 1, "pattern_name": 1,
+        "pattern_triggered_at": 1,
+    }).sort("pattern_triggered_at", 1))
+
+    created = updated = skipped = 0
+    counters = {"WAITING": 0, "FLIPPED": 0, "TIMEOUT": 0, "INVALIDATED": 0}
+    candle_cache: dict = {}
+
+    def _fetch(pair: str):
+        if pair in candle_cache:
+            return candle_cache[pair]
+        try:
+            c = get_klines_any(pair, "30m", 500) or []
+        except Exception:
+            c = []
+        candle_cache[pair] = c
+        return c
+
+    for cv in cv_list:
+        sid = str(cv["_id"])
+        direction = (cv.get("direction") or "").upper()
+        pair = cv.get("pair") or ""
+        cv_at = cv.get("pattern_triggered_at")
+        if direction not in ("LONG", "SHORT") or not pair or cv_at is None:
+            skipped += 1
+            continue
+        want_trend = 1 if direction == "LONG" else -1
+        opp_trend = -want_trend
+
+        existing = dup_col.find_one({"cv_signal_id": sid})
+        if not existing:
+            dup_col.insert_one({
+                "cv_signal_id": sid, "pair": pair, "direction": direction,
+                "cv_triggered_at": cv_at,
+                "cv_pattern_name": cv.get("pattern_name") or "",
+                "state": "WAITING", "flip_at": None, "flip_price": None,
+                "bars_under_st": 0, "st_tf": "30m",
+                "st_params": {"period": ST_PERIOD, "mult": ST_MULT},
+                "timeout_h": TIMEOUT_H,
+                "created_at": now, "updated_at": now,
+                "source": "cv_flip",
+            })
+            created += 1
+            existing = dup_col.find_one({"cv_signal_id": sid})
+        doc_id = existing["_id"]
+
+        if existing.get("state") in ("FLIPPED", "TIMEOUT", "INVALIDATED"):
+            counters[existing["state"]] += 1
+            continue
+
+        newer = cv_col.find_one({
+            "source": "cryptovizor", "pattern_triggered": True,
+            "pair": pair, "pattern_triggered_at": {"$gt": cv_at},
+        }, {"_id": 1})
+        if newer:
+            dup_col.update_one({"_id": doc_id},
+                               {"$set": {"state": "INVALIDATED", "updated_at": now}})
+            counters["INVALIDATED"] += 1
+            updated += 1
+            continue
+
+        candles = _fetch(pair)
+        if not candles or len(candles) < ST_PERIOD + 5:
+            counters["WAITING"] += 1
+            continue
+        closed = candles[:-1]
+        try:
+            st_series = compute_st_series(closed, ST_PERIOD, ST_MULT)
+        except Exception:
+            counters["WAITING"] += 1
+            continue
+
+        cv_ms = int((cv_at if cv_at.tzinfo else cv_at.replace(tzinfo=_dt.timezone.utc))
+                    .timestamp() * 1000)
+        timeout_ms = cv_ms + TIMEOUT_H * 3600 * 1000
+        first_idx = None
+        for i, c in enumerate(closed):
+            if c["t"] >= cv_ms:
+                first_idx = i
+                break
+        if first_idx is None:
+            counters["WAITING"] += 1
+            continue
+
+        flip_idx = None
+        for i in range(max(first_idx + 1, 1), len(st_series)):
+            if closed[i]["t"] > timeout_ms:
+                break
+            curr = st_series[i].get("trend")
+            prev = st_series[i - 1].get("trend")
+            if curr == want_trend and prev == opp_trend:
+                bars_before = sum(
+                    1 for j in range(first_idx, i)
+                    if st_series[j].get("trend") == opp_trend
+                )
+                if bars_before >= MIN_BARS_UNDER_ST:
+                    flip_idx = i
+                    break
+
+        if flip_idx is not None:
+            flip_bar = closed[flip_idx]
+            flip_price = float(flip_bar["c"])
+            flip_at = _dt.datetime.utcfromtimestamp(
+                (int(flip_bar["t"]) + 30 * 60 * 1000) / 1000.0
+            )
+            st_val = float(st_series[flip_idx].get("st") or 0.0)
+            if st_val <= 0 or (direction == "LONG" and st_val >= flip_price) \
+                    or (direction == "SHORT" and st_val <= flip_price):
+                st_val = flip_price * (0.99 if direction == "LONG" else 1.01)
+            sign = 1 if direction == "LONG" else -1
+            risk = abs(flip_price - st_val)
+            entry = round(flip_price, 8); sl = round(st_val, 8)
+            tp1 = round(flip_price + sign * 1 * risk, 8)
+            tp2 = round(flip_price + sign * 2 * risk, 8)
+            tp3 = round(flip_price + sign * 3 * risk, 8)
+            risk_pct = (risk / flip_price) * 100.0 if flip_price else 0.0
+            dup_col.update_one({"_id": doc_id}, {"$set": {
+                "state": "FLIPPED", "flip_at": flip_at, "flip_price": flip_price,
+                "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3,
+                "st_value_at_flip": st_val,
+                "risk_pct": round(risk_pct, 3),
+                "updated_at": now,
+            }})
+            counters["FLIPPED"] += 1
+            updated += 1
+        else:
+            age_h = (now - cv_at).total_seconds() / 3600.0
+            if age_h > TIMEOUT_H:
+                dup_col.update_one({"_id": doc_id},
+                                   {"$set": {"state": "TIMEOUT", "updated_at": now}})
+                counters["TIMEOUT"] += 1
+                updated += 1
+            else:
+                bars_before = sum(
+                    1 for j in range(first_idx, len(st_series))
+                    if st_series[j].get("trend") == opp_trend
+                )
+                dup_col.update_one({"_id": doc_id}, {"$set": {
+                    "bars_under_st": bars_before, "updated_at": now,
+                }})
+                counters["WAITING"] += 1
+
+    return {
+        "ok": True, "hours": hours, "cv_total": len(cv_list),
+        "created": created, "updated": updated, "skipped": skipped,
+        "states": counters,
+    }
+
+
+@app.post("/api/cv-flip-backfill")
+async def api_cv_flip_backfill(payload: dict | None = None):
+    """Backfill cv_flip_signals за последние N часов (POST).
+    Параметры: {"hours": 48} — default 48ч. Max 168ч (7 дней)."""
+    hours = 48
+    if payload and isinstance(payload.get("hours"), int):
+        hours = max(1, min(payload["hours"], 168))
+    return await asyncio.to_thread(_cv_flip_backfill_sync, hours)
+
+
 @app.get("/api/cv-flips")
 async def api_cv_flips(state: str = "all", pair: str = "",
                        hours: int = 72, limit: int = 500):
