@@ -1402,14 +1402,44 @@ async def on_signal(signal_data: dict):
     if not pair or direction not in ("LONG", "SHORT"):
         return None
 
-    # ── 0. Source blacklist ──────────────────────────────────────
-    # supertrend отключён: на истории 92 сделок давал PnL -172 USDT
-    # (R:R 0.81, WR 48%) при 50 сделках из 92, тянул всю систему в минус.
-    # Без него: +161 USDT / R:R 1.32 / WR 62% на остальных источниках.
+    # ── 0. Supertrend 1h-RSI filter ──────────────────────────────
+    # Исторически supertrend as-is давал PnL −172 USDT (WR 48%, 50 сделок)
+    # из-за входов в "мёртвых" RSI-зонах. Бэктест 55 supertrend-сделок
+    # по 1h-RSI(14, Wilder) на закрытой свече до входа:
+    #   RSI 40-50: +238.25 USDT  WR 61.5%   ← best
+    #   RSI 50-60:  −48.16 USDT  WR 57.7%
+    #   RSI 60-70: −175.53 USDT  WR 36.4%   ← catastrophic (late LONG)
+    # Отсекая LONG при RSI≥60 и SHORT при RSI≤40: PnL меняется
+    # с −61 → +134 USDT (saved +195 USDT). Fail-closed: если фильтр
+    # не посчитан (сеть/мало свечей) — сделку не открываем.
     if source == "supertrend":
-        logger.info(f"Paper SKIP (source=supertrend disabled): {symbol} {direction}")
-        _log_rejection_sync(signal_data, "⛔ supertrend source disabled (убыточен на истории)")
-        return None
+        try:
+            from exchange import get_klines_any
+            _candles = get_klines_any(pair, "1h", 50) or []
+            _closes = [c["c"] for c in _candles[:-1]]  # пропустить незакрытую
+            if len(_closes) < 16:
+                raise ValueError(f"мало свечей для RSI: {len(_closes)}")
+            _avg_g = sum(max(_closes[i] - _closes[i-1], 0.0) for i in range(1, 15)) / 14.0
+            _avg_l = sum(max(_closes[i-1] - _closes[i], 0.0) for i in range(1, 15)) / 14.0
+            for _i in range(15, len(_closes)):
+                _ch = _closes[_i] - _closes[_i-1]
+                _avg_g = (_avg_g * 13 + max(_ch, 0.0)) / 14.0
+                _avg_l = (_avg_l * 13 + max(-_ch, 0.0)) / 14.0
+            rsi_1h = 100.0 if _avg_l == 0 else 100.0 - 100.0 / (1 + _avg_g / _avg_l)
+        except Exception as e:
+            logger.warning(f"supertrend RSI filter error {symbol}: {e}")
+            _log_rejection_sync(signal_data, f"⛔ supertrend: RSI filter error ({e})")
+            return None
+
+        if direction == "LONG" and rsi_1h >= 60:
+            logger.info(f"Paper SKIP (supertrend RSI): {symbol} LONG 1h-RSI={rsi_1h:.1f}≥60")
+            _log_rejection_sync(signal_data, f"⛔ supertrend LONG: 1h-RSI={rsi_1h:.1f}≥60 (late entry)")
+            return None
+        if direction == "SHORT" and rsi_1h <= 40:
+            logger.info(f"Paper SKIP (supertrend RSI): {symbol} SHORT 1h-RSI={rsi_1h:.1f}≤40")
+            _log_rejection_sync(signal_data, f"⛔ supertrend SHORT: 1h-RSI={rsi_1h:.1f}≤40 (falling knife)")
+            return None
+        logger.info(f"Paper ACCEPT (supertrend RSI): {symbol} {direction} 1h-RSI={rsi_1h:.1f}")
 
     # ── 1. Anti-cluster guard ──
     try:
