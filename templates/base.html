@@ -1520,7 +1520,8 @@
               }
             }
           }
-          // Маркер 2: flip_at — 💥 (только FLIPPED)
+          // Маркер 2: flip_at — 💥 (только FLIPPED). size=4 (максимум LWC)
+          // чтобы эмодзи было хорошо видно на фоне ST-маркеров и свечей.
           if (state === 'FLIPPED' && s.flip_at) {
             const flipTs = Math.floor(new Date(s.flip_at).getTime() / 1000);
             if (flipTs >= firstTs - 3600 && flipTs <= lastTs + 3600 * 2) {
@@ -1532,7 +1533,7 @@
                   color: '#ff5ea1',
                   shape: isLong ? 'arrowUp' : 'arrowDown',
                   text: '💥',
-                  size: 2,
+                  size: 4,
                 });
               }
             }
