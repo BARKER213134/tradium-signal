@@ -8005,6 +8005,58 @@ def _compute_journal_sync():
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] supertrend fetch fail: {e}")
 
+    # ⏳ CV+ST Flip observation (source='cv_flip') — отдельная observation-ветка,
+    # не конкурирует с paper_trader (тот смотрит source='cryptovizor').
+    # Lifecycle icons: ⏳ WAITING / 💥 FLIPPED / ❌ TIMEOUT / 🚫 INVALIDATED.
+    try:
+        from database import _cv_flip_signals
+        for d in _cv_flip_signals().find(
+            {"cv_triggered_at": {"$gte": since_14d}}
+        ).sort("cv_triggered_at", -1).limit(500):
+            state = d.get("state", "WAITING")
+            state_emoji = {"FLIPPED": "💥", "TIMEOUT": "❌",
+                           "INVALIDATED": "🚫"}.get(state, "⏳")
+            state_label = {"FLIPPED": "Flipped", "TIMEOUT": "Timeout",
+                           "INVALIDATED": "Invalidated",
+                           "WAITING": "Waiting"}.get(state, state)
+            cv_dt = d.get("cv_triggered_at")
+            flip_dt = d.get("flip_at")
+            # sort по flip_at если сработало, иначе по cv_triggered_at
+            sort_dt = flip_dt or cv_dt
+            if sort_dt and hasattr(sort_dt, "timetuple"):
+                at_ts = _cal.timegm(sort_dt.timetuple())
+                at_iso = sort_dt.isoformat() + "Z"
+            else:
+                at_ts = 0
+                at_iso = str(sort_dt or "")
+            flip_iso = flip_dt.isoformat() + "Z" if (flip_dt and hasattr(flip_dt, "timetuple")) else None
+            cv_iso = cv_dt.isoformat() + "Z" if (cv_dt and hasattr(cv_dt, "timetuple")) else None
+            pair = d.get("pair", "")
+            pair_norm = pair.replace("/", "").upper() if pair else ""
+            items.append({
+                "source": "cv_flip",
+                "symbol": pair_norm,
+                "pair": pair,
+                "direction": d.get("direction", ""),
+                "entry": d.get("entry") or d.get("flip_price"),
+                "tp1": d.get("tp1"),
+                "sl": d.get("sl"),
+                "pattern": f"{state_emoji} CV+ST Flip · {state_label}",
+                "score": None,
+                "st_passed": None,
+                "pump_score": 0,
+                "is_top_pick": state == "FLIPPED",
+                "cv_flip_state": state,
+                "cv_triggered_at": cv_iso,
+                "flip_at": flip_iso,
+                "bars_under_st": d.get("bars_under_st", 0),
+                "risk_pct": d.get("risk_pct"),
+                "at": at_iso,
+                "at_ts": at_ts,
+            })
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] cv_flip fetch fail: {e}")
+
     # ✨ Verified Entries (авто-проверка Entry Checker — отправлено в @topmonetabot)
     try:
         from database import _get_db

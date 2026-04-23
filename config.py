@@ -119,6 +119,7 @@ BOTS = [
     {"id": "clusters", "label": "Кластеры", "category": "crypto"},
     {"id": "top_picks", "label": "👑 Top Picks", "category": "crypto"},
     {"id": "supertrend", "label": "🌀 SuperTrend", "category": "crypto"},
+    {"id": "cv_flip", "label": "⏳ Flip ST", "category": "crypto"},
     # {"id": "conflicts", "label": "⚠ Conflicts", "category": "crypto"},  # кнопка скрыта
     # — функционал остаётся: endpoint /api/conflicts, вкладка по прямому URL
     # /signals?bot=conflicts работает, данные детектируются в фоне через

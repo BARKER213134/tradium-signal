@@ -1460,6 +1460,87 @@
         return out;
       };
 
+      // ─── CV+ST Flip observation — маркеры на графиках ───────────────
+      // ⏳ на cv_triggered_at (WAITING/TIMEOUT), 💥 на flip_at (FLIPPED)
+      window._cvFlipCache = window._cvFlipCache || {};
+      window._fetchCvFlips = async function(pair, hours = 168) {
+        if (!pair) return [];
+        const key = `${pair}_${hours}`;
+        const c = window._cvFlipCache[key];
+        if (c && (Date.now() - c.at) < 30000) return c.items;
+        try {
+          const r = await fetch(`/api/cv-flips?pair=${encodeURIComponent(pair)}&hours=${hours}&state=all`);
+          const d = await r.json();
+          const items = (d && d.items) ? d.items : [];
+          window._cvFlipCache[key] = { at: Date.now(), items };
+          return items;
+        } catch (e) {
+          console.warn('[cv-flip] fetch fail', e);
+          return [];
+        }
+      };
+
+      window._addCvFlipMarkers = function(candles, items) {
+        if (!candles || !candles.length || !items || !items.length) return [];
+        const firstTs = candles[0].time;
+        const lastTs = candles[candles.length - 1].time;
+        const nearest = (ts) => {
+          let mc = null, minD = Infinity;
+          for (const c of candles) {
+            const diff = Math.abs(c.time - ts);
+            if (diff < minD) { minD = diff; mc = c; }
+          }
+          return mc;
+        };
+        const out = [];
+        for (const s of items) {
+          const isLong = s.direction === 'LONG';
+          const state = s.state || 'WAITING';
+          // Маркер 1: cv_triggered_at — ⏳/❌/🚫 (всегда)
+          if (s.cv_triggered_at) {
+            const cvTs = Math.floor(new Date(s.cv_triggered_at).getTime() / 1000);
+            if (cvTs >= firstTs - 3600 && cvTs <= lastTs + 3600 * 2) {
+              const mc = nearest(cvTs);
+              if (mc) {
+                const icon = state === 'TIMEOUT' ? '❌'
+                           : state === 'INVALIDATED' ? '🚫'
+                           : '⏳';
+                const color = state === 'FLIPPED' ? '#ffb84d'
+                            : state === 'TIMEOUT' ? '#888'
+                            : state === 'INVALIDATED' ? '#888'
+                            : '#ffb84d';
+                out.push({
+                  time: mc.time,
+                  position: isLong ? 'belowBar' : 'aboveBar',
+                  color: color,
+                  shape: isLong ? 'arrowUp' : 'arrowDown',
+                  text: icon,
+                  size: 1,
+                });
+              }
+            }
+          }
+          // Маркер 2: flip_at — 💥 (только FLIPPED)
+          if (state === 'FLIPPED' && s.flip_at) {
+            const flipTs = Math.floor(new Date(s.flip_at).getTime() / 1000);
+            if (flipTs >= firstTs - 3600 && flipTs <= lastTs + 3600 * 2) {
+              const mc = nearest(flipTs);
+              if (mc) {
+                out.push({
+                  time: mc.time,
+                  position: isLong ? 'belowBar' : 'aboveBar',
+                  color: '#ff5ea1',
+                  shape: isLong ? 'arrowUp' : 'arrowDown',
+                  text: '💥',
+                  size: 2,
+                });
+              }
+            }
+          }
+        }
+        return out;
+      };
+
       // ─── Verified Entries (Entry Checker авто-проверка) ─────────────
       // ✨ маркеры на графиках, подтягиваются из /api/verified-signals
       window._verifiedCache = window._verifiedCache || {};
