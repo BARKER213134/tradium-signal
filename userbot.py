@@ -480,13 +480,23 @@ async def _setup_telethon_client():
 
 
 async def _watchdog(client):
-    """Мониторит активность каналов; форсирует disconnect если оба замолчали > 30 мин.
-    Также пишет heartbeat каждые 5 минут."""
+    """Мониторит активность каналов; форсирует disconnect если оба канала
+    замолчали ДОЛЬШЕ чем типовая пауза рынка. Пишет heartbeat каждые 5 мин.
+
+    SILENCE_LIMIT был 30 мин — это создавало false-positive: CV часто
+    молчит 1-2ч в спокойный рынок, Tradium может молчать полдня (выходные).
+    Watchdog дисконнектил рабочее соединение, supervisor reconnect'ился,
+    и цикл 60с uptime → disconnect повторялся бесконечно.
+    3ч выбран как достаточно консервативный лимит.
+    """
     from database import _signals
     from pymongo import DESCENDING
-    SILENCE_LIMIT = 30 * 60  # 30 минут
+    SILENCE_LIMIT = 3 * 3600  # 3 часа — разумный верх для тишины любого канала
     HEARTBEAT_EVERY = 5 * 60
     last_heartbeat = 0
+    # Не форсим disconnect в первые 10 мин после старта — даём системе стабилизироваться
+    watchdog_started_at = utcnow()
+    GRACE_PERIOD = 600
     while True:
         try:
             await asyncio.sleep(60)
@@ -497,13 +507,17 @@ async def _watchdog(client):
             if now_ts - last_heartbeat >= HEARTBEAT_EVERY:
                 logger.info("[userbot] alive (watchdog heartbeat)")
                 last_heartbeat = now_ts
+            # Grace period: не убиваем свежий клиент
+            if (utcnow() - watchdog_started_at).total_seconds() < GRACE_PERIOD:
+                continue
             # Проверяем тишину обоих каналов
             try:
                 last_cv = _signals().find_one({"source": "cryptovizor"}, sort=[("received_at", DESCENDING)])
                 last_tr = _signals().find_one({"source": "tradium"}, sort=[("received_at", DESCENDING)])
                 cv_age = (utcnow() - last_cv["received_at"]).total_seconds() if last_cv and last_cv.get("received_at") else 9e9
                 tr_age = (utcnow() - last_tr["received_at"]).total_seconds() if last_tr and last_tr.get("received_at") else 9e9
-                # Если оба молчат больше лимита — подозреваем что подписки умерли, форсируем reconnect
+                # Оба молчат >3ч — подозреваем что подписки умерли (редкий кейс),
+                # форсируем reconnect чтобы supervisor пересоздал client
                 if cv_age > SILENCE_LIMIT and tr_age > SILENCE_LIMIT:
                     logger.warning(f"[userbot] watchdog: both channels silent (CV {cv_age/60:.0f}m, Tradium {tr_age/60:.0f}m) → force reconnect")
                     try:
