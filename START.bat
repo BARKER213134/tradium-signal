@@ -93,9 +93,12 @@ echo ═════════════════════════
 echo  Запуск сервера
 echo ══════════════════════════════════════════════════════
 echo.
-echo  UI:       http://localhost:8000
-echo  Логин:    см. переменные ADMIN_USERNAME / ADMIN_PASSWORD в .env
+echo  UI:          http://localhost:8001
+echo  Логин:       см. ADMIN_USERNAME / ADMIN_PASSWORD в .env
 echo  Остановить:  Ctrl+C
+echo.
+echo  DEV MODE:    Telethon userbot отключён (чтобы не конфликтовать
+echo               с Railway). UI, бэктесты и журнал работают.
 echo.
 echo ══════════════════════════════════════════════════════
 echo.

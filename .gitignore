@@ -4,6 +4,7 @@
 *.session
 *.session-journal
 .auth_state.json
+cookies.txt
 
 # Python
 __pycache__/
@@ -47,3 +48,17 @@ Thumbs.db
 # Docker
 docker-compose.override.yml
 _session_b64.txt
+
+# Claude Code runtime
+.claude/preview/
+.claude/worktrees/
+
+# Торговые экспорты и результаты бэктестов (данные, пересчитываются)
+paper_hist*.json
+backtest_*_results.json
+backtest_fvg_3m.json
+
+# Служебные скрипты, созданные агентами
+_bt_rsi_filter.py
+_check_trades.py
+_check_sources.py

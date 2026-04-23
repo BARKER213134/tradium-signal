@@ -2,7 +2,7 @@
 
 ## На старом компьютере
 
-1. Правый клик на `pack-portable.ps1` → **Run with PowerShell**
+1. Запусти `python pack-portable.py` (или через двойной клик на `pack-portable.ps1` если PowerShell разрешает)
 2. Получаешь `tradium-signal-portable-ГГГГ-ММ-ДД.zip` на Рабочем столе
 3. Копируй на флешку / в облако
 
@@ -13,46 +13,62 @@
 2. Распакуй архив в удобную папку
 3. **Двойной клик на `START.bat`** (Windows) или `./START.sh` (Mac/Linux)
 
-Первый запуск займёт 2-3 минуты (создаст `.venv`, поставит зависимости). Следующие запуски — мгновенно.
+Первый запуск 2-3 мин. UI откроется на **http://localhost:8001**.
 
-UI откроется на **http://localhost:8000**. Логин из `.env` (переменные `ADMIN_USERNAME` / `ADMIN_PASSWORD`).
+---
+
+## ⚠️ КРИТИЧНО: Telegram сессия и Railway
+
+В Telegram сессия — это файл `*.session`. Если его использовать из двух мест одновременно (Railway + локальный ПК), Telethon начнёт получать `AUTH_KEY_DUPLICATED` ошибки, клиенты будут дисконнектить друг друга, могут приходить дубли алертов.
+
+### `START.bat` запускает в DEV MODE — безопасно
+
+По умолчанию `START.bat` → `dev.py` → выставляет `DEV_MODE=1` → **userbot/watcher/bots НЕ стартуют** на локальной машине. Работает только:
+- UI / админка / логин
+- Бэктесты (`/api/backtest-*`)
+- Журнал сигналов
+- Просмотр графиков
+
+**Railway продолжает быть единственным production-инстансом** — ловит сигналы Cryptovizor/Tradium, ведёт автоторговлю, отправляет алерты. Новый ПК не мешает.
+
+### Когда хочешь полноценно переключить production на новый ПК
+
+1. Останови Railway (Dashboard → сервис → Pause / Remove deployment)
+2. На новом ПК: убери `DEV_MODE=1` из `.env` (или закомментируй)
+3. Запусти через `python main.py` (полный режим) или убери DEV_MODE из dev.py
+
+После этого на новом ПК будет работать userbot — Railway можно выключать навсегда.
 
 ---
 
 ## Что содержит архив
 
-Всё нужное для продолжения работы:
-
-- **Весь код** + история коммитов (`.git/`)
+- Весь код + `.git/` история
 - **Секреты** (`.env`) — API ключи, MongoDB URI, Telegram credentials
 - **Telegram сессия** (`*.session`, `_session_b64.txt`) — userbot авторизован
-- **`requirements.txt`** + launcher-скрипты
+- `requirements.txt` + launcher-скрипты
 
-Исключено (мусор, не нужно):
+Исключено (мусор):
 - `.venv/`, `__pycache__/`, `.pytest_cache/`
 - `charts/`, `logs/`, `data/`, `tmp/`
 - `_mongo_backup.json`, `*.log`, `*.pyc`
 
-## Что делать если упало
+## Типичные проблемы
 
 **"Python not found"** → поставь Python 3.11+ и перезапусти START
 
-**"No module named X"** → удали `.venv\.deps_installed` и запусти START снова — переставит зависимости
+**"No module named X"** → удали `.venv/.deps_installed` и запусти START снова
 
-**"Unauthorized" / "Session expired"** → Telegram сессия протухла. Беги `python authorize.py` и введи код из SMS.
+**"AUTH_KEY_DUPLICATED" в логах** → ты забыл DEV_MODE=1 и запустил userbot параллельно с Railway. Останови локальный процесс немедленно, иначе Telegram может забанить аккаунт на несколько часов.
 
-**"Mongo connection refused"** → MongoDB Atlas блокирует новый IP. Зайди https://cloud.mongodb.com → Network Access → Add IP → 0.0.0.0/0 (или свой IP)
+**"Session expired"** → пересоздай через `python authorize.py`, введи код из SMS.
 
-**`git push` не работает** → `git config user.name "Your Name"` и `git config user.email "your@email.com"`
+**"Mongo connection refused"** → MongoDB Atlas блокирует новый IP. https://cloud.mongodb.com → Network Access → Add IP → 0.0.0.0/0 (или твой текущий IP)
+
+**`git push` не работает** → `git config user.name "Your Name"` + `git config user.email "your@email.com"`
 
 ---
 
-## Работа продолжается без потерь
+## Claude Code продолжает работать
 
-После START.bat сразу:
-- Работает `git pull` / `git push` (история сохранена)
-- Работает Telegram userbot (сессия перенесена)
-- Работает MongoDB (URI в .env, база облачная)
-- Claude Code сам подхватит `.claude/` настройки проекта
-
-**Railway production** — отдельный облачный деплой, не зависит от компьютера вообще. `git push origin main` из любого ПК → Railway деплоит.
+Папка `.claude/` в архиве — настройки проекта (slash-команды, permissions) переносятся автоматом. Личная memory-папка не переносится, Claude наработает новую по мере работы.
