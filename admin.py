@@ -1291,6 +1291,127 @@ async def api_cv_flip_backfill(payload: dict | None = None):
     return await asyncio.to_thread(_cv_flip_backfill_sync, hours)
 
 
+def _cv_flip_results_sync(since_hours: int = 24) -> dict:
+    """Результаты отработки FLIPPED cv_flip_signals за последние N часов.
+
+    У FLIPPED записи уже сохранены entry/sl/tp1/tp2/tp3. Мы грузим 30m свечи
+    от flip_at до now (макс +48ч) и смотрим что сработало первым:
+    SL (-1R), TP1 (+1R), TP2 (+2R), TP3 (+3R), или ещё OPEN.
+
+    Pessimistic на одном баре: SL приоритетнее TP (классика для R-бэктестов).
+    """
+    from database import _cv_flip_signals, utcnow
+    from exchange import get_klines_any
+    from datetime import timedelta
+
+    since_hours = max(1, min(since_hours, 168))
+    MAX_HOLD_H = 48
+    since = utcnow() - timedelta(hours=since_hours)
+
+    docs = list(_cv_flip_signals().find({
+        "state": "FLIPPED",
+        "flip_at": {"$gte": since},
+    }).sort("flip_at", -1))
+
+    trades = []
+    for d in docs:
+        pair = d.get("pair") or ""
+        direction = d.get("direction") or ""
+        entry = d.get("entry") or d.get("flip_price")
+        sl = d.get("sl")
+        tp1, tp2, tp3 = d.get("tp1"), d.get("tp2"), d.get("tp3")
+        flip_at = d.get("flip_at")
+        if not (pair and direction and entry and sl and tp1 and tp2 and tp3 and flip_at):
+            continue
+        try:
+            candles = get_klines_any(pair, "30m", 200) or []
+        except Exception:
+            candles = []
+        if not candles:
+            continue
+        import datetime as _dt
+        flip_ms = int((flip_at if flip_at.tzinfo else flip_at.replace(tzinfo=_dt.timezone.utc))
+                      .timestamp() * 1000)
+        hold_ms = MAX_HOLD_H * 3600 * 1000
+        outcome = "OPEN"
+        exit_price = None
+        r = 0.0
+        hit_tp = 0
+        for c in candles:
+            t = int(c["t"])
+            if t <= flip_ms:
+                continue
+            if t > flip_ms + hold_ms:
+                break
+            hi, lo = float(c["h"]), float(c["l"])
+            if direction == "LONG":
+                if lo <= sl:
+                    outcome = "SL"; exit_price = sl; r = -1.0; break
+                if hi >= tp3:
+                    outcome = "TP3"; exit_price = tp3; r = 3.0; hit_tp = 3; break
+                if hi >= tp2: hit_tp = max(hit_tp, 2)
+                elif hi >= tp1: hit_tp = max(hit_tp, 1)
+            else:  # SHORT
+                if hi >= sl:
+                    outcome = "SL"; exit_price = sl; r = -1.0; break
+                if lo <= tp3:
+                    outcome = "TP3"; exit_price = tp3; r = 3.0; hit_tp = 3; break
+                if lo <= tp2: hit_tp = max(hit_tp, 2)
+                elif lo <= tp1: hit_tp = max(hit_tp, 1)
+        if outcome == "OPEN" and hit_tp > 0:
+            outcome = f"TP{hit_tp}"
+            exit_price = {1: tp1, 2: tp2}.get(hit_tp, tp3)
+            r = float(hit_tp)
+        now = utcnow()
+        age_h = (now - flip_at).total_seconds() / 3600.0 if isinstance(flip_at, _dt.datetime) else 0
+        trades.append({
+            "pair": pair,
+            "direction": direction,
+            "entry": round(entry, 8),
+            "sl": round(sl, 8),
+            "tp1": round(tp1, 8),
+            "tp3": round(tp3, 8),
+            "exit_price": round(exit_price, 8) if exit_price else None,
+            "outcome": outcome,
+            "r": round(r, 2),
+            "flip_at": flip_at.isoformat() + "Z" if hasattr(flip_at, "isoformat") else str(flip_at),
+            "age_hours": round(age_h, 1),
+        })
+
+    # Summary
+    closed = [t for t in trades if t["outcome"] != "OPEN"]
+    wins = [t for t in closed if t["r"] > 0]
+    losses = [t for t in closed if t["r"] < 0]
+    sum_r = sum(t["r"] for t in closed)
+    wr = (100.0 * len(wins) / len(closed)) if closed else 0.0
+    avg_r = (sum_r / len(closed)) if closed else 0.0
+    by_outcome: dict = {}
+    for t in trades:
+        by_outcome[t["outcome"]] = by_outcome.get(t["outcome"], 0) + 1
+    return {
+        "ok": True,
+        "since_hours": since_hours,
+        "flipped_total": len(docs),
+        "resolved": len(trades),
+        "closed": len(closed),
+        "open": len([t for t in trades if t["outcome"] == "OPEN"]),
+        "wins": len(wins),
+        "losses": len(losses),
+        "winrate_pct": round(wr, 1),
+        "sum_r": round(sum_r, 2),
+        "avg_r": round(avg_r, 3),
+        "by_outcome": by_outcome,
+        "trades": trades,
+    }
+
+
+@app.get("/api/cv-flip-results")
+async def api_cv_flip_results(since_hours: int = 24):
+    """Бэктест отработанных FLIPPED сигналов за N часов (default 24 = сегодня).
+    Показывает что сработало первым: SL / TP1 / TP2 / TP3 / OPEN."""
+    return await asyncio.to_thread(_cv_flip_results_sync, since_hours)
+
+
 @app.get("/api/cv-flips")
 async def api_cv_flips(state: str = "all", pair: str = "",
                        hours: int = 72, limit: int = 500):

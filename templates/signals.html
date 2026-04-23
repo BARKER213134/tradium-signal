@@ -2254,6 +2254,115 @@ async function _cvfBackfill() {
 
 _cvfLoad();
 safeInterval(_cvfLoad, 60 * 1000);
+
+// ═══ Backtest отработанных FLIPPED сигналов ═══════════════════════════
+async function _cvfResultsLoad() {
+  const hours = document.getElementById('cvfRHours')?.value || '24';
+  const s = document.getElementById('cvfRStatus');
+  const sum = document.getElementById('cvfRSummary');
+  const tb = document.getElementById('cvfRTbody');
+  if (s) s.textContent = 'считаем…';
+  try {
+    const r = await fetch(`/api/cv-flip-results?since_hours=${hours}`);
+    const j = await r.json();
+    if (s) s.textContent = `отработанных: ${j.closed} из ${j.resolved}`;
+    // Summary cards
+    const wrColor = j.winrate_pct >= 55 ? '#00e5a0' : j.winrate_pct >= 45 ? '#ffb84d' : '#ff5ea1';
+    const srColor = j.sum_r > 0 ? '#00e5a0' : j.sum_r < 0 ? '#ff5ea1' : 'var(--muted)';
+    const card = (lbl, val, c) => `<div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
+      <div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:0.5px;font-family:var(--font-mono);">${lbl}</div>
+      <div style="color:${c || 'var(--text)'};font-size:18px;font-weight:700;font-family:var(--font-mono);margin-top:2px;">${val}</div></div>`;
+    const byo = j.by_outcome || {};
+    const outIcon = {TP3:'🏆',TP2:'🥈',TP1:'🥉',SL:'❌',OPEN:'⏳'};
+    const outColor = {TP3:'#00e5a0',TP2:'#00e5a0',TP1:'#00d4ff',SL:'#ff5ea1',OPEN:'#ffb84d'};
+    const cards = [
+      card('FLIPPED total', j.flipped_total),
+      card('Отработано / Активно', `${j.closed} / <span style="color:#ffb84d">${j.open}</span>`),
+      card('Win / Loss', `<span style="color:#00e5a0">${j.wins}</span> / <span style="color:#ff5ea1">${j.losses}</span>`),
+      card('Win Rate', `${j.winrate_pct}%`, wrColor),
+      card('Sum R', `${j.sum_r > 0 ? '+' : ''}${j.sum_r}R`, srColor),
+      card('Avg R', `${j.avg_r > 0 ? '+' : ''}${j.avg_r}R`, srColor),
+    ];
+    for (const k of ['TP3','TP2','TP1','SL','OPEN']) {
+      if (byo[k]) cards.push(card(`${outIcon[k]} ${k}`, byo[k], outColor[k]));
+    }
+    if (sum) sum.innerHTML = cards.join('');
+    // Trades table
+    const fmtP = v => v == null ? '—' : Math.abs(v) >= 1000 ? v.toFixed(2) : Math.abs(v) >= 1 ? v.toFixed(4) : Math.abs(v) >= 0.01 ? v.toFixed(5) : v.toFixed(8);
+    if (tb) {
+      if (!j.trades || !j.trades.length) {
+        tb.innerHTML = '<tr><td colspan="8" style="padding:20px;text-align:center;color:var(--muted);">Нет FLIPPED сигналов в окне</td></tr>';
+      } else {
+        tb.innerHTML = j.trades.map(t => {
+          const icon = outIcon[t.outcome] || '•';
+          const color = outColor[t.outcome] || 'var(--text)';
+          const rColor = t.r > 0 ? '#00e5a0' : t.r < 0 ? '#ff5ea1' : 'var(--muted)';
+          const pair = (t.pair || '').replace('/USDT','');
+          const pairEsc = (t.pair || '').replace(/'/g, "\\'");
+          const fa = new Date(t.flip_at);
+          const pad = n => String(n).padStart(2,'0');
+          const ft = `${pad(fa.getDate())}.${pad(fa.getMonth()+1)} ${pad(fa.getHours())}:${pad(fa.getMinutes())}`;
+          return `<tr onclick="window.openChartModal && window.openChartModal('${pairEsc}')" style="border-bottom:1px solid var(--border);cursor:pointer;" onmouseover="this.style.background='rgba(255,255,255,0.03)'" onmouseout="this.style.background='transparent'">
+            <td style="padding:6px 8px;color:${color};font-weight:700;">${icon} ${t.outcome}</td>
+            <td style="padding:6px 8px;font-weight:700;">${pair}</td>
+            <td style="padding:6px 8px;" class="cvf-dir-${t.direction}">${t.direction}</td>
+            <td style="padding:6px 8px;text-align:right;">${fmtP(t.entry)}</td>
+            <td style="padding:6px 8px;text-align:right;">${fmtP(t.exit_price)}</td>
+            <td style="padding:6px 8px;text-align:right;color:${rColor};font-weight:700;">${t.r > 0 ? '+' : ''}${t.r}R</td>
+            <td style="padding:6px 8px;color:var(--muted);">${ft}</td>
+            <td style="padding:6px 8px;text-align:right;color:var(--muted);">${t.age_hours}ч</td>
+          </tr>`;
+        }).join('');
+      }
+    }
+  } catch (e) {
+    if (s) s.textContent = `ошибка: ${e.message || e}`;
+  }
+}
+</script>
+
+<!-- ═══ Секция бэктеста отработанных ═══════════════════════════════════ -->
+<div class="strategy-box" style="margin-top:28px;background:linear-gradient(135deg,rgba(0,229,160,0.05),rgba(0,212,255,0.03));border-color:rgba(0,229,160,0.2);">
+  <div class="strat-icon">📊</div>
+  <div class="strat-body">
+    <div class="strat-title">Бэктест отработанных FLIPPED</div>
+    По каждому FLIPPED signal грузим 30m свечи от flip_at (макс 48ч) и проверяем что сработало первым: <b>SL (−1R)</b> / <b>TP1 (+1R)</b> / <b>TP2 (+2R)</b> / <b>TP3 (+3R)</b>. Pessimistic: если SL и TP на одном баре — считается SL.
+  </div>
+</div>
+
+<div style="display:flex;gap:10px;align-items:center;margin:12px 0;flex-wrap:wrap;">
+  <select id="cvfRHours" onchange="_cvfResultsLoad()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="24" selected>Сегодня (24ч)</option>
+    <option value="48">48ч</option>
+    <option value="72">3 дня</option>
+    <option value="168">Неделя</option>
+  </select>
+  <button onclick="_cvfResultsLoad()" style="background:rgba(0,229,160,0.15);color:#00e5a0;border:1px solid rgba(0,229,160,0.4);border-radius:6px;padding:5px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">↻ Прогнать</button>
+  <span id="cvfRStatus" style="font-size:11px;color:var(--muted);font-family:var(--font-mono);"></span>
+</div>
+
+<div id="cvfRSummary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px;"></div>
+
+<div class="table-wrap" style="max-height:500px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;">
+  <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:var(--font-mono);">
+    <thead style="position:sticky;top:0;background:var(--dark);z-index:2;">
+      <tr style="border-bottom:2px solid var(--border);">
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Outcome</th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Пара</th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Dir</th>
+        <th style="padding:8px;text-align:right;color:var(--muted);font-weight:600;">Entry</th>
+        <th style="padding:8px;text-align:right;color:var(--muted);font-weight:600;">Exit</th>
+        <th style="padding:8px;text-align:right;color:var(--muted);font-weight:600;">R</th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Flip at</th>
+        <th style="padding:8px;text-align:right;color:var(--muted);font-weight:600;">Age</th>
+      </tr>
+    </thead>
+    <tbody id="cvfRTbody"></tbody>
+  </table>
+</div>
+
+<script>
+setTimeout(_cvfResultsLoad, 800);
 </script>
 
 
