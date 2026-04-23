@@ -24,6 +24,14 @@ _bot = None
 _admin_chat_id = None
 _tg_client = None  # экспортируется для /api/sync
 
+# Diagnostics — для /api/userbot/status и admin lifespan watchdog'а.
+# Позволяет видеть из админки: когда был последний setup,
+# сколько раз переподключались, какая последняя ошибка.
+_last_setup_at = None          # datetime успешного setup
+_last_setup_error = None       # str последней ошибки из _setup_telethon_client
+_last_disconnect_at = None     # datetime последнего run_until_disconnected exit
+_reconnect_count = 0           # сколько раз перезапускал setup
+
 # Буфер: message_id текста -> Signal.id в БД
 # Ждём следующее фото для этого сигнала
 _pending_charts: dict[int, int] = {}  # telegram_msg_id -> signal DB id
@@ -360,15 +368,17 @@ def _to_float(val) -> float | None:
 async def _setup_telethon_client():
     """Создаёт Telethon клиент, резолвит каналы, регистрирует хендлеры.
     Возвращает подключённый клиент или None если не получилось."""
-    global _tg_client
+    global _tg_client, _last_setup_at, _last_setup_error
     session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_userbot")
     client = TelegramClient(session_path, API_ID, API_HASH)
     try:
         await client.connect()
     except Exception as e:
         logger.error(f"[userbot] connect failed: {e}")
+        _last_setup_error = f"connect: {e}"
         return None
     if not await client.is_user_authorized():
+        _last_setup_error = "not_authorized (session revoked?)"
         logger.error(
             "❌ Userbot не авторизован! Запусти `python authorize.py` чтобы войти. "
             "Сервер продолжит работать без live-сигналов из Telegram."
@@ -376,6 +386,8 @@ async def _setup_telethon_client():
         await client.disconnect()
         return None
     _tg_client = client
+    _last_setup_at = utcnow()
+    _last_setup_error = None
     logger.info("✅ Userbot подключён")
 
     # Прогреваем кэш Tradium
@@ -509,6 +521,7 @@ async def _watchdog(client):
 
 async def start_userbot():
     """Supervisor: поднимает Telethon клиент в бесконечном цикле с reconnect."""
+    global _reconnect_count, _last_disconnect_at
     ensure_charts_dir()
     while True:
         client = None
@@ -519,12 +532,15 @@ async def start_userbot():
                 logger.warning("[userbot] setup returned None, retrying in 60s")
                 await asyncio.sleep(60)
                 continue
-            logger.info("✅ Userbot запущен (с auto-reconnect)")
+            _reconnect_count += 1
+            logger.info(f"✅ Userbot запущен (с auto-reconnect, #{_reconnect_count})")
             watchdog_task = asyncio.create_task(_watchdog(client))
             await client.run_until_disconnected()
+            _last_disconnect_at = utcnow()
             logger.warning("[userbot] disconnected, reconnecting in 30s")
-        except Exception:
+        except Exception as e:
             logger.exception("[userbot] supervisor crash")
+            _last_disconnect_at = utcnow()
         finally:
             if watchdog_task and not watchdog_task.done():
                 watchdog_task.cancel()
@@ -534,6 +550,18 @@ async def start_userbot():
                 except Exception:
                     pass
         await asyncio.sleep(30)
+
+
+def get_status_details() -> dict:
+    """Диагностика для /api/userbot/status и admin lifespan watchdog.
+    Возвращает "is_connected" + timestamps + reconnect stats + last error."""
+    return {
+        "is_connected": bool(_tg_client and _tg_client.is_connected()),
+        "last_setup_at": _last_setup_at.isoformat() + "Z" if _last_setup_at else None,
+        "last_disconnect_at": _last_disconnect_at.isoformat() + "Z" if _last_disconnect_at else None,
+        "last_setup_error": _last_setup_error,
+        "reconnect_count": _reconnect_count,
+    }
 
 
 async def handle_cryptovizor_message(text: str, message_id: int):

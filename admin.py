@@ -80,6 +80,14 @@ async def lifespan(app):
             except Exception as _e:
                 print(f"[LIFESPAN] cv_flip_watcher start skipped: {_e}", flush=True)
 
+            # Userbot health watchdog — алерт в Telegram при disconnect >10 мин.
+            # Работает независимо от userbot'ного supervisor'а (тот reconnect'ится
+            # сам, но молча; этот watchdog даёт юзеру знать что что-то не так).
+            try:
+                _bg_tasks.append(asyncio.create_task(_userbot_health_watchdog(bot)))
+            except Exception as _e:
+                print(f"[LIFESPAN] userbot health watchdog skipped: {_e}", flush=True)
+
             print(f"[LIFESPAN] {len(_bg_tasks)} tasks launched", flush=True)
         else:
             print("[LIFESPAN] Watcher already running, skipping", flush=True)
@@ -92,6 +100,72 @@ async def lifespan(app):
 
     for t in _bg_tasks:
         t.cancel()
+
+
+async def _userbot_health_watchdog(_bot):
+    """Алертит в ADMIN_CHAT_ID если userbot disconnected дольше DOWN_THRESHOLD.
+    Второй алерт — когда вернулся в connected. Один цикл проверки = 60 сек."""
+    import userbot as _ubm
+    from config import ADMIN_CHAT_ID
+    from datetime import timedelta
+    DOWN_THRESHOLD = timedelta(minutes=10)
+    disconnected_since = None
+    alerted = False
+    while True:
+        try:
+            await asyncio.sleep(60)
+            client = getattr(_ubm, "_tg_client", None)
+            is_conn = bool(client and client.is_connected())
+            now = datetime.utcnow()
+            if is_conn:
+                if alerted:
+                    # восстановился — шлём recovery
+                    try:
+                        await _bot.send_message(
+                            ADMIN_CHAT_ID,
+                            f"✅ <b>Userbot восстановлен</b> "
+                            f"(был disconnected {_human_duration(now - disconnected_since)})",
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
+                disconnected_since = None
+                alerted = False
+                continue
+            # disconnected
+            if disconnected_since is None:
+                disconnected_since = now
+            elif (not alerted) and (now - disconnected_since) >= DOWN_THRESHOLD:
+                det = _ubm.get_status_details()
+                err = det.get("last_setup_error") or "unknown"
+                try:
+                    await _bot.send_message(
+                        ADMIN_CHAT_ID,
+                        f"🚨 <b>Userbot disconnected &gt; 10 мин</b>\n"
+                        f"С: <code>{disconnected_since.strftime('%H:%M:%S UTC')}</code>\n"
+                        f"Последняя ошибка: <code>{err}</code>\n"
+                        f"Reconnect попыток: {det.get('reconnect_count', 0)}\n"
+                        f"Проверь Railway логи или Restart сервис.",
+                        parse_mode="HTML",
+                    )
+                    alerted = True
+                except Exception as e:
+                    logging.getLogger(__name__).warning(f"[userbot-watchdog] alert fail: {e}")
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logging.getLogger(__name__).exception("[userbot-watchdog] loop error")
+
+
+def _human_duration(delta) -> str:
+    s = int(delta.total_seconds())
+    if s < 60:
+        return f"{s}с"
+    m = s // 60
+    if m < 60:
+        return f"{m}м"
+    h, mm = m // 60, m % 60
+    return f"{h}ч {mm}м"
 
 
 # Sentry (опционально — активен только если SENTRY_DSN задан)
@@ -3347,10 +3421,18 @@ async def api_userbot_status():
             "age_minutes": int((now - dt).total_seconds() / 60),
             "pair": doc.get("pair"),
         }
+    # Расширенные детали supervisor'а: когда setup, сколько reconnect'ов,
+    # последняя ошибка setup. Помогает при disconnect'е сразу увидеть причину.
+    try:
+        from userbot import get_status_details
+        details = get_status_details()
+    except Exception:
+        details = {}
     return {
         "client_connected": _tg_client.is_connected() if _tg_client else False,
         "cryptovizor": _info(last_cv),
         "tradium": _info(last_tr),
+        **details,
     }
 
 
