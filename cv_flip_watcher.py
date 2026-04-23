@@ -175,20 +175,48 @@ async def _check_doc(doc, closed_candles, st_series, now_dt, dup_col):
     flip_price = float(flip_bar["c"])
     # Binance t = время открытия 30m бара (мс); close-time = +30 мин
     flip_at = datetime.utcfromtimestamp((int(flip_bar["t"]) + 30 * 60 * 1000) / 1000.0)
+
+    # SL = ST-линия на flip-баре (естественный стоп для ST-стратегии).
+    # TP1/TP2/TP3 = entry ± 1R / 2R / 3R где R = |entry - SL|.
+    st_value = float(st_series[flip_idx].get("st") or 0.0)
+    if st_value <= 0 or (direction == "LONG" and st_value >= flip_price) \
+            or (direction == "SHORT" and st_value <= flip_price):
+        # аномалия — ST с не той стороны; сделаем fallback 1% за цену
+        fallback_frac = 0.01
+        st_value = flip_price * (1 - fallback_frac) if direction == "LONG" \
+            else flip_price * (1 + fallback_frac)
+    sign = 1 if direction == "LONG" else -1
+    risk = abs(flip_price - st_value)
+    entry = round(flip_price, 8)
+    sl = round(st_value, 8)
+    tp1 = round(flip_price + sign * 1 * risk, 8)
+    tp2 = round(flip_price + sign * 2 * risk, 8)
+    tp3 = round(flip_price + sign * 3 * risk, 8)
+    risk_pct = (risk / flip_price) * 100.0 if flip_price else 0.0
+
     dup_col.update_one(
         {"_id": doc["_id"]},
         {"$set": {
             "state": "FLIPPED",
             "flip_at": flip_at,
             "flip_price": flip_price,
+            "entry": entry,
+            "sl": sl,
+            "tp1": tp1,
+            "tp2": tp2,
+            "tp3": tp3,
+            "st_value_at_flip": st_value,
+            "risk_pct": round(risk_pct, 3),
             "updated_at": utcnow(),
         }},
     )
-    logger.info(f"[cv-flip] FLIPPED {pair} {direction} @ {flip_price} "
-                f"(cv {doc.get('cv_pattern_name')})")
+    logger.info(f"[cv-flip] FLIPPED {pair} {direction} entry={entry} "
+                f"SL={sl} TP3={tp3} R%={risk_pct:.2f}")
 
     asyncio.create_task(_send_telegram(
-        pair, direction, flip_price, flip_at, doc.get("cv_pattern_name", "")
+        pair=pair, direction=direction, entry=entry, sl=sl,
+        tp1=tp1, tp2=tp2, tp3=tp3, risk_pct=risk_pct,
+        flip_at=flip_at, cv_at=doc.get("cv_triggered_at"),
     ))
 
 
@@ -234,22 +262,55 @@ async def _scan_waiting():
                 logger.warning(f"[cv-flip] check fail {pair} {doc.get('_id')}: {e}")
 
 
-async def _send_telegram(pair: str, direction: str, price: float,
-                         flip_at: datetime, pattern: str):
-    """Telegram alert в BOT12_BOT_TOKEN — graceful skip если не настроен.
-    Chat_id по умолчанию = ADMIN_CHAT_ID (см. config.CV_FLIP_CHAT_ID)."""
+def _fmt_price(v: float) -> str:
+    """Человекочитаемое округление для цен разного масштаба."""
+    if v is None:
+        return "—"
+    av = abs(v)
+    if av >= 1000:
+        return f"{v:,.2f}"
+    if av >= 1:
+        return f"{v:.4f}"
+    if av >= 0.01:
+        return f"{v:.5f}"
+    return f"{v:.8f}"
+
+
+def _fmt_pct(v: float) -> str:
+    s = "+" if v >= 0 else ""
+    return f"{s}{v:.2f}%"
+
+
+async def _send_telegram(pair: str, direction: str, entry: float, sl: float,
+                         tp1: float, tp2: float, tp3: float, risk_pct: float,
+                         flip_at: datetime, cv_at: datetime | None):
+    """Telegram alert в BOT12_BOT_TOKEN — graceful skip если не настроен."""
     from config import BOT12_BOT_TOKEN, CV_FLIP_CHAT_ID
     if not BOT12_BOT_TOKEN or not CV_FLIP_CHAT_ID:
         return
     try:
         import httpx
-        dir_e = "🟢" if direction == "LONG" else "🔴"
+        dir_e = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
+        sign = 1 if direction == "LONG" else -1
+        sl_pct = ((sl - entry) / entry) * 100.0 if entry else 0.0
+        tp1_pct = ((tp1 - entry) / entry) * 100.0 if entry else 0.0
+        tp2_pct = ((tp2 - entry) / entry) * 100.0 if entry else 0.0
+        tp3_pct = ((tp3 - entry) / entry) * 100.0 if entry else 0.0
+        waited = ""
+        if isinstance(cv_at, datetime):
+            dt = (flip_at - cv_at).total_seconds() / 60.0
+            waited = f"  ({dt:.0f} мин от CV)"
         text = (
-            f"💥 <b>CV+ST Flip confirmed</b>\n"
-            f"{dir_e} <b>{pair}</b> {direction}\n"
-            f"Pattern: <code>{pattern or '—'}</code>\n"
-            f"Flip @ <b>{price}</b>\n"
-            f"At: <code>{flip_at.strftime('%Y-%m-%d %H:%M UTC')}</code>"
+            f"💥 <b>CV+ST Flip</b> · {dir_e}\n"
+            f"<b>{pair}</b> · ST 30m\n\n"
+            f"Entry: <code>{_fmt_price(entry)}</code>\n"
+            f"SL:    <code>{_fmt_price(sl)}</code> ({_fmt_pct(sl_pct)})\n"
+            f"TP1:   <code>{_fmt_price(tp1)}</code> ({_fmt_pct(tp1_pct)}) · 1R\n"
+            f"TP2:   <code>{_fmt_price(tp2)}</code> ({_fmt_pct(tp2_pct)}) · 2R\n"
+            f"TP3:   <code>{_fmt_price(tp3)}</code> ({_fmt_pct(tp3_pct)}) · 3R\n\n"
+            f"R: {risk_pct:.2f}% · R:R до TP3 = 1:3\n"
+            f"Flip @ <code>{flip_at.strftime('%Y-%m-%d %H:%M UTC')}</code>{waited}\n\n"
+            f"<i>observation-only, в автоторговлю не идёт</i>"
         )
         url = f"https://api.telegram.org/bot{BOT12_BOT_TOKEN}/sendMessage"
         async with httpx.AsyncClient(timeout=10) as c:
