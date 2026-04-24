@@ -94,7 +94,8 @@ DEFAULT_CONFIG = {
     "min_size_rel_energy": 0.0005,
     "min_size_rel_index": 0.00015,
     "session_filter": "london_ny",     # london_ny | london | ny | any
-    "max_wait_bars": 30,
+    "max_wait_bars": 72,               # 3 дня — по бэктесту retest часто
+                                       # случается на 2-3 сутки. Было 30ч → 72% EXPIRED.
     "max_hold_bars": 50,
     "sl_buffer_rel": 0.05,             # 5% от размера FVG
     "trailing_activate_at": 1.0,       # +1R

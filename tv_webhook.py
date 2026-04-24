@@ -21,7 +21,7 @@ FVG zone (top/bottom) эмулируется через ATR (LuxAlgo Free не �
 """
 from __future__ import annotations
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from database import _fvg_signals, utcnow
@@ -110,6 +110,17 @@ def _fvg_zone_from_atr(price: float, atr: float, direction: str,
     return top, bottom
 
 
+def _ema_last(values: list[float], period: int) -> float | None:
+    """Экспоненциальная MA — последнее значение. None если мало данных."""
+    if not values or len(values) < period:
+        return None
+    k = 2.0 / (period + 1)
+    ema = sum(values[:period]) / period
+    for v in values[period:]:
+        ema = v * k + ema * (1 - k)
+    return ema
+
+
 def process_tv_webhook(payload: dict) -> dict:
     """Обработка webhook'а от TradingView.
     Returns: {"ok": bool, "fvg_id": int, "reason": str} — для API ответа."""
@@ -158,16 +169,45 @@ def process_tv_webhook(payload: dict) -> dict:
     if existing:
         return {"ok": True, "reason": "already exists", "fvg_id": existing.get("_id")}
 
-    # 7. Получаем свечи для ATR — пробуем кеш → yfinance
+    # 7. Session filter (Лондон + NY, 7:00-17:00 UTC).
+    # Бэктест 513 сигналов показал: вне этого окна ликвидность низкая,
+    # FVG часто false-break. Отсеивает ~52% сигналов, выдаёт +эквити.
+    session_hour = formed_at.hour if formed_at.tzinfo is None \
+                   else formed_at.astimezone(timezone.utc).hour
+    if session_hour < 7 or session_hour >= 17:
+        logger.info(f"[tv-webhook] REJECT session {instrument} {direction_raw} "
+                    f"hour={session_hour} (вне 7-17 UTC)")
+        return {"ok": False, "reason": f"outside session window (UTC hour={session_hour})"}
+
+    # 8. Получаем свечи для ATR + HTF filter (нужно минимум 200 баров 1h
+    # для EMA50/200). Пробуем cache → yfinance (30d вместо 7d для HTF).
     candles = get_cached_candles(instrument, "1h", max_age_min=90) or []
-    if not candles:
+    if not candles or len(candles) < 200:
         try:
-            candles = fetch_candles(ticker_yf, period="7d", interval="1h")
+            candles = fetch_candles(ticker_yf, period="30d", interval="1h")
         except Exception as e:
             logger.warning(f"[tv-webhook] fetch candles fail {ticker_yf}: {e}")
             candles = []
 
-    # 8. Рассчитываем FVG zone
+    # 9. HTF Trend Filter (1h EMA50 vs EMA200).
+    # Бэктест: отсеивает 49% контр-трендовых сигналов, sum R с −37R → −2R.
+    # Fail-open: если данных <200 баров, пропускаем (не фильтруем).
+    if len(candles) >= 200:
+        closes = [c["c"] for c in candles[-200:]]
+        ema50 = _ema_last(closes, 50)
+        ema200 = _ema_last(closes, 200)
+        if ema50 is not None and ema200 is not None:
+            uptrend = ema50 > ema200
+            if direction_raw == "bullish" and not uptrend:
+                logger.info(f"[tv-webhook] REJECT HTF {instrument} bullish "
+                            f"but 1h EMA50={ema50:.5f} < EMA200={ema200:.5f} (downtrend)")
+                return {"ok": False, "reason": "HTF downtrend for bullish signal"}
+            if direction_raw == "bearish" and uptrend:
+                logger.info(f"[tv-webhook] REJECT HTF {instrument} bearish "
+                            f"but 1h EMA50={ema50:.5f} > EMA200={ema200:.5f} (uptrend)")
+                return {"ok": False, "reason": "HTF uptrend for bearish signal"}
+
+    # 10. Рассчитываем FVG zone через ATR
     price = float(price_raw)
     atr = _compute_atr(candles) if candles else None
     if atr:
@@ -182,14 +222,14 @@ def process_tv_webhook(payload: dict) -> dict:
             fvg_top, fvg_bottom = price + half, price
         fvg_size_rel = (fvg_top - fvg_bottom) / price
 
-    # 9. Entry / SL / TP (как в оригинальной scan_one_instrument)
+    # 11. Entry = midpoint зоны (бэктест −219R → −37R vs boundary).
+    # SL за дальней границей + 5% буфер (не меняем, защищает от wick'ов).
     sl_buffer_ratio = 0.05
     buffer = (fvg_top - fvg_bottom) * sl_buffer_ratio
+    entry_price = (fvg_top + fvg_bottom) / 2.0   # midpoint для обоих направлений
     if direction_raw == "bullish":
-        entry_price = fvg_top       # входим на retest верхней границы
         sl_price = fvg_bottom - buffer
     else:
-        entry_price = fvg_bottom
         sl_price = fvg_top + buffer
     risk_rel = abs(entry_price - sl_price) / entry_price if entry_price > 0 else 0
 
@@ -208,7 +248,9 @@ def process_tv_webhook(payload: dict) -> dict:
         "formed_at": formed_at,
         "formed_ts": formed_ts,
         "formed_price": price,
-        "expire_at": formed_at + timedelta(hours=30),
+        # Было 30ч — 72% EXPIRED. 72ч (3 дня) даёт retest времени ×2,
+        # классика FVG-торговли: часто цена возвращается в зону 1-3 суток.
+        "expire_at": formed_at + timedelta(hours=72),
         "status": "WAITING_RETEST",
         "entry_price": entry_price,
         "sl_price": sl_price,

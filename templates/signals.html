@@ -4369,21 +4369,20 @@ safeInterval(() => {
 }, 20000);
 </script>
 
-{% elif bot in ['forex_fvg', 'forex_fvg_4h'] %}
-{% set fvg_tf = '4H' if bot == 'forex_fvg_4h' else '1H' %}
+{% elif bot == 'forex_fvg' %}
+{% set fvg_tf = '1H' %}
 <div class="strategy-box">
-  <div class="strat-icon">{{ '🏆' if bot == 'forex_fvg_4h' else '📈' }}</div>
+  <div class="strat-icon">📈</div>
   <div class="strat-body">
     <div class="strat-title">
-      {% if bot == 'forex_fvg_4h' %}Стратегия · Forex FVG <b>4H</b> (Top Signals — редкие и сильные){% else %}Стратегия · Forex FVG <b>1H</b> (Fair Value Gap){% endif %}
+      Стратегия · Forex FVG <b>1H</b> (Fair Value Gap)
     </div>
     Источник: <b>TradingView LuxAlgo FVG</b> webhook на {{ fvg_tf }} для 32 инструментов
     (forex, metals, indices, energy). Зона FVG эмулируется через <code>ATR × 0.5</code>.
     <b>Entry</b> — лимит на границе FVG при retest, <b>SL</b> — противоположная граница
     ±5% буфер. <b>Trailing stop</b> активируется после +1R, тянет SL на 1R сзади.
-    {% if bot == 'forex_fvg_4h' %}<b>4H FVG встречаются в ~4× реже 1H</b>, но статистически
-    сильнее — работают на более значимых уровнях.{% else %}Top Picks — Multi-TF (1H+4H) + Smart Level proximity
-    + Multi-Pair correlation = score ≥ 5.{% endif %}
+    Top Picks — Multi-TF (1H+4H) + Smart Level proximity
+    + Multi-Pair correlation = score ≥ 5.
   </div>
 </div>
 <script>window._fvgTfFilter = '{{ fvg_tf }}';</script>
