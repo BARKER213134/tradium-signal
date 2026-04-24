@@ -906,6 +906,29 @@
         return chart;
       };
 
+      // ─── Helper: ограничить autoScale свечной серии только candle range ──
+      // Без этого далёкие priceLines (R 1d / S 1h / дальний TP) втягивают
+      // axis в расширенный range → свечи визуально зажимаются в тонкую
+      // полоску. autoscaleInfoProvider возвращает only candle high/low
+      // с 10% padding — axis следит только за свечами.
+      window._clampCandleAutoscale = function(series, candles) {
+        if (!series || !candles || !candles.length) return;
+        let minP = Infinity, maxP = -Infinity;
+        for (const c of candles) {
+          if (c.low < minP) minP = c.low;
+          if (c.high > maxP) maxP = c.high;
+        }
+        if (!isFinite(minP) || !isFinite(maxP) || minP >= maxP) return;
+        const pad = (maxP - minP) * 0.1;
+        try {
+          series.applyOptions({
+            autoscaleInfoProvider: () => ({
+              priceRange: { minValue: minP - pad, maxValue: maxP + pad },
+            }),
+          });
+        } catch (_) {}
+      };
+
       // ─── SuperTrend (TradingView-совместимый) ────────────────────
       // Расчёт клиентский (~5мс на 200 свечах), две LineSeries (green+red),
       // whitespace на неактивных барах → "телепорт" на флипе как в TV.
@@ -2570,6 +2593,7 @@ async function _renderLwcSignalChart(containerId, opts) {
     wickUpColor:'#00e5a0', wickDownColor:'#ff4d6d',
   });
   series.setData(d.candles);
+  if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
   if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
   // SuperTrend (клиентский расчёт, бадж в левом верхнем углу chartDiv)
   const _stResult = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
@@ -2991,6 +3015,7 @@ async function _renderFvgChart(area, sig, tf) {
     wickUpColor:'#00e5a0', wickDownColor:'#ff4d6d',
   });
   series.setData(d.candles);
+  if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
   if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
   const _stResFvg = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });

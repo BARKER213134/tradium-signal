@@ -3448,6 +3448,7 @@ async function _drawPaperHistChart(idx) {
       wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
     });
     series.setData(d.candles);
+    if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
     const _stResHist = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
     if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
@@ -3731,6 +3732,7 @@ async function _renderPaperChart(idx, tf) {
       wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
     });
     series.setData(d.candles);
+    if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
     const _stResLive = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: area }) : null;
     if (window._addRSI) window._addRSI(chart, d.candles, { anchor: area });
@@ -5521,6 +5523,7 @@ async function loadCoinChart(coin) {
       wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
     });
     series.setData(d.candles);
+    if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _coinTF);
     const _stResCoin = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, _coinTF, { anchor: chartDiv }) : null;
     if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
@@ -6217,6 +6220,7 @@ async function openJournalChart(idx, forceTF) {
       wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
     });
     series.setData(d.candles);
+    if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _modalTF);
     const _stResJ = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, _modalTF, { anchor: container }) : null;
     if (window._addRSI) window._addRSI(chart, d.candles, { anchor: container });
