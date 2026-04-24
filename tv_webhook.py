@@ -222,6 +222,19 @@ def process_tv_webhook(payload: dict) -> dict:
             fvg_top, fvg_bottom = price + half, price
         fvg_size_rel = (fvg_top - fvg_bottom) / price
 
+    # 10a. Фильтр "FVG_too_small vs ATR".
+    # Бэктест на 14 днях: требование fvg_size/ATR >= 0.6 отрезает 21%
+    # сигналов где ATR вырос сильнее чем размер FVG (volатильность
+    # "съела" зону → retest с большой вероятностью шумный). На той же
+    # выборке даёт AvgR +0.026 → +0.089 (×3.4) и WR 26.1% → 27.8%.
+    if atr and atr > 0:
+        fvg_atr_ratio = abs(fvg_top - fvg_bottom) / atr
+        if fvg_atr_ratio < 0.6:
+            logger.info(f"[tv-webhook] REJECT fvg_too_small {instrument} "
+                        f"{direction_raw} fvg/atr={fvg_atr_ratio:.2f}<0.6")
+            return {"ok": False,
+                    "reason": f"FVG too small vs ATR (ratio={fvg_atr_ratio:.2f})"}
+
     # 11. Entry = midpoint зоны (бэктест −219R → −37R vs boundary).
     # SL за дальней границей + 5% буфер (не меняем, защищает от wick'ов).
     sl_buffer_ratio = 0.05
