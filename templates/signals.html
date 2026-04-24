@@ -6142,6 +6142,13 @@ function closeJournalChartModal() {
   if (container && window._disposeChart) window._disposeChart(container);
   const modal = document.getElementById('journalChartModal');
   if (modal) modal.classList.remove('open');
+  // Сразу обновляем журнал, не ждём 20-секундного тика. Юзер мог провести
+  // в модалке минуту — за это время приходят новые сигналы, а таблица
+  // рефрешилась раз в 20с (новые могли появиться в 19ой секунде после
+  // закрытия). Теперь — мгновенно после закрытия.
+  if (typeof loadJournal === 'function') {
+    try { loadJournal(); } catch (_) {}
+  }
 }
 
 async function openJournalChart(idx, forceTF) {
