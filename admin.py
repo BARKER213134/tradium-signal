@@ -3330,38 +3330,99 @@ async def api_fvg_rescore_all(payload: dict | None = None):
 
 @app.post("/api/fvg/test-alert")
 async def api_fvg_test_alert(payload: dict | None = None):
-    """Шлёт тестовый ENTRY-алерт в BOT8. Берёт самый свежий
-    FVG-сигнал (по умолчанию WAITING_RETEST) и отправляет его
-    в формате entry-alert. Для визуальной проверки что всё работает.
-    Body (optional): {"fvg_id": "..."} — конкретный сигнал по id."""
+    """Шлёт тестовый ENTRY-алерт в BOT8 + возвращает диагностику:
+      - есть ли BOT8_BOT_TOKEN
+      - есть ли ADMIN_CHAT_ID
+      - инициализировался ли _bot8
+      - результат httpx getMe() / send_message
+    Body (optional): {"fvg_id": "..."} — конкретный сигнал."""
+    import os
     from database import _fvg_signals
     from bson import ObjectId
     payload = payload or {}
+    diag: dict = {}
+
+    # 1. ENV checks
+    bot8_token = os.getenv("BOT8_BOT_TOKEN", "").strip()
+    admin_chat_id = os.getenv("ADMIN_CHAT_ID", "").strip()
+    diag["bot8_token_set"] = bool(bot8_token)
+    diag["bot8_token_len"] = len(bot8_token)
+    diag["admin_chat_id_set"] = bool(admin_chat_id)
+    diag["admin_chat_id_value"] = admin_chat_id or "(empty)"
+
+    if not bot8_token:
+        return {"ok": False, "reason": "BOT8_BOT_TOKEN не задан в Railway Variables",
+                "diag": diag}
+    if not admin_chat_id:
+        return {"ok": False, "reason": "ADMIN_CHAT_ID не задан в Railway Variables",
+                "diag": diag}
+
+    # 2. Прямой httpx-вызов в Telegram getMe — проверка токена
+    import httpx
+    try:
+        r = httpx.get(f"https://api.telegram.org/bot{bot8_token}/getMe", timeout=5)
+        getme = r.json()
+        diag["getme_ok"] = getme.get("ok", False)
+        if getme.get("ok"):
+            diag["bot_username"] = "@" + (getme.get("result", {}).get("username") or "?")
+        else:
+            diag["getme_error"] = getme.get("description", "?")
+            return {"ok": False, "reason": f"BOT8 токен невалидный: {diag['getme_error']}",
+                    "diag": diag}
+    except Exception as e:
+        diag["getme_exception"] = str(e)
+        return {"ok": False, "reason": f"Не смог достучаться до Telegram API: {e}",
+                "diag": diag}
+
+    # 3. Берём сигнал
     sig = None
     fid = payload.get("fvg_id")
     if fid:
         try:
             sig = _fvg_signals().find_one({"_id": ObjectId(fid)})
         except Exception:
-            return {"ok": False, "error": f"invalid fvg_id: {fid}"}
+            pass
     if not sig:
-        # берём самый свежий сигнал (любой status) — в entry-alert
-        # нужны entry_price/sl_price которые уже заполнены
         sig = _fvg_signals().find_one({}, sort=[("formed_at", -1)])
     if not sig:
-        return {"ok": False, "error": "no fvg signals in DB"}
-    # entered_at/entered_price могут отсутствовать у WAITING — подставим
-    sig.setdefault("entered_at", sig.get("formed_at"))
-    sig.setdefault("entered_price", sig.get("entry_price"))
+        return {"ok": False, "reason": "В fvg_signals нет записей", "diag": diag}
+
+    # 4. Прямая отправка через httpx (минуя watcher._bot8 aiogram wrapper)
+    # — это даст точный error message если send_message провалится.
+    instr = sig.get("instrument", "?")
+    direction = sig.get("direction", "?")
+    dir_emoji = "🟢" if direction == "bullish" else "🔴"
+    entry = sig.get("entry_price", "?")
+    sl = sig.get("sl_price", "?")
+    tf = sig.get("timeframe", "?")
+    text = (
+        f"🧪 <b>TEST · FVG ENTRY</b>\n"
+        f"{dir_emoji} <b>{instr}</b> · {direction.upper()} · {tf}\n\n"
+        f"Entry: <code>{entry}</code>\n"
+        f"SL:    <code>{sl}</code>\n\n"
+        f"<i>Это тестовое сообщение от /api/fvg/test-alert</i>"
+    )
     try:
-        from watcher import _send_fvg_entry_alert
-        await _send_fvg_entry_alert(sig)
-        return {"ok": True, "sent_for": sig.get("instrument"),
-                "direction": sig.get("direction"),
-                "entry": sig.get("entry_price"),
-                "note": "TEST alert sent to BOT8 + ADMIN_CHAT_ID"}
+        r = httpx.post(
+            f"https://api.telegram.org/bot{bot8_token}/sendMessage",
+            json={"chat_id": admin_chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=5,
+        )
+        resp = r.json()
+        diag["send_ok"] = resp.get("ok", False)
+        diag["send_response"] = resp
+        if resp.get("ok"):
+            return {"ok": True,
+                    "sent_for": instr, "direction": direction, "entry": entry,
+                    "note": f"TEST alert sent via {diag.get('bot_username','BOT8')}",
+                    "diag": diag}
+        else:
+            return {"ok": False,
+                    "reason": f"Telegram вернул ok:false — {resp.get('description','?')}",
+                    "diag": diag}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        diag["send_exception"] = str(e)
+        return {"ok": False, "reason": f"httpx.post упал: {e}", "diag": diag}
 
 
 async def _send_fvg_formed_alert_safe(result: dict):
