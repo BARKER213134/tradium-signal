@@ -3224,14 +3224,10 @@ async def api_tv_webhook(request: Request):
             content=json.dumps({"ok": False, "error": str(e), "trace": traceback.format_exc()[-800:]}),
             media_type="application/json",
         )
-    # Send FVG FORMED notification via BOT8 if signal created
-    if result.get("ok") and result.get("reason") == "created":
-        try:
-            from watcher import _send_fvg_formed_alert
-            # fire-and-forget — do not block webhook response
-            asyncio.create_task(_send_fvg_formed_alert_safe(result))
-        except Exception:
-            pass
+    # FORMED-алерты отключены по запросу пользователя.
+    # В BOT8 отправляются только ENTRY (retest сработал) и TP/SL события
+    # — по ним принимают решения, а "следим/формируется" было шумом.
+    # Alerts живут в watcher._send_fvg_entry_alert / _send_fvg_close_alert.
     return result
 
 
@@ -3332,8 +3328,46 @@ async def api_fvg_rescore_all(payload: dict | None = None):
     return {"ok": True, "stats": stats}
 
 
+@app.post("/api/fvg/test-alert")
+async def api_fvg_test_alert(payload: dict | None = None):
+    """Шлёт тестовый ENTRY-алерт в BOT8. Берёт самый свежий
+    FVG-сигнал (по умолчанию WAITING_RETEST) и отправляет его
+    в формате entry-alert. Для визуальной проверки что всё работает.
+    Body (optional): {"fvg_id": "..."} — конкретный сигнал по id."""
+    from database import _fvg_signals
+    from bson import ObjectId
+    payload = payload or {}
+    sig = None
+    fid = payload.get("fvg_id")
+    if fid:
+        try:
+            sig = _fvg_signals().find_one({"_id": ObjectId(fid)})
+        except Exception:
+            return {"ok": False, "error": f"invalid fvg_id: {fid}"}
+    if not sig:
+        # берём самый свежий сигнал (любой status) — в entry-alert
+        # нужны entry_price/sl_price которые уже заполнены
+        sig = _fvg_signals().find_one({}, sort=[("formed_at", -1)])
+    if not sig:
+        return {"ok": False, "error": "no fvg signals in DB"}
+    # entered_at/entered_price могут отсутствовать у WAITING — подставим
+    sig.setdefault("entered_at", sig.get("formed_at"))
+    sig.setdefault("entered_price", sig.get("entry_price"))
+    try:
+        from watcher import _send_fvg_entry_alert
+        await _send_fvg_entry_alert(sig)
+        return {"ok": True, "sent_for": sig.get("instrument"),
+                "direction": sig.get("direction"),
+                "entry": sig.get("entry_price"),
+                "note": "TEST alert sent to BOT8 + ADMIN_CHAT_ID"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 async def _send_fvg_formed_alert_safe(result: dict):
-    """Безопасный wrapper — не валит webhook если alert module отсутствует."""
+    """Безопасный wrapper — не валит webhook если alert module отсутствует.
+    Больше не вызывается из api_tv_webhook (FORMED alerts отключены),
+    но функция оставлена для совместимости и возможного возврата."""
     try:
         from database import _fvg_signals
         from bson import ObjectId
