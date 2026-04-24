@@ -633,17 +633,17 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <script>
-      // Pause polling когда вкладка в фоне — экономит API calls + bandwidth
-      // (браузер ставит setInterval throttling на 1 минуту в background tab,
-      // но лучше всего остановить явно).
+      // Polling работает ВСЕГДА, даже когда вкладка в фоне — по запросу
+      // пользователя: данные должны обновляться пока страница открыта,
+      // чтобы по возвращении видеть актуальный снэпшот без ожидания тика.
+      //
+      // Note: браузеры throttle'ят setInterval в неактивных вкладках
+      // (Chrome: раз в 60с, Firefox/Safari — аналогично), это аппаратное
+      // ограничение которое мы не можем обойти без Service Worker. Активная
+      // вкладка работает с полным интервалом как задан.
       window._pollingPaused = false;
-      document.addEventListener('visibilitychange', () => {
-        window._pollingPaused = document.hidden;
-      });
-      // Хелпер для polling: вместо setInterval(fn, ms) — safeInterval(fn, ms)
-      // Функция не выполняется когда вкладка не видна.
       window.safeInterval = function(fn, ms) {
-        return setInterval(() => { if (!window._pollingPaused) fn(); }, ms);
+        return setInterval(() => { fn(); }, ms);
       };
 
       // isStrongSignal — единый критерий "силы" сигнала (Variant B tightened).
