@@ -2428,7 +2428,7 @@ async function _ensureLwc() {
   if (window._lwcLoaded) return;
   await new Promise(resolve => {
     const s = document.createElement('script');
-    s.src = 'https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
+    s.src = 'https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js';
     s.onload = () => { window._lwcLoaded = true; resolve(); };
     s.onerror = () => resolve();
     document.head.appendChild(s);

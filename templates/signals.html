@@ -3410,7 +3410,7 @@ async function _drawPaperHistChart(idx) {
   if (!window._lwcLoaded) {
     await new Promise(resolve => {
       const sc = document.createElement('script');
-      sc.src = 'https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
+      sc.src = 'https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js';
       sc.onload = () => { window._lwcLoaded = true; resolve(); };
       document.head.appendChild(sc);
     });
@@ -3689,7 +3689,7 @@ async function _renderPaperChart(idx, tf) {
   if (!_lwcPaperLoaded) {
     await new Promise(resolve => {
       const sc = document.createElement('script');
-      sc.src = 'https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
+      sc.src = 'https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js';
       sc.onload = () => { _lwcPaperLoaded = true; resolve(); };
       if (window.LightweightCharts) { _lwcPaperLoaded = true; resolve(); }
       else document.head.appendChild(sc);
@@ -5487,7 +5487,7 @@ async function loadCoinChart(coin) {
   if (!_lwcLoaded) {
     await new Promise(resolve => {
       const sc = document.createElement('script');
-      sc.src = 'https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
+      sc.src = 'https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js';
       sc.onload = () => { _lwcLoaded = true; resolve(); };
       if (window.LightweightCharts) { _lwcLoaded = true; resolve(); }
       else document.head.appendChild(sc);
@@ -6186,7 +6186,7 @@ async function openJournalChart(idx, forceTF) {
   if (!_lwcLoaded) {
     await new Promise((resolve) => {
       const sc = document.createElement('script');
-      sc.src = 'https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
+      sc.src = 'https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js';
       sc.onload = () => { _lwcLoaded = true; resolve(); };
       document.head.appendChild(sc);
     });
