@@ -8313,7 +8313,7 @@ def _compute_journal_sync():
         "ai_score":1, "st_passed":1, "pump_score":1, "pattern_triggered":1,
         "is_top_pick":1, "top_pick_confirmations_count":1,
         "received_at":1, "pattern_triggered_at":1,
-    }).sort("received_at", -1).limit(300):
+    }).sort("received_at", -1).limit(150):
         pat_trig = bool(s.get("pattern_triggered"))
         at_dt = s.get("pattern_triggered_at") if pat_trig and s.get("pattern_triggered_at") else s.get("received_at")
         items.append({
@@ -8345,7 +8345,7 @@ def _compute_journal_sync():
         "pattern_name":1, "ai_score":1, "st_passed":1, "pump_score":1,
         "is_top_pick":1, "top_pick_confirmations_count":1,
         "received_at":1, "pattern_triggered_at":1,
-    }).sort("pattern_triggered_at", -1).limit(800):
+    }).sort("pattern_triggered_at", -1).limit(250):
         # Время = когда паттерн сработал (не когда монета добавлена)
         at_dt = s.get("pattern_triggered_at") or s.get("received_at")
         items.append({
@@ -8371,7 +8371,7 @@ def _compute_journal_sync():
         "symbol":1, "pair":1, "direction":1, "price":1, "anomalies":1,
         "score":1, "st_passed":1, "pump_score":1, "detected_at":1,
         "is_top_pick":1, "top_pick_confirmations_count":1,
-    }).sort("detected_at", -1).limit(800):
+    }).sort("detected_at", -1).limit(250):
         types = [x["type"] for x in a.get("anomalies", [])]
         items.append({
             "source": "anomaly",
@@ -8397,7 +8397,7 @@ def _compute_journal_sync():
         "pattern":1, "strength":1, "factors":1, "score":1,
         "st_passed":1, "pump_score":1, "is_top_pick":1,
         "top_pick_confirmations_count":1, "detected_at":1,
-    }).sort("detected_at", -1).limit(1500):
+    }).sort("detected_at", -1).limit(400):
         ftypes = [f["type"] for f in c.get("factors", [])]
         items.append({
             "source": "confluence",
@@ -8442,7 +8442,7 @@ def _compute_journal_sync():
         })
 
     # Clusters (композитные сигналы) — полноценные записи с TP/SL
-    for c in _clusters().find({}).sort("trigger_at", -1).limit(200):
+    for c in _clusters().find({}).sort("trigger_at", -1).limit(100):
         at_dt = c.get("trigger_at")
         strength = c.get("strength", "NORMAL")
         status = c.get("status", "OPEN")
@@ -8492,7 +8492,7 @@ def _compute_journal_sync():
         raw_st = list(_sts().find({
             "flip_at": {"$gte": since_14d},
             "tier": {"$in": ["vip", "mtf"]},
-        }).sort("flip_at", -1).limit(1500))
+        }).sort("flip_at", -1).limit(400))
         # Dedupe: (pair_norm, direction, bucket_30min) → высший tier
         tier_prio = {"vip": 3, "mtf": 2, "daily": 1}
         best_st: dict = {}
@@ -8565,7 +8565,7 @@ def _compute_journal_sync():
         from database import _cv_flip_signals
         for d in _cv_flip_signals().find(
             {"cv_triggered_at": {"$gte": since_14d}}
-        ).sort("cv_triggered_at", -1).limit(500):
+        ).sort("cv_triggered_at", -1).limit(200):
             state = d.get("state", "WAITING")
             state_emoji = {"FLIPPED": "💥", "TIMEOUT": "❌",
                            "INVALIDATED": "🚫"}.get(state, "⏳")
@@ -8614,7 +8614,7 @@ def _compute_journal_sync():
     try:
         from database import _get_db
         vcol = _get_db().verified_signals
-        for v in vcol.find({"created_at": {"$gte": since_14d}}).sort("created_at", -1).limit(500):
+        for v in vcol.find({"created_at": {"$gte": since_14d}}).sort("created_at", -1).limit(200):
             at_dt = v.get("created_at")
             verdict = v.get("verdict", "go")
             emoji = "⚠️✨" if verdict == "caution" else "✨"
