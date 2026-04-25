@@ -7822,17 +7822,30 @@ async def api_paper_set_balance(payload: dict):
 
 
 @app.get("/api/journal")
-async def api_journal():
+async def api_journal(limit: int = 500):
     """Все сигналы из 4 источников — для вкладки Журнал.
     Server-side limit 14 days + per-source cap. Cache 45s (async-lock safe).
     _compute_journal делает 7 sync Mongo-запросов → выносим в thread,
-    иначе блокируется event loop и тормозят параллельные /api/* (candles и т.п.)."""
+    иначе блокируется event loop и тормозят параллельные /api/* (candles и т.п.).
+
+    limit (default 500): отдаём только последние N items (по at_ts desc).
+    Раньше возвращалось ~4270 за 14 дней (весь fetch занимал 15.7с,
+    блокировал графики). 500 — разумный default для UI (юзер не видит
+    дальше первых страниц), Mongo query всё равно собирает всё за 14д,
+    но JSON-сериализация и transfer уменьшаются ×8.
+    """
     from cache_utils import journal_cache
 
     async def _compute_in_thread():
         return await asyncio.to_thread(_compute_journal_sync)
 
-    return await journal_cache.get_or_compute("journal_all", _compute_in_thread)
+    full = await journal_cache.get_or_compute("journal_all", _compute_in_thread)
+    # Slice после cache (cache хранит full result, slice — почти free)
+    items = full.get("items", []) if isinstance(full, dict) else []
+    if limit and limit > 0 and len(items) > limit:
+        items = items[:limit]
+    return {"items": items, "total": len(full.get("items", [])) if isinstance(full, dict) else 0,
+            "returned": len(items)}
 
 
 @app.get("/api/backtest/today")
