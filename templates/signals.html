@@ -3527,12 +3527,16 @@ async function _drawPaperHistChart(idx) {
     // Debounce re-render: 5 независимых fetch'ей резолвятся в течение ~1с,
     // каждый вызывает _applyAll — раньше было 5 setMarkers подряд, теперь 1.
     let _applyTimer = null;
+    const _myGen = chartDiv._lwcGen;
+    chartDiv._applyTimer = null;
     const _applyAll = () => {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
-        _applyTimer = null;
-        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsHist, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+        _applyTimer = null; chartDiv._applyTimer = null;
+        if (window._isStaleChart(chartDiv, _myGen)) return;
+        try { series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsHist, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time)); } catch (_) {}
       }, 60);
+      chartDiv._applyTimer = _applyTimer;
     };
     _applyAll();
     // Market state overlay (KC + Reversal)
@@ -3797,12 +3801,16 @@ async function _renderPaperChart(idx, tf) {
     let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [];
     const _stFlipsLive = (_stResLive && _stResLive.flipMarkers) ? _stResLive.flipMarkers : [];
     let _applyTimer = null;
+    const _myGen = area._lwcGen;
+    area._applyTimer = null;
     const _applyAll = () => {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
-        _applyTimer = null;
-        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsLive, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+        _applyTimer = null; area._applyTimer = null;
+        if (window._isStaleChart(area, _myGen)) return;
+        try { series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsLive, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time)); } catch (_) {}
       }, 60);
+      area._applyTimer = _applyTimer;
     };
     _applyAll();
     // Market state overlay (KC + Reversal)
@@ -5608,12 +5616,16 @@ async function loadCoinChart(coin) {
     let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [];
     const _stFlipsCoin = (_stResCoin && _stResCoin.flipMarkers) ? _stResCoin.flipMarkers : [];
     let _applyTimer = null;
+    const _myGen = chartDiv._lwcGen;
+    chartDiv._applyTimer = null;
     const _applyAll = () => {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
-        _applyTimer = null;
-        series.setMarkers([...unique, ..._msM, ..._klM, ..._stFlipsCoin, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+        _applyTimer = null; chartDiv._applyTimer = null;
+        if (window._isStaleChart(chartDiv, _myGen)) return;
+        try { series.setMarkers([...unique, ..._msM, ..._klM, ..._stFlipsCoin, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time)); } catch (_) {}
       }, 60);
+      chartDiv._applyTimer = _applyTimer;
     };
     _applyAll();
     // ST-signals markers
@@ -6312,12 +6324,16 @@ async function openJournalChart(idx, forceTF) {
     let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [];
     const _stFlipsJ = (_stResJ && _stResJ.flipMarkers) ? _stResJ.flipMarkers : [];
     let _applyTimer = null;
+    const _myGen = container._lwcGen;
+    container._applyTimer = null;
     const _applyAll = () => {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
-        _applyTimer = null;
-        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsJ, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+        _applyTimer = null; container._applyTimer = null;
+        if (window._isStaleChart(container, _myGen)) return;
+        try { series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsJ, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time)); } catch (_) {}
       }, 60);
+      container._applyTimer = _applyTimer;
     };
     _applyAll();
     // Market state overlay (KC + Reversal)

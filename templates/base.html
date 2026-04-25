@@ -879,9 +879,29 @@
       // Usage:
       //   const chart = window._createChartSafe(div, opts);  // автоматом чистит старый
       //   window._disposeChart(div);                         // при закрытии модалки/TF
+      // Чтобы async-callbacks (marker fetches) НЕ мутировали disposed chart:
+      // каждый _createChartSafe инкрементирует token; при dispose container
+      // получает .dataset.lwcGen = newToken, async callbacks сравнивают
+      // свой захваченный gen с текущим — если разные, не делают setMarkers
+      // (это убирает WebGL leak: closures с marker-массивами на disposed
+      // chart мешали GC освободить контекст, после 15+ открытий начинался
+      // тормоз).
+      window._lwcGen = 0;
+      window._isStaleChart = function(container, capturedGen) {
+        if (!container || !container._lwcChart) return true;
+        return (container._lwcGen | 0) !== (capturedGen | 0);
+      };
+
       window._disposeChart = function(container) {
         try {
           if (!container) return;
+          // Cancel pending debounce-таймер _applyAll
+          if (container._applyTimer) {
+            clearTimeout(container._applyTimer);
+            container._applyTimer = null;
+          }
+          // Bump generation — все async then() для старого chart станут stale
+          container._lwcGen = ++window._lwcGen;
           const old = container._lwcChart;
           if (old && typeof old.remove === 'function') {
             old.remove();
@@ -902,6 +922,8 @@
             scaleMargins: { top: 0.02, bottom: 0.30 },
           });
         } catch (_) {}
+        // Свежий gen для этого chart instance
+        container._lwcGen = ++window._lwcGen;
         container._lwcChart = chart;
         return chart;
       };
