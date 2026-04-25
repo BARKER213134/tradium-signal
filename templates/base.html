@@ -884,8 +884,23 @@
           if (!container) return;
           const old = container._lwcChart;
           if (old && typeof old.remove === 'function') {
-            old.remove();
+            try { old.remove(); } catch (_) {}
           }
+          // WebGL leak workaround: chart.remove() освобождает GPU только
+          // после GC, а GC ленив пока closures держат ссылки. Chrome
+          // держит max ~16 WebGL — после превышения новые создаются
+          // через force-release старых, отсюда тормоза. Решение:
+          // WEBGL_lose_context освобождает слот СИНХРОННО.
+          try {
+            const canvases = container.querySelectorAll('canvas');
+            for (const c of canvases) {
+              try {
+                const gl = c.getContext('webgl2') || c.getContext('webgl');
+                const ext = gl && gl.getExtension && gl.getExtension('WEBGL_lose_context');
+                if (ext && ext.loseContext) ext.loseContext();
+              } catch (_) {}
+            }
+          } catch (_) {}
           container._lwcChart = null;
           container.dataset.loaded = '';
         } catch (e) { /* ignore */ }
