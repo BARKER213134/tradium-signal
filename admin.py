@@ -7527,13 +7527,28 @@ async def api_entry_checker(pair: str, direction: str = "LONG"):
     )
 
 
+_verified_cache: dict = {}
+_VERIFIED_TTL = 90.0  # сек, in-process cache (без него mongo query шёл 2.4с на каждый chart open)
+
+
 @app.get("/api/verified-signals")
 async def api_verified_signals(pair: str = "", hours: int = 168, limit: int = 500):
     """Список verified-сигналов (те что прошли 8-пунктовый чек и отправлены в @topmonetabot).
     Используется UI для маркеров на графиках и badge в журнале.
-    pair — опционально (для конкретной пары); hours — окно (default 7 дней); limit — кап."""
+    pair — опционально (для конкретной пары); hours — окно (default 7 дней); limit — кап.
+
+    In-memory cache 90с на (pair, hours, limit) — chart marker fetch'ы
+    несколько раз в секунду на одну пару при смене TF, без cache они
+    шли 2.4с каждый.
+    """
     from database import _get_db, utcnow
     from datetime import timedelta
+
+    cache_key = f"{pair}|{hours}|{limit}"
+    now_ts = time.time()
+    hit = _verified_cache.get(cache_key)
+    if hit and (now_ts - hit[0]) < _VERIFIED_TTL:
+        return hit[1]
 
     def _sync():
         since = utcnow() - timedelta(hours=hours)
@@ -7553,7 +7568,13 @@ async def api_verified_signals(pair: str = "", hours: int = 168, limit: int = 50
             items.append(d)
         return {"ok": True, "count": len(items), "items": items}
 
-    return await asyncio.to_thread(_sync)
+    result = await asyncio.to_thread(_sync)
+    _verified_cache[cache_key] = (now_ts, result)
+    # Lazy eviction
+    if len(_verified_cache) > 200:
+        for k in [k for k, v in _verified_cache.items() if (now_ts - v[0]) > _VERIFIED_TTL * 3]:
+            _verified_cache.pop(k, None)
+    return result
 
 
 @app.post("/api/entry-checker/ai-opinion")
@@ -8666,17 +8687,44 @@ def warm_candles_cache(symbol: str, tf: str, limit: int = 200) -> bool:
         return False
 
 
+def _find_compatible_cache(symbol: str, tf: str, limit: int):
+    """Ищет в _candles_cache любую запись для (symbol, tf) с >= limit
+    свечей. Если есть — возвращает (key, age_sec, sliced_data).
+    Это даёт fuzzy match: prewarm ставит limit=200, а UI может запрашивать
+    150/300/720 — раньше каждый разный limit делал cold miss, теперь
+    переиспользуем существующий cache."""
+    prefix = f"{symbol}|{tf}|"
+    now = time.time()
+    best_key = None
+    best_data = None
+    best_age = 9e9
+    for k, (ts, data) in _candles_cache.items():
+        if not k.startswith(prefix):
+            continue
+        if data is None or len(data) < limit:
+            continue
+        age = now - ts
+        # Берём наиболее свежий совместимый
+        if age < best_age:
+            best_age = age
+            best_key = k
+            best_data = data
+    if best_data is None:
+        return None
+    # Возвращаем последние `limit` свечей (новейшие)
+    return (best_key, best_age, best_data[-limit:])
+
+
 @app.get("/api/journal-candles")
 async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
     """Свечи для Lightweight Charts. Сервер-кеш по TTL per TF со
-    stale-while-revalidate: если в кеше есть expired-запись не старше
-    STALE_MAX×TTL — сразу возвращаем её + фоном обновляем. Холодный
-    запрос к Binance (1-3с) больше не блокирует открытие графика —
-    юзер видит чуть устаревшие (максимум minutes old) свечи мгновенно,
-    свежие подъедут при следующем открытии.
+    stale-while-revalidate + fuzzy limit-match.
 
-    При cache-miss (ничего нет вообще) — как раньше, ждём Binance.
-    Background prefetch остальных TF запускается всегда при miss.
+    Lookup order:
+      1. Точный {sym}|{tf}|{limit} hit → fresh / stale-revalidate
+      2. Fuzzy compatible: cache с тем же sym+tf и >= limit → slice
+         (prewarm всегда даёт limit=200, UI бывает 150/300/720 etc)
+      3. Hard miss → Binance fetch (~1-3с), потом cache + bg prefetch
     """
     from exchange import get_klines_any
     key = f"{symbol}|{tf}|{limit}"
@@ -8713,6 +8761,23 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
         except Exception:
             pass
         return {"ok": True, "candles": hit[1], "stale": True}
+
+    # Fuzzy match: ищем cache для того же (sym, tf) с >= limit свечей.
+    # Это типичный кейс: prewarm ставит {sym}|{tf}|200, но юзер запросил
+    # limit=150 (другой ключ → не было hit). Берём из совместимого ключа.
+    fuzzy = _find_compatible_cache(symbol, tf, limit)
+    if fuzzy is not None:
+        fkey, fage, fdata = fuzzy
+        # Если совместимая ещё свежая — возвращаем как cached
+        if fage < ttl:
+            return {"ok": True, "candles": fdata, "cached": True, "fuzzy_from": fkey}
+        # Stale но в пределах STALE_MAX — возвращаем + bg refresh
+        if fage < ttl * STALE_MAX:
+            try:
+                asyncio.create_task(_bg_refresh_current())
+            except Exception:
+                pass
+            return {"ok": True, "candles": fdata, "stale": True, "fuzzy_from": fkey}
 
     # Hard miss — ждём Binance
     candles = await asyncio.to_thread(get_klines_any, pair, tf, limit)
