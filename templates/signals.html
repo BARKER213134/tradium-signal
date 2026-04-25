@@ -6201,55 +6201,23 @@ async function openJournalChart(idx, forceTF) {
       return;
     }
 
-    // ── REUSE chart instance ─────────────────────────────────────
-    // Раньше каждый _setModalTF / новый сигнал делал _disposeChart +
-    // _createChartSafe → новый WebGL context. Через 15-30 переключений
-    // браузер устаёт. Решение: переиспользуем тот же chart object,
-    // просто удаляем старые series и добавляем свежие. WebGL slot
-    // занят один и навсегда (для этой модалки), не растёт. innerHTML
-    // НЕ чистим — это убило бы canvas.
-    let chart = container._lwcChart;
-    const isReuse = !!chart;
-    if (!isReuse) {
-      container.innerHTML = '';
-      chart = window._createChartSafe(container, {
-        layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
-        grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
-        crosshair: { mode: 0 },
-        rightPriceScale: { borderColor: '#1a1e2a' },
-        timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
-        width: container.clientWidth,
-        height: container.clientHeight,
-      });
-      container._lwcSeriesAll = [];
-    } else {
-      // Сносим все известные series от прошлой загрузки (TF/signal switch)
-      for (const s of (container._lwcSeriesAll || [])) {
-        try { chart.removeSeries(s); } catch (_) {}
-      }
-      container._lwcSeriesAll = [];
-      // Resize на случай если контейнер изменился
-      try { chart.applyOptions({ width: container.clientWidth, height: container.clientHeight }); } catch (_) {}
-    }
+    container.innerHTML = '';
+    // safe: освобождает предыдущий chart (fix leak при многократном открытии журнальной модалки)
+    const chart = window._createChartSafe(container, {
+      layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
+      grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#1a1e2a' },
+      timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
+      width: container.clientWidth,
+      height: container.clientHeight,
+    });
 
     const series = chart.addCandlestickSeries({
       upColor: '#00e5a0', downColor: '#ff4d6d',
       borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
       wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
     });
-    container._lwcSeriesAll.push(series);
-    // Перехватываем addLineSeries / addHistogramSeries / addCandlestickSeries
-    // чтобы автоматически tracking всех series от RSI/Volume/ST для cleanup.
-    // Это работает только в рамках следующих add* до конца этой функции.
-    if (!chart._tracked) {
-      chart._tracked = true;
-      const _origLine = chart.addLineSeries.bind(chart);
-      const _origHist = chart.addHistogramSeries.bind(chart);
-      const _origCandle = chart.addCandlestickSeries.bind(chart);
-      chart.addLineSeries = function(o) { const s = _origLine(o); container._lwcSeriesAll.push(s); return s; };
-      chart.addHistogramSeries = function(o) { const s = _origHist(o); container._lwcSeriesAll.push(s); return s; };
-      chart.addCandlestickSeries = function(o) { const s = _origCandle(o); container._lwcSeriesAll.push(s); return s; };
-    }
     series.setData(d.candles);
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _modalTF);
