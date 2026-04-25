@@ -2430,6 +2430,27 @@ window._lwcLoaded = window._lwcLoaded || false;
 // написан под v4 API. LightweightCharts namespace в v5 frozen
 // (Object.isFrozen=true) — нельзя patch через replace createChart.
 // Поэтому патчим возвращённый chart instance в _createChartSafe.
+// В v5 series.setMarkers удалён — заменён на отдельный primitive
+// LightweightCharts.createSeriesMarkers(series, markers).setMarkers(...).
+// Patch'им series object чтобы старый код .setMarkers([...]) работал.
+window._patchSeriesV4 = function(s) {
+  const LWC = window.LightweightCharts;
+  if (!s || s.setMarkers) return s;
+  if (!LWC || !LWC.createSeriesMarkers) return s;
+  let _prim = null;
+  s.setMarkers = function(arr) {
+    try {
+      const m = arr || [];
+      if (!_prim) {
+        _prim = LWC.createSeriesMarkers(s, m);
+      } else if (_prim.setMarkers) {
+        _prim.setMarkers(m);
+      }
+    } catch (_) {}
+  };
+  return s;
+};
+
 window._patchChartV4Compat = function(chart) {
   const LWC = window.LightweightCharts;
   if (!chart || !LWC || !chart.addSeries || chart.addCandlestickSeries) return chart;
@@ -2443,9 +2464,14 @@ window._patchChartV4Compat = function(chart) {
   ];
   for (const [m, t] of map) {
     if (LWC[t] && !chart[m]) {
-      chart[m] = (o) => chart.addSeries(LWC[t], o);
+      chart[m] = (o) => window._patchSeriesV4(chart.addSeries(LWC[t], o));
     }
   }
+  // Также patch addSeries для случаев прямого вызова
+  const _origAddSeries = chart.addSeries.bind(chart);
+  chart.addSeries = function(type, o) {
+    return window._patchSeriesV4(_origAddSeries(type, o));
+  };
   return chart;
 };
 // Backward-compat alias (раньше пытался patch frozen namespace — no-op)
