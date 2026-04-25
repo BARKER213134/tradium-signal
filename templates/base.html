@@ -879,13 +879,49 @@
       // Usage:
       //   const chart = window._createChartSafe(div, opts);  // автоматом чистит старый
       //   window._disposeChart(div);                         // при закрытии модалки/TF
+      // Глубокий dispose: после chart.remove() WebGL context остаётся
+      // занятым пока GC не освободит closures. Chrome держит max ~16
+      // активных WebGL — после превышения новые создаются с force-release
+      // старых, отсюда тормоза после 28 открытий. Решение: loseContext()
+      // освобождает GPU СИНХРОННО, не ждём GC. Плюс AbortController
+      // отменяет async fetch'и — они не держат ссылки на disposed series.
+      function _loseAllWebGLContexts(container) {
+        try {
+          const canvases = container.querySelectorAll('canvas');
+          for (const c of canvases) {
+            try {
+              const gl = c.getContext('webgl2') || c.getContext('webgl')
+                       || c.getContext('experimental-webgl');
+              if (gl && typeof gl.getExtension === 'function') {
+                const ext = gl.getExtension('WEBGL_lose_context');
+                if (ext && typeof ext.loseContext === 'function') {
+                  ext.loseContext();
+                }
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
       window._disposeChart = function(container) {
         try {
           if (!container) return;
+          // Отменяем pending fetches — закрытые callback'и не дёрнут setMarkers
+          if (container._abortCtl) {
+            try { container._abortCtl.abort(); } catch (_) {}
+            container._abortCtl = null;
+          }
+          // Отменяем pending debounce-таймер _applyAll
+          if (container._applyTimer) {
+            clearTimeout(container._applyTimer);
+            container._applyTimer = null;
+          }
           const old = container._lwcChart;
           if (old && typeof old.remove === 'function') {
-            old.remove();
+            try { old.remove(); } catch (_) {}
           }
+          // Принудительно освобождаем WebGL context (не ждём GC)
+          _loseAllWebGLContexts(container);
           container._lwcChart = null;
           container.dataset.loaded = '';
         } catch (e) { /* ignore */ }
@@ -903,7 +939,18 @@
           });
         } catch (_) {}
         container._lwcChart = chart;
+        // Свежий AbortController для всех fetch'ей на этом chart instance
+        try { container._abortCtl = new AbortController(); } catch (_) {}
         return chart;
+      };
+
+      // Helper: получить AbortSignal для chart-fetch. Если container ещё
+      // не имеет controller (или disposed) — undefined; fetch без signal'а
+      // будет работать как обычно. При следующем _disposeChart все signals
+      // через этот controller станут aborted.
+      window._chartFetchSignal = function(container) {
+        if (!container || !container._abortCtl) return undefined;
+        return container._abortCtl.signal;
       };
 
       // ─── Helper: ограничить autoScale свечной серии только candle range ──
