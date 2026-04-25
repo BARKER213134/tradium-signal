@@ -908,6 +908,7 @@
       window._createChartSafe = function(container, opts) {
         window._disposeChart(container);
         const chart = LightweightCharts.createChart(container, opts);
+        if (window._patchChartV4Compat) window._patchChartV4Compat(chart);
         // Применяем scaleMargins СРАЗУ — до того как свечи получат setData.
         // Иначе: свечи рендерятся на всю высоту → потом _addRSI меняет
         // margins → chart пересчитывает → визуальный "прыжок" свечей.
@@ -2426,32 +2427,29 @@ window._lwcLoaded = window._lwcLoaded || false;
 
 // Compat shim: LWC v5 заменил addCandlestickSeries/addLineSeries/etc
 // на единый chart.addSeries(SeriesType, opts). Существующий код проекта
-// написан под v4 API — патчим chart prototype после createChart.
-window._installLwcCompat = function() {
+// написан под v4 API. LightweightCharts namespace в v5 frozen
+// (Object.isFrozen=true) — нельзя patch через replace createChart.
+// Поэтому патчим возвращённый chart instance в _createChartSafe.
+window._patchChartV4Compat = function(chart) {
   const LWC = window.LightweightCharts;
-  if (!LWC || LWC._v4Compat) return;
-  LWC._v4Compat = true;
-  const _origCreate = LWC.createChart;
-  LWC.createChart = function(container, opts) {
-    const chart = _origCreate(container, opts);
-    if (chart && !chart.addCandlestickSeries && chart.addSeries) {
-      const map = [
-        ['addCandlestickSeries', 'CandlestickSeries'],
-        ['addLineSeries',        'LineSeries'],
-        ['addHistogramSeries',   'HistogramSeries'],
-        ['addAreaSeries',        'AreaSeries'],
-        ['addBarSeries',         'BarSeries'],
-        ['addBaselineSeries',    'BaselineSeries'],
-      ];
-      for (const [m, t] of map) {
-        if (LWC[t] && !chart[m]) {
-          chart[m] = (o) => chart.addSeries(LWC[t], o);
-        }
-      }
+  if (!chart || !LWC || !chart.addSeries || chart.addCandlestickSeries) return chart;
+  const map = [
+    ['addCandlestickSeries', 'CandlestickSeries'],
+    ['addLineSeries',        'LineSeries'],
+    ['addHistogramSeries',   'HistogramSeries'],
+    ['addAreaSeries',        'AreaSeries'],
+    ['addBarSeries',         'BarSeries'],
+    ['addBaselineSeries',    'BaselineSeries'],
+  ];
+  for (const [m, t] of map) {
+    if (LWC[t] && !chart[m]) {
+      chart[m] = (o) => chart.addSeries(LWC[t], o);
     }
-    return chart;
-  };
+  }
+  return chart;
 };
+// Backward-compat alias (раньше пытался patch frozen namespace — no-op)
+window._installLwcCompat = function() { /* legacy no-op */ };
 
 async function _ensureLwc() {
   if (window.LightweightCharts) { window._lwcLoaded = true; window._installLwcCompat(); return; }
