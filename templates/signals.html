@@ -3532,7 +3532,7 @@ async function _drawPaperHistChart(idx) {
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
         series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsHist, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
-      }, 60);
+      }, 300);
     };
     _applyAll();
     // Market state overlay (KC + Reversal)
@@ -3802,7 +3802,7 @@ async function _renderPaperChart(idx, tf) {
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
         series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsLive, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
-      }, 60);
+      }, 300);
     };
     _applyAll();
     // Market state overlay (KC + Reversal)
@@ -5613,7 +5613,7 @@ async function loadCoinChart(coin) {
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
         series.setMarkers([...unique, ..._msM, ..._klM, ..._stFlipsCoin, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
-      }, 60);
+      }, 300);
     };
     _applyAll();
     // ST-signals markers
@@ -6317,7 +6317,7 @@ async function openJournalChart(idx, forceTF) {
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
         series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsJ, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
-      }, 60);
+      }, 300);
     };
     _applyAll();
     // Market state overlay (KC + Reversal)
