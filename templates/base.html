@@ -1434,24 +1434,48 @@
         });
       };
 
+      // ─── Cancellable fetch helper ─────────────────────────────────
+      // При смене chart юзер кликает по новому сигналу: для каждого
+      // запускались 5 marker-fetches. Через 30 кликов — 150 in-flight
+      // в HTTP queue (browser limit 6/host) → новые запросы стоят. Это
+      // явная причина "после многих графиков медленно".
+      // Этот helper отменяет предыдущий запрос с тем же name+key
+      // (т.е. для той же пары) — освобождает HTTP slot.
+      window._inflightFetches = window._inflightFetches || {};
+      window._cancelableFetch = async function(name, key, url) {
+        const fullKey = name + '|' + key;
+        const prev = window._inflightFetches[fullKey];
+        if (prev) {
+          try { prev.abort(); } catch (_) {}
+        }
+        const ctl = new AbortController();
+        window._inflightFetches[fullKey] = ctl;
+        try {
+          const r = await fetch(url, { signal: ctl.signal });
+          return await r.json();
+        } catch (e) {
+          if (e && e.name === 'AbortError') return null;
+          console.warn(`[fetch:${name}]`, e);
+          return null;
+        } finally {
+          if (window._inflightFetches[fullKey] === ctl) delete window._inflightFetches[fullKey];
+        }
+      };
+
       // ─── SuperTrend signals (VIP/MTF/Daily) — markers на графиках ─────
-      // Fetch с 30с кешем per (pair, hours)
+      // Fetch с 120с кешем per (pair, hours) + cancellable
       window._stSigCache = window._stSigCache || {};
       window._fetchStSignals = async function(pair, hours = 336) {
         if (!pair) return [];
         const key = `${pair}_${hours}`;
         const c = window._stSigCache[key];
         if (c && (Date.now() - c.at) < 120000) return c.items;
-        try {
-          const r = await fetch(`/api/supertrend-signals/by-pair?pair=${encodeURIComponent(pair)}&hours=${hours}`);
-          const d = await r.json();
-          const items = (d && d.items) ? d.items : [];
-          window._stSigCache[key] = { at: Date.now(), items };
-          return items;
-        } catch (e) {
-          console.warn('[st-sig] fetch fail', e);
-          return [];
-        }
+        const d = await window._cancelableFetch('st-sig', key,
+          `/api/supertrend-signals/by-pair?pair=${encodeURIComponent(pair)}&hours=${hours}`);
+        if (!d) return [];  // aborted или ошибка
+        const items = (d && d.items) ? d.items : [];
+        window._stSigCache[key] = { at: Date.now(), items };
+        return items;
       };
 
       // Build markers array для LWC из списка ST-сигналов
@@ -1515,16 +1539,12 @@
         const key = `${pair}_${hours}`;
         const c = window._cvFlipCache[key];
         if (c && (Date.now() - c.at) < 120000) return c.items;
-        try {
-          const r = await fetch(`/api/cv-flips?pair=${encodeURIComponent(pair)}&hours=${hours}&state=all`);
-          const d = await r.json();
-          const items = (d && d.items) ? d.items : [];
-          window._cvFlipCache[key] = { at: Date.now(), items };
-          return items;
-        } catch (e) {
-          console.warn('[cv-flip] fetch fail', e);
-          return [];
-        }
+        const d = await window._cancelableFetch('cv-flip', key,
+          `/api/cv-flips?pair=${encodeURIComponent(pair)}&hours=${hours}&state=all`);
+        if (!d) return [];
+        const items = (d && d.items) ? d.items : [];
+        window._cvFlipCache[key] = { at: Date.now(), items };
+        return items;
       };
 
       window._addCvFlipMarkers = function(candles, items) {
@@ -1601,16 +1621,12 @@
         const key = `${pair}_${hours}`;
         const c = window._verifiedCache[key];
         if (c && (Date.now() - c.at) < 120000) return c.items;
-        try {
-          const r = await fetch(`/api/verified-signals?pair=${encodeURIComponent(pair)}&hours=${hours}`);
-          const d = await r.json();
-          const items = (d && d.items) ? d.items : [];
-          window._verifiedCache[key] = { at: Date.now(), items };
-          return items;
-        } catch (e) {
-          console.warn('[verified] fetch fail', e);
-          return [];
-        }
+        const d = await window._cancelableFetch('verified', key,
+          `/api/verified-signals?pair=${encodeURIComponent(pair)}&hours=${hours}`);
+        if (!d) return [];
+        const items = (d && d.items) ? d.items : [];
+        window._verifiedCache[key] = { at: Date.now(), items };
+        return items;
       };
 
       window._addVerifiedMarkers = function(candles, items) {
@@ -1653,14 +1669,12 @@
         const key = `${pair}_${hours}`;
         const c = window._klCache[key];
         if (c && (Date.now() - c.at) < 120000) return c.items;
-        try {
-          const r = await fetch(`/api/key-levels/recent?pair=${encodeURIComponent(pair)}&hours=${hours}`);
-          const d = await r.json();
-          window._klCache[key] = { at: Date.now(), items: d.items || [] };
-          return d.items || [];
-        } catch(e) {
-          return [];
-        }
+        const d = await window._cancelableFetch('kl', key,
+          `/api/key-levels/recent?pair=${encodeURIComponent(pair)}&hours=${hours}`);
+        if (!d) return [];
+        const items = d.items || [];
+        window._klCache[key] = { at: Date.now(), items };
+        return items;
       };
 
       // KL badge для UI таблиц (маленький emoji + tooltip)
@@ -1725,12 +1739,12 @@
         window._meCache = window._meCache || {};
         const cached = window._meCache[cacheKey];
         if (cached && (Date.now() - cached.at < 90000)) return cached.events;
-        try {
-          const r = await fetch(`/api/market-events?since_ts=${firstTs}&until_ts=${lastTs}`);
-          const d = await r.json();
-          window._meCache[cacheKey] = { at: Date.now(), events: d.events || [] };
-          return d.events || [];
-        } catch (e) { return []; }
+        const d = await window._cancelableFetch('me', cacheKey,
+          `/api/market-events?since_ts=${firstTs}&until_ts=${lastTs}`);
+        if (!d) return [];
+        const events = d.events || [];
+        window._meCache[cacheKey] = { at: Date.now(), events };
+        return events;
       };
     </script>
 </head>
