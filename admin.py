@@ -2365,7 +2365,8 @@ async def api_paper_test_open(payload: dict | None = None):
                 await pt._send_open_alert(paper_pos, {"reasoning": paper_pos.get("ai_reasoning","")})
             except Exception:
                 pass
-            # Зеркало на live аккаунты
+            # Зеркало на live аккаунты — синхронно (чтобы тест получил реальный результат)
+            mirror_results = []
             if paper_pos:
                 sig["paper_trade_id"] = paper_pos.get("trade_id")
                 accounts = ls.get_enabled_accounts()
@@ -2378,10 +2379,16 @@ async def api_paper_test_open(payload: dict | None = None):
                     "reasoning": paper_pos.get("ai_reasoning", ""),
                 }
                 for acc in accounts:
-                    asyncio.create_task(
-                        lt.mirror_paper_for_account(sig, mirror_decision, acc),
-                        name=f"test-mirror-{acc.get('_id','?')}",
-                    )
+                    try:
+                        r = await lt.mirror_paper_for_account(sig, mirror_decision, acc)
+                        mirror_results.append({"account": acc.get("_id"), "result": r})
+                    except Exception as me:
+                        import traceback as _tb
+                        mirror_results.append({
+                            "account": acc.get("_id"),
+                            "error": str(me),
+                            "tb": _tb.format_exc()[-500:],
+                        })
         else:
             await w._paper_on_signal(sig)
             paper_pos = next(
@@ -2418,6 +2425,7 @@ async def api_paper_test_open(payload: dict | None = None):
             "input": sig,
             "paper_opened": bool(paper_pos),
             "paper_position": _safe(paper_pos),
+            "mirror_results": mirror_results if force else None,
             "live_opened_count": len(new_live),
             "live_positions": [_safe(t) for t in new_live],
             "before_paper_count": before_paper,
