@@ -742,8 +742,19 @@ async def sync_positions_for_account(account: dict) -> dict:
         return {"ok": False, "error": f"fetch_positions fail: {e}", "account_id": str(aid)}
 
     db_open = list(_live_trades().find({"status": "OPEN", "account_id": str(aid)}))
+    # Грейс-период 90с: не закрываем позиции которые только что открылись —
+    # на Binance может быть задержка eventual consistency между fill и
+    # появлением в fetch_positions. Без этого race condition закрывает свежие.
+    from datetime import timedelta
+    grace_cutoff = _utcnow() - timedelta(seconds=90)
     for pos in db_open:
         synced += 1
+        opened = pos.get("opened_at")
+        if opened and hasattr(opened, "replace"):
+            opened_naive = opened.replace(tzinfo=None) if getattr(opened, "tzinfo", None) else opened
+            if opened_naive > grace_cutoff:
+                logger.debug(f"[live-{aid}] sync skip #{pos.get('trade_id')} — grace period")
+                continue
         if pos["symbol"] not in open_symbols:
             # Позиция закрылась на бирже (TP/SL сработал)
             try:

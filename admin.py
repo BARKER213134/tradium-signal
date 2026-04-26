@@ -246,7 +246,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
-            "/api/paper/test-open",
+            "/api/paper/test-open", "/api/live/debug-recent",
             "/api/paper/clear-ai-memory",
             "/api/paper/rejections", "/api/paper/be-audit", "/api/paper/close-all",
             "/api/paper/history",
@@ -2277,6 +2277,36 @@ async def api_paper_rejections(limit: int = 50):
 
     items = await paper_rejections_cache.get_or_compute(f"limit_{limit}", _compute)
     return {"ok": True, "count": len(items), "items": items}
+
+
+@app.get("/api/live/debug-recent")
+async def api_live_debug_recent(limit: int = 10):
+    """Последние live_trades любого статуса — для диагностики mirror/sync."""
+    from database import _live_trades
+    docs = list(_live_trades().find({}).sort("opened_at", -1).limit(int(limit)))
+    out = []
+    for d in docs:
+        out.append({
+            "trade_id": d.get("trade_id"),
+            "account_id": d.get("account_id"),
+            "env": d.get("env"),
+            "symbol": d.get("symbol"),
+            "direction": d.get("direction"),
+            "status": d.get("status"),
+            "paper_trade_id": d.get("paper_trade_id"),
+            "tp_order_id": d.get("tp_order_id"),
+            "sl_order_id": d.get("sl_order_id"),
+            "exchange_order_id": d.get("exchange_order_id"),
+            "entry": d.get("entry"),
+            "exit_price": d.get("exit_price"),
+            "size_usdt": d.get("size_usdt"),
+            "leverage": d.get("leverage"),
+            "sync_detected": d.get("sync_detected"),
+            "opened_at": d.get("opened_at").isoformat() if d.get("opened_at") else None,
+            "closed_at": d.get("closed_at").isoformat() if d.get("closed_at") else None,
+            "pnl_pct": d.get("pnl_pct"),
+        })
+    return {"ok": True, "count": len(out), "trades": out}
 
 
 @app.post("/api/paper/test-open")
