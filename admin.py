@@ -2281,33 +2281,88 @@ async def api_paper_rejections(limit: int = 50):
 
 @app.post("/api/paper/test-open")
 async def api_paper_test_open(payload: dict | None = None):
-    """Прокрутить полный пайплайн _paper_on_signal: paper.on_signal → mirror to testnet.
-    Возвращает диагностику: открылась ли paper-позиция, открылись ли testnet.
+    """Открыть тестовую позицию в paper (+ зеркало в testnet/real).
 
-    payload: {"symbol":"BTCUSDT","direction":"LONG","entry":65000,"source":"manual_test"}
+    payload:
+      - force=true (по умолч.): вызывает pt.open_position() напрямую,
+        минуя фильтры verified_entry. Используется для проверки UI и
+        потока mirror.
+      - force=false: вызывает _paper_on_signal() — полный пайплайн с
+        rule-based проверками.
+      - symbol/direction/entry/tp1/sl/leverage/size_pct — параметры (опц.)
     """
     sig = payload or {}
+    force = sig.get("force", True)
     if not sig.get("symbol"):
-        # Дефолтный безопасный сигнал — BTC LONG по текущей цене
+        sig["symbol"] = "BTCUSDT"
+        sig["pair"] = "BTC/USDT"
+        sig["direction"] = "LONG"
+        sig["source"] = "manual_test"
+        sig["is_top_pick"] = True
+    if not sig.get("entry"):
         from exchange import get_prices_any
-        prices = await asyncio.to_thread(get_prices_any, ["BTC/USDT"])
-        cur = prices.get("BTCUSDT") or 65000
-        sig = {
-            "symbol": "BTCUSDT", "pair": "BTC/USDT",
-            "direction": "LONG", "entry": cur,
-            "source": "manual_test", "score": 8, "is_top_pick": True,
-        }
+        prices = await asyncio.to_thread(get_prices_any, [sig.get("pair", "BTC/USDT")])
+        sig["entry"] = prices.get(sig["symbol"]) or 65000
+
     try:
-        import watcher as w
-        # Снимок до
         from database import _live_trades
         import paper_trader as pt
+        import live_safety as ls
+        import live_trader as lt
+        import watcher as w
+
         before_paper = len(pt.get_open_positions())
-        before_live = list(_live_trades().find({"status": "OPEN"}, {"trade_id":1}))
-        # Запуск пайплайна
-        await w._paper_on_signal(sig)
-        # Снимок после (даём 2с для async create_task на live)
-        await asyncio.sleep(2.5)
+        before_live_ids = {t["trade_id"] for t in _live_trades().find({"status": "OPEN"}, {"trade_id":1})}
+
+        paper_pos = None
+        if force:
+            # Прямой вызов open_position минуя ai_decide / verified_entry
+            entry = float(sig["entry"])
+            tp1 = float(sig.get("tp1") or entry * (1.02 if sig["direction"] == "LONG" else 0.98))
+            sl = float(sig.get("sl") or entry * (0.98 if sig["direction"] == "LONG" else 1.02))
+            paper_pos = pt.open_position(
+                symbol=sig["symbol"],
+                direction=sig["direction"],
+                entry=entry,
+                tp1=tp1,
+                sl=sl,
+                leverage=int(sig.get("leverage", 5)),
+                size_pct=float(sig.get("size_pct", 3)),
+                source=sig.get("source", "manual_test"),
+                reasoning="🧪 manual test position (force=true)",
+            )
+            try:
+                await pt._send_open_alert(paper_pos, {"reasoning": paper_pos.get("ai_reasoning","")})
+            except Exception:
+                pass
+            # Зеркало на live аккаунты
+            if paper_pos:
+                sig["paper_trade_id"] = paper_pos.get("trade_id")
+                accounts = ls.get_enabled_accounts()
+                mirror_decision = {
+                    "enter": True,
+                    "leverage": paper_pos.get("leverage", 5),
+                    "size_pct": paper_pos.get("size_pct", 3),
+                    "tp1": paper_pos.get("tp1"),
+                    "sl": paper_pos.get("sl"),
+                    "reasoning": paper_pos.get("ai_reasoning", ""),
+                }
+                for acc in accounts:
+                    asyncio.create_task(
+                        lt.mirror_paper_for_account(sig, mirror_decision, acc),
+                        name=f"test-mirror-{acc.get('_id','?')}",
+                    )
+        else:
+            await w._paper_on_signal(sig)
+            paper_pos = next(
+                (p for p in pt.get_open_positions()
+                 if p.get("symbol") == sig["symbol"] and p.get("direction") == sig["direction"]),
+                None
+            )
+
+        # Дать время async create_task для live
+        await asyncio.sleep(3.0)
+
         after_paper = pt.get_open_positions()
         after_live = list(_live_trades().find(
             {"status": "OPEN"},
@@ -2315,18 +2370,26 @@ async def api_paper_test_open(payload: dict | None = None):
              "paper_trade_id":1,"tp_order_id":1,"sl_order_id":1,
              "entry":1,"size_usdt":1,"leverage":1}
         ))
-        new_paper = [p for p in after_paper
-                     if p.get("symbol") == sig.get("symbol")
-                     and p.get("direction") == sig.get("direction")][:1]
-        new_live = [t for t in after_live
-                    if t["trade_id"] not in {x["trade_id"] for x in before_live}]
+        new_live = [t for t in after_live if t["trade_id"] not in before_live_ids]
+
+        # Конвертация ObjectId/datetime в строки
+        def _safe(d):
+            if not d: return None
+            r = {}
+            for k, v in d.items():
+                if hasattr(v, "isoformat"): r[k] = v.isoformat()
+                elif k == "_id": r[k] = str(v)
+                else: r[k] = v
+            return r
+
         return {
             "ok": True,
+            "force": bool(force),
             "input": sig,
-            "paper_opened": bool(new_paper),
-            "paper_position": new_paper[0] if new_paper else None,
+            "paper_opened": bool(paper_pos),
+            "paper_position": _safe(paper_pos),
             "live_opened_count": len(new_live),
-            "live_positions": new_live,
+            "live_positions": [_safe(t) for t in new_live],
             "before_paper_count": before_paper,
             "after_paper_count": len(after_paper),
         }
