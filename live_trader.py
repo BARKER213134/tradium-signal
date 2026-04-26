@@ -576,12 +576,10 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
 
         if tp1:
             try:
-                # Стандартный endpoint: amount + reduceOnly. closePosition требует
-                # Algo Order API (-4120 error на стандартном).
+                # Минимальные params: stopPrice + reduceOnly. workingType triggered -4120.
                 tp_params = {
                     "stopPrice": float(tp1),
                     "reduceOnly": True,
-                    "workingType": "MARK_PRICE",
                 }
                 tp_order = await asyncio.to_thread(
                     ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side,
@@ -599,7 +597,6 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
                 sl_params = {
                     "stopPrice": float(sl),
                     "reduceOnly": True,
-                    "workingType": "MARK_PRICE",
                 }
                 sl_order = await asyncio.to_thread(
                     ex.create_order, symbol, "STOP_MARKET", sl_side,
