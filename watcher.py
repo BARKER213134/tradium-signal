@@ -2975,6 +2975,22 @@ async def _paper_on_signal(signal_data: dict):
         logger.warning(f"[paper-signal] {e}", exc_info=True)
 
 
+async def _live_sync_loop():
+    """Фоновая синхронизация live позиций с биржей (каждые 30с).
+    Обнаруживает TP/SL которые сработали на бирже и обновляет MongoDB."""
+    import asyncio as _asyncio
+    while True:
+        try:
+            import live_trader as lt
+            results = await lt.sync_all_accounts()
+            auto = sum(r.get("auto_closed", 0) for r in results if isinstance(r, dict))
+            if auto > 0:
+                logger.info(f"[live-sync] auto-closed {auto} position(s)")
+        except Exception:
+            logger.debug("[live-sync] sync loop error", exc_info=True)
+        await _asyncio.sleep(30)
+
+
 _watcher_running = False
 
 async def start_watcher():
@@ -3016,6 +3032,12 @@ async def start_watcher():
         logger.info("[market-phase] loop started")
     except Exception:
         logger.exception("[market-phase] loop failed to start")
+    # Live sync — каждые 30с синхронизируем позиции live-аккаунтов с биржей
+    try:
+        asyncio.create_task(_live_sync_loop())
+        logger.info("[live-sync] background loop started")
+    except Exception:
+        logger.exception("[live-sync] failed to start loop")
     # [ОТКЛЮЧЕНО] AI memory refresh + AI review open positions —
     # система переведена на rule-based (Entry Checker 8 проверок + TP ladder).
     # AI больше не используется для торговых решений.

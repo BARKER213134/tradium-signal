@@ -559,27 +559,39 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         exchange_order_id = order.get("id")
         fill_price = order.get("average") or entry_price
 
+        # Небольшая пауза чтобы позиция полностью осела на бирже
+        await asyncio.sleep(0.5)
+
         tp_order_id = sl_order_id = None
+        tp_side = "sell" if direction == "LONG" else "buy"
+        sl_side = tp_side  # same direction for reduce-only
+
         if tp1:
-            tp_side = "sell" if direction == "LONG" else "buy"
             try:
+                # closePosition=True — закрывает всю позицию, обходит проблемы с precision
                 tp_order = await asyncio.to_thread(
-                    ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side, amount,
-                    None, {"stopPrice": float(tp1), "reduceOnly": True},
+                    ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side, 0,
+                    None, {"stopPrice": float(tp1), "closePosition": True,
+                           "workingType": "MARK_PRICE"},
                 )
                 tp_order_id = tp_order.get("id")
+                logger.info(f"[live-{aid}] TP placed {symbol} stopPrice={tp1} id={tp_order_id}")
             except Exception as e:
-                logger.warning(f"[live-{aid}] TP fail {symbol}: {e}")
+                import traceback as _tb
+                logger.warning(f"[live-{aid}] TP fail {symbol}: {e}\n{_tb.format_exc()[-600:]}")
+
         if sl:
-            sl_side = "sell" if direction == "LONG" else "buy"
             try:
                 sl_order = await asyncio.to_thread(
-                    ex.create_order, symbol, "STOP_MARKET", sl_side, amount,
-                    None, {"stopPrice": float(sl), "reduceOnly": True},
+                    ex.create_order, symbol, "STOP_MARKET", sl_side, 0,
+                    None, {"stopPrice": float(sl), "closePosition": True,
+                           "workingType": "MARK_PRICE"},
                 )
                 sl_order_id = sl_order.get("id")
+                logger.info(f"[live-{aid}] SL placed {symbol} stopPrice={sl} id={sl_order_id}")
             except Exception as e:
-                logger.warning(f"[live-{aid}] SL fail {symbol}: {e}")
+                import traceback as _tb
+                logger.warning(f"[live-{aid}] SL fail {symbol}: {e}\n{_tb.format_exc()[-600:]}")
 
         from database import _get_db
         counter = _get_db().counters.find_one_and_update(
@@ -612,8 +624,14 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         record_account_trade_opened(aid)
         logger.warning(
             f"🔴 LIVE OPEN [{aid}] #{trade_id}: {symbol} {direction} "
-            f"×{leverage} ${size_usdt} entry={fill_price}"
+            f"×{leverage} ${size_usdt} entry={fill_price} "
+            f"tp={tp_order_id} sl={sl_order_id}"
         )
+        # Telegram-уведомление (не блокирует ответ)
+        try:
+            asyncio.create_task(_send_live_open_alert(doc, account))
+        except Exception:
+            pass
         return {"ok": True, "trade": doc}
     except Exception as e:
         import traceback
@@ -636,3 +654,177 @@ async def on_signal_for_account(signal_data: dict, account: dict) -> Optional[di
         logger.debug(f"[live-{account['_id']}] confirmation_required=True но multi-account flow пока без подтверждений, скип")
         return None
     return await open_position_for_account(signal_data, decision, account)
+
+
+# ════════════════════════════════════════════════════════════════
+# Telegram уведомления для live trades
+# ════════════════════════════════════════════════════════════════
+
+async def _send_live_open_alert(trade: dict, account: dict) -> None:
+    """Алерт при открытии live (testnet/real) позиции — в BOT6 (тот же что paper)."""
+    try:
+        from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
+        if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
+            return
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        bot = Bot(token=BOT6_BOT_TOKEN,
+                  default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        mode = account.get("mode", "testnet")
+        label = account.get("label") or account.get("owner") or str(account.get("_id", "?"))
+        mode_emoji = "🧪" if mode == "testnet" else "🔴"
+        direction = trade.get("direction", "LONG")
+        dir_emoji = "📈" if direction == "LONG" else "📉"
+        tp_str = f"{float(trade['tp1']):.4f}" if trade.get("tp1") else "—"
+        sl_str = f"{float(trade['sl']):.4f}" if trade.get("sl") else "—"
+        tp_ok = "✅" if trade.get("tp_order_id") else "⚠️"
+        sl_ok = "✅" if trade.get("sl_order_id") else "⚠️"
+        text = (
+            f"{mode_emoji} <b>LIVE ОТКРЫТО [{mode.upper()}]</b> #{trade.get('trade_id')}\n"
+            f"👤 {label}\n"
+            f"{dir_emoji} <b>{trade.get('symbol')} {direction}</b> ×{trade.get('leverage')}x\n"
+            f"💵 Вход: {float(trade.get('entry', 0)):.4f}\n"
+            f"{tp_ok} TP: {tp_str}\n"
+            f"{sl_ok} SL: {sl_str}\n"
+            f"💰 Размер: ${trade.get('size_usdt', 0):.2f} ({trade.get('size_pct', 0):.1f}%)\n"
+        )
+        if trade.get("ai_reasoning"):
+            text += f"📝 {str(trade['ai_reasoning'])[:120]}"
+        await bot.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
+        await bot.session.close()
+    except Exception as e:
+        logger.warning(f"[live-trader] open alert fail: {e}")
+
+
+# ════════════════════════════════════════════════════════════════
+# Синхронизация позиций (per-account)
+# ════════════════════════════════════════════════════════════════
+
+async def sync_positions_for_account(account: dict) -> dict:
+    """Синхронизация с биржей для конкретного аккаунта.
+    Обнаруживает позиции закрытые через TP/SL на бирже и обновляет MongoDB."""
+    from database import _live_trades
+    aid = account["_id"]
+    ex = _get_exchange_for_account(account)
+    if ex is None:
+        return {"ok": False, "error": "exchange not configured", "account_id": str(aid)}
+
+    synced = 0
+    closed = 0
+    try:
+        positions = await asyncio.to_thread(ex.fetch_positions)
+        open_symbols = {
+            p["symbol"] for p in positions
+            if float(p.get("contracts", 0) or 0) != 0
+        }
+    except Exception as e:
+        return {"ok": False, "error": f"fetch_positions fail: {e}", "account_id": str(aid)}
+
+    db_open = list(_live_trades().find({"status": "OPEN", "account_id": str(aid)}))
+    for pos in db_open:
+        synced += 1
+        if pos["symbol"] not in open_symbols:
+            # Позиция закрылась на бирже (TP/SL сработал)
+            try:
+                trades_list = await asyncio.to_thread(
+                    ex.fetch_my_trades, pos["symbol"], None, 5
+                )
+                exit_price = pos["entry"]
+                if trades_list:
+                    exit_price = trades_list[-1].get("price", pos["entry"])
+
+                entry = float(pos["entry"])
+                direction = pos["direction"]
+                leverage = pos.get("leverage", 1)
+                size_usdt = pos.get("size_usdt", 0)
+                raw = ((float(exit_price) - entry) / entry) * 100
+                if direction == "SHORT":
+                    raw = -raw
+                pnl_pct = round(raw * leverage, 2)
+                pnl_usdt = round(size_usdt * pnl_pct / 100, 2)
+                reason = "TP" if pnl_usdt > 0 else "SL"
+
+                _live_trades().update_one(
+                    {"trade_id": pos["trade_id"]},
+                    {"$set": {
+                        "status": reason,
+                        "exit_price": exit_price,
+                        "pnl_pct": pnl_pct,
+                        "pnl_usdt": pnl_usdt,
+                        "closed_at": _utcnow(),
+                        "sync_detected": True,
+                    }},
+                )
+                closed += 1
+                logger.warning(
+                    f"[live-{aid}] sync close #{pos['trade_id']}: "
+                    f"{pos['symbol']} {reason} pnl={pnl_pct:+.2f}% ${pnl_usdt:+.2f}"
+                )
+                # Уведомление о закрытии
+                try:
+                    asyncio.create_task(
+                        _send_live_close_alert(pos, reason, exit_price, pnl_pct, pnl_usdt, account)
+                    )
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.debug(
+                    f"[live-{aid}] sync fetch fail #{pos.get('trade_id')}: {e}",
+                    exc_info=True,
+                )
+
+    return {"ok": True, "account_id": str(aid), "synced": synced, "auto_closed": closed}
+
+
+async def sync_all_accounts() -> list:
+    """Синхронизация всех enabled аккаунтов. Вызывается из watcher каждые 30с."""
+    try:
+        from live_safety import get_enabled_accounts
+        accounts = get_enabled_accounts()
+    except Exception:
+        return []
+    results = []
+    for acc in accounts:
+        try:
+            r = await sync_positions_for_account(acc)
+            results.append(r)
+        except Exception as e:
+            results.append({
+                "ok": False,
+                "account_id": str(acc.get("_id", "?")),
+                "error": str(e),
+            })
+    return results
+
+
+async def _send_live_close_alert(
+    trade: dict, reason: str, exit_price, pnl_pct: float, pnl_usdt: float, account: dict
+) -> None:
+    """Алерт при закрытии live позиции (обнаруженной через sync)."""
+    try:
+        from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
+        if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
+            return
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        bot = Bot(token=BOT6_BOT_TOKEN,
+                  default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        mode = account.get("mode", "testnet")
+        label = account.get("label") or account.get("owner") or str(account.get("_id", "?"))
+        mode_emoji = "🧪" if mode == "testnet" else "🔴"
+        pnl_emoji = "✅" if pnl_usdt >= 0 else "❌"
+        direction = trade.get("direction", "LONG")
+        dir_emoji = "📈" if direction == "LONG" else "📉"
+        text = (
+            f"{mode_emoji} <b>LIVE ЗАКРЫТО [{mode.upper()}] {reason}</b> #{trade.get('trade_id')}\n"
+            f"👤 {label}\n"
+            f"{dir_emoji} {trade.get('symbol')} {direction} ×{trade.get('leverage')}x\n"
+            f"💵 Вход: {float(trade.get('entry', 0)):.4f} → {float(exit_price):.4f}\n"
+            f"{pnl_emoji} PnL: {pnl_pct:+.2f}% (${pnl_usdt:+.2f})\n"
+        )
+        await bot.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
+        await bot.session.close()
+    except Exception as e:
+        logger.warning(f"[live-trader] close alert fail: {e}")
