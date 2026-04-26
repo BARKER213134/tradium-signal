@@ -246,7 +246,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
-            "/api/paper/test-open", "/api/live/debug-recent",
+            "/api/paper/test-open", "/api/live/debug-recent", "/api/paper/status",
             "/api/paper/clear-ai-memory",
             "/api/paper/rejections", "/api/paper/be-audit", "/api/paper/close-all",
             "/api/paper/history",
