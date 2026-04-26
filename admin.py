@@ -263,7 +263,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
             "/api/live/positions", "/api/live/history", "/api/live/close",
-            "/api/live/confirm", "/api/fvg-monitor-debug", "/api/fvg-entry-alert-test", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static"):
+            "/api/live/confirm", "/api/fvg-monitor-debug", "/api/fvg-entry-alert-test", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static") or path.startswith("/api/live/accounts"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -2128,6 +2128,138 @@ async def api_live_confirm(payload: dict):
             return await lt.execute_confirmed(token) or {"ok": False}
         else:
             return await lt.execute_rejected(token)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ════════════════════════════════════════════════════════════════
+# Multi-account API (несколько Binance ключей одновременно — для семьи)
+# ════════════════════════════════════════════════════════════════
+
+@app.get("/api/live/accounts")
+async def api_live_accounts_list():
+    """Список всех аккаунтов (без api_secret). С балансом и кол-вом позиций."""
+    import live_safety as ls
+    from database import _live_trades
+    try:
+        accounts = await asyncio.to_thread(ls.list_accounts)
+        # Добавим runtime-инфу: открытые позиции
+        for a in accounts:
+            a["open_positions"] = _live_trades().count_documents({
+                "account_id": a["_id"], "status": "OPEN",
+            })
+            for f in ("created_at", "updated_at", "last_trade_at", "kill_at", "daily_reset_at"):
+                if a.get(f) and hasattr(a[f], "isoformat"):
+                    a[f] = a[f].isoformat()
+            # Преsет конфиг для UI
+            preset_cfg = ls.SAFETY_PRESETS.get(a.get("safety_preset", "paper_mirror"))
+            if preset_cfg:
+                a["preset_config"] = preset_cfg
+        return {"ok": True, "count": len(accounts), "accounts": accounts}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/accounts")
+async def api_live_accounts_add(payload: dict):
+    """Создать новый аккаунт.
+    payload: {id, owner, label, mode: testnet|real, api_key, api_secret,
+              safety_preset, confirmation_required}"""
+    import live_safety as ls
+    try:
+        result = await asyncio.to_thread(ls.add_account, payload or {})
+        return result
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.put("/api/live/accounts/{account_id}")
+async def api_live_accounts_update(account_id: str, payload: dict):
+    """Обновить поля аккаунта."""
+    import live_safety as ls
+    try:
+        return await asyncio.to_thread(ls.update_account, account_id, payload or {})
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.delete("/api/live/accounts/{account_id}")
+async def api_live_accounts_delete(account_id: str):
+    """Удалить аккаунт (только если нет открытых позиций)."""
+    import live_safety as ls
+    try:
+        return await asyncio.to_thread(ls.delete_account, account_id)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/accounts/{account_id}/test-connection")
+async def api_live_accounts_test(account_id: str):
+    """Проверка соединения для конкретного аккаунта (использует ключи из БД).
+    Возвращает реальный баланс с биржи."""
+    import live_safety as ls
+    import live_trader as lt
+    try:
+        account = ls.get_account(account_id)
+        if not account:
+            return {"ok": False, "error": f"account '{account_id}' не найден"}
+        result = await asyncio.to_thread(lt.test_connection_for_account, account)
+        # Если соединение OK — обновим балaнс в БД
+        if result.get("ok") and "usdt_total" in result:
+            await asyncio.to_thread(
+                ls.update_account, account_id,
+                {"balance": result["usdt_total"]},
+            )
+        return result
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/accounts/{account_id}/enable")
+async def api_live_accounts_enable(account_id: str, payload: dict | None = None):
+    """Включить/выключить аккаунт. payload: {enabled: bool}."""
+    import live_safety as ls
+    enabled = (payload or {}).get("enabled", True)
+    try:
+        return await asyncio.to_thread(
+            ls.update_account, account_id, {"enabled": bool(enabled)},
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/accounts/{account_id}/kill")
+async def api_live_accounts_kill(account_id: str, payload: dict | None = None):
+    """Активировать/сбросить kill switch на конкретном аккаунте.
+    payload: {kill: true|false}."""
+    import live_safety as ls
+    kill = (payload or {}).get("kill", True)
+    try:
+        return await asyncio.to_thread(
+            ls.update_account, account_id,
+            {"kill_switch": bool(kill), "kill_reason": "manual" if kill else None},
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/live/accounts/{account_id}/balance")
+async def api_live_accounts_set_balance(account_id: str, payload: dict):
+    """Установить виртуальный балaнс (для расчёта size_pct, не реальный margin).
+    Полезно когда хочешь зеркалить paper-balance несмотря на реальный margin
+    на бирже. payload: {balance: 2419.61}."""
+    import live_safety as ls
+    bal = (payload or {}).get("balance")
+    try:
+        bal = float(bal)
+    except Exception:
+        return {"ok": False, "error": "balance должен быть число"}
+    if bal < 0:
+        return {"ok": False, "error": "balance должен быть >= 0"}
+    try:
+        return await asyncio.to_thread(
+            ls.update_account, account_id, {"balance": bal},
+        )
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

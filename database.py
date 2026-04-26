@@ -139,6 +139,20 @@ def _live_pending_confirmations() -> Collection:
     return _get_db().live_pending_confirmations
 
 
+def _live_accounts() -> Collection:
+    """Несколько торговых аккаунтов (каждый со своим API-ключом и пресетом).
+    Один аккаунт = один человек/комбо.
+    Документ:
+      {_id: 'papa_testnet', owner: 'Иван', label: '...',
+       mode: 'testnet|real', enabled: bool, kill_switch: bool,
+       api_key: '...', api_secret: '...',
+       safety_preset: 'conservative|...|paper_mirror',
+       balance: 1000, equity_peak: ..., daily_start_balance: ...,
+       confirmation_required: bool, last_trade_at: datetime,
+       created_at: ..., updated_at: ...}"""
+    return _get_db().live_accounts
+
+
 
 
 def _counters() -> Collection:

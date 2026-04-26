@@ -56,6 +56,20 @@ SAFETY_PRESETS = {
         "max_position_usd": 3000,
         "min_balance_usd": 50,
     },
+    # Зеркало paper-trader: точные те же лимиты что в paper-режиме.
+    # Используется для testnet чтобы видеть отличие paper vs реальное
+    # исполнение (slippage/fills/fees) на одних и тех же сигналах.
+    "paper_mirror": {
+        "label": "🪞 Paper Mirror",
+        "max_positions": 7,        # paper allows ~7-10 одновременно
+        "max_size_pct": 15.0,      # paper использует 15%
+        "max_leverage": 9,         # paper использует 8-9x
+        "daily_loss_limit_pct": -20.0,
+        "max_drawdown_pct": -30.0,
+        "min_interval_minutes": 0, # paper не имеет такого ограничения
+        "max_position_usd": 5000,
+        "min_balance_usd": 50,
+    },
 }
 
 # Whitelist — только ликвидные перпетуалы на Binance Futures
@@ -358,3 +372,186 @@ def get_status_summary() -> dict:
         "last_trade_at": state.get("last_trade_at").isoformat() if state.get("last_trade_at") else None,
         "whitelist_size": len(DEFAULT_WHITELIST),
     }
+
+
+# ════════════════════════════════════════════════════════════════
+# Multi-account API (для семьи/нескольких ключей одновременно)
+# ════════════════════════════════════════════════════════════════
+# Старая модель: один глобальный live_state с одним mode и парой ключей из env.
+# Новая модель: коллекция live_accounts — N независимых аккаунтов, каждый со
+# своими ключами, режимом, пресетом и kill switch. Watcher обходит все
+# enabled аккаунты при сигнале и открывает позицию в каждом.
+# Старая live_state остаётся для UI summary "global" (paper).
+
+def list_accounts() -> list[dict]:
+    """Все аккаунты (включая disabled). Без api_secret в ответе."""
+    from database import _live_accounts
+    rows = list(_live_accounts().find({}))
+    for r in rows:
+        # Маскируем ключи в ответе
+        if r.get("api_key"):
+            k = r["api_key"]
+            r["api_key_masked"] = (k[:6] + "…" + k[-4:]) if len(k) > 12 else "•••"
+            r.pop("api_key", None)
+        r.pop("api_secret", None)
+    return rows
+
+
+def get_account(account_id: str) -> dict | None:
+    """Полный документ аккаунта (с ключами — для внутреннего использования)."""
+    from database import _live_accounts
+    return _live_accounts().find_one({"_id": account_id})
+
+
+def get_enabled_accounts() -> list[dict]:
+    """Все enabled аккаунты — для watcher iteration по сигналу."""
+    from database import _live_accounts
+    return list(_live_accounts().find({
+        "enabled": True,
+        "kill_switch": {"$ne": True},
+    }))
+
+
+def add_account(payload: dict) -> dict:
+    """Создать новый аккаунт. Обязательные: id, owner, mode, api_key, api_secret.
+    mode: 'testnet' или 'real'. preset по умолчанию paper_mirror."""
+    from database import _live_accounts
+    aid = (payload.get("id") or payload.get("_id") or "").strip().lower()
+    if not aid or not aid.replace("_", "").replace("-", "").isalnum():
+        return {"ok": False, "error": "id required (alphanum/_/-)"}
+    if _live_accounts().find_one({"_id": aid}):
+        return {"ok": False, "error": f"account '{aid}' уже существует"}
+    mode = payload.get("mode", "testnet")
+    if mode not in ("testnet", "real"):
+        return {"ok": False, "error": "mode must be testnet or real"}
+    api_key = payload.get("api_key", "").strip()
+    api_secret = payload.get("api_secret", "").strip()
+    if not api_key or not api_secret:
+        return {"ok": False, "error": "api_key и api_secret обязательны"}
+    preset = payload.get("safety_preset", "paper_mirror")
+    if preset not in SAFETY_PRESETS:
+        return {"ok": False, "error": f"unknown preset: {preset}"}
+    doc = {
+        "_id": aid,
+        "owner": payload.get("owner", aid),
+        "label": payload.get("label", aid),
+        "mode": mode,
+        "enabled": False,        # включается отдельно после test-connection
+        "kill_switch": False,
+        "api_key": api_key,
+        "api_secret": api_secret,
+        "safety_preset": preset,
+        "balance": 0.0,
+        "equity_peak": None,
+        "daily_start_balance": None,
+        "daily_reset_at": None,
+        "confirmation_required": bool(payload.get("confirmation_required", False)),
+        "last_trade_at": None,
+        "created_at": _utcnow(),
+        "updated_at": _utcnow(),
+    }
+    _live_accounts().insert_one(doc)
+    logger.info(f"[live-accounts] created '{aid}' mode={mode} preset={preset}")
+    return {"ok": True, "id": aid}
+
+
+def update_account(account_id: str, update: dict) -> dict:
+    """Обновить поля аккаунта. Поддерживает: enabled, kill_switch, mode, owner,
+    label, safety_preset, confirmation_required, api_key, api_secret."""
+    from database import _live_accounts
+    allowed = {"enabled", "kill_switch", "mode", "owner", "label",
+               "safety_preset", "confirmation_required", "api_key", "api_secret",
+               "balance"}
+    upd = {k: v for k, v in update.items() if k in allowed}
+    if "safety_preset" in upd and upd["safety_preset"] not in SAFETY_PRESETS:
+        return {"ok": False, "error": f"unknown preset: {upd['safety_preset']}"}
+    if "mode" in upd and upd["mode"] not in ("testnet", "real"):
+        return {"ok": False, "error": "mode must be testnet or real"}
+    upd["updated_at"] = _utcnow()
+    res = _live_accounts().update_one({"_id": account_id}, {"$set": upd})
+    if res.matched_count == 0:
+        return {"ok": False, "error": f"account '{account_id}' не найден"}
+    logger.info(f"[live-accounts] updated '{account_id}' fields={list(upd.keys())}")
+    return {"ok": True}
+
+
+def delete_account(account_id: str) -> dict:
+    """Полное удаление аккаунта. Открытые позиции не закрываются — это надо сделать вручную."""
+    from database import _live_accounts, _live_trades
+    open_count = _live_trades().count_documents({"account_id": account_id, "status": "OPEN"})
+    if open_count > 0:
+        return {"ok": False, "error": f"есть {open_count} открытых позиций — закрой сначала"}
+    res = _live_accounts().delete_one({"_id": account_id})
+    if res.deleted_count == 0:
+        return {"ok": False, "error": f"account '{account_id}' не найден"}
+    logger.info(f"[live-accounts] deleted '{account_id}'")
+    return {"ok": True}
+
+
+def can_open_position_for_account(account: dict, symbol: str, size_usd: float) -> tuple[bool, str]:
+    """Per-account safety check (вместо глобального can_open_position)."""
+    if not account.get("enabled"):
+        return False, "account disabled"
+    if account.get("kill_switch"):
+        return False, f"kill switch active: {account.get('kill_reason', '?')}"
+    preset_name = account.get("safety_preset", "paper_mirror")
+    preset = SAFETY_PRESETS.get(preset_name, SAFETY_PRESETS["paper_mirror"])
+
+    # Whitelist для real, для testnet любые пары
+    mode = account.get("mode", "testnet")
+    if mode == "real" and symbol.upper() not in DEFAULT_WHITELIST:
+        return False, f"{symbol} not in whitelist (real-mode)"
+
+    balance = account.get("balance", 0.0) or 0.0
+    if balance < preset["min_balance_usd"]:
+        return False, f"balance ${balance} < min ${preset['min_balance_usd']}"
+
+    if size_usd > preset["max_position_usd"]:
+        return False, f"size ${size_usd} > max ${preset['max_position_usd']} ({preset_name})"
+
+    from database import _live_trades
+    open_count = _live_trades().count_documents({
+        "status": "OPEN", "account_id": account["_id"],
+    })
+    if open_count >= preset["max_positions"]:
+        return False, f"уже {open_count}/{preset['max_positions']} открытых позиций"
+
+    last_trade = account.get("last_trade_at")
+    if last_trade and preset["min_interval_minutes"] > 0:
+        elapsed_min = (_utcnow() - last_trade).total_seconds() / 60
+        if elapsed_min < preset["min_interval_minutes"]:
+            return False, f"min interval {preset['min_interval_minutes']}min, прошло {elapsed_min:.1f}min"
+
+    daily_start = account.get("daily_start_balance") or balance
+    if daily_start > 0:
+        daily_pnl_pct = (balance - daily_start) / daily_start * 100
+        if daily_pnl_pct <= preset["daily_loss_limit_pct"]:
+            from database import _live_accounts
+            _live_accounts().update_one(
+                {"_id": account["_id"]},
+                {"$set": {"kill_switch": True, "kill_reason": f"daily loss {daily_pnl_pct:.1f}%",
+                          "kill_at": _utcnow()}},
+            )
+            return False, f"daily loss {daily_pnl_pct:.1f}% → kill switch"
+
+    peak = account.get("equity_peak") or balance
+    if peak > 0:
+        dd_pct = (balance - peak) / peak * 100
+        if dd_pct <= preset["max_drawdown_pct"]:
+            from database import _live_accounts
+            _live_accounts().update_one(
+                {"_id": account["_id"]},
+                {"$set": {"kill_switch": True, "kill_reason": f"drawdown {dd_pct:.1f}%",
+                          "kill_at": _utcnow()}},
+            )
+            return False, f"drawdown {dd_pct:.1f}% → kill switch"
+
+    return True, ""
+
+
+def record_account_trade_opened(account_id: str) -> None:
+    from database import _live_accounts
+    _live_accounts().update_one(
+        {"_id": account_id},
+        {"$set": {"last_trade_at": _utcnow(), "updated_at": _utcnow()}},
+    )

@@ -2945,22 +2945,32 @@ async def _paper_on_signal(signal_data: dict):
         logger.debug("[verified-check] schedule fail", exc_info=True)
 
     try:
-        # Определяем текущий режим
+        # Paper-trader всегда работает (статистика/журнал/AI-обучение).
+        # Параллельно — все enabled live аккаунты (multi-account):
+        # каждый со своим API ключом, пресетом и независимым kill switch.
+        import paper_trader as pt
+        await pt.on_signal(signal_data)
+
+        # Multi-account live execution
         try:
             import live_safety as ls
-            state = ls.get_state()
-            mode = state.get("mode", "paper")
-        except Exception:
-            mode = "paper"
+            accounts = ls.get_enabled_accounts()
+        except Exception as e:
+            logger.debug(f"[live-accounts] list fail: {e}")
+            accounts = []
 
-        if mode == "paper":
-            # Симуляция — как работало раньше
-            import paper_trader as pt
-            await pt.on_signal(signal_data)
-        elif mode in ("testnet", "real"):
-            # Реальная торговля через ccxt
+        if accounts:
             import live_trader as lt
-            await lt.on_signal_live(signal_data, env=mode)
+            for acc in accounts:
+                # asyncio.create_task — каждый аккаунт независим, не блокируем друг друга
+                try:
+                    asyncio.create_task(
+                        lt.on_signal_for_account(signal_data, acc),
+                        name=f"live-{acc.get('_id','?')}",
+                    )
+                except Exception as le:
+                    logger.warning(f"[live-{acc.get('_id','?')}] schedule fail: {le}",
+                                   exc_info=True)
     except Exception as e:
         logger.warning(f"[paper-signal] {e}", exc_info=True)
 

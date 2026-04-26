@@ -460,3 +460,179 @@ async def sync_positions(env: str) -> dict:
                 logger.debug(f"[live-trader] sync trade fetch fail: {e}")
         synced += 1
     return {"ok": True, "synced": synced, "auto_closed": closed}
+
+
+# ════════════════════════════════════════════════════════════════
+# Multi-account API (per-account exchange + open + signal)
+# ════════════════════════════════════════════════════════════════
+
+# Cache ccxt instances per account: account_id → exchange
+_exchange_per_account: dict[str, object] = {}
+
+
+def _get_exchange_for_account(account: dict):
+    """Возвращает ccxt.binance instance для конкретного аккаунта.
+    Каждый аккаунт = свои ключи + свой sandbox режим."""
+    aid = account["_id"]
+    if aid in _exchange_per_account:
+        return _exchange_per_account[aid]
+    api_key = account.get("api_key")
+    api_secret = account.get("api_secret")
+    if not api_key or not api_secret:
+        return None
+    try:
+        import ccxt
+    except ImportError:
+        logger.error("[live-trader] ccxt not installed")
+        return None
+    ex = ccxt.binance({
+        "apiKey": api_key,
+        "secret": api_secret,
+        "options": {"defaultType": "future"},
+        "enableRateLimit": True,
+    })
+    if account.get("mode") == "testnet":
+        ex.set_sandbox_mode(True)
+    _exchange_per_account[aid] = ex
+    logger.info(f"[live-trader] account '{aid}' ccxt initialized (mode={account.get('mode')})")
+    return ex
+
+
+def test_connection_for_account(account: dict) -> dict:
+    """Проверка соединения для конкретного аккаунта."""
+    ex = _get_exchange_for_account(account)
+    if ex is None:
+        return {"ok": False, "error": "ccxt not configured or keys missing"}
+    try:
+        balance = ex.fetch_balance()
+        usdt_free = balance.get("USDT", {}).get("free", 0)
+        usdt_used = balance.get("USDT", {}).get("used", 0)
+        usdt_total = usdt_free + usdt_used
+        return {
+            "ok": True,
+            "account_id": account["_id"],
+            "mode": account.get("mode"),
+            "usdt_total": round(usdt_total, 2),
+            "usdt_free": usdt_free,
+            "usdt_used": usdt_used,
+        }
+    except Exception as e:
+        return {"ok": False, "account_id": account["_id"], "error": str(e)}
+
+
+async def open_position_for_account(signal_data: dict, decision: dict, account: dict) -> Optional[dict]:
+    """Открыть позицию для конкретного аккаунта."""
+    from database import _live_trades
+    from live_safety import can_open_position_for_account, record_account_trade_opened
+
+    aid = account["_id"]
+    symbol = signal_data.get("symbol", "")
+    direction = signal_data.get("direction", "LONG")
+    entry_price = signal_data.get("entry") or signal_data.get("price")
+    size_pct = float(decision.get("size_pct", 3))
+    leverage = int(decision.get("leverage", 2))
+    tp1 = decision.get("tp1") or signal_data.get("tp1")
+    sl = decision.get("sl") or signal_data.get("sl")
+
+    if not symbol or not entry_price:
+        return {"ok": False, "error": "missing symbol or entry"}
+
+    balance = account.get("balance", 0) or 0
+    size_usdt = round(balance * size_pct / 100, 2)
+
+    allowed, reason = can_open_position_for_account(account, symbol, size_usdt)
+    if not allowed:
+        logger.warning(f"[live-{aid}] SAFETY BLOCK: {symbol} — {reason}")
+        return {"ok": False, "error": f"safety: {reason}"}
+
+    ex = _get_exchange_for_account(account)
+    if ex is None:
+        return {"ok": False, "error": "exchange not configured"}
+
+    side = "buy" if direction == "LONG" else "sell"
+    notional = size_usdt * leverage
+    amount = round(notional / entry_price, 6)
+
+    try:
+        await asyncio.to_thread(ex.set_leverage, leverage, symbol)
+        order = await asyncio.to_thread(ex.create_market_order, symbol, side, amount)
+        exchange_order_id = order.get("id")
+        fill_price = order.get("average") or entry_price
+
+        tp_order_id = sl_order_id = None
+        if tp1:
+            tp_side = "sell" if direction == "LONG" else "buy"
+            try:
+                tp_order = await asyncio.to_thread(
+                    ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side, amount,
+                    None, {"stopPrice": float(tp1), "reduceOnly": True},
+                )
+                tp_order_id = tp_order.get("id")
+            except Exception as e:
+                logger.warning(f"[live-{aid}] TP fail {symbol}: {e}")
+        if sl:
+            sl_side = "sell" if direction == "LONG" else "buy"
+            try:
+                sl_order = await asyncio.to_thread(
+                    ex.create_order, symbol, "STOP_MARKET", sl_side, amount,
+                    None, {"stopPrice": float(sl), "reduceOnly": True},
+                )
+                sl_order_id = sl_order.get("id")
+            except Exception as e:
+                logger.warning(f"[live-{aid}] SL fail {symbol}: {e}")
+
+        from database import _get_db
+        counter = _get_db().counters.find_one_and_update(
+            {"_id": "live_trades"}, {"$inc": {"seq": 1}},
+            upsert=True, return_document=True,
+        )
+        trade_id = (counter or {}).get("seq", 1)
+
+        doc = {
+            "trade_id": trade_id,
+            "account_id": aid,
+            "env": account.get("mode", "testnet"),
+            "symbol": symbol,
+            "pair": symbol.replace("USDT", "/USDT"),
+            "direction": direction,
+            "entry": fill_price,
+            "tp1": tp1, "sl": sl, "original_sl": sl,
+            "leverage": leverage, "size_usdt": size_usdt, "size_pct": size_pct,
+            "amount": amount, "status": "OPEN",
+            "source": signal_data.get("source", "unknown"),
+            "exchange_order_id": exchange_order_id,
+            "tp_order_id": tp_order_id, "sl_order_id": sl_order_id,
+            "ai_reasoning": decision.get("reasoning", ""),
+            "max_favorable_pct": 0.0, "sl_moved_to_be": False, "sl_trailing": False,
+            "exit_events": [],
+            "opened_at": _utcnow(), "closed_at": None,
+            "exit_price": None, "pnl_usdt": None, "pnl_pct": None,
+        }
+        _live_trades().insert_one(doc)
+        record_account_trade_opened(aid)
+        logger.warning(
+            f"🔴 LIVE OPEN [{aid}] #{trade_id}: {symbol} {direction} "
+            f"×{leverage} ${size_usdt} entry={fill_price}"
+        )
+        return {"ok": True, "trade": doc}
+    except Exception as e:
+        import traceback
+        logger.error(f"[live-{aid}] OPEN fail {symbol}: {e}\n{traceback.format_exc()[-500:]}")
+        return {"ok": False, "error": str(e)}
+
+
+async def on_signal_for_account(signal_data: dict, account: dict) -> Optional[dict]:
+    """Обработка сигнала для конкретного аккаунта (используется watcher'ом
+    при iteration по enabled аккаунтам)."""
+    if not account.get("enabled") or account.get("kill_switch"):
+        return None
+    import paper_trader as pt
+    decision = await pt.ai_decide(signal_data)
+    if not decision.get("enter"):
+        return None
+    if account.get("confirmation_required"):
+        # Можно расширить позже — сейчас не используется в multi-account.
+        # Отдельный confirmation flow для каждого аккаунта пока не делаем.
+        logger.debug(f"[live-{account['_id']}] confirmation_required=True но multi-account flow пока без подтверждений, скип")
+        return None
+    return await open_position_for_account(signal_data, decision, account)

@@ -3094,7 +3094,73 @@ safeInterval(loadConflicts, 30000);
 </style>
 
 <div id="atDashboard">
-  <!-- 🔴 Панель режима торговли — Paper / Testnet / Live Real -->
+  <!-- 🪪 Multi-account live trading (несколько ключей одновременно) -->
+  <div id="atAccountsPanel" style="margin-bottom:10px;padding:12px 14px;background:linear-gradient(135deg,rgba(0,212,255,0.05),rgba(123,92,255,0.03));border:1px solid rgba(0,212,255,0.22);border-radius:10px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+      <span style="font-family:var(--font-mono);font-size:11px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">🪪 Live аккаунты</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);">— несколько ключей одновременно (для семьи)</span>
+      <div style="flex:1"></div>
+      <button onclick="openAddAccountModal()" style="background:linear-gradient(135deg,rgba(0,229,160,0.18),rgba(0,212,255,0.08));color:#00e5a0;border:1px solid rgba(0,229,160,0.55);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">+ Добавить аккаунт</button>
+      <button onclick="loadAccounts()" title="Обновить" style="background:transparent;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:11px;cursor:pointer;color:var(--muted);">⟳</button>
+    </div>
+    <div id="atAccountsList" style="display:flex;flex-direction:column;gap:6px;">
+      <div style="padding:14px;text-align:center;color:var(--muted);font-size:11px;font-family:var(--font-mono);">Загрузка…</div>
+    </div>
+  </div>
+
+  <!-- Add account modal -->
+  <div id="atAddAccountModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;padding:20px;">
+    <div style="background:#0d121a;border:1px solid rgba(0,212,255,0.4);border-radius:12px;padding:20px;max-width:500px;width:100%;font-family:var(--font-mono);font-size:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <div style="color:var(--cyan);font-weight:700;font-size:14px;">+ Новый live аккаунт</div>
+        <button onclick="closeAddAccountModal()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;">✕</button>
+      </div>
+      <div style="display:grid;gap:10px;">
+        <label style="display:grid;gap:4px;">
+          <span style="color:var(--muted);font-size:10px;">ID (alphanum/_/-)*</span>
+          <input id="acc_id" type="text" placeholder="papa_testnet" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
+        </label>
+        <label style="display:grid;gap:4px;">
+          <span style="color:var(--muted);font-size:10px;">Владелец</span>
+          <input id="acc_owner" type="text" placeholder="Иван" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
+        </label>
+        <label style="display:grid;gap:4px;">
+          <span style="color:var(--muted);font-size:10px;">Подпись (опционально)</span>
+          <input id="acc_label" type="text" placeholder="Папа · testnet · агрес" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
+        </label>
+        <label style="display:grid;gap:4px;">
+          <span style="color:var(--muted);font-size:10px;">Режим*</span>
+          <select id="acc_mode" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
+            <option value="testnet">🟡 testnet (тренировка)</option>
+            <option value="real">🔴 real (реальные деньги!)</option>
+          </select>
+        </label>
+        <label style="display:grid;gap:4px;">
+          <span style="color:var(--muted);font-size:10px;">API Key*</span>
+          <input id="acc_api_key" type="text" placeholder="64 chars" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:11px;">
+        </label>
+        <label style="display:grid;gap:4px;">
+          <span style="color:var(--muted);font-size:10px;">API Secret*</span>
+          <input id="acc_api_secret" type="password" placeholder="64 chars" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:11px;">
+        </label>
+        <label style="display:grid;gap:4px;">
+          <span style="color:var(--muted);font-size:10px;">Safety preset</span>
+          <select id="acc_preset" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
+            <option value="paper_mirror">🪞 Paper Mirror (как paper: 9× lev, 15% size, 7 поз)</option>
+            <option value="aggressive">🔥 Aggressive (5× lev, 10% size, 3 поз)</option>
+            <option value="moderate">⚖️ Moderate (3× lev, 5% size, 2 поз)</option>
+            <option value="conservative">🛡️ Conservative (2× lev, 3% size, 1 поз)</option>
+          </select>
+        </label>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button onclick="submitAddAccount()" style="flex:1;background:linear-gradient(135deg,rgba(0,229,160,0.3),rgba(0,212,255,0.15));color:#00e5a0;border:1px solid rgba(0,229,160,0.6);border-radius:8px;padding:8px 16px;font-size:12px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">✓ Создать</button>
+          <button onclick="closeAddAccountModal()" style="background:transparent;border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;color:var(--muted);">Отмена</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🔴 Панель режима торговли — Paper / Testnet / Live Real (legacy single-account) -->
   <div id="atLivePanel" style="margin-bottom:10px;padding:10px 14px;background:linear-gradient(135deg,rgba(255,77,109,0.06),rgba(255,140,50,0.04));border:1px solid rgba(255,77,109,0.22);border-radius:10px;">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
       <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Торговля:</span>
@@ -4290,6 +4356,211 @@ async function activateKillSwitch() {
     loadLiveStatus();
   } catch (e) { alert('Ошибка: '+e.message); }
 }
+
+// ════════════════════════════════════════════════════════════════
+// Multi-account UI (для семьи / нескольких ключей одновременно)
+// ════════════════════════════════════════════════════════════════
+async function loadAccounts() {
+  const list = document.getElementById('atAccountsList');
+  if (!list) return;
+  try {
+    const r = await fetch('/api/live/accounts', {credentials:'include'});
+    const d = await r.json();
+    if (!d.ok) {
+      list.innerHTML = `<div style="padding:14px;color:var(--sell);font-size:11px;">Ошибка: ${d.error || '?'}</div>`;
+      return;
+    }
+    const accounts = d.accounts || [];
+    if (accounts.length === 0) {
+      list.innerHTML = '<div style="padding:14px;text-align:center;color:var(--muted);font-size:11px;font-family:var(--font-mono);">Нет аккаунтов. Нажми «+ Добавить аккаунт» — создай первый со своим Binance API ключом.</div>';
+      return;
+    }
+    list.innerHTML = accounts.map(a => renderAccountRow(a)).join('');
+  } catch (e) {
+    list.innerHTML = `<div style="padding:14px;color:var(--sell);font-size:11px;">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function renderAccountRow(a) {
+  const modeBadge = a.mode === 'real'
+    ? '<span style="background:rgba(255,60,60,0.18);color:#ff4060;border:1px solid rgba(255,60,60,0.5);border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700;">🔴 REAL</span>'
+    : '<span style="background:rgba(255,210,62,0.18);color:#ffd23e;border:1px solid rgba(255,210,62,0.5);border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700;">🟡 TESTNET</span>';
+  const presetCfg = a.preset_config || {};
+  const presetLabel = presetCfg.label || a.safety_preset || '?';
+  const enabled = !!a.enabled;
+  const killed = !!a.kill_switch;
+  const statusBadge = killed
+    ? '<span style="background:rgba(255,0,60,0.2);color:#ff4060;border:1px solid rgba(255,0,60,0.6);border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700;">⛔ KILL</span>'
+    : (enabled
+      ? '<span style="background:rgba(0,229,160,0.18);color:#00e5a0;border:1px solid rgba(0,229,160,0.5);border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700;">▶ ON</span>'
+      : '<span style="background:rgba(100,116,139,0.15);color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700;">⏸ OFF</span>');
+  const balance = (a.balance != null) ? `$${Number(a.balance).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2})}` : '—';
+  const openPos = a.open_positions || 0;
+  const maxPos = presetCfg.max_positions || '?';
+  const lastTrade = a.last_trade_at ? new Date(a.last_trade_at).toLocaleString('ru', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}) : '—';
+  return `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--dark-2);border:1px solid var(--border);border-radius:8px;font-family:var(--font-mono);font-size:11px;">
+      <div style="display:flex;flex-direction:column;gap:2px;min-width:130px;">
+        <div style="color:var(--text);font-weight:700;">${a.label || a._id}</div>
+        <div style="color:var(--muted);font-size:9px;">${a._id} · ${a.owner || '—'}</div>
+      </div>
+      ${modeBadge}
+      ${statusBadge}
+      <div style="color:var(--muted);font-size:10px;">${presetLabel}</div>
+      <div style="flex:1"></div>
+      <div style="text-align:right;">
+        <div style="color:var(--text);font-weight:700;">${balance}</div>
+        <div style="color:var(--muted);font-size:9px;">${openPos}/${maxPos} поз · ${lastTrade}</div>
+      </div>
+      <button onclick="testAccountConnection('${a._id}')" title="Проверить соединение и обновить баланс" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer;color:var(--cyan);">⚡ Тест</button>
+      <button onclick="setAccountVirtBalance('${a._id}', ${a.balance || 0})" title="Виртуальный баланс для расчёта size_pct (например, чтобы зеркалить paper)" style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer;color:var(--muted);">💰 Vbal</button>
+      <button onclick="toggleAccountEnabled('${a._id}', ${!enabled})" style="background:${enabled ? 'rgba(255,210,62,0.15)' : 'rgba(0,229,160,0.15)'};border:1px solid ${enabled ? 'rgba(255,210,62,0.5)' : 'rgba(0,229,160,0.5)'};border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer;color:${enabled ? '#ffd23e' : '#00e5a0'};font-weight:700;">${enabled ? '⏸ Stop' : '▶ Start'}</button>
+      ${killed
+        ? `<button onclick="resetAccountKill('${a._id}')" title="Сбросить kill switch" style="background:rgba(0,229,160,0.15);border:1px solid rgba(0,229,160,0.5);border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer;color:#00e5a0;">↻ Reset</button>`
+        : `<button onclick="killAccount('${a._id}')" title="Активировать kill switch" style="background:rgba(255,0,60,0.15);border:1px solid rgba(255,0,60,0.5);border-radius:6px;padding:4px 10px;font-size:10px;cursor:pointer;color:#ff4060;">⛔ Kill</button>`}
+      <button onclick="deleteAccount('${a._id}')" title="Удалить (только если нет открытых позиций)" style="background:transparent;border:1px solid rgba(255,77,109,0.4);border-radius:6px;padding:4px 8px;font-size:10px;cursor:pointer;color:var(--sell);">✕</button>
+    </div>
+  `;
+}
+
+function openAddAccountModal() {
+  document.getElementById('atAddAccountModal').style.display = 'flex';
+  document.getElementById('acc_id').focus();
+}
+function closeAddAccountModal() {
+  document.getElementById('atAddAccountModal').style.display = 'none';
+  for (const id of ['acc_id','acc_owner','acc_label','acc_api_key','acc_api_secret']) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  }
+}
+
+async function submitAddAccount() {
+  const payload = {
+    id: document.getElementById('acc_id').value.trim(),
+    owner: document.getElementById('acc_owner').value.trim(),
+    label: document.getElementById('acc_label').value.trim(),
+    mode: document.getElementById('acc_mode').value,
+    api_key: document.getElementById('acc_api_key').value.trim(),
+    api_secret: document.getElementById('acc_api_secret').value.trim(),
+    safety_preset: document.getElementById('acc_preset').value,
+  };
+  if (!payload.id || !payload.api_key || !payload.api_secret) {
+    alert('id, api_key и api_secret обязательны');
+    return;
+  }
+  try {
+    const r = await fetch('/api/live/accounts', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      credentials:'include', body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!d.ok) { alert('Ошибка: ' + d.error); return; }
+    closeAddAccountModal();
+    await loadAccounts();
+    // Авто-тест соединения после создания
+    if (confirm(`Аккаунт '${d.id}' создан. Проверить соединение и подтянуть баланс?`)) {
+      await testAccountConnection(d.id);
+    }
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+async function testAccountConnection(id) {
+  try {
+    const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/test-connection`, {
+      method:'POST', credentials:'include',
+    });
+    const d = await r.json();
+    if (d.ok) {
+      alert(`✅ ${id}\nMode: ${d.mode}\nUSDT total: $${d.usdt_total}\nFree: $${d.usdt_free}\nUsed: $${d.usdt_used}`);
+    } else {
+      alert(`❌ ${id}\n${d.error}`);
+    }
+    await loadAccounts();
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+async function setAccountVirtBalance(id, current) {
+  const v = prompt(`Виртуальный баланс для ${id}\n(используется для расчёта size_pct, не реальный margin)\n\nТекущий: $${current}\nПримеры:\n  $2419 — зеркалить paper\n  $1000 — фиксированный depo\n  $0 — использовать реальный margin (после теста соединения)\n\nНовый:`, current);
+  if (v == null) return;
+  const bal = parseFloat(v);
+  if (isNaN(bal) || bal < 0) { alert('Должно быть число >= 0'); return; }
+  try {
+    const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/balance`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      credentials:'include', body: JSON.stringify({balance: bal}),
+    });
+    const d = await r.json();
+    if (!d.ok) alert('Ошибка: ' + d.error);
+    await loadAccounts();
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+async function toggleAccountEnabled(id, enabled) {
+  if (enabled) {
+    if (!confirm(`▶ Включить аккаунт '${id}'?\n\nС этого момента сигналы будут открывать реальные позиции на этом аккаунте.`)) return;
+  }
+  try {
+    const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/enable`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      credentials:'include', body: JSON.stringify({enabled: enabled}),
+    });
+    const d = await r.json();
+    if (!d.ok) alert('Ошибка: ' + d.error);
+    await loadAccounts();
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+async function killAccount(id) {
+  if (!confirm(`⛔ Kill switch для ${id}?\n\nЗаблокирует новые сделки на этом аккаунте до ручного reset.`)) return;
+  try {
+    const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/kill`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      credentials:'include', body: JSON.stringify({kill: true}),
+    });
+    const d = await r.json();
+    if (!d.ok) alert('Ошибка: ' + d.error);
+    await loadAccounts();
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+async function resetAccountKill(id) {
+  try {
+    const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/kill`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      credentials:'include', body: JSON.stringify({kill: false}),
+    });
+    const d = await r.json();
+    if (!d.ok) alert('Ошибка: ' + d.error);
+    await loadAccounts();
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+async function deleteAccount(id) {
+  if (!confirm(`Удалить аккаунт '${id}'?\nЭто действие нельзя отменить.\n(API ключи будут удалены из БД, открытые позиции — нет)`)) return;
+  try {
+    const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}`, {
+      method:'DELETE', credentials:'include',
+    });
+    const d = await r.json();
+    if (!d.ok) alert('Ошибка: ' + d.error);
+    await loadAccounts();
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+// Авто-загрузка при появлении вкладки автоторговли
+(function setupAccountsAutoload(){
+  if (window._accountsAutoloaded) return;
+  window._accountsAutoloaded = true;
+  // Первая загрузка через 1с после открытия страницы
+  setTimeout(() => { try { loadAccounts(); } catch(_){} }, 1000);
+  // Обновление каждые 30с пока вкладка видима
+  setInterval(() => {
+    if (document.visibilityState === 'visible') {
+      try { loadAccounts(); } catch(_){}
+    }
+  }, 30000);
+})();
 
 // 🛑 Отказы AI — гармошка (почему не вошёл в сделку)
 async function toggleRejections() {
