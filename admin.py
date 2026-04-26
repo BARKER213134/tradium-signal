@@ -246,6 +246,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
+            "/api/paper/test-open",
             "/api/paper/clear-ai-memory",
             "/api/paper/rejections", "/api/paper/be-audit", "/api/paper/close-all",
             "/api/paper/history",
@@ -2276,6 +2277,62 @@ async def api_paper_rejections(limit: int = 50):
 
     items = await paper_rejections_cache.get_or_compute(f"limit_{limit}", _compute)
     return {"ok": True, "count": len(items), "items": items}
+
+
+@app.post("/api/paper/test-open")
+async def api_paper_test_open(payload: dict | None = None):
+    """Прокрутить полный пайплайн _paper_on_signal: paper.on_signal → mirror to testnet.
+    Возвращает диагностику: открылась ли paper-позиция, открылись ли testnet.
+
+    payload: {"symbol":"BTCUSDT","direction":"LONG","entry":65000,"source":"manual_test"}
+    """
+    sig = payload or {}
+    if not sig.get("symbol"):
+        # Дефолтный безопасный сигнал — BTC LONG по текущей цене
+        from exchange import get_prices_any
+        prices = await asyncio.to_thread(get_prices_any, ["BTC/USDT"])
+        cur = prices.get("BTCUSDT") or 65000
+        sig = {
+            "symbol": "BTCUSDT", "pair": "BTC/USDT",
+            "direction": "LONG", "entry": cur,
+            "source": "manual_test", "score": 8, "is_top_pick": True,
+        }
+    try:
+        import watcher as w
+        # Снимок до
+        from database import _live_trades
+        import paper_trader as pt
+        before_paper = len(pt.get_open_positions())
+        before_live = list(_live_trades().find({"status": "OPEN"}, {"trade_id":1}))
+        # Запуск пайплайна
+        await w._paper_on_signal(sig)
+        # Снимок после (даём 2с для async create_task на live)
+        await asyncio.sleep(2.5)
+        after_paper = pt.get_open_positions()
+        after_live = list(_live_trades().find(
+            {"status": "OPEN"},
+            {"trade_id":1,"symbol":1,"direction":1,"env":1,"account_id":1,
+             "paper_trade_id":1,"tp_order_id":1,"sl_order_id":1,
+             "entry":1,"size_usdt":1,"leverage":1}
+        ))
+        new_paper = [p for p in after_paper
+                     if p.get("symbol") == sig.get("symbol")
+                     and p.get("direction") == sig.get("direction")][:1]
+        new_live = [t for t in after_live
+                    if t["trade_id"] not in {x["trade_id"] for x in before_live}]
+        return {
+            "ok": True,
+            "input": sig,
+            "paper_opened": bool(new_paper),
+            "paper_position": new_paper[0] if new_paper else None,
+            "live_opened_count": len(new_live),
+            "live_positions": new_live,
+            "before_paper_count": before_paper,
+            "after_paper_count": len(after_paper),
+        }
+    except Exception as e:
+        import traceback
+        return {"ok": False, "error": f"{e}", "traceback": traceback.format_exc()[-1500:]}
 
 
 @app.post("/api/paper/ai-test")
