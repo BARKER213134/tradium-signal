@@ -2296,6 +2296,8 @@ async def api_live_debug_recent(limit: int = 10):
             "paper_trade_id": d.get("paper_trade_id"),
             "tp_order_id": d.get("tp_order_id"),
             "sl_order_id": d.get("sl_order_id"),
+            "tp_error": d.get("tp_error"),
+            "sl_error": d.get("sl_error"),
             "exchange_order_id": d.get("exchange_order_id"),
             "entry": d.get("entry"),
             "exit_price": d.get("exit_price"),

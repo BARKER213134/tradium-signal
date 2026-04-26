@@ -563,34 +563,46 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         await asyncio.sleep(0.5)
 
         tp_order_id = sl_order_id = None
+        tp_error = sl_error = None
         tp_side = "sell" if direction == "LONG" else "buy"
         sl_side = tp_side  # same direction for reduce-only
 
         if tp1:
             try:
                 # closePosition=True — закрывает всю позицию, обходит проблемы с precision
+                # На Binance Futures передаётся в params как { 'closePosition': true }
+                tp_params = {
+                    "stopPrice": float(tp1),
+                    "closePosition": True,
+                    "workingType": "MARK_PRICE",
+                }
                 tp_order = await asyncio.to_thread(
-                    ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side, 0,
-                    None, {"stopPrice": float(tp1), "closePosition": True,
-                           "workingType": "MARK_PRICE"},
+                    ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side, None,
+                    None, tp_params,
                 )
                 tp_order_id = tp_order.get("id")
                 logger.info(f"[live-{aid}] TP placed {symbol} stopPrice={tp1} id={tp_order_id}")
             except Exception as e:
                 import traceback as _tb
+                tp_error = f"{type(e).__name__}: {str(e)[:300]}"
                 logger.warning(f"[live-{aid}] TP fail {symbol}: {e}\n{_tb.format_exc()[-600:]}")
 
         if sl:
             try:
+                sl_params = {
+                    "stopPrice": float(sl),
+                    "closePosition": True,
+                    "workingType": "MARK_PRICE",
+                }
                 sl_order = await asyncio.to_thread(
-                    ex.create_order, symbol, "STOP_MARKET", sl_side, 0,
-                    None, {"stopPrice": float(sl), "closePosition": True,
-                           "workingType": "MARK_PRICE"},
+                    ex.create_order, symbol, "STOP_MARKET", sl_side, None,
+                    None, sl_params,
                 )
                 sl_order_id = sl_order.get("id")
                 logger.info(f"[live-{aid}] SL placed {symbol} stopPrice={sl} id={sl_order_id}")
             except Exception as e:
                 import traceback as _tb
+                sl_error = f"{type(e).__name__}: {str(e)[:300]}"
                 logger.warning(f"[live-{aid}] SL fail {symbol}: {e}\n{_tb.format_exc()[-600:]}")
 
         from database import _get_db
@@ -616,6 +628,7 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
             "paper_trade_id": signal_data.get("paper_trade_id"),
             "exchange_order_id": exchange_order_id,
             "tp_order_id": tp_order_id, "sl_order_id": sl_order_id,
+            "tp_error": tp_error, "sl_error": sl_error,
             "ai_reasoning": decision.get("reasoning", ""),
             "max_favorable_pct": 0.0, "sl_moved_to_be": False, "sl_trailing": False,
             "exit_events": [],
