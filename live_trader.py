@@ -577,7 +577,7 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
                     "workingType": "MARK_PRICE",
                 }
                 tp_order = await asyncio.to_thread(
-                    ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side, None,
+                    ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side, 0,
                     None, tp_params,
                 )
                 tp_order_id = tp_order.get("id")
@@ -595,7 +595,7 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
                     "workingType": "MARK_PRICE",
                 }
                 sl_order = await asyncio.to_thread(
-                    ex.create_order, symbol, "STOP_MARKET", sl_side, None,
+                    ex.create_order, symbol, "STOP_MARKET", sl_side, 0,
                     None, sl_params,
                 )
                 sl_order_id = sl_order.get("id")
