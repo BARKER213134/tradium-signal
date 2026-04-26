@@ -567,18 +567,29 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         tp_side = "sell" if direction == "LONG" else "buy"
         sl_side = tp_side  # same direction for reduce-only
 
+        # Округление amount по precision биржи (для testnet — упрощённое)
+        try:
+            ex.load_markets()
+            mkt = ex.markets.get(symbol) or ex.markets.get(symbol.replace("USDT", "/USDT"))
+            if mkt:
+                amount_tp_sl = float(ex.amount_to_precision(symbol, amount))
+            else:
+                amount_tp_sl = amount
+        except Exception:
+            amount_tp_sl = amount
+
         if tp1:
             try:
-                # closePosition=True — закрывает всю позицию, обходит проблемы с precision
-                # На Binance Futures передаётся в params как { 'closePosition': true }
+                # Стандартный endpoint: amount + reduceOnly. closePosition требует
+                # Algo Order API (-4120 error на стандартном).
                 tp_params = {
                     "stopPrice": float(tp1),
-                    "closePosition": True,
+                    "reduceOnly": True,
                     "workingType": "MARK_PRICE",
                 }
                 tp_order = await asyncio.to_thread(
-                    ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side, 0,
-                    None, tp_params,
+                    ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side,
+                    amount_tp_sl, None, tp_params,
                 )
                 tp_order_id = tp_order.get("id")
                 logger.info(f"[live-{aid}] TP placed {symbol} stopPrice={tp1} id={tp_order_id}")
@@ -591,12 +602,12 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
             try:
                 sl_params = {
                     "stopPrice": float(sl),
-                    "closePosition": True,
+                    "reduceOnly": True,
                     "workingType": "MARK_PRICE",
                 }
                 sl_order = await asyncio.to_thread(
-                    ex.create_order, symbol, "STOP_MARKET", sl_side, 0,
-                    None, sl_params,
+                    ex.create_order, symbol, "STOP_MARKET", sl_side,
+                    amount_tp_sl, None, sl_params,
                 )
                 sl_order_id = sl_order.get("id")
                 logger.info(f"[live-{aid}] SL placed {symbol} stopPrice={sl} id={sl_order_id}")
