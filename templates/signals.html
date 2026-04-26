@@ -3160,33 +3160,13 @@ safeInterval(loadConflicts, 30000);
     </div>
   </div>
 
-  <!-- 🔴 Панель режима торговли — Paper / Testnet / Live Real (legacy single-account) -->
-  <div id="atLivePanel" style="margin-bottom:10px;padding:10px 14px;background:linear-gradient(135deg,rgba(255,77,109,0.06),rgba(255,140,50,0.04));border:1px solid rgba(255,77,109,0.22);border-radius:10px;">
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-      <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Торговля:</span>
-      <button id="atMode_paper"   onclick="setTradingMode('paper')"   style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;color:var(--muted);">🧪 PAPER</button>
-      <button id="atMode_testnet" onclick="setTradingMode('testnet')" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;color:var(--muted);">🟡 TESTNET</button>
-      <button id="atMode_real"    onclick="setTradingMode('real')"    style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;color:var(--muted);">🔴 LIVE REAL</button>
-      <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-left:8px;">Safety:</span>
-      <button id="atPreset_conservative" onclick="setSafetyPreset('conservative')" style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 12px;font-size:11px;font-family:var(--font-mono);cursor:pointer;color:var(--muted);">🛡️ Консерв</button>
-      <button id="atPreset_moderate"     onclick="setSafetyPreset('moderate')"     style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 12px;font-size:11px;font-family:var(--font-mono);cursor:pointer;color:var(--muted);">⚖️ Умер</button>
-      <button id="atPreset_aggressive"   onclick="setSafetyPreset('aggressive')"   style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 12px;font-size:11px;font-family:var(--font-mono);cursor:pointer;color:var(--muted);">🔥 Аггрес</button>
-      <div style="flex:1"></div>
-      <button id="atLiveEnableBtn" onclick="toggleLiveEnabled()" title="Включить/выключить автоторговлю" style="background:rgba(100,116,139,0.15);border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;color:var(--muted);">⏸ Выкл</button>
-      <button onclick="activateKillSwitch()" title="KILL SWITCH — закрыть все позиции + блокировать новые" style="background:linear-gradient(135deg,rgba(255,0,60,0.3),rgba(200,0,0,0.15));color:#ff4060;border:1px solid rgba(255,0,60,0.7);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:800;cursor:pointer;">⛔ KILL</button>
-    </div>
-    <!-- Status row: подключение, daily PnL, drawdown, pos -->
-    <div id="atLiveStatus" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:14px;font-family:var(--font-mono);font-size:11px;color:var(--muted);"></div>
-  </div>
-
-  <!-- Панель paper: режим aggr/cons + задать сумму + сброс -->
+  <!-- Панель paper: режим aggr/cons + задать paper-баланс + сброс
+       (testnet/real баланс теперь в карточке аккаунта 🪪 выше — кнопка 💰 Vbal) -->
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding:10px 14px;background:var(--dark-2);border:1px solid var(--border);border-radius:10px;flex-wrap:wrap;">
     <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">Paper режим:</span>
     <button id="atModeBtn" onclick="togglePaperMode()" style="background:linear-gradient(135deg,rgba(255,77,109,0.22),rgba(255,140,50,0.1));color:#ff8c32;border:1px solid rgba(255,140,50,0.6);border-radius:8px;padding:6px 16px;font-size:12px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">🔥 AGGRESSIVE · size 3-15% · lev 2-10×</button>
     <div style="flex:1"></div>
     <button onclick="setPaperBalance()" title="Установить конкретную сумму без сброса истории" style="background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(123,92,255,0.08));color:#00d4ff;border:1px solid rgba(0,212,255,0.55);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">💰 Paper баланс</button>
-    <button onclick="setLiveBalance('testnet')" title="Установить testnet баланс" style="background:linear-gradient(135deg,rgba(255,210,62,0.18),rgba(255,170,30,0.08));color:#ffd23e;border:1px solid rgba(255,210,62,0.55);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">🟡 Testnet баланс</button>
-    <button onclick="setLiveBalance('real')" title="⚠️ Установить REAL баланс" style="background:linear-gradient(135deg,rgba(255,60,60,0.18),rgba(255,30,30,0.08));color:#ff4060;border:1px solid rgba(255,60,60,0.6);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">🔴 Real баланс</button>
     <button onclick="resetPaper()" title="Сбросить paper — стереть историю" style="background:transparent;color:var(--sell);border:1px solid rgba(255,77,109,0.45);border-radius:8px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">🔄 Сброс</button>
   </div>
 
@@ -4203,159 +4183,11 @@ async function loadAIPrompt() {
 }
 
 // ═══════════════════════════════════════════════════════════
-// 🔴 LIVE TRADING: mode / preset / kill switch / balance
+// 🔴 LIVE TRADING — single-mode legacy функции удалены.
+// Управление теперь per-account через 🪪 Live аккаунты panel
+// (см. loadAccounts / renderAccountRow ниже).
 // ═══════════════════════════════════════════════════════════
-
-async function loadLiveStatus() {
-  try {
-    const r = await fetch('/api/live/status');
-    const d = await r.json();
-    if (!d.ok) return;
-
-    // Mode buttons
-    const modes = ['paper', 'testnet', 'real'];
-    const modeColors = {
-      paper:   { bg:'linear-gradient(135deg,rgba(0,229,160,0.18),rgba(0,200,140,0.08))', c:'#00e5a0', bd:'rgba(0,229,160,0.55)' },
-      testnet: { bg:'linear-gradient(135deg,rgba(255,210,62,0.2),rgba(255,170,30,0.08))', c:'#ffd23e', bd:'rgba(255,210,62,0.65)' },
-      real:    { bg:'linear-gradient(135deg,rgba(255,60,60,0.22),rgba(255,30,30,0.08))',  c:'#ff4060', bd:'rgba(255,60,60,0.7)'  },
-    };
-    for (const m of modes) {
-      const btn = document.getElementById('atMode_' + m);
-      if (!btn) continue;
-      if (d.mode === m) {
-        const cfg = modeColors[m];
-        btn.style.background = cfg.bg;
-        btn.style.color = cfg.c;
-        btn.style.borderColor = cfg.bd;
-      } else {
-        btn.style.background = 'none';
-        btn.style.color = 'var(--muted)';
-        btn.style.borderColor = 'var(--border)';
-      }
-    }
-
-    // Safety preset buttons
-    const presets = ['conservative', 'moderate', 'aggressive'];
-    const presetColors = {
-      conservative: { c:'#00d4ff', bd:'rgba(0,212,255,0.55)', bg:'rgba(0,212,255,0.12)' },
-      moderate:     { c:'#ffd23e', bd:'rgba(255,210,62,0.55)', bg:'rgba(255,210,62,0.12)' },
-      aggressive:   { c:'#ff8c32', bd:'rgba(255,140,50,0.55)', bg:'rgba(255,140,50,0.12)' },
-    };
-    for (const p of presets) {
-      const btn = document.getElementById('atPreset_' + p);
-      if (!btn) continue;
-      if (d.safety_preset === p) {
-        const cfg = presetColors[p];
-        btn.style.background = cfg.bg;
-        btn.style.color = cfg.c;
-        btn.style.borderColor = cfg.bd;
-      } else {
-        btn.style.background = 'none';
-        btn.style.color = 'var(--muted)';
-        btn.style.borderColor = 'var(--border)';
-      }
-    }
-
-    // Enabled toggle button
-    const enableBtn = document.getElementById('atLiveEnableBtn');
-    if (enableBtn) {
-      if (d.enabled) {
-        enableBtn.textContent = '▶ Вкл';
-        enableBtn.style.background = 'linear-gradient(135deg,rgba(0,229,160,0.25),rgba(0,200,140,0.1))';
-        enableBtn.style.color = '#00e5a0';
-        enableBtn.style.borderColor = 'rgba(0,229,160,0.6)';
-      } else {
-        enableBtn.textContent = '⏸ Выкл';
-        enableBtn.style.background = 'rgba(100,116,139,0.15)';
-        enableBtn.style.color = 'var(--muted)';
-        enableBtn.style.borderColor = 'var(--border)';
-      }
-    }
-
-    // Status row
-    const statusDiv = document.getElementById('atLiveStatus');
-    if (statusDiv) {
-      const pc = d.preset_config || {};
-      const ks = d.kill_switch ? '<span style="color:#ff4060;font-weight:700">⛔ KILL ACTIVE</span>' : '';
-      const dailyColor = d.daily_pnl_pct < 0 ? '#ff4060' : (d.daily_pnl_pct > 0 ? '#00e5a0' : 'var(--muted)');
-      const ddColor = d.drawdown_pct < -5 ? '#ff4060' : 'var(--muted)';
-      const envLabel = d.mode === 'paper' ? 'PAPER' : (d.mode === 'testnet' ? 'TESTNET' : 'REAL');
-      const balShown = d.mode === 'real' ? d.balance_real : (d.mode === 'testnet' ? d.balance_testnet : d.balance);
-      statusDiv.innerHTML = [
-        `<span>Баланс ${envLabel}: <b style="color:var(--text)">$${(balShown || 0).toLocaleString('en',{minimumFractionDigits:2})}</b></span>`,
-        `<span>Позиции: <b style="color:var(--text)">${d.open_positions}/${pc.max_positions || 0}</b></span>`,
-        `<span>Daily PnL: <b style="color:${dailyColor}">${d.daily_pnl_pct >= 0 ? '+' : ''}${d.daily_pnl_pct || 0}%</b> (лимит ${pc.daily_loss_limit_pct}%)</span>`,
-        `<span>Drawdown: <b style="color:${ddColor}">${d.drawdown_pct || 0}%</b> (лимит ${pc.max_drawdown_pct}%)</span>`,
-        `<span>Confirm: <b>${d.confirmation_required ? '✅ через BOT11' : '❌ auto'}</b></span>`,
-        ks,
-      ].filter(Boolean).join(' · ');
-    }
-  } catch (e) {
-    console.warn('[live-status]', e);
-  }
-}
-
-async function setTradingMode(mode) {
-  const labels = {paper:'🧪 PAPER', testnet:'🟡 TESTNET', real:'🔴 LIVE REAL'};
-  if (mode !== 'paper') {
-    const warn = mode === 'real' ? '\n\n⚠️ ВНИМАНИЕ: Это РЕАЛЬНЫЕ ДЕНЬГИ на Binance!' : '';
-    if (!confirm(`Переключить режим на ${labels[mode]}?${warn}`)) return;
-  }
-  try {
-    await fetch('/api/live/set-mode', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({mode})});
-    loadLiveStatus();
-  } catch (e) { alert('Ошибка: '+e.message); }
-}
-
-async function setSafetyPreset(preset) {
-  const labels = {conservative:'🛡️ Консервативный', moderate:'⚖️ Умеренный', aggressive:'🔥 Агрессивный'};
-  if (!confirm(`Переключить на ${labels[preset]} preset?\nЭто изменит лимиты size/lev/drawdown для live торговли.`)) return;
-  try {
-    await fetch('/api/live/set-preset', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({preset})});
-    loadLiveStatus();
-  } catch (e) { alert('Ошибка: '+e.message); }
-}
-
-async function setLiveBalance(env) {
-  const label = env === 'real' ? '🔴 REAL (реальные деньги!)' : '🟡 TESTNET';
-  const raw = prompt(`Установить ${label} баланс в USDT:\n\nЭто стартовая точка для расчёта PnL.`, env === 'testnet' ? '1000' : '200');
-  if (raw === null) return;
-  const amt = Number((raw||'').trim().replace(',','.'));
-  if (!isFinite(amt) || amt < 10 || amt > 10_000_000) {
-    alert('Сумма должна быть в диапазоне $10 - $10M');
-    return;
-  }
-  if (env === 'real') {
-    if (!confirm(`⚠️ Установить REAL баланс $${amt}?\nУбедись что на Binance на futures именно эта сумма.`)) return;
-  }
-  try {
-    const r = await fetch('/api/live/set-balance', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({env, amount: amt})});
-    const d = await r.json();
-    if (!d.ok) { alert('Ошибка: '+(d.error||'?')); return; }
-    loadLiveStatus();
-  } catch (e) { alert('Ошибка: '+e.message); }
-}
-
-async function toggleLiveEnabled() {
-  try {
-    const s = await (await fetch('/api/live/status')).json();
-    const next = !s.enabled;
-    const msg = next ? 'ВКЛЮЧИТЬ автоторговлю?\n\n(AI начнёт исполнять сигналы)' : 'Выключить автоторговлю?';
-    if (!confirm(msg)) return;
-    await fetch('/api/live/enable', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled: next})});
-    loadLiveStatus();
-  } catch (e) { alert('Ошибка: '+e.message); }
-}
-
-async function activateKillSwitch() {
-  if (!confirm('⛔ KILL SWITCH\n\n1. Закроет ВСЕ открытые позиции по рынку\n2. Заблокирует новые до ручного сброса\n\nПодтвердить?')) return;
-  try {
-    const r = await fetch('/api/live/kill-switch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({reason: 'manual'})});
-    const d = await r.json();
-    if (d.ok) alert(`Kill switch активирован. Закрыто: ${d.closed_count} позиций`);
-    loadLiveStatus();
-  } catch (e) { alert('Ошибка: '+e.message); }
-}
+function loadLiveStatus() { /* no-op — заменено на loadAccounts() */ }
 
 // ════════════════════════════════════════════════════════════════
 // Multi-account UI (для семьи / нескольких ключей одновременно)
