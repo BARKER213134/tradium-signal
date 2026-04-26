@@ -3231,7 +3231,7 @@ async function loadPaperStatus() {
     if (d.positions.length) {
       // Ключ по стабильным полям (trade_id+sl — sl может меняться из-за BE/trail
       // но это важная информация чтобы перерисовать строку)
-      const newKey = d.positions.map(p => `${p.trade_id}_${p.sl}_${p.tp1}`).join('|');
+      const newKey = d.positions.map(p => `${p.trade_id}_${p.sl}_${p.tp1}_${(p.live_envs||[]).length}`).join('|');
       const needsFullRender = posDiv._lastKey !== newKey;
 
       if (needsFullRender) {
@@ -3245,20 +3245,26 @@ async function loadPaperStatus() {
           }
         }
 
-        // Иконка источника сигнала — показывается перед монетой
-        const _srcBadge = (src) => {
-          const MAP = {
-            confluence:     { icon:'🔗', color:'#ffa94d', bg:'rgba(255,169,77,0.18)',  tip:'Confluence' },
-            cryptovizor:    { icon:'📡', color:'#00d4ff', bg:'rgba(0,212,255,0.14)',   tip:'CryptoVizor' },
-            supertrend:     { icon:'🌊', color:'#00e5a0', bg:'rgba(0,229,160,0.14)',   tip:'SuperTrend' },
-            anomaly:        { icon:'⚡', color:'#ffd23e', bg:'rgba(255,210,62,0.14)',  tip:'Anomaly' },
-            cluster:        { icon:'🌀', color:'#b197fc', bg:'rgba(177,151,252,0.14)', tip:'Cluster' },
-            ai_signal:      { icon:'🤖', color:'#a78bfa', bg:'rgba(124,58,237,0.14)', tip:'AI Signal' },
-            verified_entry: { icon:'✅', color:'#00e5a0', bg:'rgba(0,229,160,0.10)',   tip:'Verified' },
-          };
-          const key = (src || '').toLowerCase().replace(/ /g,'_');
-          const m = MAP[key] || { icon:'●', color:'var(--muted)', bg:'rgba(255,255,255,0.05)', tip: src || '—' };
-          return `<span title="${m.tip}" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;background:${m.bg};border:1px solid ${m.color}33;font-size:12px;flex-shrink:0;cursor:default;">${m.icon}</span>`;
+        // Бейджи где открыта позиция: PAPER / TESTNET / REAL
+        // Paper всегда есть (это paper-positions API), live_envs приходит с бэка
+        const _envBadges = (p) => {
+          const badge = (icon, color, bg, tip, label) =>
+            `<span title="${tip}" style="display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:5px;background:${bg};border:1px solid ${color}55;font-size:9px;font-weight:700;color:${color};font-family:var(--font-mono);letter-spacing:0.5px;flex-shrink:0;cursor:default;">${icon}<span>${label}</span></span>`;
+          let html = badge('📄', '#9ca3af', 'rgba(156,163,175,0.12)', 'Paper Trading (симуляция)', 'P');
+          const envs = (p.live_envs || []);
+          const hasTestnet = envs.some(e => e.env === 'testnet');
+          const hasReal = envs.some(e => e.env === 'real');
+          if (hasTestnet) {
+            const acct = envs.find(e => e.env === 'testnet')?.account_id || '';
+            html += badge('🧪', '#00d4ff', 'rgba(0,212,255,0.14)',
+                          `Testnet (${acct})`, 'T');
+          }
+          if (hasReal) {
+            const acct = envs.find(e => e.env === 'real')?.account_id || '';
+            html += badge('🔴', '#ff4d6d', 'rgba(255,77,109,0.14)',
+                          `LIVE REAL (${acct})`, 'L');
+          }
+          return `<span style="display:inline-flex;gap:3px;flex-shrink:0;">${html}</span>`;
         };
 
         posDiv.innerHTML = d.positions.map((p, idx) => {
@@ -3270,7 +3276,7 @@ async function loadPaperStatus() {
           const sl = p.sl ? `SL: ${p.sl}` : '';
           const size = p.size_usdt ? `$${p.size_usdt}` : '';
           const price = p.live_price ? p.live_price : '—';
-          const srcBadge = _srcBadge(p.source);
+          const envBadges = _envBadges(p);
           // Индикаторы exit-management
           // BE / BE+ / TRAIL bages
           const beTag = p.sl_moved_to_be_plus
@@ -3291,7 +3297,7 @@ async function loadPaperStatus() {
             ? `<span class="mono text-buy" style="font-size:10px;" title="Уже зафиксировано">💰 $${realizedPnl.toFixed(2)}</span>`
             : '';
           return `<div class="at-pos" data-trade="${p.trade_id}" style="cursor:pointer;flex-wrap:wrap;" onclick="togglePaperChart(${idx})">
-            ${srcBadge}
+            ${envBadges}
             <span class="mono text-accent fw-700" style="min-width:65px;">${pair}</span>
             <span>${dirE} ${p.direction}</span>
             <span class="mono">×${p.leverage || 1}</span>
@@ -3300,6 +3306,7 @@ async function loadPaperStatus() {
             <span class="mono text-muted js-live-price">Now: ${price}</span>
             <span class="mono ${pnlCls} fw-700 js-live-pnl">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%</span>
             ${ladderTag}${beTag}${trailTag}${realizedTag}
+            <span class="mono text-muted" style="font-size:10px;">${p.source || ''}</span>
             <span class="mono text-buy" style="font-size:9px;">${tp}</span>
             <span class="mono text-sell" style="font-size:9px;">${sl}</span>
             <button onclick="event.stopPropagation();closePaperPosition(${p.trade_id}, '${pair}', '${p.direction}', ${pnl.toFixed(2)})" style="margin-left:auto;background:transparent;color:#ff4d6d;border:1px solid rgba(255,77,109,0.4);border-radius:5px;padding:3px 9px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">✕ Закрыть</button>

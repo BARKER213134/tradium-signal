@@ -2945,13 +2945,26 @@ async def _paper_on_signal(signal_data: dict):
         logger.debug("[verified-check] schedule fail", exc_info=True)
 
     try:
-        # Paper-trader всегда работает (статистика/журнал/AI-обучение).
-        # Параллельно — все enabled live аккаунты (multi-account):
-        # каждый со своим API ключом, пресетом и независимым kill switch.
+        # Paper-trader делает ВСЕ проверки и принимает решение.
+        # Если paper открыл позицию — testnet/real зеркалят её один-в-один
+        # (та же пара, направление, leverage, size_pct, TP, SL).
+        # Если paper отказал — live аккаунты тоже не открывают.
+        # Кроме того, у каждого live-аккаунта есть свой kill_switch и
+        # max_positions — они применяются ПОВЕРХ paper-решения.
         import paper_trader as pt
-        await pt.on_signal(signal_data)
+        paper_pos = await pt.on_signal(signal_data)
 
-        # Multi-account live execution
+        if not paper_pos:
+            # Paper отклонил сигнал → testnet/real не открываются (точное копирование).
+            return
+
+        # Прокидываем paper_trade_id чтобы UI мог показать "open в paper И в testnet"
+        try:
+            signal_data["paper_trade_id"] = paper_pos.get("trade_id")
+        except Exception:
+            pass
+
+        # Multi-account live execution — копирование paper-решения
         try:
             import live_safety as ls
             accounts = ls.get_enabled_accounts()
@@ -2961,15 +2974,26 @@ async def _paper_on_signal(signal_data: dict):
 
         if accounts:
             import live_trader as lt
+            # Точная копия paper-параметров (decision)
+            mirror_decision = {
+                "enter": True,
+                "leverage": paper_pos.get("leverage", 2),
+                "size_pct": paper_pos.get("size_pct", 3),
+                "tp1": paper_pos.get("tp1"),
+                "sl": paper_pos.get("sl"),
+                "reasoning": (paper_pos.get("ai_reasoning")
+                              or paper_pos.get("reasoning")
+                              or "mirror of paper"),
+            }
             for acc in accounts:
-                # asyncio.create_task — каждый аккаунт независим, не блокируем друг друга
+                # Каждый аккаунт независим — не блокируем друг друга
                 try:
                     asyncio.create_task(
-                        lt.on_signal_for_account(signal_data, acc),
-                        name=f"live-{acc.get('_id','?')}",
+                        lt.mirror_paper_for_account(signal_data, mirror_decision, acc),
+                        name=f"live-mirror-{acc.get('_id','?')}",
                     )
                 except Exception as le:
-                    logger.warning(f"[live-{acc.get('_id','?')}] schedule fail: {le}",
+                    logger.warning(f"[live-{acc.get('_id','?')}] mirror schedule fail: {le}",
                                    exc_info=True)
     except Exception as e:
         logger.warning(f"[paper-signal] {e}", exc_info=True)

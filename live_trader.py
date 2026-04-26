@@ -612,6 +612,8 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
             "leverage": leverage, "size_usdt": size_usdt, "size_pct": size_pct,
             "amount": amount, "status": "OPEN",
             "source": signal_data.get("source", "unknown"),
+            # paper_trade_id — для cross-reference в UI (показать "open в paper и testnet")
+            "paper_trade_id": signal_data.get("paper_trade_id"),
             "exchange_order_id": exchange_order_id,
             "tp_order_id": tp_order_id, "sl_order_id": sl_order_id,
             "ai_reasoning": decision.get("reasoning", ""),
@@ -640,8 +642,9 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
 
 
 async def on_signal_for_account(signal_data: dict, account: dict) -> Optional[dict]:
-    """Обработка сигнала для конкретного аккаунта (используется watcher'ом
-    при iteration по enabled аккаунтам)."""
+    """[DEPRECATED] Старая логика: каждый аккаунт независимо вызывает ai_decide.
+    Заменена на mirror_paper_for_account чтобы testnet/real точно копировали
+    paper. Оставлено для обратной совместимости."""
     if not account.get("enabled") or account.get("kill_switch"):
         return None
     import paper_trader as pt
@@ -649,9 +652,26 @@ async def on_signal_for_account(signal_data: dict, account: dict) -> Optional[di
     if not decision.get("enter"):
         return None
     if account.get("confirmation_required"):
-        # Можно расширить позже — сейчас не используется в multi-account.
-        # Отдельный confirmation flow для каждого аккаунта пока не делаем.
-        logger.debug(f"[live-{account['_id']}] confirmation_required=True но multi-account flow пока без подтверждений, скип")
+        logger.debug(f"[live-{account['_id']}] confirmation_required — скип в legacy режиме")
+        return None
+    return await open_position_for_account(signal_data, decision, account)
+
+
+async def mirror_paper_for_account(signal_data: dict, decision: dict, account: dict) -> Optional[dict]:
+    """Точная копия paper-решения для конкретного live-аккаунта.
+
+    Вызывается из watcher._paper_on_signal ПОСЛЕ того как paper_trader.on_signal
+    вернул открытую позицию (т.е. paper уже принял решение). Live аккаунт
+    использует те же параметры (leverage, size_pct, tp1, sl, source) — никаких
+    собственных ai_decide / verified-checks. Применяются только account-level
+    safety guards (enabled, kill_switch, max_positions, daily_loss).
+    """
+    aid = account.get("_id", "?")
+    if not account.get("enabled"):
+        logger.debug(f"[live-{aid}] disabled — skip mirror")
+        return None
+    if account.get("kill_switch"):
+        logger.warning(f"[live-{aid}] kill_switch active — skip mirror")
         return None
     return await open_position_for_account(signal_data, decision, account)
 

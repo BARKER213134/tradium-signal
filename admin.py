@@ -4868,6 +4868,25 @@ async def api_paper_status():
     stats = pt.get_stats()
     # Текущие цены для PnL
     from exchange import get_prices_any
+    # Cross-reference: для каждой paper-позиции — какие live-аккаунты тоже
+    # имеют эту сделку открытой (по paper_trade_id, fallback по symbol+direction)
+    live_by_paper_id: dict = {}
+    live_by_sym_dir: dict = {}
+    try:
+        from database import _live_trades
+        live_open = list(_live_trades().find(
+            {"status": "OPEN"},
+            {"paper_trade_id": 1, "symbol": 1, "direction": 1, "env": 1,
+             "account_id": 1, "trade_id": 1}
+        ))
+        for lt in live_open:
+            pid = lt.get("paper_trade_id")
+            if pid is not None:
+                live_by_paper_id.setdefault(pid, []).append(lt)
+            key = f"{lt.get('symbol')}_{lt.get('direction')}"
+            live_by_sym_dir.setdefault(key, []).append(lt)
+    except Exception as _le:
+        logging.getLogger(__name__).debug(f"[paper-status] live xref fail: {_le}")
     if positions:
         pairs = [p.get("pair", p["symbol"].replace("USDT", "/USDT")) for p in positions]
         prices = await asyncio.to_thread(get_prices_any, pairs)
@@ -4881,6 +4900,16 @@ async def api_paper_status():
             p["_id"] = str(p.get("_id", ""))
             if p.get("opened_at") and hasattr(p["opened_at"], "isoformat"):
                 p["opened_at"] = p["opened_at"].isoformat()
+            # Cross-reference: paper_trade_id matching
+            matches = live_by_paper_id.get(p.get("trade_id"), [])
+            if not matches:
+                # Fallback по symbol+direction (на случай если paper_trade_id не записан)
+                matches = live_by_sym_dir.get(f"{p.get('symbol')}_{p.get('direction')}", [])
+            p["live_envs"] = [
+                {"env": m.get("env"), "account_id": m.get("account_id"),
+                 "live_trade_id": m.get("trade_id")}
+                for m in matches
+            ]
     return {
         "balance": balance,
         "initial": pt.INITIAL_BALANCE,
