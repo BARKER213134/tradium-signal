@@ -567,15 +567,11 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         tp_side = "sell" if direction == "LONG" else "buy"
         sl_side = tp_side  # same direction for reduce-only
 
-        # Округление amount по precision биржи (для testnet — упрощённое)
+        # Округление amount по precision биржи через ccxt — markets загружены при первом ордере
         try:
-            ex.load_markets()
-            mkt = ex.markets.get(symbol) or ex.markets.get(symbol.replace("USDT", "/USDT"))
-            if mkt:
-                amount_tp_sl = float(ex.amount_to_precision(symbol, amount))
-            else:
-                amount_tp_sl = amount
-        except Exception:
+            amount_tp_sl = float(await asyncio.to_thread(ex.amount_to_precision, symbol, amount))
+        except Exception as _pe:
+            logger.debug(f"[live-{aid}] amount_to_precision fail {symbol}: {_pe}")
             amount_tp_sl = amount
 
         if tp1:
