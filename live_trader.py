@@ -738,9 +738,65 @@ async def _send_live_open_alert(trade: dict, account: dict) -> None:
 # Синхронизация позиций (per-account)
 # ════════════════════════════════════════════════════════════════
 
+async def _close_position_market(ex, account: dict, pos: dict, reason: str) -> dict:
+    """Закрыть позицию по рыночной цене + отметить в DB."""
+    from database import _live_trades
+    aid = account.get("_id", "?")
+    symbol = pos["symbol"]
+    direction = pos["direction"]
+    amount = pos.get("amount", 0)
+    close_side = "sell" if direction == "LONG" else "buy"
+    try:
+        try:
+            amt = float(await asyncio.to_thread(ex.amount_to_precision, symbol, amount))
+        except Exception:
+            amt = amount
+        order = await asyncio.to_thread(
+            ex.create_market_order, symbol, close_side, amt,
+            None, {"reduceOnly": True},
+        )
+        exit_price = order.get("average") or order.get("price") or pos.get("entry")
+        entry = float(pos["entry"])
+        leverage = pos.get("leverage", 1)
+        size_usdt = pos.get("size_usdt", 0)
+        raw = ((float(exit_price) - entry) / entry) * 100
+        if direction == "SHORT":
+            raw = -raw
+        pnl_pct = round(raw * leverage, 2)
+        pnl_usdt = round(size_usdt * pnl_pct / 100, 2)
+        _live_trades().update_one(
+            {"trade_id": pos["trade_id"]},
+            {"$set": {
+                "status": reason,
+                "exit_price": exit_price,
+                "pnl_pct": pnl_pct,
+                "pnl_usdt": pnl_usdt,
+                "closed_at": _utcnow(),
+                "close_order_id": order.get("id"),
+                "db_managed_tpsl": True,
+            }},
+        )
+        logger.warning(
+            f"[live-{aid}] DB-managed close #{pos['trade_id']}: "
+            f"{symbol} {reason} {pnl_pct:+.2f}% ${pnl_usdt:+.2f}"
+        )
+        try:
+            asyncio.create_task(
+                _send_live_close_alert(pos, reason, exit_price, pnl_pct, pnl_usdt, account)
+            )
+        except Exception:
+            pass
+        return {"ok": True, "trade_id": pos["trade_id"], "reason": reason, "pnl_pct": pnl_pct}
+    except Exception as e:
+        logger.error(f"[live-{aid}] DB-managed close fail #{pos.get('trade_id')}: {e}", exc_info=True)
+        return {"ok": False, "trade_id": pos.get("trade_id"), "error": str(e)}
+
+
 async def sync_positions_for_account(account: dict) -> dict:
     """Синхронизация с биржей для конкретного аккаунта.
-    Обнаруживает позиции закрытые через TP/SL на бирже и обновляет MongoDB."""
+    Обнаруживает позиции закрытые через TP/SL на бирже + сам триггерит TP/SL
+    для DB-managed позиций (где tp_order_id/sl_order_id null — Binance testnet
+    отклоняет TAKE_PROFIT_MARKET/STOP_MARKET с -4120)."""
     from database import _live_trades
     aid = account["_id"]
     ex = _get_exchange_for_account(account)
@@ -764,14 +820,52 @@ async def sync_positions_for_account(account: dict) -> dict:
     # появлением в fetch_positions. Без этого race condition закрывает свежие.
     from datetime import timedelta
     grace_cutoff = _utcnow() - timedelta(seconds=90)
+
+    # Текущие цены для DB-managed TP/SL триггера
+    cur_prices: dict = {}
+    if db_open:
+        try:
+            from exchange import get_prices_any as _gpa
+            unique_pairs = list({p["symbol"].replace("USDT", "/USDT") for p in db_open})
+            cur_prices = await asyncio.to_thread(_gpa, unique_pairs) or {}
+        except Exception as _pe:
+            logger.debug(f"[live-{aid}] price fetch fail: {_pe}")
+
     for pos in db_open:
         synced += 1
         opened = pos.get("opened_at")
+        in_grace = False
         if opened and hasattr(opened, "replace"):
             opened_naive = opened.replace(tzinfo=None) if getattr(opened, "tzinfo", None) else opened
             if opened_naive > grace_cutoff:
-                logger.debug(f"[live-{aid}] sync skip #{pos.get('trade_id')} — grace period")
-                continue
+                in_grace = True
+
+        # ── DB-managed TP/SL: если на бирже нет TP/SL ордеров, проверяем цену сами ──
+        sym = pos["symbol"]
+        if not pos.get("tp_order_id") and not pos.get("sl_order_id"):
+            cur = cur_prices.get(sym)
+            if cur and not in_grace:
+                tp1 = pos.get("tp1")
+                sl = pos.get("sl")
+                direction = pos.get("direction", "LONG")
+                tp_hit = sl_hit = False
+                if direction == "LONG":
+                    if tp1 and cur >= float(tp1): tp_hit = True
+                    if sl and cur <= float(sl):   sl_hit = True
+                else:
+                    if tp1 and cur <= float(tp1): tp_hit = True
+                    if sl and cur >= float(sl):   sl_hit = True
+                if tp_hit:
+                    await _close_position_market(ex, account, pos, "TP")
+                    closed += 1
+                    continue
+                if sl_hit:
+                    await _close_position_market(ex, account, pos, "SL")
+                    closed += 1
+                    continue
+
+        if in_grace:
+            continue
         if pos["symbol"] not in open_symbols:
             # Позиция закрылась на бирже (TP/SL сработал)
             try:
