@@ -2292,7 +2292,7 @@ async def api_admin_cleanup_tests(payload: dict | None = None):
     pl = payload or {}
     sources = pl.get("sources") or ["manual_test", "test_v", "final_test"]
     new_balance = float(pl.get("new_balance") or 1000.0)
-    from database import _get_db, _live_trades
+    from database import _get_db, _live_trades, utcnow
     db = _get_db()
     src_regex = "|".join(s.replace("_", r"_") for s in sources)
     paper_filter = {"source": {"$regex": f"^({src_regex})", "$options": "i"}}
