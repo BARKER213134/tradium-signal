@@ -4602,23 +4602,35 @@ async function closePaperPosition(tradeId, pair, direction, pnlPct) {
 }
 
 async function closeAllPaperPositions() {
-  const ok = confirm('Закрыть ВСЕ открытые позиции по текущим ценам?\n\nВсе сделки получат статус MANUAL.\nЭто действие необратимо.');
+  console.log('[closeAllPaperPositions] called');
+  const ok = confirm('Закрыть ВСЕ открытые позиции по текущим ценам?\n\nВсе сделки получат статус MANUAL.\nLive позиции (если есть) закроются на бирже автоматически.\nЭто действие необратимо.');
   if (!ok) return;
   const btn = document.getElementById('atCloseAllBtn');
   const origText = btn ? btn.textContent : null;
   if (btn) { btn.textContent = '⏳ Закрываю…'; btn.disabled = true; }
+  // Timeout 45с — close-all + live mirror sync может занять до 30с
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 45000);
   try {
-    const r = await fetch('/api/paper/close-all', {method: 'POST'});
+    const r = await fetch('/api/paper/close-all', {method: 'POST', signal: ctrl.signal});
+    clearTimeout(tid);
     const d = await r.json();
+    console.log('[closeAllPaperPositions] response', d);
     if (!d.ok) {
-      alert('Ошибка: ' + (d.error || '?'));
+      alert('❌ Ошибка: ' + (d.error || '?'));
     } else {
       const total = d.total_count || 0;
       const pnl = d.total_pnl_usdt || 0;
-      alert(`✓ Закрыто позиций: ${total}\nИтого PnL: $${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`);
+      const mirror = d.mirror_synced || 0;
+      let msg = `✓ Paper закрыто: ${total} позиций\nPnL: $${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`;
+      if (mirror > 0) msg += `\n\n🔴 Live синхронизировано: ${mirror} позиций`;
+      else if (total > 0) msg += `\n\n💡 Live-позиций не было (или нет аккаунтов)`;
+      alert(msg);
     }
   } catch (e) {
-    alert('Ошибка сети: ' + e.message);
+    clearTimeout(tid);
+    if (e.name === 'AbortError') alert('⏰ Сервер не ответил за 45с — попробуй ещё раз');
+    else alert('Ошибка сети: ' + e.message);
   } finally {
     if (btn) { btn.textContent = origText; btn.disabled = false; }
     setTimeout(() => {

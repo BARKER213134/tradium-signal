@@ -1846,7 +1846,8 @@ async def api_backtest_st_signals_status():
 
 @app.post("/api/paper/close")
 async def api_paper_close(payload: dict):
-    """Ручное закрытие позиции (статус MANUAL). payload: {"trade_id": 123}"""
+    """Ручное закрытие paper-позиции + INSTANT mirror close на live (если есть).
+    payload: {"trade_id": 123}"""
     import paper_trader as pt
     trade_id = (payload or {}).get("trade_id")
     if not trade_id:
@@ -1855,18 +1856,33 @@ async def api_paper_close(payload: dict):
         result = await pt.close_manual(int(trade_id))
         if not result:
             return {"ok": False, "error": "position not found or already closed"}
-        return {"ok": True, "result": result}
+        # ⚡ INSTANT mirror close на live (вместо 15с ожидания фонового loop)
+        try:
+            import live_trader as lt
+            mirror_res = await asyncio.wait_for(lt.paper_to_live_sync_check(), timeout=20.0)
+            return {"ok": True, "result": result,
+                    "mirror_synced": mirror_res.get("synced", 0) if isinstance(mirror_res, dict) else 0}
+        except Exception as me:
+            logger.warning(f"[paper-close] instant mirror fail: {me}")
+            return {"ok": True, "result": result, "mirror_warning": str(me)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
 @app.post("/api/paper/close-all")
 async def api_paper_close_all():
-    """Закрывает ВСЕ открытые paper-позиции по текущим рыночным ценам.
-    Возвращает список закрытых + суммарный PnL."""
+    """Закрывает ВСЕ paper-позиции по рынку + INSTANT mirror close всех live-позиций."""
     import paper_trader as pt
     try:
         result = await pt.close_all_manual()
+        # ⚡ INSTANT mirror close всех live позиций (paper всё закрыл → live тоже должен)
+        try:
+            import live_trader as lt
+            mirror_res = await asyncio.wait_for(lt.paper_to_live_sync_check(), timeout=30.0)
+            result["mirror_synced"] = mirror_res.get("synced", 0) if isinstance(mirror_res, dict) else 0
+        except Exception as me:
+            logger.warning(f"[paper-close-all] instant mirror fail: {me}")
+            result["mirror_warning"] = str(me)
         return {"ok": True, **result}
     except Exception as e:
         return {"ok": False, "error": str(e)}
