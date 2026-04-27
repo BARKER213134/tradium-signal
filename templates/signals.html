@@ -3253,19 +3253,20 @@ safeInterval(loadConflicts, 30000);
                    class="acc-input">
           </div>
 
-          <!-- Section: Preset -->
-          <div class="acc-section-label" style="margin-top:8px;">🛡 Safety Preset</div>
+          <!-- Section: Mirror info (preset захардкожен = paper_mirror) -->
+          <div class="acc-section-label" style="margin-top:8px;">🪞 Зеркало Paper</div>
 
-          <div class="acc-field">
-            <span class="acc-field-label">Стратегия рисков</span>
-            <select id="acc_preset" class="acc-select">
-              <option value="paper_mirror" selected>🪞 Paper Mirror — точная копия paper (9× lev, 15% size, 7 поз)</option>
-              <option value="real_safe">🟢 Real Safe — для осторожного старта (5× lev, 5% size, 5 поз)</option>
-              <option value="real_aggressive">🔴 Real Aggressive — после 50+ сделок (7× lev, 10% size, 7 поз)</option>
-              <option value="aggressive">🔥 Aggressive (5× lev, 10% size, 3 поз)</option>
-              <option value="moderate">⚖️ Moderate (3× lev, 5% size, 2 поз)</option>
-              <option value="conservative">🛡️ Conservative (2× lev, 3% size, 1 поз)</option>
-            </select>
+          <input type="hidden" id="acc_preset" value="paper_mirror">
+
+          <div style="background:linear-gradient(135deg,rgba(0,212,255,0.06),rgba(0,229,160,0.04));border:1px solid rgba(0,212,255,0.25);border-left:3px solid #00d4ff;border-radius:8px;padding:12px 14px;font-size:11px;line-height:1.7;color:var(--text-2);">
+            <div style="color:#00d4ff;font-weight:800;font-size:10.5px;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:6px;">📋 Точная копия paper</div>
+            Live аккаунт <b>дословно повторит</b> каждую сделку paper:<br>
+            → те же монеты, leverage, размер, TP/SL<br>
+            → partial close 30% / 30% / 40% (TP1 → TP2 → TP3)<br>
+            → BE+1% и trailing stop из paper зеркалятся на биржу<br>
+            <div style="margin-top:6px;color:var(--muted);font-size:10px;">
+              💡 <b>Все настройки риска редактируются в paper-режиме</b> (вкладка PAPER → "Paper режим"). Здесь ничего настраивать не надо.
+            </div>
           </div>
 
           <!-- Actions -->
