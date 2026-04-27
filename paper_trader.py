@@ -428,7 +428,8 @@ def close_position(trade_id: int, exit_price: float, reason: str = "TP"):
 
 async def close_manual(trade_id: int) -> dict | None:
     """Ручное закрытие позиции — берёт текущую цену с биржи, закрывает
-    со статусом MANUAL. Возвращает {trade_id, pnl_pct, pnl_usdt} или None."""
+    со статусом MANUAL. Возвращает {trade_id, pnl_pct, pnl_usdt} или None.
+    Шлёт уведомление в BOT6 при успехе."""
     trades, _ = _get_collections()
     pos = trades.find_one({"trade_id": int(trade_id), "status": "OPEN"})
     if not pos:
@@ -438,9 +439,16 @@ async def close_manual(trade_id: int) -> dict | None:
     prices = await asyncio.to_thread(get_prices_any, [pair])
     cur = prices.get(pos["symbol"])
     if cur is None:
-        # fallback — если цены нет, пробуем entry
         cur = pos.get("entry", 0)
     result = close_position(int(trade_id), cur, "MANUAL")
+    # ── Telegram-уведомление о ручном закрытии ──
+    if result:
+        try:
+            updated = trades.find_one({"trade_id": int(trade_id)})
+            if updated:
+                await _send_close_alert(updated, "")
+        except Exception as e:
+            logger.warning(f"[paper-manual-close] alert fail #{trade_id}: {e}")
     return result
 
 
@@ -457,8 +465,10 @@ async def close_all_manual() -> dict:
     pairs = list({p.get("pair") or p["symbol"].replace("USDT", "/USDT") for p in open_positions})
     prices = await asyncio.to_thread(get_prices_any, pairs)
 
+    trades_coll, _ = _get_collections()
     results = []
     total_pnl = 0.0
+    closed_docs = []  # для batch алертов после
     for pos in open_positions:
         trade_id = pos.get("trade_id")
         if not trade_id:
@@ -466,13 +476,26 @@ async def close_all_manual() -> dict:
         sym = pos.get("symbol", "")
         cur = prices.get(sym)
         if cur is None:
-            cur = pos.get("entry", 0)  # fallback
+            cur = pos.get("entry", 0)
         r = close_position(int(trade_id), cur, "MANUAL")
         if r:
             r["symbol"] = sym
             results.append(r)
             total_pnl += r.get("pnl_usdt", 0) or 0
+            # Собираем закрытые docs для алертов
+            try:
+                updated = trades_coll.find_one({"trade_id": int(trade_id)})
+                if updated:
+                    closed_docs.append(updated)
+            except Exception:
+                pass
     logger.info(f"Paper CLOSE ALL: {len(results)} positions, total PnL=${total_pnl:+.2f}")
+    # ── Telegram-уведомления по каждой закрытой позиции (batch) ──
+    for doc in closed_docs:
+        try:
+            await _send_close_alert(doc, "")
+        except Exception as e:
+            logger.debug(f"[paper-close-all] alert fail: {e}")
     return {
         "closed": results,
         "total_pnl_usdt": round(total_pnl, 2),
