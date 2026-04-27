@@ -549,9 +549,73 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
     if ex is None:
         return {"ok": False, "error": "exchange not configured"}
 
+    # ── Fix 2: Pre-check символа на бирже (без этого -1121 для не-листенных альтов) ──
+    try:
+        if not getattr(ex, "markets", None):
+            await asyncio.to_thread(ex.load_markets)
+    except Exception as _le:
+        logger.warning(f"[live-{aid}] load_markets fail: {_le}")
+
+    if ex.markets and symbol not in ex.markets:
+        # Пробуем форматы XXX/USDT и XXXUSDT
+        slash_form = symbol.replace("USDT", "/USDT") if not symbol.endswith("/USDT") else symbol
+        if slash_form in ex.markets:
+            symbol = slash_form
+        else:
+            return {"ok": False,
+                    "error": f"symbol {symbol} not listed on {account.get('mode','testnet')} (skip: not-supported)"}
+
+    # ── Fix 1: Динамический клампинг по доступной марже на бирже ──
+    try:
+        bal_data = await asyncio.to_thread(ex.fetch_balance)
+        usdt_free = float((bal_data.get("USDT") or {}).get("free", 0) or 0)
+    except Exception as _be:
+        logger.debug(f"[live-{aid}] fetch_balance fail: {_be}")
+        usdt_free = 0.0
+
+    # На futures: required_margin ≈ size_usdt (то что paper считает margin = size_usdt)
+    # Используем максимум 50% свободной маржи на одну позицию (буфер на slippage/fees)
+    required_margin = size_usdt
+    if usdt_free > 0 and required_margin > usdt_free * 0.5:
+        new_size = round(usdt_free * 0.5, 2)
+        if new_size < 5.0:
+            return {"ok": False,
+                    "error": f"insufficient margin: free=${usdt_free:.2f}, need=${required_margin:.2f}"}
+        logger.warning(
+            f"[live-{aid}] downscaled {symbol} size: ${size_usdt} → ${new_size} "
+            f"(free=${usdt_free:.2f}, half-rule)"
+        )
+        size_usdt = new_size
+
     side = "buy" if direction == "LONG" else "sell"
     notional = size_usdt * leverage
-    amount = round(notional / entry_price, 6)
+    amount = notional / entry_price
+
+    # ── Fix 3: Клампинг amount по exchange limits ──
+    mkt = ex.markets.get(symbol) if ex.markets else None
+    if mkt:
+        limits = mkt.get("limits") or {}
+        amt_min = (limits.get("amount") or {}).get("min")
+        amt_max = (limits.get("amount") or {}).get("max")
+        cost_min = (limits.get("cost") or {}).get("min")  # min notional
+        if amt_max and amount > amt_max:
+            logger.warning(f"[live-{aid}] {symbol} amount {amount:.6f} > max {amt_max}, clamping")
+            amount = amt_max
+            # Пересчёт size_usdt чтобы соответствовать клампленному amount
+            size_usdt = round(amount * entry_price / leverage, 2)
+        if amt_min and amount < amt_min:
+            return {"ok": False,
+                    "error": f"amount {amount:.6f} < min {amt_min} for {symbol} (size too small)"}
+        if cost_min and (amount * entry_price) < cost_min:
+            return {"ok": False,
+                    "error": f"notional ${amount * entry_price:.2f} < min ${cost_min} for {symbol}"}
+
+    # Точная precision через ccxt
+    try:
+        amount = float(await asyncio.to_thread(ex.amount_to_precision, symbol, amount))
+    except Exception as _pe:
+        logger.debug(f"[live-{aid}] amount_to_precision fail {symbol}: {_pe}")
+        amount = round(amount, 6)
 
     try:
         await asyncio.to_thread(ex.set_leverage, leverage, symbol)
@@ -751,14 +815,18 @@ async def _send_mirror_failed_alert(symbol: str, direction: str, error: str, acc
         label = account.get("label") or str(account.get("_id", "?"))
         # Понятное объяснение для частых ошибок
         nice_err = error
-        if "Invalid symbol" in error or "does not have market" in error.lower():
+        if "not listed on" in error or "not-supported" in error:
             nice_err = f"❌ Символ {symbol} не торгуется на Binance {mode}"
-        elif "-1121" in error:
+        elif "Invalid symbol" in error or "does not have market" in error.lower() or "-1121" in error:
             nice_err = f"❌ Символ {symbol} не существует на Binance"
-        elif "-4164" in error:
-            nice_err = f"⚠️ Слишком маленький размер позиции"
-        elif "-2019" in error:
-            nice_err = f"⚠️ Недостаточно маржи"
+        elif "-4164" in error or "< min" in error:
+            nice_err = f"⚠️ Слишком маленький размер позиции (min notional)"
+        elif "-2019" in error or "insufficient margin" in error.lower():
+            nice_err = f"⚠️ Недостаточно свободной маржи на бирже"
+        elif "-4005" in error or "max" in error.lower() and "amount" in error.lower():
+            nice_err = f"⚠️ Объём превышает лимит на символе"
+        elif "size too small" in error:
+            nice_err = f"⚠️ Размер позиции меньше минимума на этом символе"
         elif "safety" in error:
             nice_err = f"⚠️ Заблокировано safety: {error}"
         text = (
