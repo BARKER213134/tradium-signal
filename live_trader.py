@@ -551,17 +551,19 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
 
     # ── Fix 2: Pre-check символа на бирже (без этого -1121 для не-листенных альтов) ──
     # ccxt.binance markets keyed by unified format 'BASE/QUOTE:QUOTE' (perpetuals).
-    # Используем ex.market() которое умеет искать по всем форматам.
+    # load_markets вызывается с таймаутом — на cold start может тормозить, но не должен
+    # блокировать всю операцию.
     try:
         if not getattr(ex, "markets", None):
-            await asyncio.to_thread(ex.load_markets)
+            await asyncio.wait_for(asyncio.to_thread(ex.load_markets), timeout=15.0)
+    except asyncio.TimeoutError:
+        logger.warning(f"[live-{aid}] load_markets timeout — proceeding without pre-check")
     except Exception as _le:
         logger.warning(f"[live-{aid}] load_markets fail: {_le}")
 
-    if ex.markets:
+    if getattr(ex, "markets", None):
         try:
             mkt_lookup = ex.market(symbol)
-            # Если найдено — проверяем что это active swap/futures (не дилистинг)
             if mkt_lookup:
                 if mkt_lookup.get("active") is False:
                     return {"ok": False,
@@ -574,9 +576,13 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
 
     # ── Fix 1: Динамический клампинг по доступной марже на бирже ──
     try:
-        bal_data = await asyncio.to_thread(ex.fetch_balance)
+        bal_data = await asyncio.wait_for(asyncio.to_thread(ex.fetch_balance), timeout=15.0)
         usdt_free = float((bal_data.get("USDT") or {}).get("free", 0) or 0)
         usdt_total = float((bal_data.get("USDT") or {}).get("total", 0) or 0)
+    except asyncio.TimeoutError:
+        logger.warning(f"[live-{aid}] fetch_balance timeout — assuming free=0")
+        usdt_free = 0.0
+        usdt_total = 0.0
     except Exception as _be:
         logger.debug(f"[live-{aid}] fetch_balance fail: {_be}")
         usdt_free = 0.0
