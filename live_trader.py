@@ -756,16 +756,17 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
             logger.debug(f"[live-{aid}] amount_to_precision fail {symbol}: {_pe}")
             amount_tp_sl = amount
 
-        # TP/SL params: для BingX hedge mode — добавляем positionSide
-        tp_extra = {"positionSide": pside} if ex_name == "bingx" else {}
+        # TP/SL params:
+        # - BingX hedge mode: positionSide ОБЯЗАТЕЛЬНО, reduceOnly ЗАПРЕЩЁН
+        # - Binance / one-way: reduceOnly OK, positionSide не нужен
+        if ex_name == "bingx":
+            tp_extra = {"positionSide": pside}  # без reduceOnly!
+        else:
+            tp_extra = {"reduceOnly": True}
 
         if tp1:
             try:
-                tp_params = {
-                    "stopPrice": float(tp1),
-                    "reduceOnly": True,
-                    **tp_extra,
-                }
+                tp_params = {"stopPrice": float(tp1), **tp_extra}
                 tp_order = await asyncio.to_thread(
                     ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side,
                     amount_tp_sl, None, tp_params,
@@ -779,11 +780,7 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
 
         if sl:
             try:
-                sl_params = {
-                    "stopPrice": float(sl),
-                    "reduceOnly": True,
-                    **tp_extra,
-                }
+                sl_params = {"stopPrice": float(sl), **tp_extra}
                 sl_order = await asyncio.to_thread(
                     ex.create_order, symbol, "STOP_MARKET", sl_side,
                     amount_tp_sl, None, sl_params,
