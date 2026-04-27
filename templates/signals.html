@@ -4514,24 +4514,102 @@ async function resetPaper() {
 }
 
 async function setPaperBalance() {
-  const raw = prompt('Установить конкретную сумму в USDT БЕЗ сброса истории.\nДля перехода на реальную торговлю — введи свою реальную сумму.\nВся история сделок и AI память сохранится.\n\nТекущий баланс показан наверху.', '');
-  if (raw === null) return;
-  const amt = Number((raw || '').trim().replace(',', '.'));
+  console.log('[setPaperBalance] called');
+  // Создаём модалку на лету (не зависит от prompt() который блокируется в Brave/Chrome)
+  let modal = document.getElementById('paperBalModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'paperBalModal';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(5,7,12,0.85);backdrop-filter:blur(8px);z-index:1000;align-items:center;justify-content:center;padding:20px;';
+    modal.innerHTML = `
+      <div style="background:linear-gradient(180deg,#0e1420,#0a0e14);border:1px solid rgba(0,212,255,0.4);border-radius:14px;padding:24px;max-width:440px;width:100%;font-family:var(--font-mono);box-shadow:0 24px 60px rgba(0,0,0,0.6);">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:22px;">💰</span>
+            <div>
+              <div style="color:#00d4ff;font-weight:800;font-size:14px;letter-spacing:0.05em;">Установить Paper баланс</div>
+              <div style="color:var(--muted);font-size:10px;margin-top:2px;">Текущий: <span id="pbCurrent">—</span></div>
+            </div>
+          </div>
+          <button onclick="closePaperBalModal()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1;padding:4px 8px;border-radius:6px;">✕</button>
+        </div>
+        <div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.2);border-left:3px solid #00d4ff;border-radius:6px;padding:10px 12px;font-size:11px;color:var(--text-2);line-height:1.6;margin-bottom:14px;">
+          📋 Действие: баланс перезапишется на введённую сумму.<br>
+          ✅ История сделок <b>сохраняется</b><br>
+          ✅ AI память <b>сохраняется</b><br>
+          ⚠️ PnL % будет пересчитан от новой точки
+        </div>
+        <label style="display:grid;gap:6px;margin-bottom:14px;">
+          <span style="color:var(--text-2);font-size:11px;">Новый баланс USDT</span>
+          <input id="pbAmount" type="number" min="10" max="10000000" step="0.01" placeholder="500"
+                 style="background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:10px 14px;color:var(--text);font-family:var(--font-mono);font-size:14px;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button onclick="document.getElementById('pbAmount').value=100" style="background:transparent;border:1px solid var(--border);border-radius:5px;padding:3px 9px;font-size:10px;color:var(--muted);cursor:pointer;">$100</button>
+            <button onclick="document.getElementById('pbAmount').value=500" style="background:transparent;border:1px solid var(--border);border-radius:5px;padding:3px 9px;font-size:10px;color:var(--muted);cursor:pointer;">$500</button>
+            <button onclick="document.getElementById('pbAmount').value=1000" style="background:transparent;border:1px solid var(--border);border-radius:5px;padding:3px 9px;font-size:10px;color:var(--muted);cursor:pointer;">$1,000</button>
+            <button onclick="document.getElementById('pbAmount').value=5000" style="background:transparent;border:1px solid var(--border);border-radius:5px;padding:3px 9px;font-size:10px;color:var(--muted);cursor:pointer;">$5,000</button>
+          </div>
+        </label>
+        <div style="display:flex;gap:10px;">
+          <button id="pbSubmitBtn" onclick="submitPaperBalance()" style="flex:1;background:linear-gradient(135deg,#00e5a0,#00d4ff);color:#0a0e14;border:none;border-radius:9px;padding:11px 18px;font-size:13px;font-family:var(--font-mono);font-weight:800;letter-spacing:0.05em;cursor:pointer;">✓ Установить</button>
+          <button onclick="closePaperBalModal()" style="background:transparent;border:1px solid rgba(255,255,255,0.12);border-radius:9px;padding:11px 18px;font-size:12px;font-family:var(--font-mono);cursor:pointer;color:var(--muted);">Отмена</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    // Закрытие по клику на фон + Esc
+    modal.addEventListener('click', (e) => { if (e.target === modal) closePaperBalModal(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal.style.display === 'flex') closePaperBalModal();
+    });
+  }
+  // Заполняем текущий баланс
+  const balEl = document.getElementById('atBalance');
+  document.getElementById('pbCurrent').textContent = balEl ? balEl.textContent : '—';
+  document.getElementById('pbAmount').value = '';
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('pbAmount').focus(), 50);
+}
+
+function closePaperBalModal() {
+  const m = document.getElementById('paperBalModal');
+  if (m) m.style.display = 'none';
+}
+
+async function submitPaperBalance() {
+  const input = document.getElementById('pbAmount');
+  const amt = Number((input.value || '').trim().replace(',', '.'));
   if (!isFinite(amt) || amt < 10 || amt > 10_000_000) {
-    alert('Сумма должна быть в диапазоне $10 - $10M');
+    alert('❌ Сумма должна быть в диапазоне $10 - $10,000,000');
     return;
   }
-  if (!confirm(`Установить баланс на $${amt.toLocaleString()}?\n\nДействие: баланс = $${amt}, PnL пересчитается от этой точки.\nИстория НЕ стирается, AI память сохранится.`)) return;
+  const btn = document.getElementById('pbSubmitBtn');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Устанавливаю...'; btn.style.opacity = '0.7'; }
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 30000);
   try {
     const r = await fetch('/api/paper/set-balance', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({amount: amt}),
+      signal: ctrl.signal,
     });
+    clearTimeout(tid);
     const d = await r.json();
-    if (!d.ok) { alert('Ошибка: ' + (d.error || '?')); return; }
-    loadPaperStatus();
-  } catch (e) { alert('Ошибка сети: ' + e.message); }
+    if (!d.ok) {
+      alert('❌ ' + (d.error || 'fail'));
+      return;
+    }
+    closePaperBalModal();
+    if (typeof loadPaperStatus === 'function') loadPaperStatus();
+    alert(`✅ Paper balance: $${d.balance.toLocaleString('en',{minimumFractionDigits:2})}`);
+  } catch (e) {
+    clearTimeout(tid);
+    if (e.name === 'AbortError') alert('⏰ Сервер не ответил за 30с');
+    else alert('Ошибка сети: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; btn.style.opacity = ''; }
+  }
 }
 
 // ═══════ Paper Trading — режим / закрытие / learnings ═══════
