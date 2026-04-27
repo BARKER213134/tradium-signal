@@ -2293,9 +2293,16 @@ async def api_admin_cleanup_tests(payload: dict | None = None):
     sources = pl.get("sources") or ["manual_test", "test_v", "final_test"]
     new_balance = float(pl.get("new_balance") or 1000.0)
     from database import _get_db, _live_trades, utcnow
+    import re as _re
     db = _get_db()
-    src_regex = "|".join(s.replace("_", r"_") for s in sources)
-    paper_filter = {"source": {"$regex": f"^({src_regex})", "$options": "i"}}
+
+    # Соберём все source значения которые начинаются с одного из префиксов
+    all_paper_sources = db.paper_trades.distinct("source") or []
+    matching_sources = [
+        s for s in all_paper_sources
+        if isinstance(s, str) and any(s.startswith(p) for p in sources)
+    ]
+    paper_filter = {"source": {"$in": matching_sources}} if matching_sources else {"source": "__none__"}
 
     # Найти и удалить paper trades
     paper_to_delete = list(db.paper_trades.find(paper_filter, {"trade_id":1,"source":1,"status":1}))
@@ -2304,13 +2311,19 @@ async def api_admin_cleanup_tests(payload: dict | None = None):
 
     # Удалить соответствующие live_trades по paper_trade_id
     live_filter = {"paper_trade_id": {"$in": paper_trade_ids}}
-    live_to_delete = list(_live_trades().find(live_filter, {"trade_id":1,"symbol":1,"status":1}))
-    live_del_result = _live_trades().delete_many(live_filter)
+    live_del_result = _live_trades().delete_many(live_filter) if paper_trade_ids else type("R",(object,),{"deleted_count":0})()
 
     # Также удалить любые live_trades с source совпадающим (на случай если paper_trade_id null)
-    live_extra_del = _live_trades().delete_many({
-        "source": {"$regex": f"^({src_regex})", "$options": "i"}
-    })
+    all_live_sources = _live_trades().distinct("source") or []
+    matching_live_sources = [
+        s for s in all_live_sources
+        if isinstance(s, str) and any(s.startswith(p) for p in sources)
+    ]
+    if matching_live_sources:
+        live_extra_del = _live_trades().delete_many({"source": {"$in": matching_live_sources}})
+        live_extra_count = live_extra_del.deleted_count
+    else:
+        live_extra_count = 0
 
     # Восстановить paper баланс
     db.paper_trades.update_one(
@@ -2321,10 +2334,12 @@ async def api_admin_cleanup_tests(payload: dict | None = None):
 
     return {
         "ok": True,
+        "matched_paper_sources": matching_sources,
+        "matched_live_sources": matching_live_sources,
         "deleted_paper": paper_del_result.deleted_count,
         "deleted_paper_ids": paper_trade_ids,
         "deleted_live_by_paper_id": live_del_result.deleted_count,
-        "deleted_live_by_source": live_extra_del.deleted_count,
+        "deleted_live_by_source": live_extra_count,
         "new_balance": new_balance,
         "sources_filter": sources,
     }
