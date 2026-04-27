@@ -3015,60 +3015,62 @@ async def _paper_on_signal(signal_data: dict):
 
 async def _live_sync_loop():
     """Фоновая синхронизация live позиций с биржей (каждые 30с).
-    Обнаруживает TP/SL которые сработали на бирже и обновляет MongoDB."""
+    Защищена 30-секундным timeout — если биржа hang'нет, скип."""
     import asyncio as _asyncio
+    # Стартовая задержка чтобы основной watcher подняться без нагрузки
+    await _asyncio.sleep(45)
     while True:
         try:
             import live_trader as lt
-            results = await lt.sync_all_accounts()
+            results = await _asyncio.wait_for(lt.sync_all_accounts(), timeout=30.0)
             auto = sum(r.get("auto_closed", 0) for r in results if isinstance(r, dict))
             if auto > 0:
                 logger.info(f"[live-sync] auto-closed {auto} position(s)")
+        except _asyncio.TimeoutError:
+            logger.warning("[live-sync] sync timed out — exchange slow, will retry")
         except Exception:
             logger.debug("[live-sync] sync loop error", exc_info=True)
         await _asyncio.sleep(30)
 
 
 async def _paper_to_live_mirror_loop():
-    """Зеркало paper → live: partial closes / SL moves / full closes.
-    Каждые 15с проверяет paper позиции и зеркалит изменения в live."""
+    """Зеркало paper → live (каждые 15с). Timeout 25с."""
     import asyncio as _asyncio
+    await _asyncio.sleep(50)
     while True:
         try:
             import live_trader as lt
-            res = await lt.paper_to_live_sync_check()
+            res = await _asyncio.wait_for(lt.paper_to_live_sync_check(), timeout=25.0)
             synced = res.get("synced", 0) if isinstance(res, dict) else 0
             if synced > 0:
                 logger.info(f"[paper→live] synced {synced} action(s)")
+        except _asyncio.TimeoutError:
+            logger.warning("[paper→live] mirror sync timed out")
         except Exception:
             logger.debug("[paper→live] sync loop error", exc_info=True)
         await _asyncio.sleep(15)
 
 
 async def _exchange_symbols_refresh_loop():
-    """Каждый час обновляем списки поддерживаемых пар на ОБЕИХ биржах
-    (Binance Futures + BingX Perpetual). Это гарантирует:
-      • paper не открывает позиции на дилистенных или ненежных парах
-      • mirror на live (любая биржа) не падает с invalid-symbol error"""
+    """Раз в час обновляем списки пар на ОБЕИХ биржах.
+    Каждый refresh защищён 25-секундным timeout — если биржа не ответит,
+    цикл идёт дальше с устаревшим кешем (paper использует fallback).
+
+    На старте даём 60с задержки чтобы основной watcher успел подняться
+    БЕЗ нагрузки от HTTP запросов к биржам."""
     import asyncio as _asyncio
-    # Холодный прогрев обеих бирж — сразу при старте
-    try:
-        from exchange_symbols import refresh_supported_symbols
-        for ex_name in ("bingx", "binance"):
-            try:
-                await _asyncio.to_thread(refresh_supported_symbols, ex_name)
-            except Exception as e:
-                logger.debug(f"[{ex_name}-symbols] initial refresh error: {e}")
-    except Exception:
-        logger.debug("[exchange-symbols] initial refresh error", exc_info=True)
-    # Цикл — каждый час
+    # Стартовая задержка чтобы дать подняться основному циклу
+    await _asyncio.sleep(60)
+
     while True:
-        await _asyncio.sleep(3600)
         try:
             from exchange_symbols import refresh_supported_symbols
             for ex_name in ("bingx", "binance"):
                 try:
-                    res = await _asyncio.to_thread(refresh_supported_symbols, ex_name)
+                    res = await _asyncio.wait_for(
+                        _asyncio.to_thread(refresh_supported_symbols, ex_name),
+                        timeout=25.0,
+                    )
                     if isinstance(res, dict) and res.get("ok"):
                         added = len(res.get("added") or [])
                         removed = len(res.get("removed") or [])
@@ -3077,10 +3079,13 @@ async def _exchange_symbols_refresh_loop():
                                 f"[{ex_name}-symbols] +{added}/-{removed} → "
                                 f"now {res.get('count')} pairs"
                             )
+                except _asyncio.TimeoutError:
+                    logger.warning(f"[{ex_name}-symbols] refresh timed out — using cached/fallback")
                 except Exception:
-                    logger.debug(f"[{ex_name}-symbols] refresh loop error", exc_info=True)
+                    logger.debug(f"[{ex_name}-symbols] refresh error", exc_info=True)
         except Exception:
             logger.debug("[exchange-symbols] refresh loop error", exc_info=True)
+        await _asyncio.sleep(3600)  # 1 час до следующего refresh
 
 
 _watcher_running = False
