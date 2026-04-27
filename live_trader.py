@@ -807,13 +807,13 @@ async def mirror_paper_for_account(signal_data: dict, decision: dict, account: d
     """Точная копия paper-решения для конкретного live-аккаунта.
 
     Вызывается из watcher._paper_on_signal ПОСЛЕ того как paper_trader.on_signal
-    вернул открытую позицию (т.е. paper уже принял решение). Live аккаунт
-    использует те же параметры (leverage, size_pct, tp1, sl, source) — никаких
-    собственных ai_decide / verified-checks. Применяются только account-level
-    safety guards (enabled, kill_switch, max_positions, daily_loss).
+    вернул открытую позицию. Live аккаунт использует те же параметры
+    (leverage, size_pct, tp1, sl, source) — никаких собственных ai_decide.
 
-    Если mirror не удался — пишет mirror-attempt в live_trades со статусом
-    FAILED, чтобы UI показал что попытка была + шлёт алерт юзеру.
+    🪞 АВТО-СИНК VBAL: account.balance автоматически = paper.balance перед
+    каждой сделкой → размеры идентичны без ручного ввода Vbal.
+
+    Если mirror не удался — пишет FAILED_OPEN в live_trades + шлёт алерт.
     """
     aid = account.get("_id", "?")
     if not account.get("enabled"):
@@ -822,6 +822,30 @@ async def mirror_paper_for_account(signal_data: dict, decision: dict, account: d
     if account.get("kill_switch"):
         logger.warning(f"[live-{aid}] kill_switch active — skip mirror")
         return None
+
+    # ── 🪞 АВТО-СИНК: account.balance ← paper.balance ──
+    # Гарантирует что размер live-сделки = размеру paper-сделки.
+    # При росте/падении paper-баланса live автоматически масштабируется.
+    try:
+        import paper_trader as pt
+        paper_balance = pt.get_balance()
+        if paper_balance and paper_balance > 0:
+            from database import _live_accounts, utcnow
+            old_bal = account.get("balance", 0) or 0
+            if abs(paper_balance - old_bal) > 0.01:  # значимое изменение
+                _live_accounts().update_one(
+                    {"_id": aid},
+                    {"$set": {"balance": float(paper_balance),
+                              "balance_synced_from_paper": True,
+                              "updated_at": utcnow()}},
+                )
+                account["balance"] = float(paper_balance)
+                logger.info(
+                    f"[live-{aid}] auto-sync Vbal: ${old_bal:.2f} → ${paper_balance:.2f} (from paper)"
+                )
+    except Exception as _se:
+        logger.warning(f"[live-{aid}] paper balance sync fail: {_se}")
+
     result = await open_position_for_account(signal_data, decision, account)
     # Если open не удался — записать FAILED-attempt чтобы было видно в UI
     if result and not result.get("ok"):
