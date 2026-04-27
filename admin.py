@@ -2726,7 +2726,13 @@ async def api_live_snapshot():
         elif v < 0: losses += 1
     win_rate = round(wins / (wins + losses) * 100, 1) if (wins + losses) else 0
 
-    pnl_pct = round(total_pnl / total_balance * 100, 2) if total_balance > 0 else 0
+    # PnL% = насколько отличается текущий баланс от стартового депозита.
+    # Используем cumulative_pnl как baseline: initial = current - cumulative_pnl
+    # Это эквивалентно (current - initial) / initial × 100.
+    initial_balance_est = total_balance - total_pnl
+    if initial_balance_est <= 0:
+        initial_balance_est = total_balance  # fallback
+    pnl_pct = round((total_balance - initial_balance_est) / initial_balance_est * 100, 2) if initial_balance_est > 0 else 0
 
     # max_positions = агрегат из presets всех enabled
     max_positions_total = 0

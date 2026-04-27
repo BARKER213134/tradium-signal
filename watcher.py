@@ -3051,6 +3051,41 @@ async def _paper_to_live_mirror_loop():
         await _asyncio.sleep(15)
 
 
+async def _live_balance_refresh_loop():
+    """Каждые 5 минут подтягивает реальный exchange balance в account.balance.
+    Это гарантирует что UI показывает актуальный free на бирже, не paper-balance."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(120)  # стартовая задержка
+    while True:
+        try:
+            from live_safety import get_enabled_accounts, _live_accounts
+            from database import utcnow
+            import live_trader as lt
+            for acc in get_enabled_accounts():
+                aid = acc.get("_id")
+                try:
+                    res = await _asyncio.wait_for(
+                        _asyncio.to_thread(lt.test_connection_for_account, acc),
+                        timeout=20.0,
+                    )
+                    if res and res.get("ok"):
+                        new_bal = res.get("usdt_total")
+                        if new_bal is not None:
+                            _live_accounts().update_one(
+                                {"_id": aid},
+                                {"$set": {"balance": float(new_bal),
+                                          "balance_synced_from_exchange": True,
+                                          "updated_at": utcnow()}},
+                            )
+                except _asyncio.TimeoutError:
+                    pass
+                except Exception as e:
+                    logger.debug(f"[balance-refresh-{aid}] error: {e}")
+        except Exception:
+            pass
+        await _asyncio.sleep(300)  # 5 минут
+
+
 async def _exchange_symbols_refresh_loop():
     """Раз в час обновляем списки пар на ОБЕИХ биржах.
     Каждый refresh защищён 25-секундным timeout — если биржа не ответит,
@@ -3148,6 +3183,12 @@ async def start_watcher():
         logger.info("[exchange-symbols] background loop started")
     except Exception:
         logger.exception("[exchange-symbols] failed to start loop")
+    # Live balance refresh — каждые 5 мин обновляем account.balance из биржи
+    try:
+        asyncio.create_task(_live_balance_refresh_loop())
+        logger.info("[live-balance-refresh] background loop started")
+    except Exception:
+        logger.exception("[live-balance-refresh] failed to start loop")
     # [ОТКЛЮЧЕНО] AI memory refresh + AI review open positions —
     # система переведена на rule-based (Entry Checker 8 проверок + TP ladder).
     # AI больше не используется для торговых решений.

@@ -559,7 +559,14 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
     if not symbol or not entry_price:
         return {"ok": False, "error": "missing symbol or entry"}
 
-    balance = account.get("balance", 0) or 0
+    # Размер вычисляется от PAPER balance (для зеркального соответствия paper-сделки).
+    # account.balance используется ТОЛЬКО для safety-check max_position_usd.
+    paper_bal_for_sizing = signal_data.get("_paper_balance_for_sizing")
+    if paper_bal_for_sizing and paper_bal_for_sizing > 0:
+        balance = float(paper_bal_for_sizing)
+    else:
+        # Fallback на account.balance если paper не передан (например, из тестов)
+        balance = account.get("balance", 0) or 0
     size_usdt = round(balance * size_pct / 100, 2)
 
     allowed, reason = can_open_position_for_account(account, symbol, size_usdt)
@@ -878,28 +885,15 @@ async def mirror_paper_for_account(signal_data: dict, decision: dict, account: d
         logger.warning(f"[live-{aid}] kill_switch active — skip mirror")
         return None
 
-    # ── 🪞 АВТО-СИНК: account.balance ← paper.balance ──
-    # Гарантирует что размер live-сделки = размеру paper-сделки.
-    # При росте/падении paper-баланса live автоматически масштабируется.
+    # 🪞 size_pct берётся из paper-decision напрямую (decision[size_pct]),
+    # а size_usdt вычисляется в open_position_for_account на основе
+    # paper.balance (через signal_data["_paper_balance_for_sizing"] override),
+    # НЕ через account.balance. account.balance остаётся real exchange balance.
     try:
         import paper_trader as pt
-        paper_balance = pt.get_balance()
-        if paper_balance and paper_balance > 0:
-            from database import _live_accounts, utcnow
-            old_bal = account.get("balance", 0) or 0
-            if abs(paper_balance - old_bal) > 0.01:  # значимое изменение
-                _live_accounts().update_one(
-                    {"_id": aid},
-                    {"$set": {"balance": float(paper_balance),
-                              "balance_synced_from_paper": True,
-                              "updated_at": utcnow()}},
-                )
-                account["balance"] = float(paper_balance)
-                logger.info(
-                    f"[live-{aid}] auto-sync Vbal: ${old_bal:.2f} → ${paper_balance:.2f} (from paper)"
-                )
-    except Exception as _se:
-        logger.warning(f"[live-{aid}] paper balance sync fail: {_se}")
+        signal_data["_paper_balance_for_sizing"] = float(pt.get_balance() or 0)
+    except Exception:
+        pass
 
     result = await open_position_for_account(signal_data, decision, account)
     # Если open не удался — записать FAILED-attempt чтобы было видно в UI
