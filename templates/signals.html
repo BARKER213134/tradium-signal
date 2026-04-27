@@ -3319,6 +3319,226 @@ document.addEventListener('DOMContentLoaded', () => {
   switchTradingTab(urlParam || saved);
 });
 
+// ════════════════════════════════════════════════════════════════
+// LIVE TAB: snapshot loader (KPI cards + positions list)
+// ════════════════════════════════════════════════════════════════
+async function loadLiveSnapshot() {
+  try {
+    const r = await fetch('/api/live/snapshot');
+    const d = await r.json();
+    if (!d.ok) return;
+
+    // KPI cards
+    const balanceEl = document.getElementById('liveBalance');
+    const pnlEl = document.getElementById('livePnl');
+    const openEl = document.getElementById('liveOpen');
+    const wrEl = document.getElementById('liveWR');
+    const totalEl = document.getElementById('liveTotal');
+
+    const hasAccounts = d.count_accounts > 0;
+    if (!hasAccounts) {
+      balanceEl.textContent = '—';
+      balanceEl.style.color = 'var(--muted)';
+      pnlEl.textContent = '—';
+      pnlEl.className = 'at-card-value';
+      openEl.textContent = '0/0';
+      wrEl.textContent = '—';
+      totalEl.textContent = '0';
+      const tabReal = document.getElementById('tabStatReal');
+      if (tabReal) tabReal.textContent = 'нет аккаунтов';
+    } else {
+      balanceEl.textContent = '$' + d.total_balance.toLocaleString('en', {minimumFractionDigits: 2});
+      balanceEl.style.color = '';
+      balanceEl.className = 'at-card-value ' + (d.pnl_pct >= 0 ? 'text-buy' : 'text-sell');
+      pnlEl.textContent = (d.pnl_pct >= 0 ? '+' : '') + d.pnl_pct + '%';
+      pnlEl.className = 'at-card-value ' + (d.pnl_pct >= 0 ? 'text-buy' : 'text-sell');
+      openEl.textContent = d.open_count + '/' + d.max_positions;
+      wrEl.textContent = d.stats.total ? d.stats.win_rate + '%' : '—';
+      wrEl.className = 'at-card-value ' + (d.stats.win_rate >= 50 ? 'text-buy' : d.stats.total ? 'text-sell' : '');
+      totalEl.textContent = d.stats.total;
+      const tabReal = document.getElementById('tabStatReal');
+      if (tabReal) tabReal.textContent = '$' + d.total_balance.toLocaleString('en', {maximumFractionDigits: 0});
+    }
+
+    // Open positions
+    const posDiv = document.getElementById('livePositions');
+    window._livePositions = d.positions || [];
+    if (!d.positions || !d.positions.length) {
+      if (!hasAccounts) {
+        posDiv.innerHTML = `<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">
+          Добавь Binance Futures аккаунт через панель выше — позиции будут появляться автоматически когда paper открывает сделки</div>`;
+      } else {
+        posDiv.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет открытых live позиций</div>';
+      }
+    } else {
+      posDiv.innerHTML = d.positions.map((p, idx) => {
+        const dirE = p.direction === 'LONG' ? '🟢' : '🔴';
+        const pnl = p.live_pnl || 0;
+        const pnlCls = pnl >= 0 ? 'text-buy' : 'text-sell';
+        const pair = p.symbol ? p.symbol.replace('USDT', '') : '?';
+        const tp = p.tp1 ? `TP: ${p.tp1}` : '';
+        const sl = p.sl ? `SL: ${p.sl}` : '';
+        const size = p.size_usdt ? `$${p.size_usdt}` : '';
+        const price = p.live_price ? p.live_price : '—';
+        const tpHits = p.tp_ladder_hits || [];
+        const realizedPnl = p.realized_pnl_usdt || 0;
+        const remaining = p.remaining_fraction != null ? p.remaining_fraction : 1;
+        let ladderTag = '';
+        if (tpHits.length) {
+          const hitLabels = tpHits.map(h => h.replace('_PARTIAL', ''));
+          ladderTag = `<span class="mono" style="background:rgba(255,169,77,0.2);color:#ffa94d;border:1px solid rgba(255,169,77,0.4);border-radius:3px;padding:1px 5px;font-size:9px;" title="Зафиксировано: $${realizedPnl.toFixed(2)} | Осталось: ${(remaining*100).toFixed(0)}%">🪜 ${hitLabels.join('→')}</span>`;
+        }
+        const realizedTag = (realizedPnl > 0.01)
+          ? `<span class="mono text-buy" style="font-size:10px;" title="Уже зафиксировано">💰 $${realizedPnl.toFixed(2)}</span>`
+          : '';
+        const acct = p.account_id ? `<span class="mono" style="background:rgba(0,229,160,0.12);color:#00e5a0;border:1px solid rgba(0,229,160,0.3);border-radius:3px;padding:1px 5px;font-size:9px;">${p.account_id}</span>` : '';
+        const tpStatus = p.tp_order_id ? '<span title="TP ордер на бирже" style="color:#00e5a0;">✓TP</span>' : '<span title="DB-managed TP (на бирже не размещён)" style="color:#ffa94d;font-size:9px;">~TP</span>';
+        const slStatus = p.sl_order_id ? '<span title="SL ордер на бирже" style="color:#00e5a0;">✓SL</span>' : '<span title="DB-managed SL" style="color:#ffa94d;font-size:9px;">~SL</span>';
+        return `<div class="at-pos" data-trade="${p.trade_id}" style="cursor:pointer;flex-wrap:wrap;">
+          <span class="mono" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;background:rgba(255,77,109,0.18);border:1px solid rgba(255,77,109,0.4);font-size:12px;flex-shrink:0;">🔴</span>
+          <span class="mono text-accent fw-700" style="min-width:65px;">${pair}</span>
+          <span>${dirE} ${p.direction}</span>
+          <span class="mono">×${p.leverage || 1}</span>
+          <span class="mono">${size}</span>
+          <span class="mono">Entry: ${p.entry}</span>
+          <span class="mono text-muted">Now: ${price}</span>
+          <span class="mono ${pnlCls} fw-700">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%</span>
+          ${ladderTag}${realizedTag}
+          <span class="mono" style="font-size:9px;">${tpStatus} ${slStatus}</span>
+          ${acct}
+          <span class="mono text-muted" style="font-size:10px;">${p.source || ''}</span>
+          <span class="mono text-buy" style="font-size:9px;">${tp}</span>
+          <span class="mono text-sell" style="font-size:9px;">${sl}</span>
+          <button onclick="event.stopPropagation();closeLivePosition(${p.trade_id}, '${pair}', '${p.account_id||''}', ${pnl.toFixed(2)})" style="margin-left:auto;background:transparent;color:#ff4d6d;border:1px solid rgba(255,77,109,0.4);border-radius:5px;padding:3px 9px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">✕ Закрыть</button>
+        </div>`;
+      }).join('');
+    }
+  } catch (e) {
+    console.error('loadLiveSnapshot fail:', e);
+  }
+}
+
+async function loadLiveHistory() {
+  try {
+    const r = await fetch('/api/live/history-all?limit=200');
+    const d = await r.json();
+    const div = document.getElementById('liveHistory');
+    if (!d.ok || !d.items.length) {
+      div.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых live сделок</div>';
+      return;
+    }
+    div.innerHTML = d.items.map(t => {
+      const pnl = t.pnl_usdt || 0;
+      const pnlPct = t.pnl_pct || 0;
+      const pnlCls = pnl >= 0 ? 'text-buy' : 'text-sell';
+      const pair = t.symbol ? t.symbol.replace('USDT', '') : '?';
+      const dirE = t.direction === 'LONG' ? '🟢' : '🔴';
+      const reasonColor = {'TP':'#00e5a0','SL':'#ff4d6d','MANUAL':'#999','BE':'#00d4ff','TRAIL':'#ffa94d','AI_CLOSE':'#a78bfa'}[t.status] || '#999';
+      const closedAt = t.closed_at ? new Date(t.closed_at).toLocaleString('ru-RU', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}) : '';
+      const acct = t.account_id ? `<span class="mono" style="background:rgba(0,229,160,0.10);color:#00e5a0;border-radius:3px;padding:0 4px;font-size:9px;">${t.account_id}</span>` : '';
+      return `<div class="at-pos" style="border-bottom:1px solid rgba(255,255,255,0.04);">
+        <span class="mono text-accent fw-700" style="min-width:55px;">${pair}</span>
+        <span>${dirE} ${t.direction}</span>
+        <span class="mono">×${t.leverage || 1}</span>
+        <span class="mono" style="font-size:10px;">${t.entry} → ${t.exit_price || '—'}</span>
+        <span class="mono ${pnlCls} fw-700">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</span>
+        <span class="mono ${pnlCls}" style="font-size:10px;">(${pnlPct >= 0 ? '+' : ''}${pnlPct}%)</span>
+        <span class="mono" style="background:${reasonColor}20;color:${reasonColor};border:1px solid ${reasonColor}55;border-radius:3px;padding:1px 5px;font-size:9px;">${t.status}</span>
+        ${acct}
+        <span class="mono text-muted" style="font-size:9px;">${t.source || ''}</span>
+        <span class="mono text-muted" style="font-size:9px;margin-left:auto;">${closedAt}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    console.error('loadLiveHistory fail:', e);
+  }
+}
+
+async function loadLiveRejections() {
+  try {
+    const r = await fetch('/api/live/rejections-all?limit=100');
+    const d = await r.json();
+    const meta = document.getElementById('liveRejMeta');
+    const body = document.getElementById('liveRejBody');
+    if (meta) meta.textContent = d.count ? `${d.count} попыток` : '0';
+    if (!d.ok || !d.items.length) {
+      if (body) body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:11px;">Нет неудачных попыток</div>';
+      return;
+    }
+    if (body) body.innerHTML = d.items.map(t => {
+      const sym = t.symbol || '?';
+      const dir = t.direction || '?';
+      const reason = t.fail_reason || 'unknown';
+      const at = t.opened_at ? new Date(t.opened_at).toLocaleString('ru-RU', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}) : '';
+      // Маппинг кодов на иконки
+      let icon = '⚠️';
+      if (reason.includes('-1121') || reason.includes('Invalid symbol')) icon = '📛';
+      else if (reason.includes('-2019') || reason.includes('Insufficient') || reason.includes('insufficient margin')) icon = '💰';
+      else if (reason.includes('-4005') || reason.includes('max quantity')) icon = '📏';
+      else if (reason.includes('INACTIVE') || reason.includes('not listed')) icon = '🚫';
+      return `<div style="padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.04);display:flex;align-items:center;gap:10px;font-size:11px;font-family:var(--font-mono);">
+        <span style="font-size:14px;">${icon}</span>
+        <span style="color:var(--text);font-weight:600;min-width:80px;">${sym} ${dir}</span>
+        <span style="color:var(--muted);font-size:10px;flex:1;">${reason.substring(0, 200)}</span>
+        <span style="color:var(--muted);font-size:9px;">${at}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    console.error('loadLiveRejections fail:', e);
+  }
+}
+
+function toggleLiveRejections() {
+  const body = document.getElementById('liveRejBody');
+  const arrow = document.getElementById('liveRejArrow');
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
+}
+
+async function closeLivePosition(tradeId, pair, accountId, pnl) {
+  if (!confirm(`Закрыть live #${tradeId} ${pair} (${accountId})?\n\nТекущий PnL: ${pnl}%\n\nЗакроется по рыночной цене на бирже.`)) return;
+  try {
+    const r = await fetch(`/api/live/close`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({trade_id: tradeId})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      alert(`✅ Закрыто. PnL: ${d.pnl_pct}% ($${d.pnl_usdt})`);
+      loadLiveSnapshot();
+      loadLiveHistory();
+    } else {
+      alert(`❌ ${d.error || 'fail'}`);
+    }
+  } catch (e) { alert('Сеть недоступна: ' + e); }
+}
+
+async function closeAllLivePositions() {
+  if (!confirm(`⚠️ Закрыть ВСЕ live позиции?\n\nЗакроет market reduceOnly на бирже + пометит как MANUAL в DB. Действие необратимо.`)) return;
+  try {
+    const r = await fetch('/api/admin/close-all-exchange-positions', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({})  // пустой = все enabled аккаунты
+    });
+    const d = await r.json();
+    alert(d.ok ? `✅ Закрыто ${d.closed_count}, ошибок ${d.failed_count}` : `❌ ${d.error}`);
+    loadLiveSnapshot();
+    loadLiveHistory();
+  } catch (e) { alert('Сеть: ' + e); }
+}
+
+// Auto-refresh live tab каждые 30с (только когда активен)
+setInterval(() => {
+  const realTab = document.querySelector('[data-trading-tab="real"]');
+  if (realTab && realTab.style.display !== 'none') {
+    loadLiveSnapshot();
+  }
+}, 30000);
+
 async function loadPaperStatus() {
   try {
     const r = await fetch('/api/paper/status');

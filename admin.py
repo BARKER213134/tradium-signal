@@ -2440,9 +2440,21 @@ async def api_admin_close_all_exchange_positions(payload: dict | None = None):
     payload: {"account_id":"super_testnet"}
     """
     pl = payload or {}
-    aid = pl.get("account_id") or "super_testnet"
+    aid = pl.get("account_id")
     import live_trader as lt
     import live_safety as ls
+    if not aid:
+        # Все enabled аккаунты
+        all_results = []
+        for acc in ls.get_enabled_accounts():
+            r = await api_admin_close_all_exchange_positions({"account_id": acc.get("_id")})
+            all_results.append(r)
+        return {
+            "ok": True,
+            "closed_count": sum((r.get("closed_count") or 0) for r in all_results),
+            "failed_count": sum((r.get("failed_count") or 0) for r in all_results),
+            "by_account": all_results,
+        }
     acc = ls.get_account(aid)
     if not acc:
         return {"ok": False, "error": f"account {aid} not found"}
