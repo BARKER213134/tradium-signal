@@ -3351,6 +3351,7 @@ async function loadLiveSnapshot() {
     const totalEl = document.getElementById('liveTotal');
 
     const hasAccounts = d.count_accounts > 0;
+    const tabReal = document.getElementById('tabStatReal');
     if (!hasAccounts) {
       balanceEl.textContent = '—';
       balanceEl.style.color = 'var(--muted)';
@@ -3359,7 +3360,6 @@ async function loadLiveSnapshot() {
       openEl.textContent = '0/0';
       wrEl.textContent = '—';
       totalEl.textContent = '0';
-      const tabReal = document.getElementById('tabStatReal');
       if (tabReal) tabReal.textContent = 'нет аккаунтов';
     } else {
       balanceEl.textContent = '$' + d.total_balance.toLocaleString('en', {minimumFractionDigits: 2});
@@ -3371,8 +3371,12 @@ async function loadLiveSnapshot() {
       wrEl.textContent = d.stats.total ? d.stats.win_rate + '%' : '—';
       wrEl.className = 'at-card-value ' + (d.stats.win_rate >= 50 ? 'text-buy' : d.stats.total ? 'text-sell' : '');
       totalEl.textContent = d.stats.total;
-      const tabReal = document.getElementById('tabStatReal');
-      if (tabReal) tabReal.textContent = '$' + d.total_balance.toLocaleString('en', {maximumFractionDigits: 0});
+      if (tabReal) {
+        const posStr = d.open_count > 0
+          ? `<span style="background:rgba(255,77,109,0.22);color:#ff8c8c;padding:2px 7px;border-radius:6px;font-weight:700;margin-left:6px;">${d.open_count}</span>`
+          : `<span style="color:var(--muted);margin-left:6px;">0</span>`;
+        tabReal.innerHTML = '$' + d.total_balance.toLocaleString('en', {maximumFractionDigits: 0}) + posStr;
+      }
     }
 
     // Open positions
@@ -3546,13 +3550,25 @@ async function closeAllLivePositions() {
   } catch (e) { alert('Сеть: ' + e); }
 }
 
-// Auto-refresh live tab каждые 30с (только когда активен)
+// Auto-refresh:
+//  • полная подгрузка снапшота когда real tab активен — каждые 30с
+//  • счётчики табов (paper + live) обновляются всегда — каждые 30с (paper уже грузится через loadPaperStatus,
+//    а live snapshot дёргаем отдельно для счётчика, даже из paper tab)
 setInterval(() => {
   const realTab = document.querySelector('[data-trading-tab="real"]');
   if (realTab && realTab.style.display !== 'none') {
     loadLiveSnapshot();
+  } else {
+    // Real tab не активен → подгрузим только snapshot для счётчика на табе
+    loadLiveSnapshot();
   }
 }, 30000);
+
+// Первая загрузка live-snapshot после DOMContentLoaded — чтобы счётчик
+// показал актуальные данные сразу, не дожидаясь первого тика
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => { try { loadLiveSnapshot(); } catch(_) {} }, 500);
+});
 
 // ════════════════════════════════════════════════════════════════
 // Binance Futures symbols registry
@@ -3632,9 +3648,15 @@ async function loadPaperStatus() {
 
     document.getElementById('atBalance').textContent = '$' + d.balance.toLocaleString('en',{minimumFractionDigits:2});
     document.getElementById('atBalance').className = 'at-card-value ' + (d.pnl_pct >= 0 ? 'text-buy' : 'text-sell');
-    // Обновляем tab-stat для Paper таба
+    // Обновляем tab-stat для Paper таба: баланс + счётчик позиций
     const tabPaper = document.getElementById('tabStatPaper');
-    if (tabPaper) tabPaper.textContent = '$' + d.balance.toLocaleString('en',{maximumFractionDigits:0});
+    if (tabPaper) {
+      const openCnt = d.positions ? d.positions.length : 0;
+      const posStr = openCnt > 0
+        ? `<span style="background:rgba(0,229,160,0.18);color:#00e5a0;padding:2px 7px;border-radius:6px;font-weight:700;margin-left:6px;">${openCnt}</span>`
+        : `<span style="color:var(--muted);margin-left:6px;">0</span>`;
+      tabPaper.innerHTML = '$' + d.balance.toLocaleString('en',{maximumFractionDigits:0}) + posStr;
+    }
     document.getElementById('atPnl').textContent = (d.pnl_pct >= 0 ? '+' : '') + d.pnl_pct + '%';
     document.getElementById('atPnl').className = 'at-card-value ' + (d.pnl_pct >= 0 ? 'text-buy' : 'text-sell');
     document.getElementById('atOpen').textContent = d.positions.length + '/10';
