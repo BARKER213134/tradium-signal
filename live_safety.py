@@ -56,17 +56,19 @@ SAFETY_PRESETS = {
         "max_position_usd": 3000,
         "min_balance_usd": 50,
     },
-    # Зеркало paper-trader: точные те же лимиты что в paper-режиме.
-    # Используется только для testnet (для real слишком агрессивно).
+    # Зеркало paper-trader: ТОЧНЫЕ те же лимиты что в paper.
+    # max_positions=10 (== paper_trader.MAX_POSITIONS), max_size_pct=15%
+    # (== mode.aggressive), max_leverage=9 (== mode.aggressive maximum).
+    # Любое изменение в paper-логике должно отражаться здесь.
     "paper_mirror": {
-        "label": "🪞 Paper Mirror (testnet only)",
-        "max_positions": 7,
-        "max_size_pct": 15.0,
-        "max_leverage": 9,
+        "label": "🪞 Paper Mirror — точная копия paper",
+        "max_positions": 10,         # = paper_trader.MAX_POSITIONS
+        "max_size_pct": 15.0,        # = paper aggressive max
+        "max_leverage": 9,           # = paper aggressive max
         "daily_loss_limit_pct": -20.0,
         "max_drawdown_pct": -30.0,
-        "min_interval_minutes": 0,
-        "max_position_usd": 5000,
+        "min_interval_minutes": 0,   # paper не имеет min interval
+        "max_position_usd": 10000,
         "min_balance_usd": 50,
     },
     # Для реального капитала — половина рисков paper'а.
