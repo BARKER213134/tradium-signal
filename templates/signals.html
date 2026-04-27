@@ -3136,83 +3136,147 @@ safeInterval(loadConflicts, 30000);
     </div>
   </div>
 
-  <!-- Add account modal -->
-  <div id="atAddAccountModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;padding:20px;">
-    <div style="background:#0d121a;border:1px solid rgba(0,212,255,0.4);border-radius:12px;padding:20px;max-width:500px;width:100%;font-family:var(--font-mono);font-size:12px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-        <div style="color:var(--cyan);font-weight:700;font-size:14px;">+ Новый live аккаунт</div>
-        <button onclick="closeAddAccountModal()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;">✕</button>
-      </div>
-      <!-- Скрытый трюк: фейковые поля чтобы браузер не автозаполнял реальные API key/secret -->
-      <div style="display:none;" aria-hidden="true">
-        <input type="text" name="fakeusernameremembered" autocomplete="username">
-        <input type="password" name="fakepasswordremembered" autocomplete="current-password">
-      </div>
-      <form autocomplete="off" onsubmit="return false;" style="display:grid;gap:10px;">
-        <label style="display:grid;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">ID (alphanum/_/-)*</span>
-          <input id="acc_id" name="bnx_acc_id_unique" type="text" placeholder="super_real"
-                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-form-type="other" data-lpignore="true"
-                 style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
-        </label>
-        <label style="display:grid;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">Владелец</span>
-          <input id="acc_owner" name="bnx_acc_owner_unique" type="text" placeholder="Super"
-                 autocomplete="off" data-lpignore="true"
-                 style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
-        </label>
-        <label style="display:grid;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">Подпись (опционально)</span>
-          <input id="acc_label" name="bnx_acc_label_unique" type="text" placeholder="Super · real · paper-mirror"
-                 autocomplete="off" data-lpignore="true"
-                 style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
-        </label>
-        <!-- Биржа жёстко = BingX (Binance временно отключена, можно вернуть в коде) -->
-        <input type="hidden" id="acc_exchange" value="bingx">
-        <label style="display:grid;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">Режим*</span>
-          <select id="acc_mode" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
-            <option value="real" selected>🔴 real (реальные деньги!)</option>
-            <option value="testnet">🧪 testnet (только Binance, тренировка)</option>
-          </select>
-        </label>
-        <div style="background:rgba(255,77,109,0.08);border:1px solid rgba(255,77,109,0.3);border-radius:6px;padding:8px 10px;font-size:10.5px;color:#ff8c32;line-height:1.5;">
-          ⚠️ <b>API ключи Binance Futures:</b><br>
-          → Включи <b>Enable Futures</b> + <b>Trading</b><br>
-          → <b>НЕ включай</b> Withdrawals<br>
-          → Запиши IP whitelist (Railway: 0.0.0.0/0 если нет статики)<br>
-          → Хранятся в зашифрованной MongoDB
+  <!-- Add account modal — современный дизайн -->
+  <style>
+    .acc-modal-bg { display:none; position:fixed; inset:0; background:rgba(5,7,12,0.85); backdrop-filter:blur(8px); z-index:1000; align-items:center; justify-content:center; padding:20px; }
+    .acc-modal { background:linear-gradient(180deg, #0e1420 0%, #0a0e14 100%); border:1px solid rgba(0,229,160,0.3); border-radius:16px; padding:0; max-width:520px; width:100%; font-family:var(--font-mono); font-size:12px; box-shadow:0 24px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,229,160,0.1), 0 0 80px rgba(0,229,160,0.08); max-height:90vh; overflow-y:auto; }
+    .acc-modal-header { padding:18px 22px 14px 22px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; background:linear-gradient(135deg, rgba(0,229,160,0.06), transparent); border-radius:16px 16px 0 0; }
+    .acc-modal-header .title { display:flex; align-items:center; gap:10px; }
+    .acc-modal-header .title-icon { font-size:20px; }
+    .acc-modal-header .title-text { color:#00e5a0; font-weight:800; font-size:14px; letter-spacing:0.05em; }
+    .acc-modal-header .title-sub { color:var(--muted); font-size:10px; margin-top:2px; }
+    .acc-modal-close { background:none; border:none; color:var(--muted); cursor:pointer; font-size:22px; line-height:1; padding:4px 8px; border-radius:6px; transition:all 0.15s; }
+    .acc-modal-close:hover { background:rgba(255,77,109,0.12); color:#ff4d6d; }
+    .acc-modal-body { padding:18px 22px 22px 22px; display:grid; gap:14px; }
+    .acc-section-label { color:#00d4ff; font-size:9px; font-weight:800; letter-spacing:0.18em; text-transform:uppercase; margin-bottom:-6px; padding-top:4px; }
+    .acc-field { display:grid; gap:5px; }
+    .acc-field-label { color:var(--text-2); font-size:11px; display:flex; align-items:center; gap:6px; }
+    .acc-field-label .req { color:#ff4d6d; }
+    .acc-field-hint { color:var(--muted); font-size:9.5px; font-weight:400; }
+    .acc-input { background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:9px 12px; color:var(--text); font-family:var(--font-mono); font-size:12px; transition:all 0.15s; }
+    .acc-input:focus { outline:none; border-color:rgba(0,229,160,0.5); box-shadow:0 0 0 3px rgba(0,229,160,0.08); background:rgba(0,0,0,0.55); }
+    .acc-input::placeholder { color:rgba(255,255,255,0.18); }
+    .acc-select { background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:9px 12px; color:var(--text); font-family:var(--font-mono); font-size:12px; cursor:pointer; }
+    .acc-permissions { background:linear-gradient(135deg, rgba(255,184,77,0.05), rgba(255,77,109,0.04)); border:1px solid rgba(255,184,77,0.25); border-left:3px solid #ffb84d; border-radius:8px; padding:12px 14px; font-size:11px; line-height:1.7; color:var(--text-2); }
+    .acc-permissions .pheader { color:#ffb84d; font-weight:800; font-size:10.5px; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:6px; }
+    .acc-permissions .pcheck { color:#00e5a0; }
+    .acc-permissions .pcross { color:#ff4d6d; }
+    .acc-permissions code { background:rgba(0,0,0,0.4); padding:1px 5px; border-radius:3px; font-size:10px; color:#ffd23e; }
+    .acc-actions { display:flex; gap:10px; margin-top:6px; }
+    .acc-btn-primary { flex:1; background:linear-gradient(135deg,#00e5a0,#00d4ff); color:#0a0e14; border:none; border-radius:9px; padding:11px 18px; font-size:13px; font-family:var(--font-mono); font-weight:800; letter-spacing:0.05em; cursor:pointer; transition:all 0.15s; box-shadow:0 4px 12px rgba(0,229,160,0.25); }
+    .acc-btn-primary:hover { transform:translateY(-1px); box-shadow:0 6px 18px rgba(0,229,160,0.4); }
+    .acc-btn-secondary { background:transparent; border:1px solid rgba(255,255,255,0.12); border-radius:9px; padding:11px 18px; font-size:12px; font-family:var(--font-mono); cursor:pointer; color:var(--muted); transition:all 0.15s; }
+    .acc-btn-secondary:hover { border-color:rgba(255,77,109,0.4); color:#ff8c8c; }
+    .acc-exchange-badge { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; background:rgba(0,229,160,0.12); border:1px solid rgba(0,229,160,0.35); border-radius:999px; color:#00e5a0; font-size:11px; font-weight:700; }
+  </style>
+  <div id="atAddAccountModal" class="acc-modal-bg">
+    <div class="acc-modal">
+      <!-- Header -->
+      <div class="acc-modal-header">
+        <div class="title">
+          <span class="title-icon">🟢</span>
+          <div>
+            <div class="title-text">Новый Live аккаунт</div>
+            <div class="title-sub">BingX Perpetual Futures · реальные деньги</div>
+          </div>
         </div>
-        <label style="display:grid;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">API Key* <span style="color:#ffa94d;font-size:9px;">(64 символа из Binance)</span></span>
-          <input id="acc_api_key" name="bnx_apik_unique_z9" type="text" placeholder="вставь API Key из Binance"
-                 autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-form-type="other" data-lpignore="true"
-                 style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:11px;">
-        </label>
-        <label style="display:grid;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">API Secret* <span style="color:#ffa94d;font-size:9px;">(показывается только один раз!)</span></span>
-          <input id="acc_api_secret" name="bnx_apis_unique_z9" type="password" placeholder="вставь API Secret из Binance"
-                 autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-form-type="other" data-lpignore="true"
-                 style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:11px;">
-        </label>
-        <label style="display:grid;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">Safety preset</span>
-          <select id="acc_preset" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
-            <option value="paper_mirror" selected>🪞 Paper Mirror — точная копия paper (9× lev, 15% size, 7 поз)</option>
-            <option value="real_safe">🟢 Real Safe — для осторожного старта (5× lev, 5% size, 5 поз)</option>
-            <option value="real_aggressive">🔴 Real Aggressive — после 50+ сделок (7× lev, 10% size, 7 поз)</option>
-            <option value="aggressive">🔥 Aggressive (5× lev, 10% size, 3 поз)</option>
-            <option value="moderate">⚖️ Moderate (3× lev, 5% size, 2 поз)</option>
-            <option value="conservative">🛡️ Conservative (2× lev, 3% size, 1 поз)</option>
-          </select>
-        </label>
-        <div style="display:flex;gap:8px;margin-top:8px;">
-          <button type="button" onclick="submitAddAccount()" style="flex:1;background:linear-gradient(135deg,rgba(0,229,160,0.3),rgba(0,212,255,0.15));color:#00e5a0;border:1px solid rgba(0,229,160,0.6);border-radius:8px;padding:8px 16px;font-size:12px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">✓ Создать</button>
-          <button type="button" onclick="closeAddAccountModal()" style="background:transparent;border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;color:var(--muted);">Отмена</button>
+        <button class="acc-modal-close" onclick="closeAddAccountModal()">✕</button>
+      </div>
+
+      <!-- Body -->
+      <div class="acc-modal-body">
+        <!-- Decoy для anti-autofill -->
+        <div style="display:none;" aria-hidden="true">
+          <input type="text" name="fakeusernameremembered" autocomplete="username">
+          <input type="password" name="fakepasswordremembered" autocomplete="current-password">
         </div>
-      </form>
-    </div>
-  </div>
+        <form autocomplete="off" onsubmit="return false;" style="display:grid;gap:14px;">
+
+          <!-- Section: Identification -->
+          <div class="acc-section-label">📋 Идентификация</div>
+
+          <div class="acc-field">
+            <span class="acc-field-label">ID аккаунта<span class="req">*</span> <span class="acc-field-hint">(alphanum + _ -)</span></span>
+            <input id="acc_id" name="bnx_acc_id_unique" type="text" placeholder="super_real"
+                   autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-form-type="other" data-lpignore="true"
+                   class="acc-input">
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="acc-field">
+              <span class="acc-field-label">Владелец</span>
+              <input id="acc_owner" name="bnx_acc_owner_unique" type="text" placeholder="Super"
+                     autocomplete="off" data-lpignore="true" class="acc-input">
+            </div>
+            <div class="acc-field">
+              <span class="acc-field-label">Режим<span class="req">*</span></span>
+              <select id="acc_mode" class="acc-select">
+                <option value="real" selected>🔴 real</option>
+                <option value="testnet">🧪 testnet</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="acc-field">
+            <span class="acc-field-label">Подпись <span class="acc-field-hint">(опционально)</span></span>
+            <input id="acc_label" name="bnx_acc_label_unique" type="text" placeholder="Super · real · paper-mirror"
+                   autocomplete="off" data-lpignore="true" class="acc-input">
+          </div>
+
+          <input type="hidden" id="acc_exchange" value="bingx">
+
+          <!-- Section: API keys -->
+          <div class="acc-section-label" style="margin-top:8px;">🔐 BingX API ключи</div>
+
+          <div class="acc-permissions">
+            <div class="pheader">⚠️ Создание API на BingX</div>
+            <div><span class="pcheck">✓</span> Включи <b>Read</b> + <b>Perpetual Futures Trading</b></div>
+            <div><span class="pcross">✗</span> <b>НЕ включай Withdraw</b> (категорически!)</div>
+            <div><span class="pcross">✗</span> НЕ включай Universal Transfer</div>
+            <div style="margin-top:6px;color:var(--muted);font-size:10px;">
+              IP whitelist: оставь пустым ИЛИ <code>0.0.0.0/0</code><br>
+              🔒 Ключи хранятся в зашифрованной MongoDB, секрет недоступен после сохранения
+            </div>
+          </div>
+
+          <div class="acc-field">
+            <span class="acc-field-label">API Key<span class="req">*</span></span>
+            <input id="acc_api_key" name="bnx_apik_unique_z9" type="text" placeholder="вставь API Key из BingX"
+                   autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-form-type="other" data-lpignore="true"
+                   class="acc-input">
+          </div>
+
+          <div class="acc-field">
+            <span class="acc-field-label">API Secret<span class="req">*</span> <span class="acc-field-hint" style="color:#ffa94d;">(показывается один раз — скопируй сразу!)</span></span>
+            <input id="acc_api_secret" name="bnx_apis_unique_z9" type="password" placeholder="вставь API Secret из BingX"
+                   autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-form-type="other" data-lpignore="true"
+                   class="acc-input">
+          </div>
+
+          <!-- Section: Preset -->
+          <div class="acc-section-label" style="margin-top:8px;">🛡 Safety Preset</div>
+
+          <div class="acc-field">
+            <span class="acc-field-label">Стратегия рисков</span>
+            <select id="acc_preset" class="acc-select">
+              <option value="paper_mirror" selected>🪞 Paper Mirror — точная копия paper (9× lev, 15% size, 7 поз)</option>
+              <option value="real_safe">🟢 Real Safe — для осторожного старта (5× lev, 5% size, 5 поз)</option>
+              <option value="real_aggressive">🔴 Real Aggressive — после 50+ сделок (7× lev, 10% size, 7 поз)</option>
+              <option value="aggressive">🔥 Aggressive (5× lev, 10% size, 3 поз)</option>
+              <option value="moderate">⚖️ Moderate (3× lev, 5% size, 2 поз)</option>
+              <option value="conservative">🛡️ Conservative (2× lev, 3% size, 1 поз)</option>
+            </select>
+          </div>
+
+          <!-- Actions -->
+          <div class="acc-actions">
+            <button type="button" onclick="submitAddAccount()" class="acc-btn-primary">✓ Создать аккаунт</button>
+            <button type="button" onclick="closeAddAccountModal()" class="acc-btn-secondary">Отмена</button>
+          </div>
+        </form>
+      </div><!-- /acc-modal-body -->
+    </div><!-- /acc-modal -->
+  </div><!-- /atAddAccountModal -->
   <!-- ═══ /Live аккаунты panel (modal закрыт) ═══ -->
 
   <!-- ═══ BingX symbols registry (Binance скрыт — backend готов если понадобится) ═══ -->
@@ -4789,14 +4853,16 @@ function openAddAccountModal() {
       el.setAttribute('readonly', 'readonly'); // временно блокируем autofill
     }
   }
-  document.getElementById('atAddAccountModal').style.display = 'flex';
+  const modal = document.getElementById('atAddAccountModal');
+  modal.style.display = 'flex';
   // Через 100мс снимаем readonly — браузер уже не будет авто-заполнять
   setTimeout(() => {
     for (const id of ['acc_id','acc_owner','acc_label','acc_api_key','acc_api_secret']) {
       const el = document.getElementById(id);
       if (el) el.removeAttribute('readonly');
     }
-    document.getElementById('acc_id').focus();
+    const idEl = document.getElementById('acc_id');
+    if (idEl) idEl.focus();
   }, 100);
 }
 function closeAddAccountModal() {
@@ -4806,6 +4872,21 @@ function closeAddAccountModal() {
     if (el) el.value = '';
   }
 }
+
+// Закрывать модалку по клику на фон + по Esc
+document.addEventListener('DOMContentLoaded', () => {
+  const modal = document.getElementById('atAddAccountModal');
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeAddAccountModal();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal && modal.style.display === 'flex') {
+      closeAddAccountModal();
+    }
+  });
+});
 
 async function submitAddAccount() {
   const exEl = document.getElementById('acc_exchange');
