@@ -598,16 +598,51 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
     original_symbol = symbol  # Например "ETHUSDT"
     canonical_symbol = symbol
     if getattr(ex, "markets", None):
+        # ccxt для BingX использует unified format 'ETH/USDT:USDT'.
+        # Сигнал symbol = 'ETHUSDT' — пробуем несколько форматов чтобы найти правильный.
+        mkt_lookup = None
+        # 1. Прямой lookup
         try:
             mkt_lookup = ex.market(symbol)
-            if mkt_lookup:
-                if mkt_lookup.get("active") is False:
-                    return {"ok": False,
-                            "error": f"symbol {symbol} is INACTIVE on {account.get('mode','testnet')} (delisted)"}
-                canonical_symbol = mkt_lookup["symbol"]  # для ccxt API
         except Exception:
+            mkt_lookup = None
+        # 2. По markets_by_id (BingX id = 'ETH-USDT', но иногда совпадает с XXXUSDT)
+        if not mkt_lookup and getattr(ex, "markets_by_id", None):
+            id_match = ex.markets_by_id.get(symbol)
+            if id_match:
+                if isinstance(id_match, list):
+                    for m in id_match:
+                        if m and (m.get("swap") or m.get("type") == "swap"):
+                            mkt_lookup = m; break
+                    if not mkt_lookup and id_match:
+                        mkt_lookup = id_match[0]
+                else:
+                    mkt_lookup = id_match
+        # 3. Перебор форматов: ETH/USDT:USDT, ETH/USDT, ETH-USDT
+        if not mkt_lookup and symbol.endswith("USDT"):
+            base = symbol[:-4]
+            for try_sym in (f"{base}/USDT:USDT", f"{base}/USDT", f"{base}-USDT"):
+                try:
+                    mkt_lookup = ex.market(try_sym)
+                    if mkt_lookup: break
+                except Exception:
+                    continue
+        # 4. Полный sweep по markets — найти market с подходящим id
+        if not mkt_lookup:
+            for canon, m in (ex.markets or {}).items():
+                if not m: continue
+                mid = (m.get("id") or "").upper().replace("-", "").replace("/", "").replace(":USDT", "")
+                if mid == symbol and (m.get("swap") or m.get("type") == "swap"):
+                    mkt_lookup = m; break
+
+        if mkt_lookup:
+            if mkt_lookup.get("active") is False:
+                return {"ok": False,
+                        "error": f"symbol {symbol} is INACTIVE on {account.get('mode','real')} (delisted)"}
+            canonical_symbol = mkt_lookup["symbol"]  # для ccxt API
+        else:
             return {"ok": False,
-                    "error": f"symbol {symbol} not listed on {account.get('mode','testnet')} (skip: not-supported)"}
+                    "error": f"symbol {symbol} not listed on {account.get('mode','real')} (skip: not-supported)"}
     # symbol используется в ccxt-вызовах, original_symbol в DB
     symbol = canonical_symbol
 
