@@ -3051,6 +3051,45 @@ async def _paper_to_live_mirror_loop():
         await _asyncio.sleep(15)
 
 
+async def _ui_prewarm_loop():
+    """Прогреваем кеши тяжёлых endpoint'ов которые вызываются на /signals
+    page load: market-phase / reversal-meter / pending-clusters.
+    Без этого первая загрузка после cold-start = 30-60с тупения."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(30)  # дать watcher подняться сначала
+
+    async def _warm_one(name, coro_factory):
+        try:
+            await _asyncio.wait_for(coro_factory(), timeout=25.0)
+        except _asyncio.TimeoutError:
+            logger.debug(f"[ui-prewarm] {name} timeout")
+        except Exception as e:
+            logger.debug(f"[ui-prewarm] {name} fail: {e}")
+
+    while True:
+        try:
+            # market-phase (120s TTL)
+            await _warm_one("market-phase", lambda: _asyncio.to_thread(
+                __import__("market_phase").get_market_phase, False
+            ))
+            # pending-clusters (90s TTL)
+            async def _pc():
+                from cluster_detector import get_pending_clusters
+                await _asyncio.to_thread(get_pending_clusters, 50)
+            await _warm_one("pending-clusters", _pc)
+            # reversal-meter (cache via cache_utils, ~60s TTL)
+            try:
+                async def _rm():
+                    from reversal_meter import compute as _rm_compute
+                    await _asyncio.to_thread(_rm_compute)
+                await _warm_one("reversal-meter", _rm)
+            except ImportError:
+                pass  # модуль может отсутствовать
+        except Exception:
+            logger.debug("[ui-prewarm] loop error", exc_info=True)
+        await _asyncio.sleep(60)  # обновляем кеш каждые 60с (TTL некоторых = 60-120с)
+
+
 async def _live_balance_refresh_loop():
     """Каждые 5 минут подтягивает реальный exchange balance в account.balance.
     Это гарантирует что UI показывает актуальный free на бирже, не paper-balance."""
@@ -3189,6 +3228,12 @@ async def start_watcher():
         logger.info("[live-balance-refresh] background loop started")
     except Exception:
         logger.exception("[live-balance-refresh] failed to start loop")
+    # UI prewarm — прогрев тяжёлых endpoint'ов после cold-start
+    try:
+        asyncio.create_task(_ui_prewarm_loop())
+        logger.info("[ui-prewarm] background loop started")
+    except Exception:
+        logger.exception("[ui-prewarm] failed to start loop")
     # [ОТКЛЮЧЕНО] AI memory refresh + AI review open positions —
     # система переведена на rule-based (Entry Checker 8 проверок + TP ladder).
     # AI больше не используется для торговых решений.
