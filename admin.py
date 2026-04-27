@@ -248,7 +248,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
             "/api/paper/test-open", "/api/live/debug-recent", "/api/paper/status",
             "/api/admin/cleanup-tests", "/api/admin/wipe-live-trades",
-            "/api/admin/recompute-paper-balance",
+            "/api/admin/recompute-paper-balance", "/api/admin/backfill-mirror",
             "/api/paper/clear-ai-memory",
             "/api/paper/rejections", "/api/paper/be-audit", "/api/paper/close-all",
             "/api/paper/history",
@@ -2279,6 +2279,75 @@ async def api_paper_rejections(limit: int = 50):
 
     items = await paper_rejections_cache.get_or_compute(f"limit_{limit}", _compute)
     return {"ok": True, "count": len(items), "items": items}
+
+
+@app.post("/api/admin/backfill-mirror")
+async def api_admin_backfill_mirror(payload: dict | None = None):
+    """Прогнать mirror на live-аккаунты для уже открытых paper-позиций
+    у которых нет соответствующего live-трейда. Используется когда mirror
+    провалился по сетевой ошибке или неактуальной логике.
+    """
+    pl = payload or {}
+    account_id_filter = pl.get("account_id")  # optional, иначе все enabled
+
+    import paper_trader as pt
+    import live_safety as ls
+    import live_trader as lt
+    from database import _live_trades
+
+    accounts = ls.get_enabled_accounts()
+    if account_id_filter:
+        accounts = [a for a in accounts if a.get("_id") == account_id_filter]
+    if not accounts:
+        return {"ok": False, "error": "no enabled accounts"}
+
+    paper_open = pt.get_open_positions()
+    results = []
+    for acc in accounts:
+        aid = acc.get("_id")
+        for p in paper_open:
+            ptid = p.get("trade_id")
+            existing = _live_trades().find_one({
+                "account_id": aid,
+                "$or": [
+                    {"paper_trade_id": ptid},
+                    {"symbol": p.get("symbol"), "direction": p.get("direction")},
+                ],
+            })
+            if existing:
+                results.append({"account": aid, "paper_id": ptid,
+                                "symbol": p.get("symbol"),
+                                "skipped": f"existing trade #{existing.get('trade_id')} status={existing.get('status')}"})
+                continue
+            sig = {
+                "symbol": p.get("symbol"),
+                "pair": p.get("pair") or p.get("symbol", "").replace("USDT", "/USDT"),
+                "direction": p.get("direction"),
+                "entry": p.get("entry"),
+                "source": p.get("source", "backfill"),
+                "paper_trade_id": ptid,
+            }
+            decision = {
+                "enter": True,
+                "leverage": p.get("leverage", 5),
+                "size_pct": p.get("size_pct", 3),
+                "tp1": p.get("tp1"),
+                "sl": p.get("sl"),
+                "reasoning": p.get("ai_reasoning", "") + " [BACKFILL]",
+            }
+            try:
+                r = await lt.mirror_paper_for_account(sig, decision, acc)
+                results.append({
+                    "account": aid, "paper_id": ptid,
+                    "symbol": p.get("symbol"), "direction": p.get("direction"),
+                    "result": {"ok": r.get("ok") if r else None,
+                               "error": r.get("error") if r else None,
+                               "live_trade_id": (r.get("trade") or {}).get("trade_id") if r and r.get("ok") else None},
+                })
+            except Exception as e:
+                results.append({"account": aid, "paper_id": ptid,
+                                "symbol": p.get("symbol"), "error": str(e)[:300]})
+    return {"ok": True, "results": results}
 
 
 @app.post("/api/admin/recompute-paper-balance")
@@ -5170,18 +5239,20 @@ async def api_paper_status():
     stats = pt.get_stats()
     # Текущие цены для PnL
     from exchange import get_prices_any
-    # Cross-reference: для каждой paper-позиции — какие live-аккаунты тоже
-    # имеют эту сделку открытой (по paper_trade_id, fallback по symbol+direction)
+    # Cross-reference: для каждой paper-позиции — какие live-аккаунты пытались
+    # её открыть (любой статус, чтобы видеть и FAILED_OPEN).
     live_by_paper_id: dict = {}
     live_by_sym_dir: dict = {}
     try:
         from database import _live_trades
-        live_open = list(_live_trades().find(
-            {"status": "OPEN"},
+        # Берём ВСЕ live-трейды (любой статус), но связываем только с открытыми paper
+        live_all = list(_live_trades().find(
+            {},
             {"paper_trade_id": 1, "symbol": 1, "direction": 1, "env": 1,
-             "account_id": 1, "trade_id": 1}
-        ))
-        for lt in live_open:
+             "account_id": 1, "trade_id": 1, "status": 1, "fail_reason": 1,
+             "opened_at": 1}
+        ).sort("opened_at", -1))
+        for lt in live_all:
             pid = lt.get("paper_trade_id")
             if pid is not None:
                 live_by_paper_id.setdefault(pid, []).append(lt)
@@ -5202,15 +5273,25 @@ async def api_paper_status():
             p["_id"] = str(p.get("_id", ""))
             if p.get("opened_at") and hasattr(p["opened_at"], "isoformat"):
                 p["opened_at"] = p["opened_at"].isoformat()
-            # Cross-reference: paper_trade_id matching
+            # Cross-reference: paper_trade_id matching, fallback по symbol+direction
             matches = live_by_paper_id.get(p.get("trade_id"), [])
             if not matches:
-                # Fallback по symbol+direction (на случай если paper_trade_id не записан)
                 matches = live_by_sym_dir.get(f"{p.get('symbol')}_{p.get('direction')}", [])
+            # Только последний live-трейд по аккаунту (самый свежий)
+            seen_acct = set()
+            unique_matches = []
+            for m in matches:
+                key = (m.get("env"), m.get("account_id"))
+                if key in seen_acct:
+                    continue
+                seen_acct.add(key)
+                unique_matches.append(m)
             p["live_envs"] = [
                 {"env": m.get("env"), "account_id": m.get("account_id"),
-                 "live_trade_id": m.get("trade_id")}
-                for m in matches
+                 "live_trade_id": m.get("trade_id"),
+                 "live_status": m.get("status"),
+                 "fail_reason": m.get("fail_reason")}
+                for m in unique_matches
             ]
     return {
         "balance": balance,

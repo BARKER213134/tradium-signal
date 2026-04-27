@@ -682,6 +682,9 @@ async def mirror_paper_for_account(signal_data: dict, decision: dict, account: d
     использует те же параметры (leverage, size_pct, tp1, sl, source) — никаких
     собственных ai_decide / verified-checks. Применяются только account-level
     safety guards (enabled, kill_switch, max_positions, daily_loss).
+
+    Если mirror не удался — пишет mirror-attempt в live_trades со статусом
+    FAILED, чтобы UI показал что попытка была + шлёт алерт юзеру.
     """
     aid = account.get("_id", "?")
     if not account.get("enabled"):
@@ -690,7 +693,85 @@ async def mirror_paper_for_account(signal_data: dict, decision: dict, account: d
     if account.get("kill_switch"):
         logger.warning(f"[live-{aid}] kill_switch active — skip mirror")
         return None
-    return await open_position_for_account(signal_data, decision, account)
+    result = await open_position_for_account(signal_data, decision, account)
+    # Если open не удался — записать FAILED-attempt чтобы было видно в UI
+    if result and not result.get("ok"):
+        try:
+            from database import _live_trades, _get_db
+            error_msg = str(result.get("error", "unknown"))
+            symbol = signal_data.get("symbol", "")
+            counter = _get_db().counters.find_one_and_update(
+                {"_id": "live_trades"},
+                {"$inc": {"seq": 1}},
+                upsert=True, return_document=True,
+            )
+            trade_id = (counter or {}).get("seq", 1)
+            _live_trades().insert_one({
+                "trade_id": trade_id,
+                "account_id": aid,
+                "env": account.get("mode", "testnet"),
+                "symbol": symbol,
+                "pair": symbol.replace("USDT", "/USDT"),
+                "direction": signal_data.get("direction", "?"),
+                "status": "FAILED_OPEN",
+                "source": signal_data.get("source", "unknown"),
+                "paper_trade_id": signal_data.get("paper_trade_id"),
+                "fail_reason": error_msg[:500],
+                "tp1": decision.get("tp1"),
+                "sl": decision.get("sl"),
+                "leverage": decision.get("leverage"),
+                "size_pct": decision.get("size_pct"),
+                "opened_at": _utcnow(),
+                "closed_at": _utcnow(),
+            })
+            logger.warning(f"[live-{aid}] FAILED_OPEN logged for {symbol}: {error_msg[:200]}")
+            # Telegram-уведомление об ошибке
+            try:
+                asyncio.create_task(_send_mirror_failed_alert(symbol,
+                    signal_data.get("direction"), error_msg, account))
+            except Exception:
+                pass
+        except Exception as logerr:
+            logger.warning(f"[live-{aid}] FAILED_OPEN log fail: {logerr}")
+    return result
+
+
+async def _send_mirror_failed_alert(symbol: str, direction: str, error: str, account: dict):
+    """Алерт когда mirror не удался."""
+    try:
+        from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
+        if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
+            return
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        bot = Bot(token=BOT6_BOT_TOKEN,
+                  default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        mode = account.get("mode", "testnet")
+        label = account.get("label") or str(account.get("_id", "?"))
+        # Понятное объяснение для частых ошибок
+        nice_err = error
+        if "Invalid symbol" in error or "does not have market" in error.lower():
+            nice_err = f"❌ Символ {symbol} не торгуется на Binance {mode}"
+        elif "-1121" in error:
+            nice_err = f"❌ Символ {symbol} не существует на Binance"
+        elif "-4164" in error:
+            nice_err = f"⚠️ Слишком маленький размер позиции"
+        elif "-2019" in error:
+            nice_err = f"⚠️ Недостаточно маржи"
+        elif "safety" in error:
+            nice_err = f"⚠️ Заблокировано safety: {error}"
+        text = (
+            f"⚠️ <b>LIVE MIRROR FAIL [{mode.upper()}]</b>\n"
+            f"👤 {label}\n"
+            f"📊 {symbol} {direction}\n"
+            f"💬 {nice_err[:300]}\n\n"
+            f"<i>Paper-сделка открылась, но на бирже не получилось зеркалить</i>"
+        )
+        await bot.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
+        await bot.session.close()
+    except Exception as e:
+        logger.warning(f"[live-trader] mirror-fail alert error: {e}")
 
 
 # ════════════════════════════════════════════════════════════════

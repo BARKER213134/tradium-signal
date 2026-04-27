@@ -3231,7 +3231,7 @@ async function loadPaperStatus() {
     if (d.positions.length) {
       // Ключ по стабильным полям (trade_id+sl — sl может меняться из-за BE/trail
       // но это важная информация чтобы перерисовать строку)
-      const newKey = d.positions.map(p => `${p.trade_id}_${p.sl}_${p.tp1}_${(p.live_envs||[]).length}`).join('|');
+      const newKey = d.positions.map(p => `${p.trade_id}_${p.sl}_${p.tp1}_${(p.live_envs||[]).map(e=>(e.env||'')+(e.live_status||'')).join(',')}`).join('|');
       const needsFullRender = posDiv._lastKey !== newKey;
 
       if (needsFullRender) {
@@ -3246,23 +3246,41 @@ async function loadPaperStatus() {
         }
 
         // Бейджи где открыта позиция: PAPER / TESTNET / REAL
-        // Paper всегда есть (это paper-positions API), live_envs приходит с бэка
+        // Paper всегда есть, live_envs приходит с бэка с live_status
         const _envBadges = (p) => {
           const badge = (icon, color, bg, tip, label) =>
             `<span title="${tip}" style="display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:5px;background:${bg};border:1px solid ${color}55;font-size:9px;font-weight:700;color:${color};font-family:var(--font-mono);letter-spacing:0.5px;flex-shrink:0;cursor:default;">${icon}<span>${label}</span></span>`;
-          let html = badge('📄', '#9ca3af', 'rgba(156,163,175,0.12)', 'Paper Trading (симуляция)', 'P');
+          let html = badge('📄', '#9ca3af', 'rgba(156,163,175,0.12)', 'Paper Trading', 'P');
           const envs = (p.live_envs || []);
-          const hasTestnet = envs.some(e => e.env === 'testnet');
-          const hasReal = envs.some(e => e.env === 'real');
-          if (hasTestnet) {
-            const acct = envs.find(e => e.env === 'testnet')?.account_id || '';
-            html += badge('🧪', '#00d4ff', 'rgba(0,212,255,0.14)',
-                          `Testnet (${acct})`, 'T');
-          }
-          if (hasReal) {
-            const acct = envs.find(e => e.env === 'real')?.account_id || '';
-            html += badge('🔴', '#ff4d6d', 'rgba(255,77,109,0.14)',
-                          `LIVE REAL (${acct})`, 'L');
+          for (const e of envs) {
+            const acct = e.account_id || '';
+            const st = e.live_status || 'OPEN';
+            const isOpen = st === 'OPEN';
+            const isFailed = st === 'FAILED_OPEN';
+            const isClosed = !isOpen && !isFailed;
+            if (e.env === 'testnet') {
+              if (isFailed) {
+                html += badge('🧪', '#ef4444', 'rgba(239,68,68,0.12)',
+                  `Testnet ${acct}: НЕ ОТКРЫЛОСЬ — ${e.fail_reason || 'unknown'}`, 'T✕');
+              } else if (isClosed) {
+                html += badge('🧪', '#9ca3af', 'rgba(156,163,175,0.10)',
+                  `Testnet ${acct}: закрыт (${st})`, 'T·');
+              } else {
+                html += badge('🧪', '#00d4ff', 'rgba(0,212,255,0.14)',
+                  `Testnet ${acct}: OPEN`, 'T');
+              }
+            } else if (e.env === 'real') {
+              if (isFailed) {
+                html += badge('🔴', '#ef4444', 'rgba(239,68,68,0.12)',
+                  `LIVE ${acct}: НЕ ОТКРЫЛОСЬ — ${e.fail_reason || 'unknown'}`, 'L✕');
+              } else if (isClosed) {
+                html += badge('🔴', '#9ca3af', 'rgba(156,163,175,0.10)',
+                  `LIVE ${acct}: закрыт (${st})`, 'L·');
+              } else {
+                html += badge('🔴', '#ff4d6d', 'rgba(255,77,109,0.14)',
+                  `LIVE REAL ${acct}: OPEN`, 'L');
+              }
+            }
           }
           return `<span style="display:inline-flex;gap:3px;flex-shrink:0;">${html}</span>`;
         };
