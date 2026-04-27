@@ -529,10 +529,12 @@ def can_open_position_for_account(account: dict, symbol: str, size_usd: float) -
     preset_name = account.get("safety_preset", "paper_mirror")
     preset = SAFETY_PRESETS.get(preset_name, SAFETY_PRESETS["paper_mirror"])
 
-    # Whitelist для real, для testnet любые пары
-    mode = account.get("mode", "testnet")
-    if mode == "real" and symbol.upper() not in DEFAULT_WHITELIST:
-        return False, f"{symbol} not in whitelist (real-mode)"
+    # Whitelist убран — paper уже фильтрует по exchange_symbols (актуальный
+    # список 599 BingX / 566 Binance пар). Двойная защита не нужна.
+    # Если нужно вернуть строгий whitelist — раскомментировать ниже:
+    # mode = account.get("mode", "testnet")
+    # if mode == "real" and symbol.upper() not in DEFAULT_WHITELIST:
+    #     return False, f"{symbol} not in whitelist (real-mode)"
 
     balance = account.get("balance", 0.0) or 0.0
     if balance < preset["min_balance_usd"]:

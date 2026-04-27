@@ -3672,17 +3672,14 @@ async function closeAllLivePositions() {
   }
 }
 
-// Auto-refresh:
-//  • полная подгрузка снапшота когда real tab активен — каждые 30с
-//  • счётчики табов (paper + live) обновляются всегда — каждые 30с (paper уже грузится через loadPaperStatus,
-//    а live snapshot дёргаем отдельно для счётчика, даже из paper tab)
+// Auto-refresh: snapshot + history + rejections когда real tab активен (каждые 30с).
+// Когда paper tab активен — только snapshot для tab counter.
 setInterval(() => {
   const realTab = document.querySelector('[data-trading-tab="real"]');
+  loadLiveSnapshot();
   if (realTab && realTab.style.display !== 'none') {
-    loadLiveSnapshot();
-  } else {
-    // Real tab не активен → подгрузим только snapshot для счётчика на табе
-    loadLiveSnapshot();
+    if (typeof loadLiveHistory === 'function') loadLiveHistory();
+    if (typeof loadLiveRejections === 'function') loadLiveRejections();
   }
 }, 30000);
 
