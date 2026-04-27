@@ -247,6 +247,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
             "/api/paper/test-open", "/api/live/debug-recent", "/api/paper/status",
+            "/api/admin/cleanup-tests",
             "/api/paper/clear-ai-memory",
             "/api/paper/rejections", "/api/paper/be-audit", "/api/paper/close-all",
             "/api/paper/history",
@@ -2277,6 +2278,56 @@ async def api_paper_rejections(limit: int = 50):
 
     items = await paper_rejections_cache.get_or_compute(f"limit_{limit}", _compute)
     return {"ok": True, "count": len(items), "items": items}
+
+
+@app.post("/api/admin/cleanup-tests")
+async def api_admin_cleanup_tests(payload: dict | None = None):
+    """Удалить все тестовые трейды (paper + live) и восстановить paper баланс.
+
+    payload:
+      - sources: список префиксов source для удаления
+        (default: ["manual_test", "test_v", "final_test"])
+      - new_balance: новый paper баланс (default: 1000.0 — INITIAL_BALANCE)
+    """
+    pl = payload or {}
+    sources = pl.get("sources") or ["manual_test", "test_v", "final_test"]
+    new_balance = float(pl.get("new_balance") or 1000.0)
+    from database import _get_db, _live_trades
+    db = _get_db()
+    src_regex = "|".join(s.replace("_", r"_") for s in sources)
+    paper_filter = {"source": {"$regex": f"^({src_regex})", "$options": "i"}}
+
+    # Найти и удалить paper trades
+    paper_to_delete = list(db.paper_trades.find(paper_filter, {"trade_id":1,"source":1,"status":1}))
+    paper_trade_ids = [p["trade_id"] for p in paper_to_delete if p.get("trade_id")]
+    paper_del_result = db.paper_trades.delete_many(paper_filter)
+
+    # Удалить соответствующие live_trades по paper_trade_id
+    live_filter = {"paper_trade_id": {"$in": paper_trade_ids}}
+    live_to_delete = list(_live_trades().find(live_filter, {"trade_id":1,"symbol":1,"status":1}))
+    live_del_result = _live_trades().delete_many(live_filter)
+
+    # Также удалить любые live_trades с source совпадающим (на случай если paper_trade_id null)
+    live_extra_del = _live_trades().delete_many({
+        "source": {"$regex": f"^({src_regex})", "$options": "i"}
+    })
+
+    # Восстановить paper баланс
+    db.paper_trades.update_one(
+        {"_id": "state"},
+        {"$set": {"balance": new_balance, "updated_at": utcnow()}},
+        upsert=True,
+    )
+
+    return {
+        "ok": True,
+        "deleted_paper": paper_del_result.deleted_count,
+        "deleted_paper_ids": paper_trade_ids,
+        "deleted_live_by_paper_id": live_del_result.deleted_count,
+        "deleted_live_by_source": live_extra_del.deleted_count,
+        "new_balance": new_balance,
+        "sources_filter": sources,
+    }
 
 
 @app.get("/api/live/debug-recent")
