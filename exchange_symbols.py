@@ -75,7 +75,8 @@ def set_default_exchange(exchange: str) -> dict:
 # Per-exchange fetcher: дёргает биржу через ccxt
 # ════════════════════════════════════════════════════════════════
 def _fetch_from_exchange(exchange: str) -> Set[str]:
-    """Pull список USDT-perp пар через ccxt unified API."""
+    """Pull список USDT-perp пар через ccxt unified API.
+    Защищено timeout'ом — если биржа медленная, прерываем через 20с."""
     try:
         import ccxt
     except ImportError:
@@ -84,9 +85,9 @@ def _fetch_from_exchange(exchange: str) -> Set[str]:
 
     try:
         if exchange == "binance":
-            ex = ccxt.binance({"options": {"defaultType": "future"}})
+            ex = ccxt.binance({"options": {"defaultType": "future"}, "timeout": 20000})
         elif exchange == "bingx":
-            ex = ccxt.bingx({"options": {"defaultType": "swap"}})  # BingX uses 'swap' for perpetuals
+            ex = ccxt.bingx({"options": {"defaultType": "swap"}, "timeout": 20000})  # BingX uses 'swap' for perpetuals
         else:
             logger.error(f"[exchange-symbols] unknown exchange: {exchange}")
             return set()
@@ -136,26 +137,26 @@ def _load_from_mongo(exchange: str) -> tuple[Set[str], float]:
 
 
 def get_supported_symbols(exchange: str = None) -> Set[str]:
-    """Вернуть актуальный set символов биржи. Auto-refresh если кеш стар.
-    exchange=None → использует default (bingx)."""
+    """Вернуть актуальный set символов биржи (НЕ блокирующая операция).
+
+    Логика:
+      • Если есть в in-memory cache → вернуть сразу
+      • Иначе из MongoDB (быстро, ~5мс)
+      • Если совсем пусто → fallback топ-30
+      • Refresh из Binance/BingX API делается ТОЛЬКО в фоновом loop
+        (никогда из hot path — иначе блокирует event loop)
+    """
     exchange = exchange or get_default_exchange()
-    now = time.time()
 
     state = _cache.get(exchange)
-    if not state:
-        # Холодный старт — Mongo
+    if not state or not state.get("symbols"):
+        # Холодный старт — Mongo (быстро)
         cached, ts = _load_from_mongo(exchange)
         state = {"symbols": cached, "updated": ts}
         _cache[exchange] = state
 
-    # Auto-refresh если стар
-    if not state["symbols"] or (now - state["updated"]) > _CACHE_TTL_SEC:
-        try:
-            refresh_supported_symbols(exchange)
-        except Exception as e:
-            logger.warning(f"[exchange-symbols] auto-refresh {exchange} fail: {e}")
-
     if not state["symbols"]:
+        # Совсем пусто (Mongo тоже пуст, watcher loop ещё не отработал)
         return _FALLBACK_TOP_30
     return state["symbols"]
 
