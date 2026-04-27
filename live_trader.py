@@ -550,18 +550,25 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         return {"ok": False, "error": "exchange not configured"}
 
     # ── Fix 2: Pre-check символа на бирже (без этого -1121 для не-листенных альтов) ──
+    # ccxt.binance markets keyed by unified format 'BASE/QUOTE:QUOTE' (perpetuals).
+    # Используем ex.market() которое умеет искать по всем форматам.
     try:
         if not getattr(ex, "markets", None):
             await asyncio.to_thread(ex.load_markets)
     except Exception as _le:
         logger.warning(f"[live-{aid}] load_markets fail: {_le}")
 
-    if ex.markets and symbol not in ex.markets:
-        # Пробуем форматы XXX/USDT и XXXUSDT
-        slash_form = symbol.replace("USDT", "/USDT") if not symbol.endswith("/USDT") else symbol
-        if slash_form in ex.markets:
-            symbol = slash_form
-        else:
+    if ex.markets:
+        try:
+            mkt_lookup = ex.market(symbol)
+            # Если найдено — проверяем что это active swap/futures (не дилистинг)
+            if mkt_lookup:
+                if mkt_lookup.get("active") is False:
+                    return {"ok": False,
+                            "error": f"symbol {symbol} is INACTIVE on {account.get('mode','testnet')} (delisted)"}
+                # Используем canonical symbol для дальнейших вызовов
+                symbol = mkt_lookup["symbol"]
+        except Exception:
             return {"ok": False,
                     "error": f"symbol {symbol} not listed on {account.get('mode','testnet')} (skip: not-supported)"}
 
@@ -592,7 +599,11 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
     amount = notional / entry_price
 
     # ── Fix 3: Клампинг amount по exchange limits ──
-    mkt = ex.markets.get(symbol) if ex.markets else None
+    mkt = None
+    try:
+        mkt = ex.market(symbol) if ex.markets else None
+    except Exception:
+        mkt = None
     if mkt:
         limits = mkt.get("limits") or {}
         amt_min = (limits.get("amount") or {}).get("min")
