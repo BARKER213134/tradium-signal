@@ -2291,30 +2291,31 @@ async def api_admin_recompute_paper_balance():
     db = _get_db()
     initial = pt.INITIAL_BALANCE
 
-    # Полностью закрытые сделки
+    # Полностью закрытые сделки: pnl_usdt — это финальная часть (остаток после partials)
     closed_pnl = 0.0
+    closed_partial = 0.0
     for d in db.paper_trades.find(
-        {"status": {"$in": ["TP", "SL", "BE", "TRAIL", "MANUAL", "AI_CLOSE"]},
-         "pnl_usdt": {"$ne": None}},
-        {"pnl_usdt": 1}
+        {"status": {"$in": ["TP", "SL", "BE", "TRAIL", "MANUAL", "AI_CLOSE"]}},
+        {"pnl_usdt": 1, "realized_pnl_usdt": 1}
     ):
         try:
             closed_pnl += float(d.get("pnl_usdt") or 0)
+            closed_partial += float(d.get("realized_pnl_usdt") or 0)
         except Exception:
             pass
 
     # Partial-закрытия из открытых позиций (TP1_PARTIAL и т.д.)
-    partial_pnl = 0.0
+    open_partial = 0.0
     for d in db.paper_trades.find(
         {"status": "OPEN", "realized_pnl_usdt": {"$gt": 0}},
         {"realized_pnl_usdt": 1}
     ):
         try:
-            partial_pnl += float(d.get("realized_pnl_usdt") or 0)
+            open_partial += float(d.get("realized_pnl_usdt") or 0)
         except Exception:
             pass
 
-    new_balance = round(initial + closed_pnl + partial_pnl, 2)
+    new_balance = round(initial + closed_pnl + closed_partial + open_partial, 2)
     db.paper_trades.update_one(
         {"_id": "state"},
         {"$set": {"balance": new_balance, "updated_at": utcnow()}},
@@ -2323,8 +2324,9 @@ async def api_admin_recompute_paper_balance():
     return {
         "ok": True,
         "initial": initial,
-        "closed_pnl_total": round(closed_pnl, 2),
-        "partial_pnl_total": round(partial_pnl, 2),
+        "closed_pnl": round(closed_pnl, 2),
+        "closed_partial_pnl": round(closed_partial, 2),
+        "open_partial_pnl": round(open_partial, 2),
         "new_balance": new_balance,
     }
 
