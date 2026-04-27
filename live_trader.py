@@ -834,7 +834,7 @@ async def mirror_paper_for_account(signal_data: dict, decision: dict, account: d
 
 
 async def _send_mirror_failed_alert(symbol: str, direction: str, error: str, account: dict):
-    """Алерт когда mirror не удался."""
+    """DESYNC alert когда paper открыл, а live зеркалить не получилось."""
     try:
         from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
         if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
@@ -846,28 +846,14 @@ async def _send_mirror_failed_alert(symbol: str, direction: str, error: str, acc
                   default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         mode = account.get("mode", "testnet")
         label = account.get("label") or str(account.get("_id", "?"))
-        # Понятное объяснение для частых ошибок
-        nice_err = error
-        if "not listed on" in error or "not-supported" in error:
-            nice_err = f"❌ Символ {symbol} не торгуется на Binance {mode}"
-        elif "Invalid symbol" in error or "does not have market" in error.lower() or "-1121" in error:
-            nice_err = f"❌ Символ {symbol} не существует на Binance"
-        elif "-4164" in error or "< min" in error:
-            nice_err = f"⚠️ Слишком маленький размер позиции (min notional)"
-        elif "-2019" in error or "insufficient margin" in error.lower():
-            nice_err = f"⚠️ Недостаточно свободной маржи на бирже"
-        elif "-4005" in error or "max" in error.lower() and "amount" in error.lower():
-            nice_err = f"⚠️ Объём превышает лимит на символе"
-        elif "size too small" in error:
-            nice_err = f"⚠️ Размер позиции меньше минимума на этом символе"
-        elif "safety" in error:
-            nice_err = f"⚠️ Заблокировано safety: {error}"
+        nice_err = _humanize_error(error, symbol, mode)
         text = (
-            f"⚠️ <b>LIVE MIRROR FAIL [{mode.upper()}]</b>\n"
-            f"👤 {label}\n"
+            f"⚠️ <b>DESYNC: paper=OPEN, live=FAILED</b>\n"
+            f"👤 {label} ({mode.upper()})\n"
             f"📊 {symbol} {direction}\n"
             f"💬 {nice_err[:300]}\n\n"
-            f"<i>Paper-сделка открылась, но на бирже не получилось зеркалить</i>"
+            f"<i>📄 Paper открыл, 🔴 Live на бирже не получилось.\n"
+            f"PnL paper и live теперь будут расходиться по этой сделке.</i>"
         )
         await bot.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
         await bot.session.close()
@@ -875,12 +861,37 @@ async def _send_mirror_failed_alert(symbol: str, direction: str, error: str, acc
         logger.warning(f"[live-trader] mirror-fail alert error: {e}")
 
 
+def _humanize_error(error: str, symbol: str, mode: str = "real") -> str:
+    """Перевод технических ошибок Binance/ccxt в понятные русские причины."""
+    if not error:
+        return "unknown"
+    if "not listed on" in error or "not-supported" in error:
+        return f"❌ Символ {symbol} не торгуется на Binance {mode}"
+    if "Invalid symbol" in error or "does not have market" in error.lower() or "-1121" in error:
+        return f"❌ Символ {symbol} не существует на Binance"
+    if "INACTIVE" in error:
+        return f"❌ Символ {symbol} деактивирован (delisted)"
+    if "-4164" in error or "< min $" in error or "min notional" in error.lower():
+        return "⚠️ Слишком маленький размер позиции (Binance min $5)"
+    if "-2019" in error or "insufficient margin" in error.lower():
+        return "⚠️ Недостаточно свободной маржи на бирже"
+    if "-4005" in error or ("max" in error.lower() and "amount" in error.lower()):
+        return "⚠️ Объём превышает лимит на символе"
+    if "size too small" in error:
+        return f"⚠️ Размер позиции меньше минимума на {symbol}"
+    if "safety:" in error:
+        return f"⚠️ Заблокировано safety: {error.replace('safety:', '').strip()}"
+    if "kill switch" in error.lower():
+        return "🛑 Аккаунт остановлен (kill switch active)"
+    return error[:200]
+
+
 # ════════════════════════════════════════════════════════════════
 # Telegram уведомления для live trades
 # ════════════════════════════════════════════════════════════════
 
 async def _send_live_open_alert(trade: dict, account: dict) -> None:
-    """Алерт при открытии live (testnet/real) позиции — в BOT6 (тот же что paper)."""
+    """Алерт при открытии live позиции — синхронизирован с paper (показывает slippage)."""
     try:
         from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
         if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
@@ -893,23 +904,44 @@ async def _send_live_open_alert(trade: dict, account: dict) -> None:
         mode = account.get("mode", "testnet")
         label = account.get("label") or account.get("owner") or str(account.get("_id", "?"))
         mode_emoji = "🧪" if mode == "testnet" else "🔴"
+        mode_label = "TESTNET" if mode == "testnet" else "REAL"
         direction = trade.get("direction", "LONG")
         dir_emoji = "📈" if direction == "LONG" else "📉"
         tp_str = f"{float(trade['tp1']):.4f}" if trade.get("tp1") else "—"
         sl_str = f"{float(trade['sl']):.4f}" if trade.get("sl") else "—"
-        tp_ok = "✅" if trade.get("tp_order_id") else "⚠️"
-        sl_ok = "✅" if trade.get("sl_order_id") else "⚠️"
+        # Birden TP/SL ордера на бирже
+        tp_status = "✅ на бирже" if trade.get("tp_order_id") else "⚠️ DB-managed"
+        sl_status = "✅ на бирже" if trade.get("sl_order_id") else "⚠️ DB-managed"
+        # Slippage paper vs live
+        slippage_str = ""
+        ptid = trade.get("paper_trade_id")
+        if ptid:
+            try:
+                from database import _get_db
+                paper = _get_db().paper_trades.find_one({"trade_id": ptid}, {"entry": 1})
+                if paper and paper.get("entry"):
+                    paper_entry = float(paper["entry"])
+                    live_entry = float(trade.get("entry") or 0)
+                    if paper_entry > 0:
+                        slip_pct = (live_entry - paper_entry) / paper_entry * 100
+                        emoji = "🟢" if abs(slip_pct) < 0.05 else "🟡" if abs(slip_pct) < 0.2 else "🔴"
+                        slippage_str = f"\n📊 Slippage vs paper: {emoji} {slip_pct:+.3f}%"
+            except Exception:
+                pass
         text = (
-            f"{mode_emoji} <b>LIVE ОТКРЫТО [{mode.upper()}]</b> #{trade.get('trade_id')}\n"
+            f"{mode_emoji} <b>LIVE OPEN [{mode_label}]</b> #{trade.get('trade_id')}\n"
             f"👤 {label}\n"
             f"{dir_emoji} <b>{trade.get('symbol')} {direction}</b> ×{trade.get('leverage')}x\n"
             f"💵 Вход: {float(trade.get('entry', 0)):.4f}\n"
-            f"{tp_ok} TP: {tp_str}\n"
-            f"{sl_ok} SL: {sl_str}\n"
-            f"💰 Размер: ${trade.get('size_usdt', 0):.2f} ({trade.get('size_pct', 0):.1f}%)\n"
+            f"🎯 TP: {tp_str}  ({tp_status})\n"
+            f"🛡 SL: {sl_str}  ({sl_status})\n"
+            f"💰 Размер: ${trade.get('size_usdt', 0):.2f} ({trade.get('size_pct', 0):.1f}%)"
         )
+        if ptid:
+            text += f"\n🔗 Paper #{ptid}"
+        text += slippage_str
         if trade.get("ai_reasoning"):
-            text += f"📝 {str(trade['ai_reasoning'])[:120]}"
+            text += f"\n📝 {str(trade['ai_reasoning'])[:120]}"
         await bot.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
         await bot.session.close()
     except Exception as e:
@@ -1167,6 +1199,12 @@ async def mirror_partial_close_for_account(
             f"[live-{aid}] PARTIAL #{live_pos['trade_id']}: {symbol_db} {reason} "
             f"{fraction_to_close*100:.0f}% → ${pnl_usdt:+.2f} (realized=${new_realized:+.2f})"
         )
+        try:
+            asyncio.create_task(
+                _send_live_partial_alert(live_pos, reason, fraction_to_close, pnl_usdt, account)
+            )
+        except Exception:
+            pass
         return {"ok": True, "trade_id": live_pos["trade_id"], "pnl_usdt": pnl_usdt}
     except Exception as e:
         logger.error(f"[live-{aid}] partial close fail #{live_pos.get('trade_id')}: {e}", exc_info=True)
@@ -1395,7 +1433,7 @@ async def sync_all_accounts() -> list:
 async def _send_live_close_alert(
     trade: dict, reason: str, exit_price, pnl_pct: float, pnl_usdt: float, account: dict
 ) -> None:
-    """Алерт при закрытии live позиции (обнаруженной через sync)."""
+    """Алерт при закрытии live позиции."""
     try:
         from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
         if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
@@ -1408,17 +1446,72 @@ async def _send_live_close_alert(
         mode = account.get("mode", "testnet")
         label = account.get("label") or account.get("owner") or str(account.get("_id", "?"))
         mode_emoji = "🧪" if mode == "testnet" else "🔴"
+        mode_label = "TESTNET" if mode == "testnet" else "REAL"
         pnl_emoji = "✅" if pnl_usdt >= 0 else "❌"
+        reason_emoji = {"TP": "🎯", "SL": "🛑", "BE": "⚖️", "TRAIL": "📉",
+                        "MANUAL": "👤", "AI_CLOSE": "🤖"}.get(reason, "✕")
         direction = trade.get("direction", "LONG")
         dir_emoji = "📈" if direction == "LONG" else "📉"
+        # Paper PnL для сравнения
+        paper_pnl_str = ""
+        ptid = trade.get("paper_trade_id")
+        if ptid:
+            try:
+                from database import _get_db
+                paper = _get_db().paper_trades.find_one(
+                    {"trade_id": ptid},
+                    {"pnl_pct": 1, "pnl_usdt": 1, "status": 1}
+                )
+                if paper and paper.get("pnl_usdt") is not None:
+                    pp = float(paper["pnl_pct"] or 0)
+                    pu = float(paper["pnl_usdt"] or 0)
+                    diff_usdt = pnl_usdt - pu
+                    diff_emoji = "🟢" if abs(diff_usdt) < 1 else "🟡" if abs(diff_usdt) < 5 else "🔴"
+                    paper_pnl_str = (
+                        f"\n📄 Paper PnL: {pp:+.2f}% (${pu:+.2f})"
+                        f"\n📊 Diff vs paper: {diff_emoji} ${diff_usdt:+.2f}"
+                    )
+            except Exception:
+                pass
         text = (
-            f"{mode_emoji} <b>LIVE ЗАКРЫТО [{mode.upper()}] {reason}</b> #{trade.get('trade_id')}\n"
+            f"{mode_emoji} <b>LIVE CLOSE [{mode_label}] {reason_emoji} {reason}</b> #{trade.get('trade_id')}\n"
             f"👤 {label}\n"
             f"{dir_emoji} {trade.get('symbol')} {direction} ×{trade.get('leverage')}x\n"
-            f"💵 Вход: {float(trade.get('entry', 0)):.4f} → {float(exit_price):.4f}\n"
-            f"{pnl_emoji} PnL: {pnl_pct:+.2f}% (${pnl_usdt:+.2f})\n"
+            f"💵 {float(trade.get('entry', 0)):.4f} → {float(exit_price):.4f}\n"
+            f"{pnl_emoji} <b>Live PnL: {pnl_pct:+.2f}% (${pnl_usdt:+.2f})</b>"
+            f"{paper_pnl_str}"
         )
         await bot.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
         await bot.session.close()
     except Exception as e:
         logger.warning(f"[live-trader] close alert fail: {e}")
+
+
+async def _send_live_partial_alert(
+    live_pos: dict, reason: str, fraction: float, pnl_usdt: float, account: dict
+) -> None:
+    """Алерт при partial close (TP1_PARTIAL, TP2_PARTIAL, etc.)"""
+    try:
+        from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
+        if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
+            return
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        bot = Bot(token=BOT6_BOT_TOKEN,
+                  default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        mode = account.get("mode", "testnet")
+        label = account.get("label") or str(account.get("_id", "?"))
+        mode_emoji = "🧪" if mode == "testnet" else "🔴"
+        text = (
+            f"🪜 <b>LIVE PARTIAL {reason}</b> #{live_pos.get('trade_id')}\n"
+            f"{mode_emoji} {label}\n"
+            f"📊 {live_pos.get('symbol')} {live_pos.get('direction')} ×{live_pos.get('leverage')}x\n"
+            f"📦 Закрыто {fraction*100:.0f}% позиции\n"
+            f"💰 Зафиксировано: ${pnl_usdt:+.2f}\n"
+            f"📈 Realized cumulative: ${float(live_pos.get('realized_pnl_usdt') or 0) + pnl_usdt:+.2f}"
+        )
+        await bot.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
+        await bot.session.close()
+    except Exception as e:
+        logger.warning(f"[live-trader] partial alert fail: {e}")
