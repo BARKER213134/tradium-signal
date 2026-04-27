@@ -250,6 +250,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/admin/cleanup-tests", "/api/admin/wipe-live-trades",
             "/api/admin/recompute-paper-balance", "/api/admin/backfill-mirror",
             "/api/admin/close-all-exchange-positions",
+            "/api/admin/normalize-live-symbols",
             "/api/paper/clear-ai-memory",
             "/api/paper/rejections", "/api/paper/be-audit", "/api/paper/close-all",
             "/api/paper/history",
@@ -2403,6 +2404,30 @@ async def api_admin_recompute_paper_balance():
         "open_partial_pnl": round(open_partial, 2),
         "new_balance": new_balance,
     }
+
+
+@app.post("/api/admin/normalize-live-symbols")
+async def api_admin_normalize_live_symbols():
+    """Привести live_trades.symbol к XXXUSDT формату (как в paper).
+    Раньше trades могли записываться в ccxt-формате XXX/USDT:USDT,
+    что ломало cross-reference."""
+    from database import _live_trades
+    fixed = 0
+    for t in _live_trades().find({"symbol": {"$regex": "/USDT"}}):
+        sym = t.get("symbol", "")
+        # ETH/USDT:USDT → ETHUSDT
+        new_sym = sym.split(":")[0].replace("/", "")
+        if new_sym != sym:
+            _live_trades().update_one(
+                {"_id": t["_id"]},
+                {"$set": {
+                    "symbol": new_sym,
+                    "pair": new_sym.replace("USDT", "/USDT"),
+                    "ccxt_symbol": sym,
+                }}
+            )
+            fixed += 1
+    return {"ok": True, "fixed_count": fixed}
 
 
 @app.post("/api/admin/close-all-exchange-positions")

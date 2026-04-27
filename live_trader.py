@@ -561,6 +561,10 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
     except Exception as _le:
         logger.warning(f"[live-{aid}] load_markets fail: {_le}")
 
+    # Сохраняем оригинальный символ (XXXUSDT) для DB consistency с paper, отдельно
+    # держим canonical (XXX/USDT:USDT) только для ccxt-вызовов.
+    original_symbol = symbol  # Например "ETHUSDT"
+    canonical_symbol = symbol
     if getattr(ex, "markets", None):
         try:
             mkt_lookup = ex.market(symbol)
@@ -568,11 +572,12 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
                 if mkt_lookup.get("active") is False:
                     return {"ok": False,
                             "error": f"symbol {symbol} is INACTIVE on {account.get('mode','testnet')} (delisted)"}
-                # Используем canonical symbol для дальнейших вызовов
-                symbol = mkt_lookup["symbol"]
+                canonical_symbol = mkt_lookup["symbol"]  # для ccxt API
         except Exception:
             return {"ok": False,
                     "error": f"symbol {symbol} not listed on {account.get('mode','testnet')} (skip: not-supported)"}
+    # symbol используется в ccxt-вызовах, original_symbol в DB
+    symbol = canonical_symbol
 
     # ── Fix 1: Динамический клампинг по доступной марже на бирже ──
     try:
@@ -711,8 +716,9 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
             "trade_id": trade_id,
             "account_id": aid,
             "env": account.get("mode", "testnet"),
-            "symbol": symbol,
-            "pair": symbol.replace("USDT", "/USDT"),
+            "symbol": original_symbol,   # XXXUSDT — совместимо с paper
+            "pair": original_symbol.replace("USDT", "/USDT"),
+            "ccxt_symbol": canonical_symbol,  # для отладки/debug
             "direction": direction,
             "entry": fill_price,
             "tp1": tp1, "sl": sl, "original_sl": sl,
