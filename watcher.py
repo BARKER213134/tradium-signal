@@ -3015,6 +3015,22 @@ async def _live_sync_loop():
         await _asyncio.sleep(30)
 
 
+async def _paper_to_live_mirror_loop():
+    """Зеркало paper → live: partial closes / SL moves / full closes.
+    Каждые 15с проверяет paper позиции и зеркалит изменения в live."""
+    import asyncio as _asyncio
+    while True:
+        try:
+            import live_trader as lt
+            res = await lt.paper_to_live_sync_check()
+            synced = res.get("synced", 0) if isinstance(res, dict) else 0
+            if synced > 0:
+                logger.info(f"[paper→live] synced {synced} action(s)")
+        except Exception:
+            logger.debug("[paper→live] sync loop error", exc_info=True)
+        await _asyncio.sleep(15)
+
+
 _watcher_running = False
 
 async def start_watcher():
@@ -3062,6 +3078,12 @@ async def start_watcher():
         logger.info("[live-sync] background loop started")
     except Exception:
         logger.exception("[live-sync] failed to start loop")
+    # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
+    try:
+        asyncio.create_task(_paper_to_live_mirror_loop())
+        logger.info("[paper→live] background loop started")
+    except Exception:
+        logger.exception("[paper→live] failed to start loop")
     # [ОТКЛЮЧЕНО] AI memory refresh + AI review open positions —
     # система переведена на rule-based (Entry Checker 8 проверок + TP ladder).
     # AI больше не используется для торговых решений.

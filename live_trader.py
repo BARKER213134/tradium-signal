@@ -1101,6 +1101,276 @@ async def sync_positions_for_account(account: dict) -> dict:
     return {"ok": True, "account_id": str(aid), "synced": synced, "auto_closed": closed}
 
 
+async def mirror_partial_close_for_account(
+    paper_pos: dict, live_pos: dict, fraction_to_close: float, reason: str, account: dict
+) -> dict:
+    """Зеркалит partial close paper → live.
+    fraction_to_close — какая ДОЛЯ от ОРИГИНАЛЬНОЙ позиции должна быть закрыта.
+    """
+    aid = account.get("_id", "?")
+    ex = _get_exchange_for_account(account)
+    if ex is None:
+        return {"ok": False, "error": "no exchange"}
+    symbol_db = live_pos.get("symbol")
+    direction = live_pos.get("direction")
+    original_amount = float(live_pos.get("amount") or 0)
+    if original_amount <= 0:
+        return {"ok": False, "error": "no original amount"}
+    close_amount = original_amount * fraction_to_close
+    # Точная precision
+    try:
+        ccxt_sym = live_pos.get("ccxt_symbol") or symbol_db
+        close_amount = float(await asyncio.to_thread(ex.amount_to_precision, ccxt_sym, close_amount))
+    except Exception:
+        close_amount = round(close_amount, 6)
+    if close_amount <= 0:
+        return {"ok": False, "error": "amount=0 after precision"}
+    side = "sell" if direction == "LONG" else "buy"
+    try:
+        ccxt_sym = live_pos.get("ccxt_symbol") or symbol_db
+        order = await asyncio.to_thread(
+            ex.create_market_order, ccxt_sym, side, close_amount,
+            None, {"reduceOnly": True},
+        )
+        exit_price = order.get("average") or order.get("price") or live_pos.get("entry")
+        # Compute partial PnL
+        entry = float(live_pos.get("entry") or 0)
+        leverage = live_pos.get("leverage", 1)
+        original_size = float(live_pos.get("size_usdt") or 0)
+        size_closed = original_size * fraction_to_close
+        raw = ((float(exit_price) - entry) / entry) * 100
+        if direction == "SHORT":
+            raw = -raw
+        pnl_pct = round(raw * leverage, 2)
+        pnl_usdt = round(size_closed * pnl_pct / 100, 2)
+        # Update live_pos with the new partial
+        from database import _live_trades
+        new_partial = {
+            "at": _utcnow(), "fraction": round(fraction_to_close, 4),
+            "exit_price": exit_price, "pnl_pct": pnl_pct, "pnl_usdt": pnl_usdt,
+            "reason": reason, "order_id": order.get("id"),
+        }
+        partial_closes = list(live_pos.get("partial_closes") or []) + [new_partial]
+        tp_hits = list(live_pos.get("tp_ladder_hits") or []) + [reason]
+        new_realized = round(float(live_pos.get("realized_pnl_usdt") or 0) + pnl_usdt, 2)
+        new_remaining = round(float(live_pos.get("remaining_fraction") or 1.0) - fraction_to_close, 4)
+        _live_trades().update_one(
+            {"trade_id": live_pos["trade_id"]},
+            {"$set": {
+                "partial_closes": partial_closes,
+                "tp_ladder_hits": tp_hits,
+                "realized_pnl_usdt": new_realized,
+                "remaining_fraction": new_remaining,
+            }},
+        )
+        logger.warning(
+            f"[live-{aid}] PARTIAL #{live_pos['trade_id']}: {symbol_db} {reason} "
+            f"{fraction_to_close*100:.0f}% → ${pnl_usdt:+.2f} (realized=${new_realized:+.2f})"
+        )
+        return {"ok": True, "trade_id": live_pos["trade_id"], "pnl_usdt": pnl_usdt}
+    except Exception as e:
+        logger.error(f"[live-{aid}] partial close fail #{live_pos.get('trade_id')}: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+async def mirror_sl_move_for_account(live_pos: dict, new_sl: float, account: dict) -> dict:
+    """Двигает SL на бирже: отменяет старый SL ордер, ставит новый по new_sl."""
+    aid = account.get("_id", "?")
+    ex = _get_exchange_for_account(account)
+    if ex is None:
+        return {"ok": False, "error": "no exchange"}
+    from database import _live_trades
+    ccxt_sym = live_pos.get("ccxt_symbol") or live_pos.get("symbol")
+    direction = live_pos.get("direction")
+    sl_side = "sell" if direction == "LONG" else "buy"
+    # Cancel старый SL ордер если был
+    old_sl_id = live_pos.get("sl_order_id")
+    if old_sl_id:
+        try:
+            await asyncio.to_thread(ex.cancel_order, old_sl_id, ccxt_sym)
+        except Exception as ce:
+            logger.debug(f"[live-{aid}] cancel old SL fail: {ce}")
+    # Place новый SL (если эта биржа поддерживает; иначе DB-managed)
+    new_sl_id = None
+    try:
+        amount = live_pos.get("amount") or 0
+        try:
+            amount = float(await asyncio.to_thread(ex.amount_to_precision, ccxt_sym, amount * (live_pos.get("remaining_fraction") or 1.0)))
+        except Exception:
+            pass
+        if amount > 0:
+            sl_order = await asyncio.to_thread(
+                ex.create_order, ccxt_sym, "STOP_MARKET", sl_side, amount,
+                None, {"stopPrice": float(new_sl), "reduceOnly": True},
+            )
+            new_sl_id = sl_order.get("id")
+    except Exception as e:
+        logger.debug(f"[live-{aid}] new SL place fail (will be DB-managed): {e}")
+    _live_trades().update_one(
+        {"trade_id": live_pos["trade_id"]},
+        {"$set": {
+            "sl": float(new_sl),
+            "sl_order_id": new_sl_id,
+            "sl_moved_to_be": True,
+        }},
+    )
+    logger.warning(f"[live-{aid}] SL moved #{live_pos['trade_id']}: → {new_sl}")
+    return {"ok": True, "new_sl": new_sl, "new_sl_order_id": new_sl_id}
+
+
+async def mirror_full_close_for_account(live_pos: dict, reason: str, account: dict, exit_price_hint: float = None) -> dict:
+    """Закрывает остаток позиции market reduceOnly когда paper закрылся."""
+    aid = account.get("_id", "?")
+    ex = _get_exchange_for_account(account)
+    if ex is None:
+        return {"ok": False, "error": "no exchange"}
+    ccxt_sym = live_pos.get("ccxt_symbol") or live_pos.get("symbol")
+    direction = live_pos.get("direction")
+    close_side = "sell" if direction == "LONG" else "buy"
+    remaining = float(live_pos.get("remaining_fraction") or 1.0)
+    original_amount = float(live_pos.get("amount") or 0)
+    close_amount = original_amount * remaining
+    try:
+        close_amount = float(await asyncio.to_thread(ex.amount_to_precision, ccxt_sym, close_amount))
+    except Exception:
+        close_amount = round(close_amount, 6)
+    if close_amount <= 0:
+        return {"ok": False, "error": "amount=0"}
+    try:
+        # Cancel TP/SL ордера если есть
+        for fld in ("tp_order_id", "sl_order_id"):
+            oid = live_pos.get(fld)
+            if oid:
+                try:
+                    await asyncio.to_thread(ex.cancel_order, oid, ccxt_sym)
+                except Exception:
+                    pass
+        order = await asyncio.to_thread(
+            ex.create_market_order, ccxt_sym, close_side, close_amount,
+            None, {"reduceOnly": True},
+        )
+        exit_price = order.get("average") or order.get("price") or exit_price_hint or live_pos.get("entry")
+        entry = float(live_pos.get("entry") or 0)
+        leverage = live_pos.get("leverage", 1)
+        original_size = float(live_pos.get("size_usdt") or 0)
+        size_remaining = original_size * remaining
+        raw = ((float(exit_price) - entry) / entry) * 100
+        if direction == "SHORT":
+            raw = -raw
+        pnl_pct_remaining = round(raw * leverage, 2)
+        pnl_usdt_remaining = round(size_remaining * pnl_pct_remaining / 100, 2)
+        total_pnl = round(float(live_pos.get("realized_pnl_usdt") or 0) + pnl_usdt_remaining, 2)
+        total_pct = round(total_pnl / original_size * 100, 2) if original_size else 0
+        from database import _live_trades
+        _live_trades().update_one(
+            {"trade_id": live_pos["trade_id"]},
+            {"$set": {
+                "status": reason,
+                "exit_price": exit_price,
+                "pnl_pct": total_pct,
+                "pnl_usdt": total_pnl,
+                "closed_at": _utcnow(),
+                "close_order_id": order.get("id"),
+                "remaining_fraction": 0,
+                "paper_synced_close": True,
+            }},
+        )
+        logger.warning(
+            f"[live-{aid}] FULL CLOSE #{live_pos['trade_id']}: {ccxt_sym} {reason} "
+            f"total=${total_pnl:+.2f} ({total_pct:+.2f}%)"
+        )
+        try:
+            asyncio.create_task(
+                _send_live_close_alert(live_pos, reason, exit_price, total_pct, total_pnl, account)
+            )
+        except Exception:
+            pass
+        return {"ok": True, "pnl_usdt": total_pnl, "pnl_pct": total_pct}
+    except Exception as e:
+        logger.error(f"[live-{aid}] full close fail #{live_pos.get('trade_id')}: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+async def paper_to_live_sync_check() -> dict:
+    """Сверяет paper и live позиции:
+    - Если paper закрыл partial (TP1/TP2) — live тоже закрывает ту же долю
+    - Если paper подвинул SL (BE/BE+/TRAIL) — live двигает SL на бирже
+    - Если paper закрылся полностью (status != OPEN) — live тоже закрывается
+
+    Идемпотентно: запускается каждые 15с, ничего не дублирует.
+    """
+    from database import _get_db, _live_trades
+    from live_safety import get_enabled_accounts
+    db = _get_db()
+
+    accounts = get_enabled_accounts()
+    if not accounts:
+        return {"ok": True, "synced": 0, "skipped_no_accounts": True}
+
+    # Все live OPEN с paper_trade_id
+    live_open = list(_live_trades().find({
+        "status": "OPEN", "paper_trade_id": {"$ne": None},
+    }))
+    if not live_open:
+        return {"ok": True, "synced": 0}
+
+    # Все paper позиции (все статусы) для этих trade_ids
+    paper_ids = list({lt.get("paper_trade_id") for lt in live_open if lt.get("paper_trade_id")})
+    paper_docs = {p["trade_id"]: p for p in db.paper_trades.find({"trade_id": {"$in": paper_ids}})}
+
+    actions = []
+    accounts_by_id = {a["_id"]: a for a in accounts}
+
+    for live in live_open:
+        ptid = live.get("paper_trade_id")
+        if ptid is None: continue
+        paper = paper_docs.get(ptid)
+        if not paper: continue
+
+        acc = accounts_by_id.get(live.get("account_id"))
+        if not acc: continue
+
+        # === A. Paper закрылся полностью → закрыть live ===
+        if paper.get("status") not in (None, "OPEN"):
+            r = await mirror_full_close_for_account(
+                live, paper.get("status", "MANUAL"), acc,
+                exit_price_hint=paper.get("exit_price"),
+            )
+            actions.append({"action": "full_close", "trade_id": live["trade_id"], "result": r})
+            continue
+
+        # === B. Paper зафиксировал partials → закрыть те же доли в live ===
+        paper_partials = paper.get("partial_closes") or []
+        live_partials = live.get("partial_closes") or []
+        # Сравниваем по reason (TP1_PARTIAL, TP2_PARTIAL, etc.)
+        live_reasons = {pc.get("reason") for pc in live_partials}
+        for pp in paper_partials:
+            if pp.get("reason") in live_reasons:
+                continue
+            # Эту долю надо зеркалить
+            r = await mirror_partial_close_for_account(
+                paper, live, float(pp.get("fraction") or 0), pp.get("reason", "PARTIAL"), acc
+            )
+            actions.append({"action": "partial", "trade_id": live["trade_id"],
+                            "reason": pp.get("reason"), "result": r})
+            # Обновим live в памяти на случай нескольких partials в этом же loop
+            if r.get("ok"):
+                live["partial_closes"] = live.get("partial_closes", []) + [pp]
+                live["realized_pnl_usdt"] = live.get("realized_pnl_usdt", 0) + r.get("pnl_usdt", 0)
+                live["remaining_fraction"] = live.get("remaining_fraction", 1) - float(pp.get("fraction") or 0)
+
+        # === C. Paper подвинул SL → подвинуть SL в live ===
+        paper_sl = paper.get("sl")
+        live_sl = live.get("sl")
+        if (paper.get("sl_moved_to_be") or paper.get("sl_moved_to_be_plus") or paper.get("sl_trailing")):
+            if paper_sl and abs(float(paper_sl) - float(live_sl or 0)) / float(paper_sl) > 0.001:
+                r = await mirror_sl_move_for_account(live, float(paper_sl), acc)
+                actions.append({"action": "sl_move", "trade_id": live["trade_id"],
+                                "new_sl": paper_sl, "result": r})
+
+    return {"ok": True, "synced": len(actions), "actions": actions[:30]}
+
+
 async def sync_all_accounts() -> list:
     """Синхронизация всех enabled аккаунтов. Вызывается из watcher каждые 30с."""
     try:
