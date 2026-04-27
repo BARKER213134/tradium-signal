@@ -5360,11 +5360,18 @@ safeInterval(() => {
   const body = document.getElementById('atPromptBody');
   if (body && body.style.display === 'block') loadAIPrompt();
 }, 60000);
-// Если гармошка отказов открыта — обновляем раз в 20 сек
+// Auto-refresh отказов каждые 20с — ВСЕГДА (даже при свёрнутой гармошке).
+// Юзер видит как растёт счётчик в заголовке, и при разворачивании — свежий список.
 safeInterval(() => {
   const body = document.getElementById('atRejBody');
-  if (body && body.style.display === 'block') loadRejections();
+  if (body) loadRejections();  // обновляет и счётчик и список
 }, 20000);
+// Initial load: сразу при загрузке страницы (чтобы счётчик не был пустым 20с)
+setTimeout(() => {
+  try {
+    if (typeof loadRejections === 'function') loadRejections();
+  } catch(_) {}
+}, 1500);
 </script>
 
 {% elif bot == 'forex_fvg' %}
