@@ -717,12 +717,15 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         amount = round(amount, 6)
 
     try:
-        # set_leverage [v2]: для BingX обязательно указать positionSide
-        # Передаём через kwargs params чтобы ccxt точно увидел.
+        # BingX в hedge mode требует positionSide на set_leverage И create_order
         ex_name = (account.get("exchange") or "").lower()
+        pside = "LONG" if direction == "LONG" else "SHORT"
+        order_params = {}
+        if ex_name == "bingx":
+            order_params = {"positionSide": pside}
+
         try:
             if ex_name == "bingx":
-                pside = "LONG" if direction == "LONG" else "SHORT"
                 logger.info(f"[live-{aid}] BingX setLeverage {leverage}x side={pside} sym={symbol}")
                 await asyncio.to_thread(
                     lambda: ex.set_leverage(leverage, symbol, params={"side": pside})
@@ -730,9 +733,12 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
             else:
                 await asyncio.to_thread(ex.set_leverage, leverage, symbol)
         except Exception as _le:
-            # Уже установлен или hedge mode — не критично, продолжаем
             logger.warning(f"[live-{aid}] set_leverage warn (continuing): {_le}")
-        order = await asyncio.to_thread(ex.create_market_order, symbol, side, amount)
+
+        # create_market_order с positionSide для BingX hedge mode
+        order = await asyncio.to_thread(
+            lambda: ex.create_market_order(symbol, side, amount, params=order_params)
+        )
         exchange_order_id = order.get("id")
         fill_price = order.get("average") or entry_price
 
@@ -751,12 +757,15 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
             logger.debug(f"[live-{aid}] amount_to_precision fail {symbol}: {_pe}")
             amount_tp_sl = amount
 
+        # TP/SL params: для BingX hedge mode — добавляем positionSide
+        tp_extra = {"positionSide": pside} if ex_name == "bingx" else {}
+
         if tp1:
             try:
-                # Минимальные params: stopPrice + reduceOnly. workingType triggered -4120.
                 tp_params = {
                     "stopPrice": float(tp1),
                     "reduceOnly": True,
+                    **tp_extra,
                 }
                 tp_order = await asyncio.to_thread(
                     ex.create_order, symbol, "TAKE_PROFIT_MARKET", tp_side,
@@ -774,6 +783,7 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
                 sl_params = {
                     "stopPrice": float(sl),
                     "reduceOnly": True,
+                    **tp_extra,
                 }
                 sl_order = await asyncio.to_thread(
                     ex.create_order, symbol, "STOP_MARKET", sl_side,
