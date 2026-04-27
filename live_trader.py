@@ -720,24 +720,23 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         # BingX в hedge mode требует positionSide на set_leverage И create_order
         ex_name = (account.get("exchange") or "").lower()
         pside = "LONG" if direction == "LONG" else "SHORT"
-        order_params = {}
-        if ex_name == "bingx":
-            order_params = {"positionSide": pside}
+        order_params = {"positionSide": pside} if ex_name == "bingx" else {}
 
         try:
             if ex_name == "bingx":
                 logger.info(f"[live-{aid}] BingX setLeverage {leverage}x side={pside} sym={symbol}")
-                await asyncio.to_thread(
-                    lambda: ex.set_leverage(leverage, symbol, params={"side": pside})
-                )
+                # Позиционные args: leverage, symbol, params
+                await asyncio.to_thread(ex.set_leverage, leverage, symbol, {"side": pside})
             else:
                 await asyncio.to_thread(ex.set_leverage, leverage, symbol)
         except Exception as _le:
             logger.warning(f"[live-{aid}] set_leverage warn (continuing): {_le}")
 
-        # create_market_order с positionSide для BingX hedge mode
+        # create_market_order: ccxt сигнатура (symbol, side, amount, price=None, params={})
+        # Передаём 5 позиционных аргументов чтобы params точно пришли
+        logger.info(f"[live-{aid}] BingX market order {side} {amount} {symbol} params={order_params}")
         order = await asyncio.to_thread(
-            lambda: ex.create_market_order(symbol, side, amount, params=order_params)
+            ex.create_market_order, symbol, side, amount, None, order_params
         )
         exchange_order_id = order.get("id")
         fill_price = order.get("average") or entry_price
