@@ -447,9 +447,12 @@ def add_account(payload: dict) -> dict:
         return {"ok": False, "error": "id required (alphanum/_/-)"}
     if _live_accounts().find_one({"_id": aid}):
         return {"ok": False, "error": f"account '{aid}' уже существует"}
-    mode = payload.get("mode", "testnet")
+    mode = payload.get("mode", "real")
     if mode not in ("testnet", "real"):
         return {"ok": False, "error": "mode must be testnet or real"}
+    exchange = (payload.get("exchange") or "bingx").lower()
+    if exchange not in ("binance", "bingx"):
+        return {"ok": False, "error": "exchange must be 'binance' or 'bingx'"}
     api_key = payload.get("api_key", "").strip()
     api_secret = payload.get("api_secret", "").strip()
     if not api_key or not api_secret:
@@ -461,6 +464,7 @@ def add_account(payload: dict) -> dict:
         "_id": aid,
         "owner": payload.get("owner", aid),
         "label": payload.get("label", aid),
+        "exchange": exchange,        # 'binance' или 'bingx'
         "mode": mode,
         "enabled": False,        # включается отдельно после test-connection
         "kill_switch": False,
@@ -487,7 +491,7 @@ def update_account(account_id: str, update: dict) -> dict:
     from database import _live_accounts
     allowed = {"enabled", "kill_switch", "mode", "owner", "label",
                "safety_preset", "confirmation_required", "api_key", "api_secret",
-               "balance"}
+               "balance", "exchange"}
     upd = {k: v for k, v in update.items() if k in allowed}
     if "safety_preset" in upd and upd["safety_preset"] not in SAFETY_PRESETS:
         return {"ok": False, "error": f"unknown preset: {upd['safety_preset']}"}

@@ -471,8 +471,9 @@ _exchange_per_account: dict[str, object] = {}
 
 
 def _get_exchange_for_account(account: dict):
-    """Возвращает ccxt.binance instance для конкретного аккаунта.
-    Каждый аккаунт = свои ключи + свой sandbox режим."""
+    """Возвращает ccxt instance для конкретного аккаунта.
+    Поддерживает Binance Futures и BingX Perpetual.
+    Каждый аккаунт = свои ключи + биржа + sandbox режим."""
     aid = account["_id"]
     if aid in _exchange_per_account:
         return _exchange_per_account[aid]
@@ -485,16 +486,37 @@ def _get_exchange_for_account(account: dict):
     except ImportError:
         logger.error("[live-trader] ccxt not installed")
         return None
-    ex = ccxt.binance({
-        "apiKey": api_key,
-        "secret": api_secret,
-        "options": {"defaultType": "future"},
-        "enableRateLimit": True,
-    })
-    if account.get("mode") == "testnet":
-        ex.set_sandbox_mode(True)
+
+    exchange_name = (account.get("exchange") or "binance").lower()
+    mode = account.get("mode", "real")
+
+    if exchange_name == "bingx":
+        ex = ccxt.bingx({
+            "apiKey": api_key,
+            "secret": api_secret,
+            # BingX 'swap' = perpetual futures (USDT-M)
+            "options": {"defaultType": "swap"},
+            "enableRateLimit": True,
+        })
+        # BingX testnet через demo mode (если нужно — отдельно настраивается)
+    elif exchange_name == "binance":
+        ex = ccxt.binance({
+            "apiKey": api_key,
+            "secret": api_secret,
+            "options": {"defaultType": "future"},
+            "enableRateLimit": True,
+        })
+        if mode == "testnet":
+            ex.set_sandbox_mode(True)
+    else:
+        logger.error(f"[live-trader] unknown exchange '{exchange_name}' for account {aid}")
+        return None
+
     _exchange_per_account[aid] = ex
-    logger.info(f"[live-trader] account '{aid}' ccxt initialized (mode={account.get('mode')})")
+    logger.info(
+        f"[live-trader] account '{aid}' ccxt {exchange_name} initialized "
+        f"(mode={mode})"
+    )
     return ex
 
 
@@ -862,26 +884,42 @@ async def _send_mirror_failed_alert(symbol: str, direction: str, error: str, acc
 
 
 def _humanize_error(error: str, symbol: str, mode: str = "real") -> str:
-    """Перевод технических ошибок Binance/ccxt в понятные русские причины."""
+    """Перевод технических ошибок Binance/BingX/ccxt в понятные русские причины."""
     if not error:
         return "unknown"
+    err_l = error.lower()
+    # Symbol issues — общие
     if "not listed on" in error or "not-supported" in error:
-        return f"❌ Символ {symbol} не торгуется на Binance {mode}"
-    if "Invalid symbol" in error or "does not have market" in error.lower() or "-1121" in error:
-        return f"❌ Символ {symbol} не существует на Binance"
-    if "INACTIVE" in error:
+        return f"❌ Символ {symbol} не торгуется на бирже ({mode})"
+    if "invalid symbol" in err_l or "does not have market" in err_l or "-1121" in error:
+        return f"❌ Символ {symbol} не существует на бирже"
+    if "INACTIVE" in error or "inactive" in err_l:
         return f"❌ Символ {symbol} деактивирован (delisted)"
-    if "-4164" in error or "< min $" in error or "min notional" in error.lower():
-        return "⚠️ Слишком маленький размер позиции (Binance min $5)"
-    if "-2019" in error or "insufficient margin" in error.lower():
-        return "⚠️ Недостаточно свободной маржи на бирже"
-    if "-4005" in error or ("max" in error.lower() and "amount" in error.lower()):
-        return "⚠️ Объём превышает лимит на символе"
+    # Notional / size
+    if "-4164" in error or "min notional" in err_l or "< min $" in error:
+        return "⚠️ Слишком маленький размер позиции (min notional)"
     if "size too small" in error:
         return f"⚠️ Размер позиции меньше минимума на {symbol}"
+    # Margin
+    if "-2019" in error or "insufficient" in err_l or "margin is insufficient" in err_l:
+        return "⚠️ Недостаточно свободной маржи на бирже"
+    # Quantity / max
+    if "-4005" in error or ("max" in err_l and "amount" in err_l) or ("max" in err_l and "quantity" in err_l):
+        return "⚠️ Объём превышает лимит на символе"
+    # BingX specific
+    if "100400" in error or "100410" in error:
+        return "⚠️ BingX: invalid params (проверь leverage/symbol)"
+    if "permission" in err_l:
+        return "🔐 API не имеет нужных прав (futures trading)"
+    if "ip" in err_l and ("white" in err_l or "restrict" in err_l):
+        return "🌐 IP не в whitelist API ключа"
+    # Algo/order type
+    if "-4120" in error or "algo order" in err_l:
+        return "⚠️ Биржа отклонила тип ордера (используем DB-managed TP/SL)"
+    # Generic
     if "safety:" in error:
         return f"⚠️ Заблокировано safety: {error.replace('safety:', '').strip()}"
-    if "kill switch" in error.lower():
+    if "kill switch" in err_l:
         return "🛑 Аккаунт остановлен (kill switch active)"
     return error[:200]
 

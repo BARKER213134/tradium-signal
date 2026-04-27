@@ -249,6 +249,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/test-open", "/api/live/debug-recent", "/api/paper/status",
             "/api/live/snapshot", "/api/live/history-all", "/api/live/rejections-all",
             "/api/binance-symbols", "/api/binance-symbols/refresh",
+            "/api/exchange-symbols/all", "/api/exchange-symbols/set-default",
             "/api/admin/cleanup-tests", "/api/admin/wipe-live-trades",
             "/api/admin/recompute-paper-balance", "/api/admin/backfill-mirror",
             "/api/admin/close-all-exchange-positions",
@@ -2593,22 +2594,42 @@ async def api_admin_cleanup_tests(payload: dict | None = None):
 
 
 @app.get("/api/binance-symbols")
-async def api_binance_symbols(only_meta: bool = False):
-    """Текущий список Binance Futures USDT-perp символов + метаинфо.
-    only_meta=true — без массива символов (быстрее, меньше payload)."""
-    from binance_symbols import get_supported_symbols, get_meta
-    meta = get_meta()
+async def api_binance_symbols(only_meta: bool = False, exchange: str = ""):
+    """Список USDT-perp символов биржи + метаинфо.
+    exchange='binance' | 'bingx' (default — берём default из настроек).
+    only_meta=true — без массива символов."""
+    from exchange_symbols import get_supported_symbols, get_meta, get_default_exchange
+    ex_name = exchange or get_default_exchange()
+    meta = get_meta(ex_name)
     if only_meta:
         return {"ok": True, **meta}
-    syms = sorted(list(get_supported_symbols()))
+    syms = sorted(list(get_supported_symbols(ex_name)))
     return {"ok": True, "symbols": syms, **meta}
 
 
 @app.post("/api/binance-symbols/refresh")
-async def api_binance_symbols_refresh():
-    """Принудительный refresh из Binance API."""
-    from binance_symbols import refresh_supported_symbols
-    return await asyncio.to_thread(refresh_supported_symbols)
+async def api_binance_symbols_refresh(payload: dict | None = None):
+    """Принудительный refresh из exchange API.
+    payload: {"exchange": "binance" | "bingx"} — иначе default."""
+    from exchange_symbols import refresh_supported_symbols, get_default_exchange
+    ex_name = (payload or {}).get("exchange") or get_default_exchange()
+    return await asyncio.to_thread(refresh_supported_symbols, ex_name)
+
+
+@app.get("/api/exchange-symbols/all")
+async def api_exchange_symbols_all():
+    """Метаинфо по обеим биржам сразу — для UI 2-колоночного отображения."""
+    from exchange_symbols import get_meta_all
+    return {"ok": True, **get_meta_all()}
+
+
+@app.post("/api/exchange-symbols/set-default")
+async def api_exchange_symbols_set_default(payload: dict):
+    """Сменить default exchange (для paper фильтра).
+    payload: {"exchange": "bingx" | "binance"}"""
+    from exchange_symbols import set_default_exchange
+    ex_name = (payload or {}).get("exchange", "")
+    return set_default_exchange(ex_name)
 
 
 @app.get("/api/live/snapshot")

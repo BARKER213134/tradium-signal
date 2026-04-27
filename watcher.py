@@ -2922,17 +2922,18 @@ async def _paper_on_signal(signal_data: dict):
     Плюс: параллельно запускает Verified Entry Checker (rule-based 8 проверок),
     и если verdict=GO шлёт в @topmonetabot с эмоджи ✨.
     """
-    # ── ФИЛЬТР: только пары торгуемые на Binance Futures USDT-perp ──
-    # Чтобы paper-результаты были корректным прокси для live (mirror на Binance).
-    # Сигналы для не-Binance пар (HANA, ZEREBRO, ZKC, новые альты) пропускаются.
+    # ── ФИЛЬТР: только пары торгуемые на DEFAULT бирже (BingX) ──
+    # Paper фильтрует по default exchange (по умолчанию BingX, можно сменить).
+    # Сигналы для не-листенных пар пропускаются — paper не открывает.
     try:
-        from binance_symbols import is_symbol_supported
+        from exchange_symbols import is_symbol_supported, get_default_exchange
         sym_check = (signal_data.get("symbol") or "").upper()
         if sym_check and not is_symbol_supported(sym_check):
-            logger.info(f"[paper-signal] skip {sym_check} — not on Binance Futures USDT-perp")
+            ex_name = get_default_exchange()
+            logger.info(f"[paper-signal] skip {sym_check} — not on {ex_name.upper()} Futures USDT-perp")
             return
     except Exception as _fe:
-        # Если binance_symbols глючит — НЕ блокируем сигнал, пропускаем дальше
+        # Если symbols registry глючит — НЕ блокируем сигнал, пропускаем дальше
         logger.debug(f"[paper-signal] symbol filter error: {_fe}")
 
     # [УБРАНО] Pump fallback — он был нужен когда использовался AI (Claude
@@ -3044,33 +3045,42 @@ async def _paper_to_live_mirror_loop():
         await _asyncio.sleep(15)
 
 
-async def _binance_symbols_refresh_loop():
-    """Каждый час обновляем список поддерживаемых пар Binance Futures.
-    Гарантирует что paper не открывает позиции на дилистенных или
-    непросутившихся пары, и mirror на live не падает с -1121."""
+async def _exchange_symbols_refresh_loop():
+    """Каждый час обновляем списки поддерживаемых пар на ОБЕИХ биржах
+    (Binance Futures + BingX Perpetual). Это гарантирует:
+      • paper не открывает позиции на дилистенных или ненежных парах
+      • mirror на live (любая биржа) не падает с invalid-symbol error"""
     import asyncio as _asyncio
-    # Холодный прогрев — сразу
+    # Холодный прогрев обеих бирж — сразу при старте
     try:
-        from binance_symbols import refresh_supported_symbols
-        await _asyncio.to_thread(refresh_supported_symbols)
+        from exchange_symbols import refresh_supported_symbols
+        for ex_name in ("bingx", "binance"):
+            try:
+                await _asyncio.to_thread(refresh_supported_symbols, ex_name)
+            except Exception as e:
+                logger.debug(f"[{ex_name}-symbols] initial refresh error: {e}")
     except Exception:
-        logger.debug("[binance-symbols] initial refresh error", exc_info=True)
-    # Цикл
+        logger.debug("[exchange-symbols] initial refresh error", exc_info=True)
+    # Цикл — каждый час
     while True:
-        await _asyncio.sleep(3600)  # 1 час
+        await _asyncio.sleep(3600)
         try:
-            from binance_symbols import refresh_supported_symbols
-            res = await _asyncio.to_thread(refresh_supported_symbols)
-            if isinstance(res, dict) and res.get("ok"):
-                added = len(res.get("added") or [])
-                removed = len(res.get("removed") or [])
-                if added or removed:
-                    logger.warning(
-                        f"[binance-symbols] +{added}/-{removed} → "
-                        f"now {res.get('count')} pairs"
-                    )
+            from exchange_symbols import refresh_supported_symbols
+            for ex_name in ("bingx", "binance"):
+                try:
+                    res = await _asyncio.to_thread(refresh_supported_symbols, ex_name)
+                    if isinstance(res, dict) and res.get("ok"):
+                        added = len(res.get("added") or [])
+                        removed = len(res.get("removed") or [])
+                        if added or removed:
+                            logger.warning(
+                                f"[{ex_name}-symbols] +{added}/-{removed} → "
+                                f"now {res.get('count')} pairs"
+                            )
+                except Exception:
+                    logger.debug(f"[{ex_name}-symbols] refresh loop error", exc_info=True)
         except Exception:
-            logger.debug("[binance-symbols] refresh loop error", exc_info=True)
+            logger.debug("[exchange-symbols] refresh loop error", exc_info=True)
 
 
 _watcher_running = False
@@ -3126,12 +3136,13 @@ async def start_watcher():
         logger.info("[paper→live] background loop started")
     except Exception:
         logger.exception("[paper→live] failed to start loop")
-    # Binance symbols refresh — каждый час подтягиваем актуальный список пар
+    # Exchange symbols refresh — каждый час подтягиваем актуальные списки
+    # пар по всем поддерживаемым биржам (Binance + BingX)
     try:
-        asyncio.create_task(_binance_symbols_refresh_loop())
-        logger.info("[binance-symbols] background loop started")
+        asyncio.create_task(_exchange_symbols_refresh_loop())
+        logger.info("[exchange-symbols] background loop started")
     except Exception:
-        logger.exception("[binance-symbols] failed to start loop")
+        logger.exception("[exchange-symbols] failed to start loop")
     # [ОТКЛЮЧЕНО] AI memory refresh + AI review open positions —
     # система переведена на rule-based (Entry Checker 8 проверок + TP ladder).
     # AI больше не используется для торговых решений.

@@ -3168,10 +3168,17 @@ safeInterval(loadConflicts, 30000);
                  style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
         </label>
         <label style="display:grid;gap:4px;">
+          <span style="color:var(--muted);font-size:10px;">Биржа*</span>
+          <select id="acc_exchange" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
+            <option value="bingx" selected>🟢 BingX (рекомендуется — нет ограничений по странам)</option>
+            <option value="binance">🟡 Binance Futures (ограничения в РФ/СНГ)</option>
+          </select>
+        </label>
+        <label style="display:grid;gap:4px;">
           <span style="color:var(--muted);font-size:10px;">Режим*</span>
           <select id="acc_mode" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
             <option value="real" selected>🔴 real (реальные деньги!)</option>
-            <option value="testnet">🧪 testnet (тренировка — limited pairs)</option>
+            <option value="testnet">🧪 testnet (только Binance, тренировка)</option>
           </select>
         </label>
         <div style="background:rgba(255,77,109,0.08);border:1px solid rgba(255,77,109,0.3);border-radius:6px;padding:8px 10px;font-size:10.5px;color:#ff8c32;line-height:1.5;">
@@ -3213,20 +3220,43 @@ safeInterval(loadConflicts, 30000);
   </div>
   <!-- ═══ /Live аккаунты panel (modal закрыт) ═══ -->
 
-  <!-- ═══ Binance Futures symbols registry ═══ -->
-  <div id="binSymbolsPanel" style="margin-bottom:14px;padding:10px 14px;background:linear-gradient(135deg,rgba(255,184,77,0.05),rgba(0,212,255,0.03));border:1px solid rgba(255,184,77,0.22);border-radius:10px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-family:var(--font-mono);font-size:11px;">
-    <span style="color:#ffb84d;font-weight:700;letter-spacing:0.05em;">📋 Binance Futures:</span>
-    <span id="binSymCount" style="color:var(--text);font-weight:700;">—</span>
-    <span style="color:var(--muted);">пар (USDT-perp)</span>
-    <span style="color:var(--muted);font-size:10px;">·</span>
-    <span style="color:var(--muted);font-size:10px;">обновлено</span>
-    <span id="binSymUpdated" style="color:var(--muted);font-size:10px;">—</span>
-    <span id="binSymStale" style="display:none;color:#ff8c32;font-size:10px;">⚠️ устарел</span>
-    <div style="flex:1"></div>
-    <button onclick="refreshBinanceSymbols()" title="Обновить список из Binance API" style="background:transparent;border:1px solid rgba(255,184,77,0.4);color:#ffb84d;border-radius:6px;padding:4px 10px;font-size:10px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">⟳ Обновить</button>
-    <button onclick="toggleBinSymList()" title="Показать список" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:4px 10px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">👁 Список</button>
+  <!-- ═══ Multi-exchange symbols registry ═══ -->
+  <div style="margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+    <!-- BingX panel -->
+    <div id="bingxSymPanel" style="padding:10px 14px;background:linear-gradient(135deg,rgba(0,229,160,0.05),rgba(0,212,255,0.03));border:1px solid rgba(0,229,160,0.25);border-radius:10px;font-family:var(--font-mono);font-size:11px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+        <span style="color:#00e5a0;font-weight:700;letter-spacing:0.05em;">🟢 BingX</span>
+        <span id="bingxIsDefault" style="display:none;background:rgba(0,229,160,0.18);color:#00e5a0;border:1px solid rgba(0,229,160,0.4);border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;">⭐ DEFAULT</span>
+        <span id="bingxSymCount" style="color:var(--text);font-weight:700;">—</span>
+        <span style="color:var(--muted);font-size:10px;">пар</span>
+        <div style="flex:1"></div>
+        <button onclick="refreshExchangeSymbols('bingx')" title="Обновить" style="background:transparent;border:1px solid rgba(0,229,160,0.4);color:#00e5a0;border-radius:5px;padding:2px 8px;font-size:9px;font-family:var(--font-mono);cursor:pointer;">⟳</button>
+        <button onclick="setDefaultExchange('bingx')" title="Сделать default (paper будет фильтровать по этой бирже)" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:2px 8px;font-size:9px;font-family:var(--font-mono);cursor:pointer;">⭐</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:10px;color:var(--muted);">
+        <span id="bingxSymUpdated">—</span>
+        <span id="bingxSymStale" style="display:none;color:#ff8c32;">⚠️ устарел</span>
+      </div>
+    </div>
+    <!-- Binance panel -->
+    <div id="binanceSymPanel" style="padding:10px 14px;background:linear-gradient(135deg,rgba(255,184,77,0.05),rgba(0,212,255,0.03));border:1px solid rgba(255,184,77,0.22);border-radius:10px;font-family:var(--font-mono);font-size:11px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+        <span style="color:#ffb84d;font-weight:700;letter-spacing:0.05em;">🟡 Binance</span>
+        <span id="binanceIsDefault" style="display:none;background:rgba(255,184,77,0.18);color:#ffb84d;border:1px solid rgba(255,184,77,0.4);border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;">⭐ DEFAULT</span>
+        <span id="binanceSymCount" style="color:var(--text);font-weight:700;">—</span>
+        <span style="color:var(--muted);font-size:10px;">пар</span>
+        <div style="flex:1"></div>
+        <button onclick="refreshExchangeSymbols('binance')" title="Обновить" style="background:transparent;border:1px solid rgba(255,184,77,0.4);color:#ffb84d;border-radius:5px;padding:2px 8px;font-size:9px;font-family:var(--font-mono);cursor:pointer;">⟳</button>
+        <button onclick="setDefaultExchange('binance')" title="Сделать default" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:2px 8px;font-size:9px;font-family:var(--font-mono);cursor:pointer;">⭐</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:10px;color:var(--muted);">
+        <span id="binanceSymUpdated">—</span>
+        <span id="binanceSymStale" style="display:none;color:#ff8c32;">⚠️ устарел</span>
+      </div>
+    </div>
   </div>
-  <div id="binSymList" style="display:none;margin-bottom:14px;padding:12px;background:var(--dark-2);border:1px solid var(--border);border-radius:8px;max-height:200px;overflow-y:auto;font-family:var(--font-mono);font-size:10px;color:var(--muted);"></div>
+  <div style="margin-bottom:14px;font-size:10px;color:var(--muted);font-family:var(--font-mono);">
+    💡 Default биржа определяет: какие символы paper будет торговать. Сейчас → <span id="paperFilterEx" style="color:var(--cyan);font-weight:700;">—</span></div>
 
   <!-- ═══ Live KPI cards (агрегат всех аккаунтов) ═══ -->
   <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px;">
@@ -3586,74 +3616,92 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ════════════════════════════════════════════════════════════════
-// Binance Futures symbols registry
+// Multi-exchange symbols registry (Binance + BingX)
 // ════════════════════════════════════════════════════════════════
-async function loadBinanceSymbols() {
-  try {
-    const r = await fetch('/api/binance-symbols?only_meta=true');
-    const d = await r.json();
-    if (!d.ok) return;
-    const cntEl = document.getElementById('binSymCount');
-    const updEl = document.getElementById('binSymUpdated');
-    const staleEl = document.getElementById('binSymStale');
-    if (cntEl) cntEl.textContent = d.count.toLocaleString();
-    if (updEl) {
-      if (d.updated_at_epoch) {
-        const ts = new Date(d.updated_at_epoch * 1000);
-        const minAgo = Math.round((Date.now() - ts.getTime()) / 60000);
-        updEl.textContent = minAgo < 1 ? 'только что' : minAgo < 60 ? `${minAgo} мин назад` : `${Math.round(minAgo/60)} ч назад`;
-      } else {
-        updEl.textContent = 'никогда';
-      }
-    }
-    if (staleEl) staleEl.style.display = d.stale ? '' : 'none';
-  } catch (e) { console.error('loadBinanceSymbols fail:', e); }
+function _formatTimeAgo(epoch) {
+  if (!epoch) return 'никогда';
+  const minAgo = Math.round((Date.now() / 1000 - epoch) / 60);
+  if (minAgo < 1) return 'только что';
+  if (minAgo < 60) return `${minAgo} мин назад`;
+  const hAgo = Math.round(minAgo / 60);
+  if (hAgo < 24) return `${hAgo} ч назад`;
+  return `${Math.round(hAgo / 24)} дн назад`;
 }
 
-async function refreshBinanceSymbols() {
-  const btn = event.target;
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Обновляю...'; }
+async function loadAllExchangeSymbols() {
   try {
-    const r = await fetch('/api/binance-symbols/refresh', {method: 'POST'});
+    const r = await fetch('/api/exchange-symbols/all');
+    const d = await r.json();
+    if (!d.ok) return;
+    const def = d.default;
+    for (const ex of ['binance', 'bingx']) {
+      const m = d[ex] || {};
+      const cnt = document.getElementById(ex + 'SymCount');
+      const upd = document.getElementById(ex + 'SymUpdated');
+      const stale = document.getElementById(ex + 'SymStale');
+      const isDef = document.getElementById(ex + 'IsDefault');
+      if (cnt) cnt.textContent = (m.count || 0).toLocaleString();
+      if (upd) upd.textContent = _formatTimeAgo(m.updated_at_epoch);
+      if (stale) stale.style.display = m.stale ? '' : 'none';
+      if (isDef) isDef.style.display = (def === ex) ? 'inline-block' : 'none';
+    }
+    const filt = document.getElementById('paperFilterEx');
+    if (filt) filt.textContent = def.toUpperCase();
+  } catch (e) { console.error('loadAllExchangeSymbols fail:', e); }
+}
+
+async function refreshExchangeSymbols(exchange) {
+  const btn = event && event.target;
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  try {
+    const r = await fetch('/api/binance-symbols/refresh', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({exchange: exchange}),
+    });
     const d = await r.json();
     if (d.ok) {
       const a = (d.added || []).length;
       const r2 = (d.removed || []).length;
-      const msg = `✅ ${d.count} пар (+${a}/-${r2})`
+      const msg = `✅ ${exchange.toUpperCase()}: ${d.count} пар (+${a}/-${r2})`
         + (a ? `\nДобавлены: ${(d.added || []).slice(0, 10).join(', ')}` : '')
         + (r2 ? `\nУдалены: ${(d.removed || []).slice(0, 10).join(', ')}` : '');
       alert(msg);
-      loadBinanceSymbols();
+      loadAllExchangeSymbols();
     } else {
       alert('❌ ' + (d.error || 'fail'));
     }
   } catch (e) { alert('Сеть: ' + e); }
-  if (btn) { btn.disabled = false; btn.textContent = '⟳ Обновить'; }
+  if (btn) { btn.disabled = false; btn.textContent = orig || '⟳'; }
 }
 
-async function toggleBinSymList() {
-  const list = document.getElementById('binSymList');
-  if (!list) return;
-  if (list.style.display === 'none') {
-    list.style.display = 'block';
-    list.innerHTML = '<div style="text-align:center;color:var(--muted);">Загружаю...</div>';
-    try {
-      const r = await fetch('/api/binance-symbols');
-      const d = await r.json();
-      if (d.ok && d.symbols) {
-        list.innerHTML = d.symbols.map(s => `<span style="display:inline-block;margin:2px;padding:2px 6px;background:rgba(0,212,255,0.08);color:#00d4ff;border-radius:3px;font-size:9px;">${s}</span>`).join('');
-      }
-    } catch (e) { list.innerHTML = '<div style="color:#ff4d6d;">Ошибка: ' + e + '</div>'; }
-  } else {
-    list.style.display = 'none';
-  }
+async function setDefaultExchange(exchange) {
+  if (!confirm(`Переключить default биржу на ${exchange.toUpperCase()}?\n\nЭто значит: paper будет открывать сделки только по парам ${exchange.toUpperCase()}.\nСуществующие открытые позиции продолжат закрываться по своим правилам.`)) return;
+  try {
+    const r = await fetch('/api/exchange-symbols/set-default', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({exchange: exchange}),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      alert(`✅ Default биржа теперь: ${d.default_exchange.toUpperCase()}\nPaper будет фильтровать по парам этой биржи.`);
+      loadAllExchangeSymbols();
+    } else {
+      alert('❌ ' + (d.error || 'fail'));
+    }
+  } catch (e) { alert('Сеть: ' + e); }
 }
+
+// Backwards-compat (старые вызовы loadBinanceSymbols → грузим обе биржи)
+function loadBinanceSymbols() { loadAllExchangeSymbols(); }
 
 // Загрузить при первом открытии real tab
 const _origSwitchTradingTab = window.switchTradingTab;
 window.switchTradingTab = function(wallet) {
   _origSwitchTradingTab(wallet);
-  if (wallet === 'real') loadBinanceSymbols();
+  if (wallet === 'real') loadAllExchangeSymbols();
 };
 
 async function loadPaperStatus() {
@@ -4779,10 +4827,12 @@ function closeAddAccountModal() {
 }
 
 async function submitAddAccount() {
+  const exEl = document.getElementById('acc_exchange');
   const payload = {
     id: document.getElementById('acc_id').value.trim(),
     owner: document.getElementById('acc_owner').value.trim(),
     label: document.getElementById('acc_label').value.trim(),
+    exchange: exEl ? exEl.value : 'bingx',
     mode: document.getElementById('acc_mode').value,
     api_key: document.getElementById('acc_api_key').value.trim(),
     api_secret: document.getElementById('acc_api_secret').value.trim(),
