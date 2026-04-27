@@ -2296,8 +2296,9 @@ async def api_admin_cleanup_tests(payload: dict | None = None):
     import re as _re
     db = _get_db()
 
-    # Соберём все source значения которые начинаются с одного из префиксов
-    all_paper_sources = db.paper_trades.distinct("source") or []
+    # Собираем уникальные source через aggregation (надёжнее чем distinct)
+    pipeline = [{"$group": {"_id": "$source"}}]
+    all_paper_sources = [d["_id"] for d in db.paper_trades.aggregate(pipeline) if d.get("_id")]
     matching_sources = [
         s for s in all_paper_sources
         if isinstance(s, str) and any(s.startswith(p) for p in sources)
@@ -2314,7 +2315,7 @@ async def api_admin_cleanup_tests(payload: dict | None = None):
     live_del_result = _live_trades().delete_many(live_filter) if paper_trade_ids else type("R",(object,),{"deleted_count":0})()
 
     # Также удалить любые live_trades с source совпадающим (на случай если paper_trade_id null)
-    all_live_sources = _live_trades().distinct("source") or []
+    all_live_sources = [d["_id"] for d in _live_trades().aggregate(pipeline) if d.get("_id")]
     matching_live_sources = [
         s for s in all_live_sources
         if isinstance(s, str) and any(s.startswith(p) for p in sources)
@@ -2334,6 +2335,8 @@ async def api_admin_cleanup_tests(payload: dict | None = None):
 
     return {
         "ok": True,
+        "all_paper_sources_in_db": all_paper_sources[:30],
+        "all_live_sources_in_db": all_live_sources[:30],
         "matched_paper_sources": matching_sources,
         "matched_live_sources": matching_live_sources,
         "deleted_paper": paper_del_result.deleted_count,
