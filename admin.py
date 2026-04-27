@@ -248,6 +248,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
             "/api/paper/test-open", "/api/live/debug-recent", "/api/paper/status",
             "/api/admin/cleanup-tests", "/api/admin/wipe-live-trades",
+            "/api/admin/recompute-paper-balance",
             "/api/paper/clear-ai-memory",
             "/api/paper/rejections", "/api/paper/be-audit", "/api/paper/close-all",
             "/api/paper/history",
@@ -2278,6 +2279,54 @@ async def api_paper_rejections(limit: int = 50):
 
     items = await paper_rejections_cache.get_or_compute(f"limit_{limit}", _compute)
     return {"ok": True, "count": len(items), "items": items}
+
+
+@app.post("/api/admin/recompute-paper-balance")
+async def api_admin_recompute_paper_balance():
+    """Пересчитать paper balance из истории:
+    balance = INITIAL_BALANCE + сумма всех закрытых pnl_usdt + realized из partial.
+    """
+    from database import _get_db, utcnow
+    import paper_trader as pt
+    db = _get_db()
+    initial = pt.INITIAL_BALANCE
+
+    # Полностью закрытые сделки
+    closed_pnl = 0.0
+    for d in db.paper_trades.find(
+        {"status": {"$in": ["TP", "SL", "BE", "TRAIL", "MANUAL", "AI_CLOSE"]},
+         "pnl_usdt": {"$ne": None}},
+        {"pnl_usdt": 1}
+    ):
+        try:
+            closed_pnl += float(d.get("pnl_usdt") or 0)
+        except Exception:
+            pass
+
+    # Partial-закрытия из открытых позиций (TP1_PARTIAL и т.д.)
+    partial_pnl = 0.0
+    for d in db.paper_trades.find(
+        {"status": "OPEN", "realized_pnl_usdt": {"$gt": 0}},
+        {"realized_pnl_usdt": 1}
+    ):
+        try:
+            partial_pnl += float(d.get("realized_pnl_usdt") or 0)
+        except Exception:
+            pass
+
+    new_balance = round(initial + closed_pnl + partial_pnl, 2)
+    db.paper_trades.update_one(
+        {"_id": "state"},
+        {"$set": {"balance": new_balance, "updated_at": utcnow()}},
+        upsert=True,
+    )
+    return {
+        "ok": True,
+        "initial": initial,
+        "closed_pnl_total": round(closed_pnl, 2),
+        "partial_pnl_total": round(partial_pnl, 2),
+        "new_balance": new_balance,
+    }
 
 
 @app.post("/api/admin/wipe-live-trades")
