@@ -2291,23 +2291,27 @@ async def api_admin_recompute_paper_balance():
     db = _get_db()
     initial = pt.INITIAL_BALANCE
 
-    # Полностью закрытые сделки: pnl_usdt — это финальная часть (остаток после partials)
+    # Закрытые сделки: pnl_usdt уже = realized_pnl + final_leg (см. paper_trader L401)
+    # → не надо складывать realized_pnl, иначе double counting.
     closed_pnl = 0.0
-    closed_partial = 0.0
+    closed_count = 0
     for d in db.paper_trades.find(
-        {"status": {"$in": ["TP", "SL", "BE", "TRAIL", "MANUAL", "AI_CLOSE"]}},
-        {"pnl_usdt": 1, "realized_pnl_usdt": 1}
+        {"status": {"$nin": ["OPEN"]}, "pnl_usdt": {"$type": "double"}},
+        {"pnl_usdt": 1}
     ):
         try:
-            closed_pnl += float(d.get("pnl_usdt") or 0)
-            closed_partial += float(d.get("realized_pnl_usdt") or 0)
+            v = d.get("pnl_usdt")
+            if v is None:
+                continue
+            closed_pnl += float(v)
+            closed_count += 1
         except Exception:
             pass
 
-    # Partial-закрытия из открытых позиций (TP1_PARTIAL и т.д.)
+    # Открытые позиции с partials (TP1/TP2 hits) — частично уже фиксировано
     open_partial = 0.0
     for d in db.paper_trades.find(
-        {"status": "OPEN", "realized_pnl_usdt": {"$gt": 0}},
+        {"status": "OPEN"},
         {"realized_pnl_usdt": 1}
     ):
         try:
@@ -2315,7 +2319,7 @@ async def api_admin_recompute_paper_balance():
         except Exception:
             pass
 
-    new_balance = round(initial + closed_pnl + closed_partial + open_partial, 2)
+    new_balance = round(initial + closed_pnl + open_partial, 2)
     db.paper_trades.update_one(
         {"_id": "state"},
         {"$set": {"balance": new_balance, "updated_at": utcnow()}},
@@ -2324,8 +2328,8 @@ async def api_admin_recompute_paper_balance():
     return {
         "ok": True,
         "initial": initial,
-        "closed_pnl": round(closed_pnl, 2),
-        "closed_partial_pnl": round(closed_partial, 2),
+        "closed_trades_count": closed_count,
+        "closed_pnl_total": round(closed_pnl, 2),
         "open_partial_pnl": round(open_partial, 2),
         "new_balance": new_balance,
     }
