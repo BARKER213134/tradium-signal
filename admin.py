@@ -248,6 +248,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
             "/api/paper/test-open", "/api/live/debug-recent", "/api/paper/status",
             "/api/live/snapshot", "/api/live/history-all", "/api/live/rejections-all",
+            "/api/binance-symbols", "/api/binance-symbols/refresh",
             "/api/admin/cleanup-tests", "/api/admin/wipe-live-trades",
             "/api/admin/recompute-paper-balance", "/api/admin/backfill-mirror",
             "/api/admin/close-all-exchange-positions",
@@ -2589,6 +2590,25 @@ async def api_admin_cleanup_tests(payload: dict | None = None):
         "new_balance": new_balance,
         "sources_filter": sources,
     }
+
+
+@app.get("/api/binance-symbols")
+async def api_binance_symbols(only_meta: bool = False):
+    """Текущий список Binance Futures USDT-perp символов + метаинфо.
+    only_meta=true — без массива символов (быстрее, меньше payload)."""
+    from binance_symbols import get_supported_symbols, get_meta
+    meta = get_meta()
+    if only_meta:
+        return {"ok": True, **meta}
+    syms = sorted(list(get_supported_symbols()))
+    return {"ok": True, "symbols": syms, **meta}
+
+
+@app.post("/api/binance-symbols/refresh")
+async def api_binance_symbols_refresh():
+    """Принудительный refresh из Binance API."""
+    from binance_symbols import refresh_supported_symbols
+    return await asyncio.to_thread(refresh_supported_symbols)
 
 
 @app.get("/api/live/snapshot")

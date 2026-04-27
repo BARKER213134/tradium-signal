@@ -2922,6 +2922,19 @@ async def _paper_on_signal(signal_data: dict):
     Плюс: параллельно запускает Verified Entry Checker (rule-based 8 проверок),
     и если verdict=GO шлёт в @topmonetabot с эмоджи ✨.
     """
+    # ── ФИЛЬТР: только пары торгуемые на Binance Futures USDT-perp ──
+    # Чтобы paper-результаты были корректным прокси для live (mirror на Binance).
+    # Сигналы для не-Binance пар (HANA, ZEREBRO, ZKC, новые альты) пропускаются.
+    try:
+        from binance_symbols import is_symbol_supported
+        sym_check = (signal_data.get("symbol") or "").upper()
+        if sym_check and not is_symbol_supported(sym_check):
+            logger.info(f"[paper-signal] skip {sym_check} — not on Binance Futures USDT-perp")
+            return
+    except Exception as _fe:
+        # Если binance_symbols глючит — НЕ блокируем сигнал, пропускаем дальше
+        logger.debug(f"[paper-signal] symbol filter error: {_fe}")
+
     # [УБРАНО] Pump fallback — он был нужен когда использовался AI (Claude
     # отказывал при pump_vol=0). Теперь система rule-based, check_entry
     # сам делает Vol/OI fallback через check_pump_potential (с кешем 120с).
@@ -3031,6 +3044,35 @@ async def _paper_to_live_mirror_loop():
         await _asyncio.sleep(15)
 
 
+async def _binance_symbols_refresh_loop():
+    """Каждый час обновляем список поддерживаемых пар Binance Futures.
+    Гарантирует что paper не открывает позиции на дилистенных или
+    непросутившихся пары, и mirror на live не падает с -1121."""
+    import asyncio as _asyncio
+    # Холодный прогрев — сразу
+    try:
+        from binance_symbols import refresh_supported_symbols
+        await _asyncio.to_thread(refresh_supported_symbols)
+    except Exception:
+        logger.debug("[binance-symbols] initial refresh error", exc_info=True)
+    # Цикл
+    while True:
+        await _asyncio.sleep(3600)  # 1 час
+        try:
+            from binance_symbols import refresh_supported_symbols
+            res = await _asyncio.to_thread(refresh_supported_symbols)
+            if isinstance(res, dict) and res.get("ok"):
+                added = len(res.get("added") or [])
+                removed = len(res.get("removed") or [])
+                if added or removed:
+                    logger.warning(
+                        f"[binance-symbols] +{added}/-{removed} → "
+                        f"now {res.get('count')} pairs"
+                    )
+        except Exception:
+            logger.debug("[binance-symbols] refresh loop error", exc_info=True)
+
+
 _watcher_running = False
 
 async def start_watcher():
@@ -3084,6 +3126,12 @@ async def start_watcher():
         logger.info("[paper→live] background loop started")
     except Exception:
         logger.exception("[paper→live] failed to start loop")
+    # Binance symbols refresh — каждый час подтягиваем актуальный список пар
+    try:
+        asyncio.create_task(_binance_symbols_refresh_loop())
+        logger.info("[binance-symbols] background loop started")
+    except Exception:
+        logger.exception("[binance-symbols] failed to start loop")
     # [ОТКЛЮЧЕНО] AI memory refresh + AI review open positions —
     # система переведена на rule-based (Entry Checker 8 проверок + TP ladder).
     # AI больше не используется для торговых решений.
