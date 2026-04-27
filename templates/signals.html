@@ -3608,13 +3608,25 @@ function toggleLiveRejections() {
 }
 
 async function closeLivePosition(tradeId, pair, accountId, pnl) {
-  if (!confirm(`Закрыть live #${tradeId} ${pair} (${accountId})?\n\nТекущий PnL: ${pnl}%\n\nЗакроется по рыночной цене на бирже.`)) return;
+  console.log('[closeLivePosition]', {tradeId, pair, accountId, pnl});
+  // customConfirm определена в paper section (используется для paper close)
+  const ok = (typeof customConfirm === 'function')
+    ? await customConfirm(
+        `Закрыть live #${tradeId}?`,
+        `${pair} · аккаунт ${accountId}\nТекущий PnL: ${pnl}%\n\nЗакроется по рыночной цене на бирже + пометится MANUAL в DB.`
+      )
+    : confirm(`Закрыть live #${tradeId} ${pair}?`);
+  if (!ok) return;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 30000);
   try {
     const r = await fetch(`/api/live/close`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({trade_id: tradeId})
+      body: JSON.stringify({trade_id: tradeId}),
+      signal: ctrl.signal,
     });
+    clearTimeout(tid);
     const d = await r.json();
     if (d.ok) {
       alert(`✅ Закрыто. PnL: ${d.pnl_pct}% ($${d.pnl_usdt})`);
@@ -3623,22 +3635,41 @@ async function closeLivePosition(tradeId, pair, accountId, pnl) {
     } else {
       alert(`❌ ${d.error || 'fail'}`);
     }
-  } catch (e) { alert('Сеть недоступна: ' + e); }
+  } catch (e) {
+    clearTimeout(tid);
+    if (e.name === 'AbortError') alert('⏰ Сервер не ответил за 30с');
+    else alert('Сеть недоступна: ' + e);
+  }
 }
 
 async function closeAllLivePositions() {
-  if (!confirm(`⚠️ Закрыть ВСЕ live позиции?\n\nЗакроет market reduceOnly на бирже + пометит как MANUAL в DB. Действие необратимо.`)) return;
+  console.log('[closeAllLivePositions]');
+  const ok = (typeof customConfirm === 'function')
+    ? await customConfirm(
+        '⚠️ Закрыть ВСЕ live позиции?',
+        'Закроет market на бирже (BingX hedge mode safe) + пометит MANUAL в DB.\nДействие необратимо.'
+      )
+    : confirm('Закрыть ВСЕ live позиции?');
+  if (!ok) return;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 60000);
   try {
     const r = await fetch('/api/admin/close-all-exchange-positions', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({})  // пустой = все enabled аккаунты
+      body: JSON.stringify({}),
+      signal: ctrl.signal,
     });
+    clearTimeout(tid);
     const d = await r.json();
     alert(d.ok ? `✅ Закрыто ${d.closed_count}, ошибок ${d.failed_count}` : `❌ ${d.error}`);
     loadLiveSnapshot();
     loadLiveHistory();
-  } catch (e) { alert('Сеть: ' + e); }
+  } catch (e) {
+    clearTimeout(tid);
+    if (e.name === 'AbortError') alert('⏰ Сервер не ответил за 60с');
+    else alert('Сеть: ' + e);
+  }
 }
 
 // Auto-refresh:
