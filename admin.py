@@ -247,7 +247,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
             "/api/paper/test-open", "/api/live/debug-recent", "/api/paper/status",
-            "/api/admin/cleanup-tests",
+            "/api/admin/cleanup-tests", "/api/admin/wipe-live-trades",
             "/api/paper/clear-ai-memory",
             "/api/paper/rejections", "/api/paper/be-audit", "/api/paper/close-all",
             "/api/paper/history",
@@ -2278,6 +2278,24 @@ async def api_paper_rejections(limit: int = 50):
 
     items = await paper_rejections_cache.get_or_compute(f"limit_{limit}", _compute)
     return {"ok": True, "count": len(items), "items": items}
+
+
+@app.post("/api/admin/wipe-live-trades")
+async def api_admin_wipe_live_trades(payload: dict | None = None):
+    """Удалить ВСЕ live_trades для указанного account_id. Используется для
+    чистки после тестов когда трейды зависли в неправильном статусе.
+    payload: {"account_id":"super_testnet"}"""
+    pl = payload or {}
+    aid = pl.get("account_id") or "super_testnet"
+    from database import _live_trades, _live_accounts, utcnow
+    res = _live_trades().delete_many({"account_id": aid})
+    # Reset last_trade_at и kill_switch
+    _live_accounts().update_one(
+        {"_id": aid},
+        {"$set": {"last_trade_at": None, "kill_switch": False,
+                  "kill_reason": None, "updated_at": utcnow()}},
+    )
+    return {"ok": True, "deleted_live_trades": res.deleted_count, "account_id": aid}
 
 
 @app.post("/api/admin/cleanup-tests")
