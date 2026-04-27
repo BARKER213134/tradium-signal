@@ -3167,13 +3167,8 @@ safeInterval(loadConflicts, 30000);
                  autocomplete="off" data-lpignore="true"
                  style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
         </label>
-        <label style="display:grid;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">Биржа*</span>
-          <select id="acc_exchange" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
-            <option value="bingx" selected>🟢 BingX (рекомендуется — нет ограничений по странам)</option>
-            <option value="binance">🟡 Binance Futures (ограничения в РФ/СНГ)</option>
-          </select>
-        </label>
+        <!-- Биржа жёстко = BingX (Binance временно отключена, можно вернуть в коде) -->
+        <input type="hidden" id="acc_exchange" value="bingx">
         <label style="display:grid;gap:4px;">
           <span style="color:var(--muted);font-size:10px;">Режим*</span>
           <select id="acc_mode" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
@@ -3220,43 +3215,29 @@ safeInterval(loadConflicts, 30000);
   </div>
   <!-- ═══ /Live аккаунты panel (modal закрыт) ═══ -->
 
-  <!-- ═══ Multi-exchange symbols registry ═══ -->
-  <div style="margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-    <!-- BingX panel -->
+  <!-- ═══ BingX symbols registry (Binance скрыт — backend готов если понадобится) ═══ -->
+  <div style="margin-bottom:14px;">
     <div id="bingxSymPanel" style="padding:10px 14px;background:linear-gradient(135deg,rgba(0,229,160,0.05),rgba(0,212,255,0.03));border:1px solid rgba(0,229,160,0.25);border-radius:10px;font-family:var(--font-mono);font-size:11px;">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
-        <span style="color:#00e5a0;font-weight:700;letter-spacing:0.05em;">🟢 BingX</span>
-        <span id="bingxIsDefault" style="display:none;background:rgba(0,229,160,0.18);color:#00e5a0;border:1px solid rgba(0,229,160,0.4);border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;">⭐ DEFAULT</span>
+        <span style="color:#00e5a0;font-weight:700;letter-spacing:0.05em;">🟢 BingX Perpetual Futures</span>
         <span id="bingxSymCount" style="color:var(--text);font-weight:700;">—</span>
-        <span style="color:var(--muted);font-size:10px;">пар</span>
+        <span style="color:var(--muted);font-size:10px;">USDT-perp пар · paper фильтрует по этим символам</span>
         <div style="flex:1"></div>
-        <button onclick="refreshExchangeSymbols('bingx')" title="Обновить" style="background:transparent;border:1px solid rgba(0,229,160,0.4);color:#00e5a0;border-radius:5px;padding:2px 8px;font-size:9px;font-family:var(--font-mono);cursor:pointer;">⟳</button>
-        <button onclick="setDefaultExchange('bingx')" title="Сделать default (paper будет фильтровать по этой бирже)" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:2px 8px;font-size:9px;font-family:var(--font-mono);cursor:pointer;">⭐</button>
+        <button onclick="refreshExchangeSymbols('bingx')" title="Обновить из BingX API" style="background:transparent;border:1px solid rgba(0,229,160,0.4);color:#00e5a0;border-radius:5px;padding:3px 10px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">⟳ Обновить</button>
       </div>
       <div style="display:flex;align-items:center;gap:8px;font-size:10px;color:var(--muted);">
-        <span id="bingxSymUpdated">—</span>
+        обновлено <span id="bingxSymUpdated">—</span>
         <span id="bingxSymStale" style="display:none;color:#ff8c32;">⚠️ устарел</span>
       </div>
     </div>
-    <!-- Binance panel -->
-    <div id="binanceSymPanel" style="padding:10px 14px;background:linear-gradient(135deg,rgba(255,184,77,0.05),rgba(0,212,255,0.03));border:1px solid rgba(255,184,77,0.22);border-radius:10px;font-family:var(--font-mono);font-size:11px;">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
-        <span style="color:#ffb84d;font-weight:700;letter-spacing:0.05em;">🟡 Binance</span>
-        <span id="binanceIsDefault" style="display:none;background:rgba(255,184,77,0.18);color:#ffb84d;border:1px solid rgba(255,184,77,0.4);border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;">⭐ DEFAULT</span>
-        <span id="binanceSymCount" style="color:var(--text);font-weight:700;">—</span>
-        <span style="color:var(--muted);font-size:10px;">пар</span>
-        <div style="flex:1"></div>
-        <button onclick="refreshExchangeSymbols('binance')" title="Обновить" style="background:transparent;border:1px solid rgba(255,184,77,0.4);color:#ffb84d;border-radius:5px;padding:2px 8px;font-size:9px;font-family:var(--font-mono);cursor:pointer;">⟳</button>
-        <button onclick="setDefaultExchange('binance')" title="Сделать default" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:2px 8px;font-size:9px;font-family:var(--font-mono);cursor:pointer;">⭐</button>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;font-size:10px;color:var(--muted);">
-        <span id="binanceSymUpdated">—</span>
-        <span id="binanceSymStale" style="display:none;color:#ff8c32;">⚠️ устарел</span>
-      </div>
+    <!-- Binance скрыт — UI элементы оставлены display:none для обратной совместимости -->
+    <div id="binanceSymPanel" style="display:none;">
+      <span id="binanceIsDefault" style="display:none;"></span>
+      <span id="binanceSymCount"></span><span id="binanceSymUpdated"></span><span id="binanceSymStale"></span>
     </div>
+    <span id="bingxIsDefault" style="display:none;"></span>
+    <span id="paperFilterEx" style="display:none;"></span>
   </div>
-  <div style="margin-bottom:14px;font-size:10px;color:var(--muted);font-family:var(--font-mono);">
-    💡 Default биржа определяет: какие символы paper будет торговать. Сейчас → <span id="paperFilterEx" style="color:var(--cyan);font-weight:700;">—</span></div>
 
   <!-- ═══ Live KPI cards (агрегат всех аккаунтов) ═══ -->
   <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px;">
