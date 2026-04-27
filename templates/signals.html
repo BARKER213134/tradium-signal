@@ -5126,11 +5126,52 @@ async function testAccountConnection(id) {
   } catch (e) { alert('Ошибка: ' + e.message); }
 }
 
+// Custom prompt-modal — заменяет браузерный prompt() (блокируется в Brave/strict mode)
+function customPrompt(title, message, defaultValue) {
+  return new Promise((resolve) => {
+    let modal = document.getElementById('customPromptModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'customPromptModal';
+      modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(5,7,12,0.85);backdrop-filter:blur(8px);z-index:10000;align-items:center;justify-content:center;padding:20px;';
+      modal.innerHTML = `
+        <div style="background:linear-gradient(180deg,#0e1420,#0a0e14);border:1px solid rgba(0,212,255,0.4);border-radius:14px;padding:22px;max-width:460px;width:100%;font-family:var(--font-mono);box-shadow:0 24px 60px rgba(0,0,0,0.6);">
+          <div id="cpTitle" style="color:#00d4ff;font-weight:800;font-size:14px;margin-bottom:8px;"></div>
+          <div id="cpMsg" style="color:var(--muted);font-size:11px;line-height:1.6;white-space:pre-wrap;margin-bottom:14px;"></div>
+          <input id="cpInput" type="text" style="width:100%;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:10px 14px;color:var(--text);font-family:var(--font-mono);font-size:14px;margin-bottom:14px;box-sizing:border-box;">
+          <div style="display:flex;gap:10px;">
+            <button id="cpYes" style="flex:1;background:linear-gradient(135deg,#00e5a0,#00d4ff);color:#0a0e14;border:none;border-radius:9px;padding:10px 18px;font-size:13px;font-family:var(--font-mono);font-weight:800;cursor:pointer;">✓ OK</button>
+            <button id="cpNo" style="background:transparent;border:1px solid rgba(255,255,255,0.12);border-radius:9px;padding:10px 18px;font-size:12px;font-family:var(--font-mono);cursor:pointer;color:var(--muted);">Отмена</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+    }
+    document.getElementById('cpTitle').textContent = title;
+    document.getElementById('cpMsg').textContent = message;
+    const inp = document.getElementById('cpInput');
+    inp.value = defaultValue || '';
+    modal.style.display = 'flex';
+    setTimeout(() => { inp.focus(); inp.select(); }, 50);
+    const close = (val) => { modal.style.display = 'none'; resolve(val); };
+    document.getElementById('cpYes').onclick = () => close(inp.value);
+    document.getElementById('cpNo').onclick = () => close(null);
+    modal.onclick = (e) => { if (e.target === modal) close(null); };
+    inp.onkeydown = (e) => {
+      if (e.key === 'Enter') close(inp.value);
+      else if (e.key === 'Escape') close(null);
+    };
+  });
+}
+
 async function setAccountVirtBalance(id, current) {
-  const v = prompt(`Виртуальный баланс для ${id}\n(используется для расчёта size_pct, не реальный margin)\n\nТекущий: $${current}\nПримеры:\n  $2419 — зеркалить paper\n  $1000 — фиксированный depo\n  $0 — использовать реальный margin (после теста соединения)\n\nНовый:`, current);
+  const v = await customPrompt(
+    `💰 Vbal для ${id}`,
+    `Виртуальный баланс для расчёта size_pct (не реальный margin).\n\nТекущий: $${current}\nПримеры:\n  $500 — зеркалить твой реальный депо\n  $0 — использовать реальный margin\n\n💡 Vbal автосинхронизируется с paper.balance перед каждой сделкой — обычно вручную трогать не надо.`,
+    String(current || '')
+  );
   if (v == null) return;
   const bal = parseFloat(v);
-  if (isNaN(bal) || bal < 0) { alert('Должно быть число >= 0'); return; }
+  if (isNaN(bal) || bal < 0) { alert('❌ Должно быть число >= 0'); return; }
   try {
     const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/balance`, {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -5144,7 +5185,11 @@ async function setAccountVirtBalance(id, current) {
 
 async function toggleAccountEnabled(id, enabled) {
   if (enabled) {
-    if (!confirm(`▶ Включить аккаунт '${id}'?\n\nС этого момента сигналы будут открывать реальные позиции на этом аккаунте.`)) return;
+    const ok = await customConfirm(
+      `▶ Включить аккаунт '${id}'?`,
+      'С этого момента сигналы будут открывать РЕАЛЬНЫЕ позиции на этом аккаунте.\nЗеркалирование с paper активируется.'
+    );
+    if (!ok) return;
   }
   try {
     const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/enable`, {
@@ -5152,20 +5197,24 @@ async function toggleAccountEnabled(id, enabled) {
       credentials:'include', body: JSON.stringify({enabled: enabled}),
     });
     const d = await r.json();
-    if (!d.ok) alert('Ошибка: ' + d.error);
+    if (!d.ok) alert('❌ ' + d.error);
     await loadAccounts();
   } catch (e) { alert('Ошибка: ' + e.message); }
 }
 
 async function killAccount(id) {
-  if (!confirm(`⛔ Kill switch для ${id}?\n\nЗаблокирует новые сделки на этом аккаунте до ручного reset.`)) return;
+  const ok = await customConfirm(
+    `⛔ Kill switch для ${id}?`,
+    'Заблокирует НОВЫЕ сделки на этом аккаунте до ручного reset.\nОткрытые позиции остаются — закрой их вручную если нужно.'
+  );
+  if (!ok) return;
   try {
     const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/kill`, {
       method:'POST', headers:{'Content-Type':'application/json'},
       credentials:'include', body: JSON.stringify({kill: true}),
     });
     const d = await r.json();
-    if (!d.ok) alert('Ошибка: ' + d.error);
+    if (!d.ok) alert('❌ ' + d.error);
     await loadAccounts();
   } catch (e) { alert('Ошибка: ' + e.message); }
 }
@@ -5177,19 +5226,23 @@ async function resetAccountKill(id) {
       credentials:'include', body: JSON.stringify({kill: false}),
     });
     const d = await r.json();
-    if (!d.ok) alert('Ошибка: ' + d.error);
+    if (!d.ok) alert('❌ ' + d.error);
     await loadAccounts();
   } catch (e) { alert('Ошибка: ' + e.message); }
 }
 
 async function deleteAccount(id) {
-  if (!confirm(`Удалить аккаунт '${id}'?\nЭто действие нельзя отменить.\n(API ключи будут удалены из БД, открытые позиции — нет)`)) return;
+  const ok = await customConfirm(
+    `Удалить аккаунт '${id}'?`,
+    'API ключи будут удалены из БД.\nОткрытые позиции на бирже — НЕ закрываются (закрой их сначала).\nЭто действие нельзя отменить.'
+  );
+  if (!ok) return;
   try {
     const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}`, {
       method:'DELETE', credentials:'include',
     });
     const d = await r.json();
-    if (!d.ok) alert('Ошибка: ' + d.error);
+    if (!d.ok) alert('❌ ' + d.error);
     await loadAccounts();
   } catch (e) { alert('Ошибка: ' + e.message); }
 }
