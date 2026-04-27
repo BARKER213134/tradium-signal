@@ -3143,18 +3143,29 @@ safeInterval(loadConflicts, 30000);
         <div style="color:var(--cyan);font-weight:700;font-size:14px;">+ Новый live аккаунт</div>
         <button onclick="closeAddAccountModal()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;">✕</button>
       </div>
-      <div style="display:grid;gap:10px;">
+      <!-- Скрытый трюк: фейковые поля чтобы браузер не автозаполнял реальные API key/secret -->
+      <div style="display:none;" aria-hidden="true">
+        <input type="text" name="fakeusernameremembered" autocomplete="username">
+        <input type="password" name="fakepasswordremembered" autocomplete="current-password">
+      </div>
+      <form autocomplete="off" onsubmit="return false;" style="display:grid;gap:10px;">
         <label style="display:grid;gap:4px;">
           <span style="color:var(--muted);font-size:10px;">ID (alphanum/_/-)*</span>
-          <input id="acc_id" type="text" placeholder="papa_testnet" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
+          <input id="acc_id" name="bnx_acc_id_unique" type="text" placeholder="super_real"
+                 autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-form-type="other" data-lpignore="true"
+                 style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
         </label>
         <label style="display:grid;gap:4px;">
           <span style="color:var(--muted);font-size:10px;">Владелец</span>
-          <input id="acc_owner" type="text" placeholder="Иван" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
+          <input id="acc_owner" name="bnx_acc_owner_unique" type="text" placeholder="Super"
+                 autocomplete="off" data-lpignore="true"
+                 style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
         </label>
         <label style="display:grid;gap:4px;">
           <span style="color:var(--muted);font-size:10px;">Подпись (опционально)</span>
-          <input id="acc_label" type="text" placeholder="Папа · testnet · агрес" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
+          <input id="acc_label" name="bnx_acc_label_unique" type="text" placeholder="Super · real · paper-mirror"
+                 autocomplete="off" data-lpignore="true"
+                 style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
         </label>
         <label style="display:grid;gap:4px;">
           <span style="color:var(--muted);font-size:10px;">Режим*</span>
@@ -3171,12 +3182,16 @@ safeInterval(loadConflicts, 30000);
           → Хранятся в зашифрованной MongoDB
         </div>
         <label style="display:grid;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">API Key*</span>
-          <input id="acc_api_key" type="text" placeholder="64 chars" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:11px;">
+          <span style="color:var(--muted);font-size:10px;">API Key* <span style="color:#ffa94d;font-size:9px;">(64 символа из Binance)</span></span>
+          <input id="acc_api_key" name="bnx_apik_unique_z9" type="text" placeholder="вставь API Key из Binance"
+                 autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-form-type="other" data-lpignore="true"
+                 style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:11px;">
         </label>
         <label style="display:grid;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">API Secret*</span>
-          <input id="acc_api_secret" type="password" placeholder="64 chars" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:11px;">
+          <span style="color:var(--muted);font-size:10px;">API Secret* <span style="color:#ffa94d;font-size:9px;">(показывается только один раз!)</span></span>
+          <input id="acc_api_secret" name="bnx_apis_unique_z9" type="password" placeholder="вставь API Secret из Binance"
+                 autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-form-type="other" data-lpignore="true"
+                 style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:11px;">
         </label>
         <label style="display:grid;gap:4px;">
           <span style="color:var(--muted);font-size:10px;">Safety preset</span>
@@ -3190,10 +3205,10 @@ safeInterval(loadConflicts, 30000);
           </select>
         </label>
         <div style="display:flex;gap:8px;margin-top:8px;">
-          <button onclick="submitAddAccount()" style="flex:1;background:linear-gradient(135deg,rgba(0,229,160,0.3),rgba(0,212,255,0.15));color:#00e5a0;border:1px solid rgba(0,229,160,0.6);border-radius:8px;padding:8px 16px;font-size:12px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">✓ Создать</button>
-          <button onclick="closeAddAccountModal()" style="background:transparent;border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;color:var(--muted);">Отмена</button>
+          <button type="button" onclick="submitAddAccount()" style="flex:1;background:linear-gradient(135deg,rgba(0,229,160,0.3),rgba(0,212,255,0.15));color:#00e5a0;border:1px solid rgba(0,229,160,0.6);border-radius:8px;padding:8px 16px;font-size:12px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">✓ Создать</button>
+          <button type="button" onclick="closeAddAccountModal()" style="background:transparent;border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;color:var(--muted);">Отмена</button>
         </div>
-      </div>
+      </form>
     </div>
   </div>
   <!-- ═══ /Live аккаунты panel (modal закрыт) ═══ -->
@@ -4737,8 +4752,23 @@ function renderAccountRow(a) {
 }
 
 function openAddAccountModal() {
+  // Сначала очищаем все поля чтобы убрать любой browser autofill
+  for (const id of ['acc_id','acc_owner','acc_label','acc_api_key','acc_api_secret']) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.value = '';
+      el.setAttribute('readonly', 'readonly'); // временно блокируем autofill
+    }
+  }
   document.getElementById('atAddAccountModal').style.display = 'flex';
-  document.getElementById('acc_id').focus();
+  // Через 100мс снимаем readonly — браузер уже не будет авто-заполнять
+  setTimeout(() => {
+    for (const id of ['acc_id','acc_owner','acc_label','acc_api_key','acc_api_secret']) {
+      const el = document.getElementById(id);
+      if (el) el.removeAttribute('readonly');
+    }
+    document.getElementById('acc_id').focus();
+  }, 100);
 }
 function closeAddAccountModal() {
   document.getElementById('atAddAccountModal').style.display = 'none';
