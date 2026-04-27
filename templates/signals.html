@@ -3131,10 +3131,17 @@ safeInterval(loadConflicts, 30000);
         <label style="display:grid;gap:4px;">
           <span style="color:var(--muted);font-size:10px;">Режим*</span>
           <select id="acc_mode" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
-            <option value="testnet">🟡 testnet (тренировка)</option>
-            <option value="real">🔴 real (реальные деньги!)</option>
+            <option value="real" selected>🔴 real (реальные деньги!)</option>
+            <option value="testnet">🧪 testnet (тренировка — limited pairs)</option>
           </select>
         </label>
+        <div style="background:rgba(255,77,109,0.08);border:1px solid rgba(255,77,109,0.3);border-radius:6px;padding:8px 10px;font-size:10.5px;color:#ff8c32;line-height:1.5;">
+          ⚠️ <b>API ключи Binance Futures:</b><br>
+          → Включи <b>Enable Futures</b> + <b>Trading</b><br>
+          → <b>НЕ включай</b> Withdrawals<br>
+          → Запиши IP whitelist (Railway: 0.0.0.0/0 если нет статики)<br>
+          → Хранятся в зашифрованной MongoDB
+        </div>
         <label style="display:grid;gap:4px;">
           <span style="color:var(--muted);font-size:10px;">API Key*</span>
           <input id="acc_api_key" type="text" placeholder="64 chars" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:11px;">
@@ -3146,10 +3153,12 @@ safeInterval(loadConflicts, 30000);
         <label style="display:grid;gap:4px;">
           <span style="color:var(--muted);font-size:10px;">Safety preset</span>
           <select id="acc_preset" style="background:#0a0e14;border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--font-mono);font-size:12px;">
-            <option value="paper_mirror">🪞 Paper Mirror (как paper: 9× lev, 15% size, 7 поз)</option>
-            <option value="aggressive">🔥 Aggressive (5× lev, 10% size, 3 поз)</option>
-            <option value="moderate">⚖️ Moderate (3× lev, 5% size, 2 поз)</option>
+            <option value="real_safe" selected>🟢 Real Safe — рекоменд. для старта (5× lev, 5% size, 5 поз)</option>
+            <option value="real_aggressive">🔴 Real Aggressive — после 50+ сделок (7× lev, 10% size, 7 поз)</option>
             <option value="conservative">🛡️ Conservative (2× lev, 3% size, 1 поз)</option>
+            <option value="moderate">⚖️ Moderate (3× lev, 5% size, 2 поз)</option>
+            <option value="aggressive">🔥 Aggressive (5× lev, 10% size, 3 поз)</option>
+            <option value="paper_mirror">🪞 Paper Mirror — testnet only (9× lev, 15% size)</option>
           </select>
         </label>
         <div style="display:flex;gap:8px;margin-top:8px;">

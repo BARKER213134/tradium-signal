@@ -57,18 +57,44 @@ SAFETY_PRESETS = {
         "min_balance_usd": 50,
     },
     # Зеркало paper-trader: точные те же лимиты что в paper-режиме.
-    # Используется для testnet чтобы видеть отличие paper vs реальное
-    # исполнение (slippage/fills/fees) на одних и тех же сигналах.
+    # Используется только для testnet (для real слишком агрессивно).
     "paper_mirror": {
-        "label": "🪞 Paper Mirror",
-        "max_positions": 7,        # paper allows ~7-10 одновременно
-        "max_size_pct": 15.0,      # paper использует 15%
-        "max_leverage": 9,         # paper использует 8-9x
+        "label": "🪞 Paper Mirror (testnet only)",
+        "max_positions": 7,
+        "max_size_pct": 15.0,
+        "max_leverage": 9,
         "daily_loss_limit_pct": -20.0,
         "max_drawdown_pct": -30.0,
-        "min_interval_minutes": 0, # paper не имеет такого ограничения
+        "min_interval_minutes": 0,
         "max_position_usd": 5000,
         "min_balance_usd": 50,
+    },
+    # Для реального капитала — половина рисков paper'а.
+    # Если paper делает +5%/нед, real ~+2.5% (минус slippage/funding/whales).
+    # При балансе $1000: max 5 позиций × 5% × 5x = 125% notional, безопасно.
+    "real_safe": {
+        "label": "🟢 Real Safe (рекоменд. для старта)",
+        "max_positions": 5,
+        "max_size_pct": 5.0,
+        "max_leverage": 5,
+        "daily_loss_limit_pct": -10.0,
+        "max_drawdown_pct": -20.0,
+        "min_interval_minutes": 3,
+        "max_position_usd": 500,
+        "min_balance_usd": 50,
+    },
+    # Для уверенных — те же риски что paper, на real-деньгах.
+    # Только когда уже 50+ закрытых сделок на testnet/paper показали +EV.
+    "real_aggressive": {
+        "label": "🔴 Real Aggressive (после 50+ сделок!)",
+        "max_positions": 7,
+        "max_size_pct": 10.0,
+        "max_leverage": 7,
+        "daily_loss_limit_pct": -15.0,
+        "max_drawdown_pct": -25.0,
+        "min_interval_minutes": 1,
+        "max_position_usd": 2000,
+        "min_balance_usd": 100,
     },
 }
 
