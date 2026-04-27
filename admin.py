@@ -596,9 +596,18 @@ async def _run_backfill_missed(client, hours: float, only: str | None):
         log.exception("[backfill-api] crashed")
 
 
+_tradium_forum_cache: dict = {}
+_TRADIUM_FORUM_TTL = 600  # 10 мин — список тем меняется редко
+
+
 @app.get("/api/peek-tradium-forum")
 async def api_peek_tradium_forum():
-    """Проверяет форумные топики в Tradium группе."""
+    """Проверяет форумные топики в Tradium группе. Кеш 10 мин."""
+    import time as _time
+    now = _time.time()
+    cached = _tradium_forum_cache.get("v")
+    if cached and (now - cached[0]) < _TRADIUM_FORUM_TTL:
+        return cached[1]
     try:
         from userbot import _tg_client
         from config import SOURCE_GROUP_ID
@@ -642,14 +651,29 @@ async def api_peek_tradium_forum():
                     info["topic_samples"][f"{t.id}:{t.title}"] = samples
             except Exception as e:
                 info["forum_error"] = str(e)
-        return {"ok": True, **info}
+        result_doc = {"ok": True, **info}
+        _tradium_forum_cache["v"] = (now, result_doc)
+        return result_doc
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 
+# In-memory cache для tradium-setups (5-минутный TTL)
+_tradium_setups_cache: dict = {}  # key=hours → (timestamp, result)
+_TRADIUM_SETUPS_TTL = 300  # 5 минут
+
+
 @app.get("/api/peek-tradium-setups")
 async def api_peek_tradium_setups(hours: int = 48):
-    """Ищет только Tradium Setup сообщения (по тексту) за последние N часов."""
+    """Ищет только Tradium Setup сообщения (по тексту) за последние N часов.
+    Кеш 5 мин — иначе каждый запрос = iter 10000 Telegram messages."""
+    import time as _time
+    now = _time.time()
+    cache_key = int(hours)
+    cached = _tradium_setups_cache.get(cache_key)
+    if cached and (now - cached[0]) < _TRADIUM_SETUPS_TTL:
+        return cached[1]
+
     try:
         from userbot import _tg_client
         from config import SOURCE_GROUP_ID
@@ -668,7 +692,6 @@ async def api_peek_tradium_setups(hours: int = 48):
             if m.date and m.date < since:
                 break
             text = m.raw_text or ""
-            # Фильтруем по признакам Tradium Setup
             if "Tradium Setups" not in text and "Setup Screener" not in text and "#сетап" not in text:
                 continue
             parsed = parse_signal(text)
@@ -688,7 +711,9 @@ async def api_peek_tradium_setups(hours: int = 48):
                     "timeframe": parsed.get("timeframe"),
                 },
             })
-        return {"ok": True, "scanned_total": total, "setups_found": len(setups), "messages": setups}
+        result = {"ok": True, "scanned_total": total, "setups_found": len(setups), "messages": setups}
+        _tradium_setups_cache[cache_key] = (now, result)
+        return result
     except Exception as e:
         return {"ok": False, "error": str(e), "scanned_total": total, "setups_found": len(setups), "messages": setups}
 
