@@ -4874,7 +4874,7 @@ function closeAddAccountModal() {
   }
 }
 
-// Закрывать модалку по клику на фон + по Esc
+// Закрывать модалку по клику на фон + по Esc + ID auto-normalize
 document.addEventListener('DOMContentLoaded', () => {
   const modal = document.getElementById('atAddAccountModal');
   if (modal) {
@@ -4887,12 +4887,31 @@ document.addEventListener('DOMContentLoaded', () => {
       closeAddAccountModal();
     }
   });
+  // Real-time нормализация ID: пробелы→_, lowercase, без спец.символов
+  const idInput = document.getElementById('acc_id');
+  if (idInput) {
+    idInput.addEventListener('input', (e) => {
+      const v = e.target.value;
+      const normalized = v.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_-]/g, '');
+      if (v !== normalized) {
+        const pos = e.target.selectionStart;
+        e.target.value = normalized;
+        try { e.target.setSelectionRange(pos, pos); } catch(_) {}
+      }
+    });
+  }
 });
 
 async function submitAddAccount() {
   const exEl = document.getElementById('acc_exchange');
+  // Авто-нормализация ID: пробелы → _, lowercase, без спец. символов
+  const rawId = document.getElementById('acc_id').value.trim();
+  const normalizedId = rawId.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_-]/g, '');
+  if (rawId && normalizedId !== rawId.toLowerCase()) {
+    document.getElementById('acc_id').value = normalizedId;  // показываем нормализованный ID юзеру
+  }
   const payload = {
-    id: document.getElementById('acc_id').value.trim(),
+    id: normalizedId,
     owner: document.getElementById('acc_owner').value.trim(),
     label: document.getElementById('acc_label').value.trim(),
     exchange: exEl ? exEl.value : 'bingx',
@@ -4901,24 +4920,63 @@ async function submitAddAccount() {
     api_secret: document.getElementById('acc_api_secret').value.trim(),
     safety_preset: document.getElementById('acc_preset').value,
   };
-  if (!payload.id || !payload.api_key || !payload.api_secret) {
-    alert('id, api_key и api_secret обязательны');
+  if (!payload.id) {
+    alert('❌ ID обязателен.\nРазрешены только латинские буквы, цифры, _ и -');
     return;
   }
+  if (!payload.api_key || !payload.api_secret) {
+    alert('❌ API Key и API Secret обязательны');
+    return;
+  }
+  if (payload.api_key.length < 20 || payload.api_secret.length < 20) {
+    alert('❌ API Key/Secret слишком короткие — проверь что вставил полностью');
+    return;
+  }
+
+  // Visual feedback на кнопке "Создать"
+  const btn = document.querySelector('#atAddAccountModal .acc-btn-primary');
+  const origText = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Создаю аккаунт...';
+    btn.style.opacity = '0.7';
+  }
+
+  // Fetch с timeout 20с — не висит вечно
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+
   try {
     const r = await fetch('/api/live/accounts', {
       method:'POST', headers:{'Content-Type':'application/json'},
       credentials:'include', body: JSON.stringify(payload),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
     const d = await r.json();
-    if (!d.ok) { alert('Ошибка: ' + d.error); return; }
+    if (!d.ok) {
+      alert('❌ Ошибка: ' + (d.error || 'неизвестная ошибка'));
+      return;
+    }
     closeAddAccountModal();
     await loadAccounts();
-    // Авто-тест соединения после создания
-    if (confirm(`Аккаунт '${d.id}' создан. Проверить соединение и подтянуть баланс?`)) {
+    if (confirm(`✅ Аккаунт '${d.id}' создан.\n\nПроверить соединение и подтянуть реальный баланс с биржи?`)) {
       await testAccountConnection(d.id);
     }
-  } catch (e) { alert('Ошибка: ' + e.message); }
+  } catch (e) {
+    clearTimeout(timeoutId);
+    if (e.name === 'AbortError') {
+      alert('⏰ Сервер не ответил за 20 секунд.\n\nПопробуй ещё раз — возможно перезагружается worker.');
+    } else {
+      alert('❌ Ошибка сети: ' + (e.message || e));
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origText;
+      btn.style.opacity = '';
+    }
+  }
 }
 
 async function testAccountConnection(id) {
