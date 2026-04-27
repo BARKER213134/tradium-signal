@@ -247,6 +247,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
             "/api/paper/ai-prompt", "/api/paper/set-balance", "/api/paper/ai-test",
             "/api/paper/test-open", "/api/live/debug-recent", "/api/paper/status",
+            "/api/live/snapshot", "/api/live/history-all", "/api/live/rejections-all",
             "/api/admin/cleanup-tests", "/api/admin/wipe-live-trades",
             "/api/admin/recompute-paper-balance", "/api/admin/backfill-mirror",
             "/api/admin/close-all-exchange-positions",
@@ -2576,6 +2577,135 @@ async def api_admin_cleanup_tests(payload: dict | None = None):
         "new_balance": new_balance,
         "sources_filter": sources,
     }
+
+
+@app.get("/api/live/snapshot")
+async def api_live_snapshot():
+    """Агрегат всех enabled live аккаунтов: суммарный капитал, позиции, статы.
+    Это аналог /api/paper/status но для real-money."""
+    from database import _live_trades, _live_accounts
+    import live_safety as ls
+    from exchange import get_prices_any
+
+    accounts = list(_live_accounts().find({}))
+    enabled = [a for a in accounts if a.get("enabled")]
+
+    # Реальный баланс с биржи (если ключи настроены)
+    total_balance = 0.0
+    total_equity = 0.0
+    total_free = 0.0
+    total_used = 0.0
+    accounts_status = []
+    import live_trader as lt
+    for a in accounts:
+        aid = a.get("_id")
+        # Используем кешированный balance из аккаунта (обновляется при ⚡ Тест)
+        # для агрегации НЕ дёргаем биржу каждый раз
+        bal = float(a.get("balance") or 0.0)
+        total_balance += bal
+        accounts_status.append({
+            "id": aid,
+            "label": a.get("label") or aid,
+            "owner": a.get("owner"),
+            "mode": a.get("mode"),
+            "enabled": a.get("enabled"),
+            "kill_switch": a.get("kill_switch"),
+            "balance": bal,
+        })
+
+    # Все открытые live позиции
+    open_trades = list(_live_trades().find({"status": "OPEN"}))
+    # Live PnL по текущим ценам
+    if open_trades:
+        pairs = list({(p.get("symbol", "") or "").replace("USDT", "/USDT") for p in open_trades if p.get("symbol")})
+        try:
+            prices = await asyncio.to_thread(get_prices_any, pairs) or {}
+        except Exception:
+            prices = {}
+        for p in open_trades:
+            cur = prices.get(p.get("symbol", ""))
+            if cur and p.get("entry"):
+                raw = ((cur - p["entry"]) / p["entry"]) * 100
+                pnl = -raw if p.get("direction") == "SHORT" else raw
+                p["live_pnl"] = round(pnl * (p.get("leverage", 1) or 1), 2)
+                p["live_price"] = cur
+            p["_id"] = str(p.get("_id", ""))
+            for k in ("opened_at", "closed_at"):
+                if p.get(k) and hasattr(p[k], "isoformat"):
+                    p[k] = p[k].isoformat()
+
+    # Статистика по ВСЕМ закрытым live трейдам
+    closed_filter = {"status": {"$in": ["TP", "SL", "BE", "TRAIL", "MANUAL", "AI_CLOSE"]}}
+    closed_count = _live_trades().count_documents(closed_filter)
+    failed_count = _live_trades().count_documents({"status": "FAILED_OPEN"})
+
+    # Win rate + total PnL
+    total_pnl = 0.0
+    wins = 0
+    losses = 0
+    for d in _live_trades().find(closed_filter, {"pnl_usdt": 1}):
+        v = float(d.get("pnl_usdt") or 0)
+        total_pnl += v
+        if v > 0: wins += 1
+        elif v < 0: losses += 1
+    win_rate = round(wins / (wins + losses) * 100, 1) if (wins + losses) else 0
+
+    pnl_pct = round(total_pnl / total_balance * 100, 2) if total_balance > 0 else 0
+
+    # max_positions = агрегат из presets всех enabled
+    max_positions_total = 0
+    for a in enabled:
+        preset = ls.SAFETY_PRESETS.get(a.get("safety_preset", "paper_mirror"), {})
+        max_positions_total += preset.get("max_positions", 0)
+
+    return {
+        "ok": True,
+        "count_accounts": len(accounts),
+        "count_enabled": len(enabled),
+        "total_balance": round(total_balance, 2),
+        "total_pnl": round(total_pnl, 2),
+        "pnl_pct": pnl_pct,
+        "open_count": len(open_trades),
+        "max_positions": max_positions_total,
+        "stats": {
+            "total": closed_count,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": win_rate,
+            "total_pnl": round(total_pnl, 2),
+            "avg_pnl": round(total_pnl / closed_count, 2) if closed_count else 0,
+            "failed_attempts": failed_count,
+        },
+        "positions": open_trades,
+        "accounts": accounts_status,
+    }
+
+
+@app.get("/api/live/history-all")
+async def api_live_history_all(limit: int = 200):
+    """Последние N закрытых live трейдов (агрегат по всем аккаунтам)."""
+    from database import _live_trades
+    closed_filter = {"status": {"$in": ["TP", "SL", "BE", "TRAIL", "MANUAL", "AI_CLOSE"]}}
+    items = list(_live_trades().find(closed_filter).sort("closed_at", -1).limit(int(limit)))
+    for it in items:
+        it["_id"] = str(it.get("_id", ""))
+        for k in ("opened_at", "closed_at"):
+            if it.get(k) and hasattr(it[k], "isoformat"):
+                it[k] = it[k].isoformat()
+    return {"ok": True, "count": len(items), "items": items}
+
+
+@app.get("/api/live/rejections-all")
+async def api_live_rejections_all(limit: int = 100):
+    """Последние N FAILED_OPEN попыток (символ + причина)."""
+    from database import _live_trades
+    items = list(_live_trades().find({"status": "FAILED_OPEN"}).sort("opened_at", -1).limit(int(limit)))
+    for it in items:
+        it["_id"] = str(it.get("_id", ""))
+        for k in ("opened_at", "closed_at"):
+            if it.get(k) and hasattr(it[k], "isoformat"):
+                it[k] = it[k].isoformat()
+    return {"ok": True, "count": len(items), "items": items}
 
 
 @app.get("/api/live/debug-recent")
