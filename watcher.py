@@ -164,34 +164,31 @@ async def _eth_kc_prewarm_loop():
 
     while True:
         try:
-            await _asyncio.sleep(240)  # 4 мин
+            await _asyncio.sleep(600)  # 10 минут (было 4)
             await _asyncio.to_thread(get_keltner_eth)
             await _asyncio.to_thread(get_eth_market_context)
-            # Периодический refresh ST+pump (каждые 4 мин)
-            _asyncio.create_task(_warm_st_top_pairs())
+            # ST+pump prewarm убран из периодического обновления — холодные
+            # запросы при первом use ОК (TTL 120с в supertrend_state)
         except Exception:
             logger.exception("[prewarm] ETH/KC loop error")
 
 
 async def _candles_prewarm_loop():
-    """Фоновый прогрев candles cache для ВСЕХ активных пар, чтобы первое
-    открытие графика было мгновенным. Два уровня:
-      — топ-50 (важные) прогреваются каждые 3 мин на 5 TF (15m/1h/4h/1d/30m)
-      — остальные (до 300) прогреваются каждые 10 мин на 3 TF (1h/4h/1d)
-    warm_candles_cache пропускает если >50% TTL осталось, так что реальные
-    HTTP запросы к Binance идут только когда надо.
+    """Фоновый прогрев candles cache. Снижено в ~5× для уменьшения CPU нагрузки:
+      — топ-20 пар каждые 10 мин на 3 TF (1h/4h/1d)
+      — cold пары полностью отключены (открыты будут чуть медленнее на холодную)
     """
     import asyncio as _asyncio
-    HOT_TFS = ["1h", "4h", "1d", "15m", "30m"]
-    COLD_TFS = ["1h", "4h", "1d"]
+    HOT_TFS = ["1h", "4h", "1d"]
+    COLD_TFS = []
     tick = 0
     while True:
         try:
             from supertrend_tracker import get_tracked_pairs
             from admin import warm_candles_cache
             pairs = await _asyncio.to_thread(get_tracked_pairs)
-            hot = pairs[:50]
-            cold = pairs[50:300] if len(pairs) > 50 else []
+            hot = pairs[:20]  # top-20 only
+            cold = []  # disabled
             warmed_hot = 0
             for p in hot:
                 for tf in HOT_TFS:
@@ -216,7 +213,7 @@ async def _candles_prewarm_loop():
             logger.info(f"[prewarm] hot={warmed_hot} cold={warmed_cold} (hot {len(hot)} × {len(HOT_TFS)}TF + cold {len(cold)} × {len(COLD_TFS)}TF)")
         except Exception:
             logger.exception("[prewarm] loop crashed")
-        await _asyncio.sleep(180)
+        await _asyncio.sleep(600)  # 10 минут вместо 3
 
 
 def _resolve_chart(p: str) -> str | None:
@@ -3052,15 +3049,16 @@ async def _paper_to_live_mirror_loop():
 
 
 async def _ui_prewarm_loop():
-    """Прогреваем кеши тяжёлых endpoint'ов которые вызываются на /signals
-    page load: market-phase / reversal-meter / pending-clusters.
-    Без этого первая загрузка после cold-start = 30-60с тупения."""
+    """Прогреваем кеши endpoint'ов параллельно (gather) каждые 5 мин.
+    Все taski wrapped в timeout — не блокируют worker.
+    Tradium-setups убран т.к. compute = 23с (HTTP fetch from forum) и съедает
+    ресурсы; пользователь увидит первый раз 23с при открытии Tradium вкладки."""
     import asyncio as _asyncio
-    await _asyncio.sleep(30)  # дать watcher подняться сначала
+    await _asyncio.sleep(60)  # стартовая задержка побольше
 
-    async def _warm_one(name, coro_factory):
+    async def _warm_one(name, coro_factory, timeout=20.0):
         try:
-            await _asyncio.wait_for(coro_factory(), timeout=25.0)
+            await _asyncio.wait_for(coro_factory(), timeout=timeout)
         except _asyncio.TimeoutError:
             logger.debug(f"[ui-prewarm] {name} timeout")
         except Exception as e:
@@ -3068,47 +3066,49 @@ async def _ui_prewarm_loop():
 
     while True:
         try:
+            # Все прогревы параллельно через gather — суммарное время = max
+            tasks = []
+
             # market-phase (120s TTL)
-            await _warm_one("market-phase", lambda: _asyncio.to_thread(
+            tasks.append(_warm_one("market-phase", lambda: _asyncio.to_thread(
                 __import__("market_phase").get_market_phase, False
-            ))
+            )))
+
             # pending-clusters (90s TTL)
             async def _pc():
                 from cluster_detector import get_pending_clusters
                 await _asyncio.to_thread(get_pending_clusters, 50)
-            await _warm_one("pending-clusters", _pc)
+            tasks.append(_warm_one("pending-clusters", _pc))
+
             # reversal-meter (~60s TTL)
             try:
                 async def _rm():
                     from reversal_meter import compute as _rm_compute
                     await _asyncio.to_thread(_rm_compute)
-                await _warm_one("reversal-meter", _rm)
+                tasks.append(_warm_one("reversal-meter", _rm))
             except ImportError:
                 pass
 
-            # ── Tradium / Top Picks / FVG endpoints (slow tabs) ──
-            # Прогреваем напрямую через admin api-функции (фиксят cache_utils)
+            # top-picks (60s TTL)
             try:
                 from admin import api_top_picks
-                await _warm_one("top-picks", lambda: api_top_picks(96, 200))
-            except Exception as e:
-                logger.debug(f"[ui-prewarm] top-picks import fail: {e}")
+                tasks.append(_warm_one("top-picks", lambda: api_top_picks(96, 200)))
+            except Exception:
+                pass
 
-            try:
-                from admin import api_peek_tradium_setups
-                await _warm_one("tradium-setups", lambda: api_peek_tradium_setups(48))
-            except Exception as e:
-                logger.debug(f"[ui-prewarm] tradium-setups import fail: {e}")
-
+            # fvg-signals
             try:
                 from admin import api_fvg_signals
-                await _warm_one("fvg-signals", lambda: api_fvg_signals("all", 200, ""))
-            except Exception as e:
-                logger.debug(f"[ui-prewarm] fvg-signals import fail: {e}")
+                tasks.append(_warm_one("fvg-signals", lambda: api_fvg_signals("all", 200, "")))
+            except Exception:
+                pass
+
+            # Запускаем всё параллельно — не последовательно (быстрее в 5 раз)
+            await _asyncio.gather(*tasks, return_exceptions=True)
 
         except Exception:
             logger.debug("[ui-prewarm] loop error", exc_info=True)
-        await _asyncio.sleep(60)
+        await _asyncio.sleep(300)  # 5 минут вместо 60с — снижаем нагрузку
 
 
 async def _live_balance_refresh_loop():
