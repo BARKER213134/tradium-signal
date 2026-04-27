@@ -3103,6 +3103,17 @@ async def _ui_prewarm_loop():
             except Exception:
                 pass
 
+            # tradium-setups (медленный — 23s) — параллельно с другими, не блокирует
+            # Прогреваем каждые 5 мин (cycle interval), чтобы Tradium вкладка
+            # открывалась мгновенно. Timeout 30s — если forum не отвечает, скип.
+            try:
+                from admin import api_peek_tradium_setups
+                tasks.append(_warm_one("tradium-setups",
+                                       lambda: api_peek_tradium_setups(48),
+                                       timeout=30.0))
+            except Exception:
+                pass
+
             # Запускаем всё параллельно — не последовательно (быстрее в 5 раз)
             await _asyncio.gather(*tasks, return_exceptions=True)
 

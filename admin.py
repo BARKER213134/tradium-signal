@@ -5539,27 +5539,41 @@ async def api_paper_status():
     stats = pt.get_stats()
     # Текущие цены для PnL
     from exchange import get_prices_any
-    # Cross-reference: для каждой paper-позиции — какие live-аккаунты пытались
-    # её открыть (любой статус, чтобы видеть и FAILED_OPEN).
+    # ── OPTIMIZED Cross-reference: query только нужные live_trades ──
+    # Раньше брали ВСЕ live_trades в память и фильтровали Python'ом.
+    # При 1000+ live trades это 2-3 секунды на каждый запрос paper/status.
+    # Теперь: запрос только trade_ids/symbols соответствующих текущим
+    # открытым paper-позициям через MongoDB $in.
     live_by_paper_id: dict = {}
     live_by_sym_dir: dict = {}
-    try:
-        from database import _live_trades
-        # Берём ВСЕ live-трейды (любой статус), но связываем только с открытыми paper
-        live_all = list(_live_trades().find(
-            {},
-            {"paper_trade_id": 1, "symbol": 1, "direction": 1, "env": 1,
-             "account_id": 1, "trade_id": 1, "status": 1, "fail_reason": 1,
-             "opened_at": 1}
-        ).sort("opened_at", -1))
-        for lt in live_all:
-            pid = lt.get("paper_trade_id")
-            if pid is not None:
-                live_by_paper_id.setdefault(pid, []).append(lt)
-            key = f"{lt.get('symbol')}_{lt.get('direction')}"
-            live_by_sym_dir.setdefault(key, []).append(lt)
-    except Exception as _le:
-        logging.getLogger(__name__).debug(f"[paper-status] live xref fail: {_le}")
+    if positions:
+        try:
+            from database import _live_trades
+            paper_trade_ids = [p.get("trade_id") for p in positions if p.get("trade_id")]
+            paper_sym_dirs = [(p.get("symbol"), p.get("direction")) for p in positions]
+            paper_symbols = list({sd[0] for sd in paper_sym_dirs if sd[0]})
+
+            # Один запрос: trade с paper_trade_id ИЛИ symbol из открытых paper
+            query = {
+                "$or": [
+                    {"paper_trade_id": {"$in": paper_trade_ids}},
+                    {"symbol": {"$in": paper_symbols}},
+                ]
+            }
+            live_relevant = list(_live_trades().find(
+                query,
+                {"paper_trade_id": 1, "symbol": 1, "direction": 1, "env": 1,
+                 "account_id": 1, "trade_id": 1, "status": 1, "fail_reason": 1,
+                 "opened_at": 1}
+            ).sort("opened_at", -1).limit(200))
+            for lt in live_relevant:
+                pid = lt.get("paper_trade_id")
+                if pid is not None:
+                    live_by_paper_id.setdefault(pid, []).append(lt)
+                key = f"{lt.get('symbol')}_{lt.get('direction')}"
+                live_by_sym_dir.setdefault(key, []).append(lt)
+        except Exception as _le:
+            logging.getLogger(__name__).debug(f"[paper-status] live xref fail: {_le}")
     if positions:
         pairs = [p.get("pair", p["symbol"].replace("USDT", "/USDT")) for p in positions]
         prices = await asyncio.to_thread(get_prices_any, pairs)
