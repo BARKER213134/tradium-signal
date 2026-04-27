@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}1 Milliard STA Screener{% endblock %}</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Preload LightweightCharts параллельно с рендером страницы.
+         Защита: rel=preload + onerror→ обычный <script> fallback.
+         Экономит 100-200мс на первом клике по графику. -->
+    <link rel="preload" as="script" href="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js" crossorigin="anonymous">
+    <script async defer src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"
+            onload="window._lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat();"></script>
     <style>
         :root {
             /* Tech Innovation palette */

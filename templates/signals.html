@@ -4361,7 +4361,7 @@ async function _renderPaperChart(idx, tf) {
   }
 
   try {
-    const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=${tf}&limit=200`);
+    const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=${tf}&limit=120`);
     const d = await r.json();
     if (!d.ok) return;
 
