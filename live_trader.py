@@ -1087,6 +1087,12 @@ async def _close_position_market(ex, account: dict, pos: dict, reason: str) -> d
     direction = pos["direction"]
     amount = pos.get("amount", 0)
     close_side = "sell" if direction == "LONG" else "buy"
+    # BingX hedge mode → positionSide; иначе reduceOnly
+    ex_name = (account.get("exchange") or "").lower()
+    if ex_name == "bingx":
+        close_params = {"positionSide": "LONG" if direction == "LONG" else "SHORT"}
+    else:
+        close_params = {"reduceOnly": True}
     try:
         try:
             amt = float(await asyncio.to_thread(ex.amount_to_precision, symbol, amount))
@@ -1094,7 +1100,7 @@ async def _close_position_market(ex, account: dict, pos: dict, reason: str) -> d
             amt = amount
         order = await asyncio.to_thread(
             ex.create_market_order, symbol, close_side, amt,
-            None, {"reduceOnly": True},
+            None, close_params,
         )
         exit_price = order.get("average") or order.get("price") or pos.get("entry")
         entry = float(pos["entry"])
@@ -1285,11 +1291,16 @@ async def mirror_partial_close_for_account(
     if close_amount <= 0:
         return {"ok": False, "error": "amount=0 after precision"}
     side = "sell" if direction == "LONG" else "buy"
+    ex_name = (account.get("exchange") or "").lower()
+    if ex_name == "bingx":
+        partial_params = {"positionSide": "LONG" if direction == "LONG" else "SHORT"}
+    else:
+        partial_params = {"reduceOnly": True}
     try:
         ccxt_sym = live_pos.get("ccxt_symbol") or symbol_db
         order = await asyncio.to_thread(
             ex.create_market_order, ccxt_sym, side, close_amount,
-            None, {"reduceOnly": True},
+            None, partial_params,
         )
         exit_price = order.get("average") or order.get("price") or live_pos.get("entry")
         # Compute partial PnL
@@ -1364,9 +1375,15 @@ async def mirror_sl_move_for_account(live_pos: dict, new_sl: float, account: dic
         except Exception:
             pass
         if amount > 0:
+            ex_name = (account.get("exchange") or "").lower()
+            direction = live_pos.get("direction", "LONG")
+            if ex_name == "bingx":
+                sl_extra = {"positionSide": "LONG" if direction == "LONG" else "SHORT"}
+            else:
+                sl_extra = {"reduceOnly": True}
             sl_order = await asyncio.to_thread(
                 ex.create_order, ccxt_sym, "STOP_MARKET", sl_side, amount,
-                None, {"stopPrice": float(new_sl), "reduceOnly": True},
+                None, {"stopPrice": float(new_sl), **sl_extra},
             )
             new_sl_id = sl_order.get("id")
     except Exception as e:
@@ -1410,9 +1427,15 @@ async def mirror_full_close_for_account(live_pos: dict, reason: str, account: di
                     await asyncio.to_thread(ex.cancel_order, oid, ccxt_sym)
                 except Exception:
                     pass
+        # BingX hedge mode → positionSide; иначе reduceOnly
+        ex_name = (account.get("exchange") or "").lower()
+        if ex_name == "bingx":
+            full_close_params = {"positionSide": "LONG" if direction == "LONG" else "SHORT"}
+        else:
+            full_close_params = {"reduceOnly": True}
         order = await asyncio.to_thread(
             ex.create_market_order, ccxt_sym, close_side, close_amount,
-            None, {"reduceOnly": True},
+            None, full_close_params,
         )
         exit_price = order.get("average") or order.get("price") or exit_price_hint or live_pos.get("entry")
         entry = float(live_pos.get("entry") or 0)

@@ -2487,14 +2487,21 @@ async def api_admin_close_all_exchange_positions(payload: dict | None = None):
     except Exception as e:
         return {"ok": False, "error": f"fetch_positions fail: {e}"}
 
+    # Определяем биржу для правильных params (BingX hedge mode != reduceOnly)
+    ex_name = (acc.get("exchange") or "").lower()
     for p in positions:
         contracts = float(p.get("contracts", 0) or 0)
         if contracts == 0:
             continue
         sym = p.get("symbol")
         side = p.get("side")  # "long" or "short"
-        # Закрываем через market reduceOnly: для long → sell; для short → buy
+        # Закрываем через market: для long → sell; для short → buy
         close_side = "sell" if side == "long" else "buy"
+        # BingX hedge mode: positionSide ОБЯЗАТЕЛЬНО, reduceOnly запрещён
+        if ex_name == "bingx":
+            close_params = {"positionSide": "LONG" if side == "long" else "SHORT"}
+        else:
+            close_params = {"reduceOnly": True}
         try:
             try:
                 amt = float(await asyncio.to_thread(ex.amount_to_precision, sym, contracts))
@@ -2502,7 +2509,7 @@ async def api_admin_close_all_exchange_positions(payload: dict | None = None):
                 amt = contracts
             order = await asyncio.to_thread(
                 ex.create_market_order, sym, close_side, amt,
-                None, {"reduceOnly": True},
+                None, close_params,
             )
             closed.append({"symbol": sym, "side": side, "contracts": contracts,
                            "exit_price": order.get("average"), "order_id": order.get("id")})
