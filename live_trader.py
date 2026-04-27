@@ -576,18 +576,28 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
     try:
         bal_data = await asyncio.to_thread(ex.fetch_balance)
         usdt_free = float((bal_data.get("USDT") or {}).get("free", 0) or 0)
+        usdt_total = float((bal_data.get("USDT") or {}).get("total", 0) or 0)
     except Exception as _be:
         logger.debug(f"[live-{aid}] fetch_balance fail: {_be}")
         usdt_free = 0.0
+        usdt_total = 0.0
 
-    # На futures: required_margin ≈ size_usdt (то что paper считает margin = size_usdt)
+    # Hard skip: если free margin меньше $20 — открывать нечего
+    MIN_FREE_FOR_OPEN = 20.0
+    if usdt_free < MIN_FREE_FOR_OPEN:
+        return {"ok": False,
+                "error": f"insufficient margin: free=${usdt_free:.2f} < ${MIN_FREE_FOR_OPEN} "
+                         f"(total=${usdt_total:.2f}, закрой старые позиции на бирже)"}
+
     # Используем максимум 50% свободной маржи на одну позицию (буфер на slippage/fees)
+    # required_margin для futures ≈ size_usdt (margin = notional / leverage = size_usdt)
     required_margin = size_usdt
-    if usdt_free > 0 and required_margin > usdt_free * 0.5:
+    if required_margin > usdt_free * 0.5:
         new_size = round(usdt_free * 0.5, 2)
         if new_size < 5.0:
             return {"ok": False,
-                    "error": f"insufficient margin: free=${usdt_free:.2f}, need=${required_margin:.2f}"}
+                    "error": f"insufficient margin after downscale: free=${usdt_free:.2f}, "
+                             f"50%=${new_size} < $5 min"}
         logger.warning(
             f"[live-{aid}] downscaled {symbol} size: ${size_usdt} → ${new_size} "
             f"(free=${usdt_free:.2f}, half-rule)"
