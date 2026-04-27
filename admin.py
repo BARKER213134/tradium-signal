@@ -249,6 +249,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/paper/test-open", "/api/live/debug-recent", "/api/paper/status",
             "/api/admin/cleanup-tests", "/api/admin/wipe-live-trades",
             "/api/admin/recompute-paper-balance", "/api/admin/backfill-mirror",
+            "/api/admin/close-all-exchange-positions",
             "/api/paper/clear-ai-memory",
             "/api/paper/rejections", "/api/paper/be-audit", "/api/paper/close-all",
             "/api/paper/history",
@@ -2402,6 +2403,68 @@ async def api_admin_recompute_paper_balance():
         "open_partial_pnl": round(open_partial, 2),
         "new_balance": new_balance,
     }
+
+
+@app.post("/api/admin/close-all-exchange-positions")
+async def api_admin_close_all_exchange_positions(payload: dict | None = None):
+    """Закрывает ВСЕ открытые позиции на бирже для аккаунта (через ccxt).
+    Освобождает заблокированную маржу. Работает напрямую через биржу — не
+    зависит от того что хранится в MongoDB.
+
+    payload: {"account_id":"super_testnet"}
+    """
+    pl = payload or {}
+    aid = pl.get("account_id") or "super_testnet"
+    import live_trader as lt
+    import live_safety as ls
+    acc = ls.get_account(aid)
+    if not acc:
+        return {"ok": False, "error": f"account {aid} not found"}
+    ex = lt._get_exchange_for_account(acc)
+    if ex is None:
+        return {"ok": False, "error": "exchange not configured"}
+
+    closed = []
+    failed = []
+    try:
+        positions = await asyncio.to_thread(ex.fetch_positions)
+    except Exception as e:
+        return {"ok": False, "error": f"fetch_positions fail: {e}"}
+
+    for p in positions:
+        contracts = float(p.get("contracts", 0) or 0)
+        if contracts == 0:
+            continue
+        sym = p.get("symbol")
+        side = p.get("side")  # "long" or "short"
+        # Закрываем через market reduceOnly: для long → sell; для short → buy
+        close_side = "sell" if side == "long" else "buy"
+        try:
+            try:
+                amt = float(await asyncio.to_thread(ex.amount_to_precision, sym, contracts))
+            except Exception:
+                amt = contracts
+            order = await asyncio.to_thread(
+                ex.create_market_order, sym, close_side, amt,
+                None, {"reduceOnly": True},
+            )
+            closed.append({"symbol": sym, "side": side, "contracts": contracts,
+                           "exit_price": order.get("average"), "order_id": order.get("id")})
+        except Exception as e:
+            failed.append({"symbol": sym, "side": side, "error": str(e)[:300]})
+
+    # Также пометим всё OPEN в MongoDB как MANUAL closed
+    from database import _live_trades, utcnow
+    db_open = list(_live_trades().find({"status": "OPEN", "account_id": aid}))
+    for pos in db_open:
+        _live_trades().update_one(
+            {"trade_id": pos["trade_id"]},
+            {"$set": {"status": "MANUAL", "closed_at": utcnow(),
+                      "exit_price": pos.get("entry"), "pnl_pct": 0,
+                      "pnl_usdt": 0, "manual_close_reason": "wipe-exchange-positions"}},
+        )
+    return {"ok": True, "closed_count": len(closed), "failed_count": len(failed),
+            "closed": closed[:20], "failed": failed[:20], "db_marked_manual": len(db_open)}
 
 
 @app.post("/api/admin/wipe-live-trades")
