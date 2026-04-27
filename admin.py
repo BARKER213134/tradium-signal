@@ -5580,10 +5580,20 @@ async def api_paper_status():
                  "fail_reason": m.get("fail_reason")}
                 for m in unique_matches
             ]
+    # Initial balance: из state-doc (после set_balance) или fallback на константу
+    initial = pt.INITIAL_BALANCE
+    try:
+        from database import _get_db
+        state_doc = _get_db().paper_trades.find_one({"_id": "state"}, {"initial_balance": 1})
+        if state_doc and state_doc.get("initial_balance"):
+            initial = float(state_doc["initial_balance"])
+    except Exception:
+        pass
+    pnl_pct = round((balance - initial) / initial * 100, 2) if initial > 0 else 0
     return {
         "balance": balance,
-        "initial": pt.INITIAL_BALANCE,
-        "pnl_pct": round((balance - pt.INITIAL_BALANCE) / pt.INITIAL_BALANCE * 100, 2),
+        "initial": initial,
+        "pnl_pct": pnl_pct,
         "positions": positions,
         "stats": stats,
     }
