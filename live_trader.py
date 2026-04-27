@@ -717,16 +717,21 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         amount = round(amount, 6)
 
     try:
-        # set_leverage: для BingX обязательно указать side ('LONG'|'SHORT'|'BOTH')
-        # Для Binance side не нужен, но ccxt принимает params dict — лишним не будет
-        leverage_params = {}
-        if (account.get("exchange") or "").lower() == "bingx":
-            leverage_params = {"side": "LONG" if direction == "LONG" else "SHORT"}
+        # set_leverage [v2]: для BingX обязательно указать positionSide
+        # Передаём через kwargs params чтобы ccxt точно увидел.
+        ex_name = (account.get("exchange") or "").lower()
         try:
-            await asyncio.to_thread(ex.set_leverage, leverage, symbol, leverage_params)
+            if ex_name == "bingx":
+                pside = "LONG" if direction == "LONG" else "SHORT"
+                logger.info(f"[live-{aid}] BingX setLeverage {leverage}x side={pside} sym={symbol}")
+                await asyncio.to_thread(
+                    lambda: ex.set_leverage(leverage, symbol, params={"side": pside})
+                )
+            else:
+                await asyncio.to_thread(ex.set_leverage, leverage, symbol)
         except Exception as _le:
-            # Иногда set_leverage падает если уже установлен или для hedge mode — не критично
-            logger.debug(f"[live-{aid}] set_leverage warn (continuing): {_le}")
+            # Уже установлен или hedge mode — не критично, продолжаем
+            logger.warning(f"[live-{aid}] set_leverage warn (continuing): {_le}")
         order = await asyncio.to_thread(ex.create_market_order, symbol, side, amount)
         exchange_order_id = order.get("id")
         fill_price = order.get("average") or entry_price
