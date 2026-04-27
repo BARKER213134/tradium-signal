@@ -213,11 +213,63 @@ def refresh_supported_symbols(exchange: str = None) -> dict:
     }
 
 
+def _multiplier_variants(symbol: str) -> list[str]:
+    """Генерирует все вероятные варианты символа с/без множителей.
+    Например для PEPEUSDT → [PEPEUSDT, 1000PEPEUSDT, 10000PEPEUSDT].
+    Это потому что разные биржи используют разные prefixes для дешёвых монет:
+      Binance: 1000PEPEUSDT
+      BingX: 1000PEPEUSDT (часто) или PEPEUSDT (иногда)
+      Bybit: 1000PEPEUSDT и т.д.
+    """
+    if not symbol:
+        return []
+    s = symbol.upper()
+    variants = [s]
+    # Если символ начинается с множителя — попробуем без и с другими
+    multipliers = ["1000000", "10000", "1000", "100"]
+    for m in multipliers:
+        if s.startswith(m):
+            base = s[len(m):]  # PEPEUSDT (после убирания 1000)
+            variants.append(base)
+            # Также попробуем с другими множителями
+            for m2 in multipliers:
+                if m2 != m:
+                    variants.append(m2 + base)
+            break
+    else:
+        # Не было множителя — добавим все возможные prefixes
+        if s.endswith("USDT"):
+            base = s[:-4]  # PEPE
+            for m in multipliers:
+                variants.append(m + base + "USDT")
+    # Уникальные с сохранением порядка
+    seen = set()
+    return [v for v in variants if not (v in seen or seen.add(v))]
+
+
 def is_symbol_supported(symbol: str, exchange: str = None) -> bool:
-    """True если symbol торгуется на указанной бирже."""
+    """True если symbol торгуется на указанной бирже.
+    Проверяет также варианты с множителями (PEPE ↔ 1000PEPE)."""
     if not symbol:
         return False
-    return symbol.upper() in get_supported_symbols(exchange)
+    available = get_supported_symbols(exchange)
+    for variant in _multiplier_variants(symbol):
+        if variant in available:
+            return True
+    return False
+
+
+def resolve_symbol(symbol: str, exchange: str = None) -> str | None:
+    """Возвращает КАНОНИЧЕСКОЕ имя символа на бирже (с правильным множителем).
+    PEPEUSDT на BingX где есть 1000PEPEUSDT → возвращает '1000PEPEUSDT'.
+    Возвращает None если символ не торгуется."""
+    if not symbol:
+        return None
+    available = get_supported_symbols(exchange)
+    for variant in _multiplier_variants(symbol):
+        if variant in available:
+            return variant
+    return None
 
 
 def get_meta(exchange: str = None) -> dict:

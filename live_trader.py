@@ -571,10 +571,20 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
     if ex is None:
         return {"ok": False, "error": "exchange not configured"}
 
-    # ── Fix 2: Pre-check символа на бирже (без этого -1121 для не-листенных альтов) ──
-    # ccxt.binance markets keyed by unified format 'BASE/QUOTE:QUOTE' (perpetuals).
-    # load_markets вызывается с таймаутом — на cold start может тормозить, но не должен
-    # блокировать всю операцию.
+    # ── Fix 2: Pre-check символа на бирже + нормализация множителей ──
+    # PEPE-сигнал на BingX → 1000PEPE (или наоборот) — resolve_symbol находит
+    # правильный canonical вариант
+    try:
+        from exchange_symbols import resolve_symbol
+        resolved = resolve_symbol(symbol, account.get("exchange"))
+        if resolved and resolved != symbol:
+            logger.info(f"[live-{aid}] symbol resolved {symbol} → {resolved} for {account.get('exchange')}")
+            symbol = resolved
+            signal_data["symbol"] = symbol  # обновляем для consistency
+    except Exception as _re:
+        logger.debug(f"[live-{aid}] resolve_symbol fail: {_re}")
+
+    # Загрузка markets — для precision/limits проверок ниже
     try:
         if not getattr(ex, "markets", None):
             await asyncio.wait_for(asyncio.to_thread(ex.load_markets), timeout=15.0)
