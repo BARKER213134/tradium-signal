@@ -3077,17 +3077,38 @@ async def _ui_prewarm_loop():
                 from cluster_detector import get_pending_clusters
                 await _asyncio.to_thread(get_pending_clusters, 50)
             await _warm_one("pending-clusters", _pc)
-            # reversal-meter (cache via cache_utils, ~60s TTL)
+            # reversal-meter (~60s TTL)
             try:
                 async def _rm():
                     from reversal_meter import compute as _rm_compute
                     await _asyncio.to_thread(_rm_compute)
                 await _warm_one("reversal-meter", _rm)
             except ImportError:
-                pass  # модуль может отсутствовать
+                pass
+
+            # ── Tradium / Top Picks / FVG endpoints (slow tabs) ──
+            # Прогреваем напрямую через admin api-функции (фиксят cache_utils)
+            try:
+                from admin import api_top_picks
+                await _warm_one("top-picks", lambda: api_top_picks(96, 200))
+            except Exception as e:
+                logger.debug(f"[ui-prewarm] top-picks import fail: {e}")
+
+            try:
+                from admin import api_peek_tradium_setups
+                await _warm_one("tradium-setups", lambda: api_peek_tradium_setups(48))
+            except Exception as e:
+                logger.debug(f"[ui-prewarm] tradium-setups import fail: {e}")
+
+            try:
+                from admin import api_fvg_signals
+                await _warm_one("fvg-signals", lambda: api_fvg_signals("all", 200, ""))
+            except Exception as e:
+                logger.debug(f"[ui-prewarm] fvg-signals import fail: {e}")
+
         except Exception:
             logger.debug("[ui-prewarm] loop error", exc_info=True)
-        await _asyncio.sleep(60)  # обновляем кеш каждые 60с (TTL некоторых = 60-120с)
+        await _asyncio.sleep(60)
 
 
 async def _live_balance_refresh_loop():
