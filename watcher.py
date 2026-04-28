@@ -1112,27 +1112,47 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
 
     # ── ЭТАП 2: Background tasks (НЕ блокируют — fire-and-forget) ──
     # Paper trader: важная задача, но если упадёт — Telegram уже отправлен.
-    asyncio.create_task(_cv_alert_followup(signal, pattern, current_price, sym, msg_id))
+    # Глобальный timeout 60с — если followup завис (Mongo / klines / paper_on_signal)
+    # → не накапливаем висящие задачи в памяти (1.5h — и Railway hang).
+    async def _bounded_followup():
+        try:
+            await asyncio.wait_for(
+                _cv_alert_followup(signal, pattern, current_price, sym, msg_id),
+                timeout=60.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"[CV-ALERT-FU] timeout 60s #{signal.id} {pair_short}")
+        except Exception as e:
+            logger.warning(f"[CV-ALERT-FU] task error #{signal.id}: {e}")
+    asyncio.create_task(_bounded_followup())
 
 
 async def _cv_alert_followup(signal: Signal, pattern: str, current_price: float,
                               sym: str, msg_id: int | None):
     """Background follow-up для CV алерта: paper open + rich edit message.
-    Запускается через asyncio.create_task — НЕ блокирует доставку Telegram."""
-    # 1) Paper trader (открытие позиции)
+    Запускается через asyncio.create_task — НЕ блокирует доставку Telegram.
+    Каждый sub-step с timeout — не накапливаем висящие задачи."""
+    # 1) Paper trader (открытие позиции) — bounded 20с
     try:
-        await _paper_on_signal({
+        await asyncio.wait_for(_paper_on_signal({
             "symbol": sym, "direction": signal.direction, "entry": current_price,
             "source": "cryptovizor", "pattern": pattern,
             "score": getattr(signal, "ai_score", None),
             "pump_vol": 0, "pump_oi": 0,
-        })
+        }), timeout=20.0)
+    except asyncio.TimeoutError:
+        logger.warning(f"[CV-ALERT-FU] paper timeout 20s #{signal.id}")
     except Exception as e:
         logger.warning(f"[CV-ALERT-FU] paper fail #{signal.id}: {e}")
 
-    # 2) Cluster check
+    # 2) Cluster check — bounded 10с
     try:
-        await _cluster_check_on_signal(signal.pair, signal.direction)
+        await asyncio.wait_for(
+            _cluster_check_on_signal(signal.pair, signal.direction),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"[CV-ALERT-FU] cluster_check timeout 10s #{signal.id}")
     except Exception as e:
         logger.warning(f"[CV-ALERT-FU] cluster_check fail #{signal.id}: {e}")
 
