@@ -2827,7 +2827,8 @@ async def api_cv_pipeline_trace(signal_id: int):
 
     events = list(_ev_col().find({
         "$or": [
-            {"data.signal_id": int(signal_id)},
+            {"signal_id": int(signal_id)},          # log_event format (top-level)
+            {"data.signal_id": int(signal_id)},     # cv-alert format (in data)
             {"data.id": int(signal_id)},
         ]
     }).sort("at", 1).limit(50))

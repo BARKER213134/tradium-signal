@@ -667,9 +667,34 @@ async def _send_cv_basic_alert(signal_id: int, pair: str, direction: str,
     Использует httpx напрямую (минуя aiogram) чтобы не зависеть от watcher state.
     Метит cv_alert_sent в _events для диагностики через /api/cv-alert-diag.
     """
+    # Маячок что функция вызвана (для диагностики что create_task сработал)
+    try:
+        from database import _events, utcnow
+        _events().insert_one({
+            "at": utcnow(),
+            "type": "cv_alert_called",
+            "data": {"signal_id": signal_id, "pair": pair,
+                     "direction": direction, "kind": "basic"},
+        })
+    except Exception:
+        pass
+
     from config import BOT2_BOT_TOKEN, ADMIN_CHAT_ID
     if not BOT2_BOT_TOKEN or not ADMIN_CHAT_ID:
-        logger.debug(f"[CV-basic-alert] BOT2 не настроен — skip #{signal_id}")
+        logger.warning(f"[CV-basic-alert] BOT2 не настроен — skip #{signal_id} "
+                       f"(token={'set' if BOT2_BOT_TOKEN else 'EMPTY'}, "
+                       f"chat={ADMIN_CHAT_ID})")
+        try:
+            from database import _events, utcnow
+            _events().insert_one({
+                "at": utcnow(),
+                "type": "cv_alert_error",
+                "data": {"signal_id": signal_id, "pair": pair,
+                         "error": f"BOT2 token/chat empty (token_set={bool(BOT2_BOT_TOKEN)}, chat={ADMIN_CHAT_ID})",
+                         "kind": "basic"},
+            })
+        except Exception:
+            pass
         return
     is_long = direction in ("LONG", "BUY")
     dir_emoji = "🟢" if is_long else "🔴"
