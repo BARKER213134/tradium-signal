@@ -766,10 +766,13 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         # TP/SL params:
         # - BingX hedge mode: positionSide ОБЯЗАТЕЛЬНО, reduceOnly ЗАПРЕЩЁН
         # - Binance / one-way: reduceOnly OK, positionSide не нужен
+        # workingType=MARK_PRICE: используем mark price (усреднённый индекс)
+        # вместо last trade price — НЕ триггерим SL/TP на wick'ах. Это
+        # критично т.к. paper тоже фиксирует TP/SL по более стабильной цене.
         if ex_name == "bingx":
-            tp_extra = {"positionSide": pside}  # без reduceOnly!
+            tp_extra = {"positionSide": pside, "workingType": "MARK_PRICE"}
         else:
-            tp_extra = {"reduceOnly": True}
+            tp_extra = {"reduceOnly": True, "workingType": "MARK_PRICE"}
 
         if tp1:
             try:
@@ -1372,9 +1375,10 @@ async def mirror_sl_move_for_account(live_pos: dict, new_sl: float, account: dic
             ex_name = (account.get("exchange") or "").lower()
             direction = live_pos.get("direction", "LONG")
             if ex_name == "bingx":
-                sl_extra = {"positionSide": "LONG" if direction == "LONG" else "SHORT"}
+                sl_extra = {"positionSide": "LONG" if direction == "LONG" else "SHORT",
+                            "workingType": "MARK_PRICE"}
             else:
-                sl_extra = {"reduceOnly": True}
+                sl_extra = {"reduceOnly": True, "workingType": "MARK_PRICE"}
             sl_order = await asyncio.to_thread(
                 ex.create_order, ccxt_sym, "STOP_MARKET", sl_side, amount,
                 None, {"stopPrice": float(new_sl), **sl_extra},
