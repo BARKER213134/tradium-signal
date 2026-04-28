@@ -111,6 +111,18 @@ async def open_position(signal_data: dict, decision: dict, env: str) -> Optional
     if not symbol or not entry_price:
         return {"ok": False, "error": "missing symbol or entry"}
 
+    # V2: low-cap leverage cap — на парах с 24h volume < $50M ставим leverage ≤ 4×.
+    # Зеркалирует paper_trader._calc_position_params; даёт +160 USDT на бэктесте
+    # 27-28 апр 2026 (21 ST-сделка, катастрофы B3 −129 / BR −62 при slippage за SL).
+    try:
+        from exchange import is_low_cap_pair
+        pair = signal_data.get("pair") or symbol
+        if pair and is_low_cap_pair(pair) and leverage > 4:
+            logger.info(f"[live-trader] LOW_CAP cap: {symbol} leverage {leverage}→4")
+            leverage = 4
+    except Exception as _e:
+        logger.debug(f"[live-trader] low-cap check fail: {_e}")
+
     balance = get_current_balance()
     size_usdt = round(balance * size_pct / 100, 2)
 

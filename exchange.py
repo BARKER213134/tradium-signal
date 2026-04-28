@@ -538,3 +538,48 @@ def get_prices(pairs: list[str]) -> dict[str, float]:
         if p is not None:
             out[s] = p
     return out
+
+
+# ── 24h volume cache (для определения low-cap пар) ─────────────────
+# Используется paper_trader.py / live_trader.py чтобы понизить leverage
+# на низколиквидных парах. Бэктест 27-28 апр 2026: 21 ST-сделка на парах
+# vol<$50M давала средний loss −7 USDT при slippage за SL до 1.3%; снижение
+# плеча с 9× до 4× уменьшает урон в 2.25×.
+_volume_cache: dict[str, tuple[float, float]] = {}  # symbol -> (vol_quote, ts)
+_VOLUME_TTL = 3600  # 1 час — volume меняется медленно
+
+LOW_CAP_VOLUME_USD = 50_000_000  # $50M суточного объёма
+
+
+def get_24h_volume_usd(pair: str) -> float:
+    """24h quoteVolume в USD (Binance fapi). Кэш 1ч.
+    Возвращает 0.0 если запрос не удался — fail-open (без cap'а на leverage).
+    """
+    sym = _normalize(pair)
+    if not sym:
+        return 0.0
+    now = time.time()
+    cached = _volume_cache.get(sym)
+    if cached and (now - cached[1]) < _VOLUME_TTL:
+        return cached[0]
+    try:
+        r = _http_get(f"{BINANCE_FUTURES}/fapi/v1/ticker/24hr",
+                      params={"symbol": sym}, timeout=5)
+        if r.status_code == 200:
+            vol = float(r.json().get("quoteVolume", 0))
+        else:
+            vol = 0.0
+    except Exception as e:
+        logger.debug(f"24h volume fetch fail {sym}: {e}")
+        vol = 0.0
+    _volume_cache[sym] = (vol, now)
+    return vol
+
+
+def is_low_cap_pair(pair: str, threshold_usd: float = LOW_CAP_VOLUME_USD) -> bool:
+    """True если 24h volume пары < threshold (по умолчанию $50M).
+    Fail-open: при ошибке fetch возвращает False (не cap'аем плечо)."""
+    vol = get_24h_volume_usd(pair)
+    if vol <= 0:
+        return False  # fail-open
+    return vol < threshold_usd

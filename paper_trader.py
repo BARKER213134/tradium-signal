@@ -634,6 +634,11 @@ def check_positions(prices: dict):
             sl = new_sl
 
         # ── 4. SL/TP hit → финальное закрытие оставшегося ──
+        # V1: при SL hit фиксируем exit_price = sl exact (без slippage за SL).
+        # Это соответствует поведению live-trader на BingX с workingType=MARK_PRICE
+        # (stop срабатывает по mark-цене ровно на уровне SL, не по market wick).
+        # Бэктест 27-28 апр: спасает ~+11% margin loss на катастрофах вроде B3
+        # (slippage 1.29% за SL → −33% pnl_pct вместо ожидаемых −22%).
         if is_long:
             if tp1 and price >= tp1:
                 r = close_position(pos["trade_id"], price, "TP")
@@ -646,7 +651,8 @@ def check_positions(prices: dict):
                     reason = "BE_PLUS"
                 elif pos.get("sl_moved_to_be") and abs(price - entry) / entry * 100 < 0.2:
                     reason = "BE"
-                r = close_position(pos["trade_id"], price, reason)
+                # V1: используем sl а не price — убираем wick-slippage
+                r = close_position(pos["trade_id"], sl, reason)
                 if r: closed.append(r)
         else:
             if tp1 and price <= tp1:
@@ -660,7 +666,8 @@ def check_positions(prices: dict):
                     reason = "BE_PLUS"
                 elif pos.get("sl_moved_to_be") and abs(price - entry) / entry * 100 < 0.2:
                     reason = "BE"
-                r = close_position(pos["trade_id"], price, reason)
+                # V1: используем sl а не price — убираем wick-slippage
+                r = close_position(pos["trade_id"], sl, reason)
                 if r: closed.append(r)
 
     return closed
@@ -1395,6 +1402,21 @@ def _calc_position_params(signal_data: dict, phase: str, verdict: str,
         size_pct *= 0.5
         leverage = max(lev_min, int(round(leverage * 0.5)))
         notes.append("CAUTION×0.5(size+lev)")
+
+    # V2: low-cap leverage cap — на парах с 24h volume < $50M ставим leverage ≤ 4×.
+    # Бэктест 27-28 апр: 21 ST-сделка на низколиквидных парах при 9× leverage давала
+    # катастрофы (B3 −129, BR −62) из-за slippage 1-1.5% за SL × 9 = 13.5% доп. потерь.
+    # Снижение до 4× уменьшает урон в 2.25× и даёт +160 USDT vs baseline_pure.
+    try:
+        from exchange import is_low_cap_pair
+        pair = signal_data.get("pair") or ""
+        if pair and is_low_cap_pair(pair):
+            if leverage > 4:
+                leverage = 4
+                notes.append("LOW_CAP_LEV4")
+    except Exception:
+        # fail-open — не блокируем сделку из-за проблем с volume API
+        pass
 
     # Clamp в диапазон mode
     size_pct = max(size_min, min(size_max, size_pct))
