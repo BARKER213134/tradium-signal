@@ -2961,12 +2961,21 @@ async def _paper_on_signal(signal_data: dict):
     # ── ФИЛЬТР: только пары торгуемые на DEFAULT бирже (BingX) ──
     # Paper фильтрует по default exchange (по умолчанию BingX, можно сменить).
     # Сигналы для не-листенных пар пропускаются — paper не открывает.
+    # ВАЖНО: пишем в paper_rejections чтобы видеть сколько сигналов
+    # теряется на этом фильтре (бэктест 28.04 показал ~70 ST/день и
+    # ~106 CV/день уходят сюда тихо).
     try:
         from exchange_symbols import is_symbol_supported, get_default_exchange
         sym_check = (signal_data.get("symbol") or "").upper()
         if sym_check and not is_symbol_supported(sym_check):
             ex_name = get_default_exchange()
             logger.info(f"[paper-signal] skip {sym_check} — not on {ex_name.upper()} Futures USDT-perp")
+            try:
+                from paper_trader import _log_rejection_sync
+                _log_rejection_sync(signal_data,
+                                    f"⛔ F0: пара не на {ex_name.upper()} Futures USDT-perp")
+            except Exception:
+                pass
             return
     except Exception as _fe:
         # Если symbols registry глючит — НЕ блокируем сигнал, пропускаем дальше

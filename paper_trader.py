@@ -1552,11 +1552,24 @@ async def on_signal(signal_data: dict):
                 and bool(signal_data.get("is_top_pick"))) or
             bool(signal_data.get("is_top_pick"))
         )
-        if not is_strong:
+
+        # ZERO_RED исключение — разрешаем CAUTION с 0 красных флагов
+        # (только warnings, без блокеров). Бэктест 153 ST CAUTION zero-red
+        # сделок за 5 дней (23-28 апр) дал +$26.82 / WR 53.6% / avg +$0.18.
+        # Логика: CAUTION возникает либо при 1 bad, либо при 3+ warn без bad.
+        # Второй случай (counts.bad == 0) — мягче: чек-лист в основном ОК,
+        # только нюансы — стоит попробовать. 1 bad всё ещё блокируется
+        # (бэктест: -$92 на 374 сделок).
+        zero_red = (counts.get("bad", 1) == 0)
+
+        if not (is_strong or zero_red):
             _log_rejection_sync(signal_data,
                                 f"⚠ CAUTION без strong-source (src={source}): {summary}")
             logger.info(f"Paper SKIP (caution, src={source}): {symbol} {direction}")
             return None
+        # Помечаем zero-red в reasoning для разбора потом
+        if zero_red and not is_strong:
+            logger.info(f"Paper ALLOW (CAUTION zero-red, src={source}): {symbol} {direction}")
 
     # ── 4. Параметры позиции ──
     sig = check.get("signal", {})
