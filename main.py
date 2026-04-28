@@ -137,14 +137,13 @@ async def main():
         logger.error("Не задан BOT_TOKEN в .env!")
         return
 
-    # Увеличиваем threadpool для asyncio.to_thread() — default 6 на 2 CPU мало
-    # для нашего кейса с множеством параллельных ccxt-вызовов и DB-запросов.
-    # 40 потоков позволяет ~10 параллельных AJAX без саморасторгания.
+    # Threadpool для asyncio.to_thread() — на Railway Pro (8 vCPU / 8GB) можно
+    # 80 потоков для максимальной concurrent-нагрузки. На Hobby хватало 40.
     try:
         from concurrent.futures import ThreadPoolExecutor
         loop = asyncio.get_running_loop()
-        loop.set_default_executor(ThreadPoolExecutor(max_workers=40, thread_name_prefix="async-pool"))
-        logger.info("[main] threadpool: 40 workers (default executor)")
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=80, thread_name_prefix="async-pool"))
+        logger.info("[main] threadpool: 80 workers (Railway Pro tuning)")
     except Exception as _te:
         logger.warning(f"[main] threadpool tuning fail: {_te}")
 

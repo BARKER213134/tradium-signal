@@ -164,31 +164,31 @@ async def _eth_kc_prewarm_loop():
 
     while True:
         try:
-            await _asyncio.sleep(600)  # 10 минут (было 4)
+            await _asyncio.sleep(300)  # 5 минут (Pro plan: возвращаем активный refresh)
             await _asyncio.to_thread(get_keltner_eth)
             await _asyncio.to_thread(get_eth_market_context)
-            # ST+pump prewarm убран из периодического обновления — холодные
-            # запросы при первом use ОК (TTL 120с в supertrend_state)
+            # На Pro можем себе позволить ST+pump prewarm для топ-10
+            _asyncio.create_task(_warm_st_top_pairs())
         except Exception:
             logger.exception("[prewarm] ETH/KC loop error")
 
 
 async def _candles_prewarm_loop():
-    """Фоновый прогрев candles cache. Снижено в ~5× для уменьшения CPU нагрузки:
-      — топ-20 пар каждые 10 мин на 3 TF (1h/4h/1d)
-      — cold пары полностью отключены (открыты будут чуть медленнее на холодную)
+    """Фоновый прогрев candles cache. На Pro плане (8 vCPU) больше пар:
+      — топ-40 пар каждые 5 мин на 4 TF (15m/1h/4h/1d)
+      — cold-100 каждые 10 мин на 2 TF (1h/4h)
     """
     import asyncio as _asyncio
-    HOT_TFS = ["1h", "4h", "1d"]
-    COLD_TFS = []
+    HOT_TFS = ["15m", "1h", "4h", "1d"]
+    COLD_TFS = ["1h", "4h"]
     tick = 0
     while True:
         try:
             from supertrend_tracker import get_tracked_pairs
             from admin import warm_candles_cache
             pairs = await _asyncio.to_thread(get_tracked_pairs)
-            hot = pairs[:20]  # top-20 only
-            cold = []  # disabled
+            hot = pairs[:40]
+            cold = pairs[40:140] if len(pairs) > 40 else []
             warmed_hot = 0
             for p in hot:
                 for tf in HOT_TFS:
@@ -213,7 +213,7 @@ async def _candles_prewarm_loop():
             logger.info(f"[prewarm] hot={warmed_hot} cold={warmed_cold} (hot {len(hot)} × {len(HOT_TFS)}TF + cold {len(cold)} × {len(COLD_TFS)}TF)")
         except Exception:
             logger.exception("[prewarm] loop crashed")
-        await _asyncio.sleep(600)  # 10 минут вместо 3
+        await _asyncio.sleep(300)  # 5 минут на Pro плане
 
 
 def _resolve_chart(p: str) -> str | None:
@@ -3119,7 +3119,7 @@ async def _ui_prewarm_loop():
 
         except Exception:
             logger.debug("[ui-prewarm] loop error", exc_info=True)
-        await _asyncio.sleep(300)  # 5 минут вместо 60с — снижаем нагрузку
+        await _asyncio.sleep(120)  # 2 минуты на Pro (было 5 на Hobby)
 
 
 async def _live_balance_refresh_loop():
