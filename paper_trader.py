@@ -1514,11 +1514,20 @@ async def on_signal(signal_data: dict):
         return None
 
     if verdict == "caution":
-        # CAUTION — разрешаем только для сильных источников
+        # CAUTION — разрешаем для прибыльных источников (по бэктесту 48h):
+        #   cryptovizor: 245 sig, WR 36.7%, +167R ✅
+        #   confluence:  201 sig, WR 33.7%, +79R ✅
+        #   cluster:     6 sig,   WR 60%,   +1.7R ✅
+        #   tradium:     9 sig,   WR 100%,  +9R ✅
+        # Блокируем убыточные:
+        #   supertrend_mtf: 264 sig, WR 21%, -83R ❌
+        #   supertrend_vip: 55 sig,  WR 31%, -17R ❌ (только если is_top_pick)
+        #   anomaly:        20 sig,  WR 26%, -5R ❌ (только cluster/top_pick override)
         is_strong = (
-            source == "cluster" or
-            (source == "supertrend" and (signal_data.get("tier") or "").lower() == "vip") or
-            source == "supertrend_vip" or
+            source in ("cluster", "cryptovizor", "confluence", "tradium") or
+            source == "supertrend_vip" and bool(signal_data.get("is_top_pick")) or
+            (source == "supertrend" and (signal_data.get("tier") or "").lower() == "vip"
+                and bool(signal_data.get("is_top_pick"))) or
             bool(signal_data.get("is_top_pick"))
         )
         if not is_strong:
