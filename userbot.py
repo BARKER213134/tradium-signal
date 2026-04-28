@@ -643,7 +643,105 @@ async def handle_cryptovizor_message(text: str, message_id: int):
                     broadcast_event("signal_new", {"id": signal.id, "source": BOT2_NAME})
                 except Exception:
                     pass
+                # Прямой Telegram-алерт в BOT2 — каждый CV сигнал.
+                # Раньше алерт шёл только при паттерне на 1h свечах через
+                # watcher._send_cryptovizor_alert; в боковом рынке паттерны
+                # не находились → алерты не шли. Юзер хочет ВСЕ сигналы в бота.
+                try:
+                    asyncio.create_task(_send_cv_basic_alert(
+                        signal.id, pair, sd["direction"],
+                        sd.get("trend", ""), current_price,
+                    ))
+                except Exception as _e:
+                    logger.debug(f"[CV-basic-alert] schedule fail: {_e}")
         finally:
             db.close()
     except Exception:
         logger.exception(f"[CV] handle_cryptovizor_message crashed (msg_id={message_id})")
+
+
+async def _send_cv_basic_alert(signal_id: int, pair: str, direction: str,
+                                trend: str, price: float):
+    """Прямой Telegram-алерт каждого CV-сигнала в BOT2.
+    Без AI/паттернов/чартов — минимальный текст: pair + direction + trend + price.
+    Использует httpx напрямую (минуя aiogram) чтобы не зависеть от watcher state.
+    Метит cv_alert_sent в _events для диагностики через /api/cv-alert-diag.
+    """
+    from config import BOT2_BOT_TOKEN, ADMIN_CHAT_ID
+    if not BOT2_BOT_TOKEN or not ADMIN_CHAT_ID:
+        logger.debug(f"[CV-basic-alert] BOT2 не настроен — skip #{signal_id}")
+        return
+    is_long = direction in ("LONG", "BUY")
+    dir_emoji = "🟢" if is_long else "🔴"
+    dir_label = "LONG" if is_long else "SHORT"
+    # Trend rendering: GRRRR → 🟢🔴🔴🔴🔴
+    trend_emoji = "".join("🟢" if c == "G" else "🔴" for c in (trend or ""))
+    # Цена форматирование под масштаб
+    if price is None:
+        price_str = "—"
+    elif abs(price) >= 1000:
+        price_str = f"{price:,.2f}"
+    elif abs(price) >= 1:
+        price_str = f"{price:.4f}"
+    elif abs(price) >= 0.01:
+        price_str = f"{price:.5f}"
+    else:
+        price_str = f"{price:.8f}"
+
+    sym = pair.replace("/", "").upper()
+    base = pair.split("/")[0] if "/" in pair else pair.replace("USDT", "")
+    text = (
+        f"🚀 <b>CRYPTOVIZOR</b>\n\n"
+        f"<b>{base}/USDT</b> · {dir_emoji} <b>{dir_label}</b>\n"
+        f"<code>{sym}</code>\n\n"
+        f"Тренд: {trend_emoji} ({trend})\n"
+        f"Цена: <code>{price_str}</code>\n"
+    )
+    try:
+        import httpx
+        url = f"https://api.telegram.org/bot{BOT2_BOT_TOKEN}/sendMessage"
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(url, json={
+                "chat_id": ADMIN_CHAT_ID,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            })
+            resp = r.json()
+            if resp.get("ok"):
+                msg_id = resp.get("result", {}).get("message_id")
+                logger.info(f"[CV-basic-alert] sent #{signal_id} {pair} → msg_id={msg_id}")
+                try:
+                    from database import _events, utcnow
+                    _events().insert_one({
+                        "at": utcnow(),
+                        "type": "cv_alert_sent",
+                        "data": {"signal_id": signal_id, "pair": pair,
+                                 "message_id": msg_id, "kind": "basic"},
+                    })
+                except Exception:
+                    pass
+            else:
+                logger.warning(f"[CV-basic-alert] BOT2 error #{signal_id}: {resp}")
+                try:
+                    from database import _events, utcnow
+                    _events().insert_one({
+                        "at": utcnow(),
+                        "type": "cv_alert_error",
+                        "data": {"signal_id": signal_id, "pair": pair,
+                                 "error": str(resp)[:200], "kind": "basic"},
+                    })
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"[CV-basic-alert] send fail #{signal_id}: {e}")
+        try:
+            from database import _events, utcnow
+            _events().insert_one({
+                "at": utcnow(),
+                "type": "cv_alert_error",
+                "data": {"signal_id": signal_id, "pair": pair,
+                         "error": str(e)[:200], "kind": "basic"},
+            })
+        except Exception:
+            pass
