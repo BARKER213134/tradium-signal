@@ -972,21 +972,24 @@ async def _check_once():
 async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: float,
                                    s1: float | None, r1: float | None,
                                    chart_png: bytes | None):
-    """Полный rich-алерт в BOT2 для Cryptovizor через httpx.
+    """CV алерт + paper trigger. Архитектура fail-fast (28.04.2026):
 
-    Архитектура (после фикса 28.04.2026):
-      • Все sync-блоки (_kl_block, _st_block, _market_block — sync Mongo) идут
-        ЧЕРЕЗ asyncio.to_thread с timeout 5с — поэтому event loop не блокируется
-        и timeouts реально срабатывают (раньше aiogram + sync функции висли 45с).
-      • Telegram-отправка через httpx.AsyncClient (не aiogram) — стабильнее,
-        нет shared-session багов.
-      • Если какой-то блок упал/таймнул — просто пропускается, не блокирует
-        отправку всего сообщения.
+    Этап 1 (СИНХРОННЫЙ, <500мс): минимальный текст → httpx POST → Telegram.
+       Никаких sync-блоков (Mongo find / klines / API) до отправки.
+       Гарантированно доставляется в Telegram.
+
+    Этап 2 (BACKGROUND, не блокирует): paper trader + cluster check
+       + rich-edit message (если время позволит).
+
+    Раньше rich-блоки (KL, ST, pump, reversal, pending_cluster, paper)
+    шли ДО httpx → суммарно зависали 45+ секунд → fire-and-forget timeout
+    убивал ВСЕ алерты (за 2 часа: 6 паттернов / 0 sent / 6 timeout).
     """
     from config import BOT2_BOT_TOKEN, ADMIN_CHAT_ID
     if not BOT2_BOT_TOKEN or not ADMIN_CHAT_ID:
         return
-    # Маячок — видеть что функция вызвана
+
+    # Маячок что функция вызвана
     try:
         from database import _events
         _events().insert_one({
@@ -1003,7 +1006,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     pair_short = (signal.pair or "—").replace("/USDT", "")
     sym = (signal.pair or "").replace("/", "").upper()
 
-    # ── AI line ──
+    # AI line
     ai_line = ""
     if getattr(signal, "ai_score", None) is not None:
         score = signal.ai_score
@@ -1011,64 +1014,25 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         verdict = signal.ai_verdict or ("STRONG" if score >= 70 else "OK" if score >= 40 else "SKIP")
         ai_line = f"\n{emoji_ai} <b>AI:</b> {score}/100 · {verdict}"
 
-    # ── PnL line ──
+    # PnL line
     pnl_line = ""
     if signal.entry and current_price:
         raw = ((current_price - signal.entry) / signal.entry) * 100
         pnl = -raw if not is_long else raw
         pnl_line = f"\n📊 <b>PnL с сигнала:</b> {pnl:+.2f}%"
 
-    # ── S1/R1 levels ──
+    # S1/R1
     lvl_parts = []
     if s1: lvl_parts.append(f"🟢 S1: <code>{s1}</code>")
     if r1: lvl_parts.append(f"🔴 R1: <code>{r1}</code>")
     lvl = " | ".join(lvl_parts)
 
-    # ── Sync blocks через to_thread с timeout (не блокируют event loop) ──
-    async def _safe(coro_or_call, timeout=5.0, default=""):
-        try:
-            return await asyncio.wait_for(coro_or_call, timeout=timeout)
-        except Exception:
-            return default
-
-    # Keltner ETH фильтр (sync → to_thread)
-    _stp, _std = await _safe(
-        asyncio.to_thread(_check_keltner_filter, signal.direction),
-        timeout=5.0, default=(True, {"direction": "NEUTRAL"})
-    )
-    # Pump check (async)
-    _pump = await _safe(
-        _pump_check(sym),
-        timeout=5.0,
-        default={"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0, "funding": 0}
-    )
-    hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
-
-    # Key Levels block (sync Mongo → to_thread)
-    _kl = await _safe(
-        asyncio.to_thread(_kl_block, signal.pair, signal.direction,
-                          getattr(signal, "pattern_triggered_at", None) or utcnow(),
-                          (current_price or signal.entry), signal.tp1, signal.sl),
-        timeout=5.0, default=""
-    )
-    # SuperTrend block (sync — cache_only=True, быстрый)
-    _stb = await _safe(
-        asyncio.to_thread(_st_block, signal.pair, signal.direction, "1h"),
-        timeout=3.0, default=""
-    )
-    # Market block (sync, мгновенный)
-    try:
-        _market = _market_block(_pump, _stp, _std)
-    except Exception:
-        _market = ""
-
-    # ── Полный rich text ──
+    # Минимальный текст без sync-блоков (KL/ST/pump/reversal/cluster) —
+    # они добавятся фоном через editMessage если успеют.
     text = (
-        f"{hp}"
         f"🚀 <b>CRYPTOVIZOR · ПАТТЕРН</b>\n\n"
         f"<b>{pair_short}/USDT</b> · 1h · {dir_emoji} <b>{dir_label}</b>\n"
-        f"<code>{sym}</code>\n"
-        f"{_kl}{_stb}\n"
+        f"<code>{sym}</code>\n\n"
         f"─── Сигнал ───\n"
         f"🕯 Паттерн: <b>{pattern}</b>\n"
         f"🎯 Entry: <code>{signal.entry}</code> → Сейчас: <code>{current_price}</code>"
@@ -1076,32 +1040,14 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"{lvl}\n"
         f"{ai_line}"
         f"⚡ Тренд: {_fmt_trend(signal.trend)}\n"
-        f"{_market}"
     )
-    # Дополнительные блоки (reversal/cluster) — async с timeout
-    rev_block = await _safe(_reversal_block(signal.direction), timeout=5.0, default="")
-    text += rev_block
-    cluster_block = await _safe(
-        _pending_cluster_block(pair_short, signal.direction),
-        timeout=5.0, default=""
-    )
-    text += cluster_block
 
-    # ── Сохраняем pump в БД (sync → to_thread, fire-and-forget) ──
-    try:
-        from database import _signals as _sc
-        await asyncio.to_thread(_sc().update_one,
-                                {"id": signal.id},
-                                {"$set": {"pump_score": _pump.get("score", 0),
-                                          "pump_factors": _pump.get("factors", [])}})
-    except Exception:
-        pass
-
-    # ── Отправка через httpx ──
+    # ── ЭТАП 1: Telegram POST (быстрый, гарантированный) ──
+    msg_id = None
     try:
         import httpx
         url = f"https://api.telegram.org/bot{BOT2_BOT_TOKEN}/sendMessage"
-        async with httpx.AsyncClient(timeout=12) as c:
+        async with httpx.AsyncClient(timeout=10) as c:
             r = await c.post(url, json={
                 "chat_id": ADMIN_CHAT_ID,
                 "text": text,
@@ -1144,22 +1090,98 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         except Exception:
             pass
 
-    # ── Paper trader: открыть paper позицию для CV сигнала ──
+    # ── ЭТАП 2: Background tasks (НЕ блокируют — fire-and-forget) ──
+    # Paper trader: важная задача, но если упадёт — Telegram уже отправлен.
+    asyncio.create_task(_cv_alert_followup(signal, pattern, current_price, sym, msg_id))
+
+
+async def _cv_alert_followup(signal: Signal, pattern: str, current_price: float,
+                              sym: str, msg_id: int | None):
+    """Background follow-up для CV алерта: paper open + rich edit message.
+    Запускается через asyncio.create_task — НЕ блокирует доставку Telegram."""
+    # 1) Paper trader (открытие позиции)
     try:
         await _paper_on_signal({
             "symbol": sym, "direction": signal.direction, "entry": current_price,
             "source": "cryptovizor", "pattern": pattern,
             "score": getattr(signal, "ai_score", None),
-            "pump_vol": _pump.get("volume_spike", 0),
-            "pump_oi": _pump.get("oi_change", 0),
+            "pump_vol": 0, "pump_oi": 0,
         })
     except Exception as e:
-        logger.warning(f"[CV-ALERT] paper fail #{signal.id}: {e}")
-    # ── Cluster check ──
+        logger.warning(f"[CV-ALERT-FU] paper fail #{signal.id}: {e}")
+
+    # 2) Cluster check
     try:
         await _cluster_check_on_signal(signal.pair, signal.direction)
     except Exception as e:
-        logger.warning(f"[CV-ALERT] cluster_check fail #{signal.id}: {e}")
+        logger.warning(f"[CV-ALERT-FU] cluster_check fail #{signal.id}: {e}")
+
+    # 3) Rich edit message — добавляем HIGH POTENTIAL/Vol/OI/Фильтры
+    #    в существующий текст через editMessageText. Если timeout — просто
+    #    оставляем минимальный текст, юзер всё равно видит сигнал.
+    if not msg_id:
+        return
+    try:
+        from config import BOT2_BOT_TOKEN, ADMIN_CHAT_ID
+        async def _safe(coro, t=5.0, d=None):
+            try: return await asyncio.wait_for(coro, timeout=t)
+            except Exception: return d
+
+        _stp, _std = await _safe(
+            asyncio.to_thread(_check_keltner_filter, signal.direction),
+            t=5.0, d=(True, {"direction": "NEUTRAL"}))
+        _pump = await _safe(_pump_check(sym), t=5.0,
+            d={"score": 0, "factors": [], "label": "", "volume_spike": 0,
+               "oi_change": 0, "funding": 0})
+        hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
+        _market = ""
+        try:
+            _market = _market_block(_pump, _stp, _std)
+        except Exception:
+            pass
+
+        is_long = signal.direction in ("LONG", "BUY")
+        dir_emoji = "🟢" if is_long else "🔴"
+        dir_label = "LONG" if is_long else "SHORT"
+        pair_short = (signal.pair or "—").replace("/USDT", "")
+        ai_line = ""
+        if getattr(signal, "ai_score", None) is not None:
+            sc = signal.ai_score
+            ea = "🟢" if sc >= 70 else "🟡" if sc >= 40 else "🔴"
+            v = signal.ai_verdict or ("STRONG" if sc >= 70 else "OK" if sc >= 40 else "SKIP")
+            ai_line = f"\n{ea} <b>AI:</b> {sc}/100 · {v}"
+        pnl_line = ""
+        if signal.entry and current_price:
+            raw = ((current_price - signal.entry) / signal.entry) * 100
+            pnl = -raw if not is_long else raw
+            pnl_line = f"\n📊 <b>PnL с сигнала:</b> {pnl:+.2f}%"
+
+        new_text = (
+            f"{hp}"
+            f"🚀 <b>CRYPTOVIZOR · ПАТТЕРН</b>\n\n"
+            f"<b>{pair_short}/USDT</b> · 1h · {dir_emoji} <b>{dir_label}</b>\n"
+            f"<code>{sym}</code>\n\n"
+            f"─── Сигнал ───\n"
+            f"🕯 Паттерн: <b>{pattern}</b>\n"
+            f"🎯 Entry: <code>{signal.entry}</code> → Сейчас: <code>{current_price}</code>"
+            f"{pnl_line}\n"
+            f"{ai_line}"
+            f"⚡ Тренд: {_fmt_trend(signal.trend)}\n"
+            f"{_market}"
+        )
+
+        import httpx
+        url = f"https://api.telegram.org/bot{BOT2_BOT_TOKEN}/editMessageText"
+        async with httpx.AsyncClient(timeout=10) as c:
+            await c.post(url, json={
+                "chat_id": ADMIN_CHAT_ID,
+                "message_id": msg_id,
+                "text": new_text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            })
+    except Exception as e:
+        logger.debug(f"[CV-ALERT-FU] edit fail #{signal.id}: {e}")
 
 async def _check_cryptovizor(db):
     """Watcher для cryptovizor сигналов: детект reversal+continuation на 1h,
