@@ -1421,7 +1421,60 @@ async def mirror_full_close_for_account(live_pos: dict, reason: str, account: di
                     await asyncio.to_thread(ex.cancel_order, oid, ccxt_sym)
                 except Exception:
                     pass
-        # BingX hedge mode → positionSide; иначе reduceOnly
+
+        # ── Проверка: позиция ещё существует на бирже? ──
+        # Если TP/SL уже триггернулись на бирже (price hit), позиция уже закрыта.
+        # Тогда create_market_order упадёт с "no position". Важно НЕ failить —
+        # просто помечаем DB как closed с paper exit_price.
+        position_exists = False
+        try:
+            positions = await asyncio.to_thread(ex.fetch_positions, [ccxt_sym])
+            for p in positions:
+                if (p.get("symbol") == ccxt_sym
+                    and float(p.get("contracts", 0) or 0) != 0):
+                    position_exists = True; break
+        except Exception:
+            position_exists = True  # на ошибке fetch — пробуем закрыть
+
+        if not position_exists:
+            # Биржа закрыла раньше (TP/SL hit). Просто обновим DB.
+            from database import _live_trades
+            exit_price = exit_price_hint or live_pos.get("entry")
+            entry = float(live_pos.get("entry") or 0)
+            leverage = live_pos.get("leverage", 1)
+            original_size = float(live_pos.get("size_usdt") or 0)
+            size_remaining = original_size * remaining
+            raw = ((float(exit_price) - entry) / entry) * 100
+            if direction == "SHORT":
+                raw = -raw
+            pnl_pct = round(raw * leverage, 2)
+            pnl_usdt = round(size_remaining * pnl_pct / 100, 2)
+            total_pnl = round(float(live_pos.get("realized_pnl_usdt") or 0) + pnl_usdt, 2)
+            total_pct = round(total_pnl / original_size * 100, 2) if original_size else 0
+            _live_trades().update_one(
+                {"trade_id": live_pos["trade_id"]},
+                {"$set": {
+                    "status": reason, "exit_price": exit_price,
+                    "pnl_pct": total_pct, "pnl_usdt": total_pnl,
+                    "closed_at": _utcnow(), "remaining_fraction": 0,
+                    "exchange_already_closed": True,  # mark for clarity
+                }},
+            )
+            logger.warning(
+                f"[live-{aid}] full close (exchange already closed) "
+                f"#{live_pos['trade_id']}: {ccxt_sym} {reason} "
+                f"total=${total_pnl:+.2f}"
+            )
+            try:
+                asyncio.create_task(
+                    _send_live_close_alert(live_pos, reason, exit_price, total_pct, total_pnl, account)
+                )
+            except Exception:
+                pass
+            return {"ok": True, "pnl_usdt": total_pnl, "pnl_pct": total_pct,
+                    "exchange_already_closed": True}
+
+        # Позиция всё ещё на бирже — закрываем market'ом
         ex_name = (account.get("exchange") or "").lower()
         if ex_name == "bingx":
             full_close_params = {"positionSide": "LONG" if direction == "LONG" else "SHORT"}
