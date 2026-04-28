@@ -1048,12 +1048,14 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     msg_id = None
     resp = None
     last_err = None
+    # Используем тот же простой timeout=30 (число) что и userbot._send_cv_basic_alert
+    # (он стабильно работает, тест TEST/USDT msg_id 1748 прошёл).
+    # httpx.Timeout(...) объект давал ConnectTimeout при том же endpoint.
     for attempt in range(2):  # 2 попытки: 0 + retry
         try:
             import httpx
             url = f"https://api.telegram.org/bot{BOT2_BOT_TOKEN}/sendMessage"
-            timeout_obj = httpx.Timeout(connect=15.0, read=30.0, write=15.0, pool=5.0)
-            async with httpx.AsyncClient(timeout=timeout_obj) as c:
+            async with httpx.AsyncClient(timeout=30.0) as c:
                 r = await c.post(url, json={
                     "chat_id": ADMIN_CHAT_ID,
                     "text": text,
@@ -1064,9 +1066,9 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
                 break  # success — выходим из retry loop
         except Exception as _e:
             last_err = _e
-            logger.warning(f"[CV-ALERT] httpx attempt {attempt+1}/2 fail #{signal.id}: {type(_e).__name__}")
+            logger.warning(f"[CV-ALERT] httpx attempt {attempt+1}/2 fail #{signal.id}: {type(_e).__name__}: {_e}")
             if attempt == 0:
-                await asyncio.sleep(2)  # экспон. бэкофф между retry
+                await asyncio.sleep(2)
             continue
     if resp is None:
         # Оба attempts упали — пишем error и возвращаемся
