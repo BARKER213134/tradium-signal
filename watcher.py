@@ -1042,53 +1042,71 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         f"⚡ Тренд: {_fmt_trend(signal.trend)}\n"
     )
 
-    # ── ЭТАП 1: Telegram POST (быстрый, гарантированный) ──
+    # ── ЭТАП 1: Telegram POST (с retry на ConnectTimeout) ──
+    # Railway → Telegram bursts of network congestion → ConnectTimeout 10s.
+    # Увеличили timeout до 30с + 1 retry с экспон. бэкоффом.
     msg_id = None
-    try:
-        import httpx
-        url = f"https://api.telegram.org/bot{BOT2_BOT_TOKEN}/sendMessage"
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.post(url, json={
-                "chat_id": ADMIN_CHAT_ID,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            })
-            resp = r.json()
-            if resp.get("ok"):
-                msg_id = resp.get("result", {}).get("message_id")
-                logger.info(f"[CV-ALERT] sent #{signal.id} {pair_short} {pattern} → msg_id={msg_id}")
-                try:
-                    from database import _events
-                    _events().insert_one({
-                        "at": utcnow(), "type": "cv_alert_sent",
-                        "data": {"signal_id": signal.id, "pair": signal.pair,
-                                 "pattern": pattern, "message_id": msg_id, "kind": "pattern"},
-                    })
-                except Exception:
-                    pass
-            else:
-                logger.warning(f"[CV-ALERT] BOT2 error #{signal.id}: {resp}")
-                try:
-                    from database import _events
-                    _events().insert_one({
-                        "at": utcnow(), "type": "cv_alert_error",
-                        "data": {"signal_id": signal.id, "pair": signal.pair,
-                                 "error": str(resp)[:200], "kind": "pattern"},
-                    })
-                except Exception:
-                    pass
-    except Exception as e:
-        logger.error(f"[CV-ALERT] httpx fail #{signal.id} {pair_short}: {e}")
+    resp = None
+    last_err = None
+    for attempt in range(2):  # 2 попытки: 0 + retry
+        try:
+            import httpx
+            url = f"https://api.telegram.org/bot{BOT2_BOT_TOKEN}/sendMessage"
+            timeout_obj = httpx.Timeout(connect=15.0, read=30.0, write=15.0, pool=5.0)
+            async with httpx.AsyncClient(timeout=timeout_obj) as c:
+                r = await c.post(url, json={
+                    "chat_id": ADMIN_CHAT_ID,
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                })
+                resp = r.json()
+                break  # success — выходим из retry loop
+        except Exception as _e:
+            last_err = _e
+            logger.warning(f"[CV-ALERT] httpx attempt {attempt+1}/2 fail #{signal.id}: {type(_e).__name__}")
+            if attempt == 0:
+                await asyncio.sleep(2)  # экспон. бэкофф между retry
+            continue
+    if resp is None:
+        # Оба attempts упали — пишем error и возвращаемся
         try:
             from database import _events
             _events().insert_one({
                 "at": utcnow(), "type": "cv_alert_error",
                 "data": {"signal_id": signal.id, "pair": signal.pair,
-                         "error": f"{type(e).__name__}: {str(e)[:200]}", "kind": "pattern"},
+                         "error": f"{type(last_err).__name__}: {str(last_err)[:200]}",
+                         "kind": "pattern", "attempts": 2},
             })
         except Exception:
             pass
+        # Не возвращаемся — paper_on_signal всё равно нужен
+        msg_id = None
+    else:
+        # resp получен (200 от Telegram) — обрабатываем успех/ошибку Telegram-уровня
+        if resp.get("ok"):
+            msg_id = resp.get("result", {}).get("message_id")
+            logger.info(f"[CV-ALERT] sent #{signal.id} {pair_short} {pattern} → msg_id={msg_id}")
+            try:
+                from database import _events
+                _events().insert_one({
+                    "at": utcnow(), "type": "cv_alert_sent",
+                    "data": {"signal_id": signal.id, "pair": signal.pair,
+                             "pattern": pattern, "message_id": msg_id, "kind": "pattern"},
+                })
+            except Exception:
+                pass
+        else:
+            logger.warning(f"[CV-ALERT] BOT2 error #{signal.id}: {resp}")
+            try:
+                from database import _events
+                _events().insert_one({
+                    "at": utcnow(), "type": "cv_alert_error",
+                    "data": {"signal_id": signal.id, "pair": signal.pair,
+                             "error": str(resp)[:200], "kind": "pattern"},
+                })
+            except Exception:
+                pass
 
     # ── ЭТАП 2: Background tasks (НЕ блокируют — fire-and-forget) ──
     # Paper trader: важная задача, но если упадёт — Telegram уже отправлен.
