@@ -2937,13 +2937,18 @@ async def api_cv_alert_diag(hours: int = 24, limit: int = 50):
     from datetime import timedelta
     since = utcnow() - timedelta(hours=hours)
 
-    # Recent CV сигналы со status=ПАТТЕРН
+    # Recent CV сигналы — берём всё что либо received либо pattern_triggered за since
+    # (паттерн может сработать на старом сигнале — UI показывает по pattern_triggered_at)
     cv_docs = list(_sig_col().find({
         "source": "cryptovizor",
-        "received_at": {"$gte": since},
+        "$or": [
+            {"received_at": {"$gte": since}},
+            {"pattern_triggered_at": {"$gte": since}},
+        ],
     }, {
         "id": 1, "pair": 1, "direction": 1, "status": 1,
-        "pattern_name": 1, "pattern_triggered_at": 1, "received_at": 1,
+        "pattern_name": 1, "pattern_triggered": 1, "pattern_triggered_at": 1,
+        "received_at": 1,
         "st_passed": 1, "ai_score": 1, "ai_verdict": 1,
     }).sort("received_at", -1).limit(int(limit)))
 
