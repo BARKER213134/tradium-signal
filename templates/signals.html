@@ -4503,6 +4503,7 @@ async function loadPaperMode() {
       'conservative': {bg:'linear-gradient(135deg,rgba(0,212,255,0.18),rgba(0,180,255,0.06))', c:'#00d4ff', bd:'rgba(0,212,255,0.55)', emoji:'🛡️', label:'CONSERVATIVE'},
       'aggressive':   {bg:'linear-gradient(135deg,rgba(255,77,109,0.22),rgba(255,140,50,0.1))', c:'#ff8c32', bd:'rgba(255,140,50,0.6)',  emoji:'🔥', label:'AGGRESSIVE'},
       'hyper':        {bg:'linear-gradient(135deg,rgba(255,0,128,0.28),rgba(190,0,230,0.14))', c:'#ff4cc4', bd:'rgba(255,76,196,0.7)', emoji:'💎', label:'HYPER'},
+      'turbo':        {bg:'linear-gradient(135deg,rgba(255,222,0,0.30),rgba(255,128,0,0.18))', c:'#ffde00', bd:'rgba(255,222,0,0.75)', emoji:'🚀', label:'TURBO'},
     };
     const s = styles[name] || styles.aggressive;
     btn.style.background = s.bg;
@@ -4513,8 +4514,8 @@ async function loadPaperMode() {
 }
 
 async function togglePaperMode() {
-  // Цикл: conservative → aggressive → hyper → conservative
-  const ORDER = ['conservative', 'aggressive', 'hyper'];
+  // Цикл: conservative → aggressive → hyper → turbo → conservative
+  const ORDER = ['conservative', 'aggressive', 'hyper', 'turbo'];
   try {
     const r0 = await fetch('/api/paper/mode');
     const d0 = await r0.json();

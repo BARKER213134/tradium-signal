@@ -37,8 +37,23 @@ MODE_HYPER = {
     # 10 позиций × max 25% = до 250%. Claude всё равно адаптивно снижает
     # размер когда уже есть открытые позиции (видит их в контексте).
 }
+MODE_TURBO = {
+    "name": "turbo",
+    "size_min": 8, "size_max": 35,
+    "lev_min": 5,  "lev_max": 18,
+    "cluster_size_bonus": 6, "top_pick_size_bonus": 4,
+    # Размер ×2 от HYPER на типичной ST CAUTION сделке. Profit на TP1 partial
+    # (+1% raw × 30%) растёт с $0.22 до ~$0.65, full TP с $2 до ~$5.
+    # Риск: B3-style катастрофы потенциально глубже, V2 (low-cap lev cap 4)
+    # всё ещё работает — защищает.
+}
 
-_MODES = {"conservative": MODE_CONSERVATIVE, "aggressive": MODE_AGGRESSIVE, "hyper": MODE_HYPER}
+_MODES = {
+    "conservative": MODE_CONSERVATIVE,
+    "aggressive": MODE_AGGRESSIVE,
+    "hyper": MODE_HYPER,
+    "turbo": MODE_TURBO,
+}
 
 
 def get_mode() -> dict:
