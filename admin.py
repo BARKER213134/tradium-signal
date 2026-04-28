@@ -2314,9 +2314,10 @@ async def api_live_accounts_set_balance(account_id: str, payload: dict):
 
 
 @app.get("/api/paper/rejections")
-async def api_paper_rejections(limit: int = 50):
+async def api_paper_rejections(limit: int = 200):
     """Последние отказы AI от сделок — для UI лога «почему не вошёл».
-    Кеш 30с — аккордеон polling'ит этот endpoint."""
+    Кеш 30с — аккордеон polling'ит этот endpoint.
+    Default 200 (раньше 50) — чтобы видеть полную картину F0/CAUTION/SKIP."""
     import paper_trader as pt
     from cache_utils import paper_rejections_cache
 

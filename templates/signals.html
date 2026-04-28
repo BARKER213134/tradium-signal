@@ -5159,7 +5159,7 @@ async function loadRejections() {
   const meta = document.getElementById('atRejMeta');
   if (!body) return;
   try {
-    const r = await fetch('/api/paper/rejections?limit=50');
+    const r = await fetch('/api/paper/rejections?limit=200');
     const d = await r.json();
     if (!d.ok) { body.innerHTML = `<div style="padding:20px;color:var(--sell);">Ошибка: ${d.error || '?'}</div>`; return; }
     const items = d.items || [];
