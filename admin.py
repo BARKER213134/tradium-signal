@@ -271,7 +271,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
             "/api/live/positions", "/api/live/history", "/api/live/close",
-            "/api/live/confirm", "/api/fvg-monitor-debug", "/api/fvg-entry-alert-test", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/cv-flip-results", "/api/cv-flips", "/api/cv-alert-diag", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static") or path.startswith("/api/live/accounts"):
+            "/api/live/confirm", "/api/fvg-monitor-debug", "/api/fvg-entry-alert-test", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/cv-flip-results", "/api/cv-flips", "/api/cv-alert-diag", "/api/cv-pipeline-trace", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static") or path.startswith("/api/live/accounts"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -2813,6 +2813,74 @@ async def api_live_rejections_all(limit: int = 100):
             if it.get(k) and hasattr(it[k], "isoformat"):
                 it[k] = it[k].isoformat()
     return {"ok": True, "count": len(items), "items": items}
+
+
+@app.get("/api/cv-pipeline-trace")
+async def api_cv_pipeline_trace(signal_id: int):
+    """Трасса конкретного CV-сигнала через pipeline:
+      received → СЛЕЖУ → паттерн → ПАТТЕРН → AI score → alert.
+    Возвращает все события + текущее состояние сигнала + последние klines."""
+    from database import _signals as _sig_col, _events as _ev_col
+    sig = _sig_col().find_one({"id": int(signal_id)})
+    if not sig:
+        return {"ok": False, "error": "signal not found"}
+
+    events = list(_ev_col().find({
+        "$or": [
+            {"data.signal_id": int(signal_id)},
+            {"data.id": int(signal_id)},
+        ]
+    }).sort("at", 1).limit(50))
+
+    out_events = []
+    for e in events:
+        out_events.append({
+            "type": e.get("type"),
+            "at": e.get("at").isoformat() if hasattr(e.get("at"), "isoformat") else None,
+            "data": {k: v for k, v in (e.get("data") or {}).items()
+                     if k not in ("signal_id", "id")},
+            "message": e.get("message"),
+        })
+
+    sig_out = {
+        "id": sig.get("id"),
+        "pair": sig.get("pair"),
+        "direction": sig.get("direction"),
+        "status": sig.get("status"),
+        "source": sig.get("source"),
+        "entry": sig.get("entry"),
+        "tp1": sig.get("tp1"),
+        "sl": sig.get("sl"),
+        "dca1": sig.get("dca1"), "dca2": sig.get("dca2"),
+        "dca3": sig.get("dca3"), "dca4": sig.get("dca4"),
+        "received_at": sig.get("received_at").isoformat() if sig.get("received_at") else None,
+        "pattern_triggered": sig.get("pattern_triggered"),
+        "pattern_name": sig.get("pattern_name"),
+        "pattern_triggered_at": sig.get("pattern_triggered_at").isoformat() if sig.get("pattern_triggered_at") else None,
+        "ai_score": sig.get("ai_score"),
+        "ai_verdict": sig.get("ai_verdict"),
+        "st_passed": sig.get("st_passed"),
+        "is_filtered": sig.get("is_filtered"),
+        "filter_reason": sig.get("filter_reason"),
+    }
+    # Последние 5 1h свечей этой пары для ручной проверки паттернов
+    candles_summary = None
+    try:
+        from exchange import get_futures_klines
+        candles = get_futures_klines(sig.get("pair", ""), "1h", 5) or []
+        candles_summary = [
+            {"t": c["t"], "o": c["o"], "h": c["h"], "l": c["l"], "c": c["c"]}
+            for c in candles[-5:]
+        ]
+    except Exception as e:
+        candles_summary = {"error": str(e)}
+
+    return {
+        "ok": True,
+        "signal": sig_out,
+        "events": out_events,
+        "last_5_candles_1h": candles_summary,
+    }
 
 
 @app.get("/api/cv-alert-diag")
