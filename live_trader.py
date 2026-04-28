@@ -654,25 +654,32 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
     symbol = canonical_symbol
 
     # ── Fix 1: Динамический клампинг по доступной марже на бирже ──
+    # Если fetch_balance fail/timeout — используем cached account.balance
+    # как proxy (обновляется каждые 5 мин в _live_balance_refresh_loop).
+    fetch_balance_failed = False
     try:
         bal_data = await asyncio.wait_for(asyncio.to_thread(ex.fetch_balance), timeout=15.0)
         usdt_free = float((bal_data.get("USDT") or {}).get("free", 0) or 0)
         usdt_total = float((bal_data.get("USDT") or {}).get("total", 0) or 0)
-    except asyncio.TimeoutError:
-        logger.warning(f"[live-{aid}] fetch_balance timeout — assuming free=0")
-        usdt_free = 0.0
-        usdt_total = 0.0
-    except Exception as _be:
-        logger.debug(f"[live-{aid}] fetch_balance fail: {_be}")
-        usdt_free = 0.0
-        usdt_total = 0.0
+    except (asyncio.TimeoutError, Exception) as _be:
+        # Биржа не ответила — берём кешированный баланс из DB
+        cached_bal = float(account.get("balance", 0) or 0)
+        usdt_free = cached_bal
+        usdt_total = cached_bal
+        fetch_balance_failed = True
+        logger.warning(
+            f"[live-{aid}] fetch_balance fail ({type(_be).__name__}): "
+            f"using cached balance ${cached_bal:.2f}"
+        )
 
-    # Hard skip: если free margin меньше $20 — открывать нечего
+    # Hard skip: если free margin реально меньше $20 — открывать нечего
     MIN_FREE_FOR_OPEN = 20.0
     if usdt_free < MIN_FREE_FOR_OPEN:
         return {"ok": False,
                 "error": f"insufficient margin: free=${usdt_free:.2f} < ${MIN_FREE_FOR_OPEN} "
-                         f"(total=${usdt_total:.2f}, закрой старые позиции на бирже)"}
+                         f"(total=${usdt_total:.2f}"
+                         + (", fetch_balance timeout" if fetch_balance_failed else "")
+                         + ", закрой старые позиции на бирже)"}
 
     # Используем максимум 50% свободной маржи на одну позицию (буфер на slippage/fees)
     # required_margin для futures ≈ size_usdt (margin = notional / leverage = size_usdt)
