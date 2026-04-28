@@ -643,17 +643,13 @@ async def handle_cryptovizor_message(text: str, message_id: int):
                     broadcast_event("signal_new", {"id": signal.id, "source": BOT2_NAME})
                 except Exception:
                     pass
-                # Прямой Telegram-алерт в BOT2 — каждый CV сигнал.
-                # Раньше алерт шёл только при паттерне на 1h свечах через
-                # watcher._send_cryptovizor_alert; в боковом рынке паттерны
-                # не находились → алерты не шли. Юзер хочет ВСЕ сигналы в бота.
-                try:
-                    asyncio.create_task(_send_cv_basic_alert(
-                        signal.id, pair, sd["direction"],
-                        sd.get("trend", ""), current_price,
-                    ))
-                except Exception as _e:
-                    logger.debug(f"[CV-basic-alert] schedule fail: {_e}")
+                # Прямой Telegram-алерт ОТКЛЮЧЁН (28.04.2026):
+                # минимальные basic alerts (только pair + direction + trend)
+                # дублировались с rich pattern alerts → юзер видел сначала
+                # минимальную "хуйню", потом красивый. Сейчас:
+                # CV сигнал → СЛЕЖУ → watcher._check_cryptovizor находит паттерн
+                # → status=ПАТТЕРН → _send_cryptovizor_alert (rich httpx) → BOT2.
+                # Если паттерн не находится за 24ч — алерт не идёт (by design).
         finally:
             db.close()
     except Exception:
