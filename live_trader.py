@@ -481,6 +481,25 @@ async def sync_positions(env: str) -> dict:
 # Cache ccxt instances per account: account_id → exchange
 _exchange_per_account: dict[str, object] = {}
 
+# Per-account asyncio.Lock — гарантирует что ордера на одном аккаунте идут
+# СЕРИАЛЬНО, не параллельно. Защита от race condition:
+#   • margin gap (2 сигнала одновременно резервируют один и тот же $50)
+#   • ghost order (set_leverage ещё в процессе, market_order уже летит → BingX
+#     принимает ордер но позиция не открывается корректно)
+#   • rate limit (BingX ~10-20 req/sec, без lock пик идёт параллельно)
+# Параллельные signals на РАЗНЫЕ аккаунты — независимы (свой lock).
+_account_locks: dict[str, "asyncio.Lock"] = {}
+
+def _get_account_lock(aid: str) -> "asyncio.Lock":
+    if aid not in _account_locks:
+        _account_locks[aid] = asyncio.Lock()
+    return _account_locks[aid]
+
+
+# Leverage cache: (account_id, symbol) → last_set_leverage. Избегаем избыточных
+# set_leverage вызовов (запрос к бирже) когда плечо не изменилось.
+_leverage_cache: dict[tuple[str, str], int] = {}
+
 
 def _get_exchange_for_account(account: dict):
     """Возвращает ccxt instance для конкретного аккаунта.
@@ -742,24 +761,36 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         logger.debug(f"[live-{aid}] amount_to_precision fail {symbol}: {_pe}")
         amount = round(amount, 6)
 
-    try:
+    # ── PER-ACCOUNT LOCK ──
+    # Все ордера на 1 аккаунте идут СЕРИАЛЬНО. Параллельные signals на разные
+    # аккаунты — независимы. Защищает от:
+    #   • margin race (2 ордера резервируют один и тот же баланс)
+    #   • ghost order (leverage ещё ставится, ордер уже летит)
+    #   • BingX rate limit пиков
+    async with _get_account_lock(aid):
+      try:
         # BingX в hedge mode требует positionSide на set_leverage И create_order
         ex_name = (account.get("exchange") or "").lower()
         pside = "LONG" if direction == "LONG" else "SHORT"
         order_params = {"positionSide": pside} if ex_name == "bingx" else {}
 
-        try:
-            if ex_name == "bingx":
-                logger.info(f"[live-{aid}] BingX setLeverage {leverage}x side={pside} sym={symbol}")
-                # Позиционные args: leverage, symbol, params
-                await asyncio.to_thread(ex.set_leverage, leverage, symbol, {"side": pside})
-            else:
-                await asyncio.to_thread(ex.set_leverage, leverage, symbol)
-        except Exception as _le:
-            logger.warning(f"[live-{aid}] set_leverage warn (continuing): {_le}")
+        # Leverage cache — пропускаем set_leverage если уже установлен такой же
+        lev_key = (aid, symbol)
+        last_lev = _leverage_cache.get(lev_key)
+        if last_lev == leverage:
+            logger.debug(f"[live-{aid}] leverage cache hit {symbol}={leverage}x — skip set_leverage")
+        else:
+            try:
+                if ex_name == "bingx":
+                    logger.info(f"[live-{aid}] BingX setLeverage {leverage}x side={pside} sym={symbol}")
+                    await asyncio.to_thread(ex.set_leverage, leverage, symbol, {"side": pside})
+                else:
+                    await asyncio.to_thread(ex.set_leverage, leverage, symbol)
+                _leverage_cache[lev_key] = leverage
+            except Exception as _le:
+                logger.warning(f"[live-{aid}] set_leverage warn (continuing): {_le}")
 
-        # create_market_order: ccxt сигнатура (symbol, side, amount, price=None, params={})
-        # Передаём 5 позиционных аргументов чтобы params точно пришли
+        # create_market_order
         logger.info(f"[live-{aid}] BingX market order {side} {amount} {symbol} params={order_params}")
         order = await asyncio.to_thread(
             ex.create_market_order, symbol, side, amount, None, order_params
@@ -768,7 +799,31 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         fill_price = order.get("average") or entry_price
 
         # Небольшая пауза чтобы позиция полностью осела на бирже
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.0)
+
+        # ── POST-FILL VERIFY (защита от ghost orders) ──
+        # BingX иногда принимает order и возвращает id с filled=True, но position
+        # на бирже не появляется (race с set_leverage, hedge mode mismatch).
+        # Проверяем через fetch_positions что позиция реально открыта.
+        try:
+            positions = await asyncio.to_thread(ex.fetch_positions, [symbol])
+            real_pos = None
+            for p in (positions or []):
+                contracts = float(p.get("contracts") or p.get("size") or 0)
+                if contracts > 0:
+                    real_pos = p
+                    break
+            if not real_pos:
+                logger.error(f"[live-{aid}] 👻 GHOST ORDER {symbol} #{exchange_order_id} — "
+                             f"order filled но position не открыта на бирже")
+                return {"ok": False,
+                        "error": f"ghost order: market_order filled (id={exchange_order_id}) "
+                                 f"но fetch_positions показал size=0 — position не открыта"}
+            real_size = float(real_pos.get("contracts") or real_pos.get("size") or 0)
+            logger.info(f"[live-{aid}] ✅ position verified {symbol} size={real_size}")
+        except Exception as ve:
+            # fail-open: если fetch_positions упал, не блокируем — может быть network glitch
+            logger.warning(f"[live-{aid}] post-fill verify fail {symbol} (continuing): {ve}")
 
         tp_order_id = sl_order_id = None
         tp_error = sl_error = None
@@ -865,7 +920,7 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
         except Exception:
             pass
         return {"ok": True, "trade": doc}
-    except Exception as e:
+      except Exception as e:
         import traceback
         logger.error(f"[live-{aid}] OPEN fail {symbol}: {e}\n{traceback.format_exc()[-500:]}")
         return {"ok": False, "error": str(e)}
