@@ -271,7 +271,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
             "/api/live/positions", "/api/live/history", "/api/live/close",
-            "/api/live/confirm", "/api/fvg-monitor-debug", "/api/fvg-entry-alert-test", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/cv-flip-results", "/api/cv-flips", "/api/cv-alert-diag", "/api/cv-pipeline-trace", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static") or path.startswith("/api/live/accounts"):
+            "/api/live/confirm", "/api/fvg-monitor-debug", "/api/fvg-entry-alert-test", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/cv-flip-results", "/api/cv-flips", "/api/cv-alert-diag", "/api/cv-pipeline-trace", "/api/cv-test-basic-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static") or path.startswith("/api/live/accounts"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -2813,6 +2813,45 @@ async def api_live_rejections_all(limit: int = 100):
             if it.get(k) and hasattr(it[k], "isoformat"):
                 it[k] = it[k].isoformat()
     return {"ok": True, "count": len(items), "items": items}
+
+
+@app.post("/api/cv-test-basic-alert")
+async def api_cv_test_basic_alert():
+    """Тестовый вызов _send_cv_basic_alert — для проверки что BOT2 настроен
+    и функция вообще доходит до Telegram. Шлёт сообщение про фиктивный TEST/USDT.
+    Возвращает результат вызова + последние 5 cv_alert_* events.
+    """
+    from config import BOT2_BOT_TOKEN, ADMIN_CHAT_ID
+    from database import _events
+    diag = {
+        "BOT2_BOT_TOKEN_set": bool(BOT2_BOT_TOKEN),
+        "BOT2_BOT_TOKEN_prefix": BOT2_BOT_TOKEN[:8] + "..." if BOT2_BOT_TOKEN else None,
+        "ADMIN_CHAT_ID": ADMIN_CHAT_ID,
+    }
+    try:
+        from userbot import _send_cv_basic_alert
+        await _send_cv_basic_alert(
+            signal_id=99999,
+            pair="TEST/USDT",
+            direction="LONG",
+            trend="RGGGG",
+            price=42.0,
+        )
+        diag["call"] = "ok"
+    except Exception as e:
+        diag["call"] = f"error: {e}"
+
+    # Последние 5 cv_alert_* events
+    recent = list(_events().find({
+        "type": {"$in": ["cv_alert_called", "cv_alert_sent",
+                          "cv_alert_error", "cv_alert_timeout"]},
+    }).sort("at", -1).limit(5))
+    diag["recent_events"] = [{
+        "type": e.get("type"),
+        "at": e.get("at").isoformat() if hasattr(e.get("at"), "isoformat") else None,
+        "data": e.get("data"),
+    } for e in recent]
+    return diag
 
 
 @app.get("/api/cv-pipeline-trace")
