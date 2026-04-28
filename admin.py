@@ -2815,6 +2815,96 @@ async def api_live_rejections_all(limit: int = 100):
     return {"ok": True, "count": len(items), "items": items}
 
 
+@app.get("/api/cv-alert-diag")
+async def api_cv_alert_diag(hours: int = 24, limit: int = 50):
+    """Диагностика CV алертов в Telegram. Возвращает последние CV сигналы за N часов
+    + соответствующие события (cv_alert_called/sent/timeout/error).
+
+    Помогает понять почему cryptovizor сигналы не приходят в бот:
+      - есть только 'called', нет 'sent' → BOT2 send_message виснет/падает
+      - нет 'called' → не вызывается _send_cryptovizor_alert (st_passed=False?)
+      - есть 'sent' с message_id → реально отправлено в Telegram
+    """
+    from database import _signals as _sig_col, _events as _ev_col, utcnow
+    from datetime import timedelta
+    since = utcnow() - timedelta(hours=hours)
+
+    # Recent CV сигналы со status=ПАТТЕРН
+    cv_docs = list(_sig_col().find({
+        "source": "cryptovizor",
+        "received_at": {"$gte": since},
+    }, {
+        "id": 1, "pair": 1, "direction": 1, "status": 1,
+        "pattern_name": 1, "pattern_triggered_at": 1, "received_at": 1,
+        "st_passed": 1, "ai_score": 1, "ai_verdict": 1,
+    }).sort("received_at", -1).limit(int(limit)))
+
+    sig_ids = [d.get("id") for d in cv_docs if d.get("id")]
+    events_by_sid: dict = {}
+    if sig_ids:
+        for ev in _ev_col().find({
+            "type": {"$in": ["cv_alert_called", "cv_alert_sent",
+                             "cv_alert_timeout", "cv_alert_error",
+                             "cv_alert_timeout_global"]},
+            "data.signal_id": {"$in": sig_ids},
+            "at": {"$gte": since},
+        }).sort("at", 1):
+            sid = ev.get("data", {}).get("signal_id")
+            events_by_sid.setdefault(sid, []).append({
+                "type": ev.get("type"),
+                "at": ev.get("at").isoformat() if hasattr(ev.get("at"), "isoformat") else None,
+                "data": {k: v for k, v in (ev.get("data") or {}).items() if k != "signal_id"},
+            })
+
+    # Аггрегаты
+    counts = {"total": len(cv_docs), "with_pattern": 0,
+              "called": 0, "sent": 0, "timeout": 0, "error": 0,
+              "no_alert": 0, "st_failed": 0}
+    items = []
+    for d in cv_docs:
+        sid = d.get("id")
+        evs = events_by_sid.get(sid, [])
+        ev_types = [e["type"] for e in evs]
+        has_called = "cv_alert_called" in ev_types
+        has_sent = "cv_alert_sent" in ev_types
+        has_timeout = "cv_alert_timeout" in ev_types or "cv_alert_timeout_global" in ev_types
+        has_error = "cv_alert_error" in ev_types
+        if d.get("status") == "ПАТТЕРН":
+            counts["with_pattern"] += 1
+        if has_called: counts["called"] += 1
+        if has_sent: counts["sent"] += 1
+        if has_timeout: counts["timeout"] += 1
+        if has_error: counts["error"] += 1
+        if d.get("status") == "ПАТТЕРН" and not has_called:
+            counts["no_alert"] += 1
+        if d.get("st_passed") is False:
+            counts["st_failed"] += 1
+        items.append({
+            "id": sid,
+            "pair": d.get("pair"),
+            "direction": d.get("direction"),
+            "status": d.get("status"),
+            "pattern": d.get("pattern_name"),
+            "received_at": d["received_at"].isoformat() if d.get("received_at") else None,
+            "pattern_triggered_at": d["pattern_triggered_at"].isoformat()
+                if d.get("pattern_triggered_at") else None,
+            "st_passed": d.get("st_passed"),
+            "ai_score": d.get("ai_score"),
+            "ai_verdict": d.get("ai_verdict"),
+            "events": evs,
+            "summary": (
+                "✅ sent" if has_sent else
+                "⏱ timeout" if has_timeout else
+                "❌ error" if has_error else
+                "⏳ called, no result" if has_called else
+                "⏸ no alert (st_passed=False?)" if d.get("status") == "ПАТТЕРН" else
+                "— wait pattern"
+            ),
+        })
+
+    return {"ok": True, "hours": hours, "counts": counts, "items": items}
+
+
 @app.get("/api/live/debug-recent")
 async def api_live_debug_recent(limit: int = 10):
     """Последние live_trades любого статуса — для диагностики mirror/sync."""
