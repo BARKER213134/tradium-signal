@@ -972,18 +972,23 @@ async def _check_once():
 async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: float,
                                    s1: float | None, r1: float | None,
                                    chart_png: bytes | None):
-    """Алерт в отдельный бот BOT2 для Cryptovizor."""
-    target_bot = _bot2 or _bot
-    if not target_bot or not _admin_chat_id:
+    """Алерт в BOT2 для Cryptovizor — упрощённая версия через httpx.
+
+    Раньше функция использовала aiogram + 7 sync/async sub-блоков (KL, ST,
+    pump, reversal, pending_cluster) → суммарно зависала на 45+ секунд,
+    глобальный fire-and-forget timeout убивал все 44 сигнала за 24h.
+    Сейчас: один httpx-запрос с минимальным текстом + paper trigger.
+    """
+    from config import BOT2_BOT_TOKEN, ADMIN_CHAT_ID
+    if not BOT2_BOT_TOKEN or not ADMIN_CHAT_ID:
         return
-    # Маячок — видеть, дошёл ли вызов до функции (для диагностики зависаний)
+    # Маячок — видеть что функция вызвана
     try:
         from database import _events
         _events().insert_one({
             "at": utcnow(),
             "type": "cv_alert_called",
-            "data": {"signal_id": signal.id, "pair": signal.pair, "pattern": pattern,
-                     "has_chart": bool(chart_png)},
+            "data": {"signal_id": signal.id, "pair": signal.pair, "pattern": pattern},
         })
     except Exception:
         pass
@@ -996,17 +1001,92 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     if getattr(signal, "ai_score", None) is not None:
         score = signal.ai_score
         emoji_ai = "🟢" if score >= 70 else "🟡" if score >= 40 else "🔴"
-        ai_line = f"\n{emoji_ai} <b>AI:</b> {score}/100 · {signal.ai_verdict or '—'}"
+        ai_line = f"\n{emoji_ai} <b>AI:</b> {score}/100"
 
     pnl_line = ""
     if signal.entry and current_price:
         raw = ((current_price - signal.entry) / signal.entry) * 100
         pnl = -raw if not is_long else raw
-        pnl_line = f"\n📊 <b>PnL с сигнала:</b> {pnl:+.2f}%"
+        pnl_line = f"  ({pnl:+.2f}%)"
 
-    s1_line = f"\n🟢 <b>S1:</b> <code>{s1}</code>" if s1 else ""
-    r1_line = f"\n🔴 <b>R1:</b> <code>{r1}</code>" if r1 else ""
+    sym = (signal.pair or "").replace("/", "").upper()
+    # Минимальный текст — без KL/ST/pump/reversal/pending_cluster блоков.
+    # Эти блоки можно добавить позже через AsyncClient + to_thread, но сейчас
+    # главное — гарантированная доставка алерта в Telegram.
+    text = (
+        f"🚀 <b>CRYPTOVIZOR · ПАТТЕРН</b>\n\n"
+        f"<b>{pair}/USDT</b> · 1h · {dir_emoji} <b>{dir_label}</b>\n"
+        f"<code>{sym}</code>\n\n"
+        f"🕯 Паттерн: <b>{pattern}</b>\n"
+        f"🎯 Entry: <code>{signal.entry}</code> → Сейчас: <code>{current_price}</code>{pnl_line}"
+        f"{ai_line}\n"
+    )
 
+    try:
+        import httpx
+        url = f"https://api.telegram.org/bot{BOT2_BOT_TOKEN}/sendMessage"
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(url, json={
+                "chat_id": ADMIN_CHAT_ID,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            })
+            resp = r.json()
+            if resp.get("ok"):
+                msg_id = resp.get("result", {}).get("message_id")
+                logger.info(f"[CV-ALERT] sent #{signal.id} {pair} {pattern} → msg_id={msg_id}")
+                try:
+                    from database import _events
+                    _events().insert_one({
+                        "at": utcnow(),
+                        "type": "cv_alert_sent",
+                        "data": {"signal_id": signal.id, "pair": signal.pair,
+                                 "pattern": pattern, "message_id": msg_id,
+                                 "kind": "pattern"},
+                    })
+                except Exception:
+                    pass
+            else:
+                logger.warning(f"[CV-ALERT] BOT2 error #{signal.id}: {resp}")
+                try:
+                    from database import _events
+                    _events().insert_one({
+                        "at": utcnow(),
+                        "type": "cv_alert_error",
+                        "data": {"signal_id": signal.id, "pair": signal.pair,
+                                 "error": str(resp)[:200], "kind": "pattern"},
+                    })
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.error(f"[CV-ALERT] httpx fail #{signal.id} {pair}: {e}")
+        try:
+            from database import _events
+            _events().insert_one({
+                "at": utcnow(),
+                "type": "cv_alert_error",
+                "data": {"signal_id": signal.id, "pair": signal.pair,
+                         "error": f"{type(e).__name__}: {str(e)[:200]}",
+                         "kind": "pattern"},
+            })
+        except Exception:
+            pass
+
+    # Paper trader: открыть paper позицию для CV сигнала после отправки алерта.
+    # Если paper упадёт — это не блокирует Telegram (алерт уже отправлен).
+    try:
+        await _paper_on_signal({
+            "symbol": sym, "direction": signal.direction, "entry": current_price,
+            "source": "cryptovizor", "pattern": pattern,
+            "score": getattr(signal, "ai_score", None),
+            "pump_vol": 0, "pump_oi": 0,
+        })
+    except Exception as e:
+        logger.warning(f"[CV-ALERT] paper fail #{signal.id}: {e}")
+    return  # ранний выход — старая логика ниже не выполняется
+
+    # ── НИЖЕ — мёртвый код старой реализации, оставлен для reference ──
     sym = (signal.pair or "").replace("/", "").upper()
     # Каждый хелпер с timeout — раньше без timeout виснули минутами на Binance/Mongo
     try:
