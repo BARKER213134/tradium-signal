@@ -167,8 +167,31 @@ def check_entry(pair: str, direction: str,
             status = "ok"
             comment = f"{phase_emoji} {phase_label}: SHORT совпадает с трендом"
     elif phase == "CHOP":
-        status = "warn"
-        comment = f"{phase_emoji} CHOP: малые сайзы, whipsaw risk"
+        # CHOP-фаза формально нейтральная, НО если BTC 1h+4h оба DOWN —
+        # фактический тренд медвежий (просто atr_1h низкий → не BEAR_TREND).
+        # Бэктест 28-29 апр: 13 LONG в CHOP с BTC↓↓ → −$56, 4 LONG win'а +$34.
+        # → блокируем LONG если BTC 1h+4h DOWN (кроме Cluster STRONG/MEGA).
+        # Зеркально для SHORT при BTC 1h+4h UP.
+        btc_st = (phase_data.get("metrics") or {}).get("btc_st") or {}
+        btc_1h = btc_st.get("1h", "")
+        btc_4h = btc_st.get("4h", "")
+        if direction == "LONG" and btc_1h == "DOWN" and btc_4h == "DOWN":
+            if is_strong_cluster:
+                status = "warn"
+                comment = f"{phase_emoji} CHOP + BTC↓↓: LONG против BTC (Cluster {sig_strength} — разрешено)"
+            else:
+                status = "bad"
+                comment = f"⛔ CHOP + BTC 1h↓ 4h↓: LONG запрещён (BTC nрend medвежий)"
+        elif direction == "SHORT" and btc_1h == "UP" and btc_4h == "UP":
+            if is_strong_cluster:
+                status = "warn"
+                comment = f"{phase_emoji} CHOP + BTC↑↑: SHORT против BTC (Cluster {sig_strength} — разрешено)"
+            else:
+                status = "bad"
+                comment = f"⛔ CHOP + BTC 1h↑ 4h↑: SHORT запрещён (BTC trend бычий)"
+        else:
+            status = "warn"
+            comment = f"{phase_emoji} CHOP (BTC {btc_1h or '?'}/{btc_4h or '?'}): малые сайзы, whipsaw risk"
     elif phase == "VOLATILE":
         status = "bad"
         comment = f"{phase_emoji} VOLATILE: только VIP с double-confirm или Cluster MEGA"
