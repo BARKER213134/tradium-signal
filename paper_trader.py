@@ -1493,7 +1493,10 @@ async def on_signal(signal_data: dict):
     if source == "supertrend":
         try:
             from exchange import get_klines_any
-            _candles = get_klines_any(pair, "1h", 50) or []
+            # sync HTTP к Binance/BingX блокирует event loop на 200ms-2s
+            # на каждый supertrend сигнал. При burst (5-10 сигналов одновременно)
+            # event loop виснет → autotrading тормозит.
+            _candles = await asyncio.to_thread(get_klines_any, pair, "1h", 50) or []
             _closes = [c["c"] for c in _candles[:-1]]  # пропустить незакрытую
             if len(_closes) < 16:
                 raise ValueError(f"мало свечей для RSI: {len(_closes)}")

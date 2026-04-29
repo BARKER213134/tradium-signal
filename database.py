@@ -38,7 +38,20 @@ def _get_db():
         return _db
     if not MONGO_URL:
         raise RuntimeError("MONGO_URL не задан в .env")
-    _client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=10000)
+    # serverSelectionTimeoutMS — сколько ждать выбора сервера replica set
+    # socketTimeoutMS — таймаут на конкретную операцию (find/insert/...).
+    #   Без него зависшая операция держит thread pool worker вечно → hang всего сервиса.
+    # connectTimeoutMS — таймаут на установку TCP connection.
+    # maxPoolSize — лимит одновременных connections (по умолчанию 100).
+    #   Уменьшаем чтобы не plate Atlas connections при burst.
+    _client = MongoClient(
+        MONGO_URL,
+        serverSelectionTimeoutMS=10000,
+        socketTimeoutMS=20000,
+        connectTimeoutMS=10000,
+        maxPoolSize=50,
+        retryWrites=True,
+    )
     _db = _client[MONGO_DB]
     return _db
 
