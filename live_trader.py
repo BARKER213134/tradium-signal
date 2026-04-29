@@ -1321,6 +1321,53 @@ async def sync_positions_for_account(account: dict) -> dict:
                     f"[live-{aid}] sync close #{pos['trade_id']}: "
                     f"{pos['symbol']} {reason} pnl={pnl_pct:+.2f}% ${pnl_usdt:+.2f}"
                 )
+
+                # ── LIVE → PAPER mirror close ──
+                # Биржа закрыла позицию по TP/SL, но paper всё ещё может
+                # показывать OPEN до своей price-loop проверки (5-30с лаг).
+                # Чтобы paper и live закрывались ОДНОВРЕМЕННО — закрываем
+                # paper прямо здесь по тому же exit_price.
+                paper_id = pos.get("paper_trade_id")
+                if paper_id:
+                    try:
+                        from database import _get_db
+                        paper_doc = _get_db().paper_trades.find_one({"trade_id": paper_id})
+                        if paper_doc and paper_doc.get("status") in (None, "OPEN"):
+                            entry_p = float(paper_doc.get("entry") or pos["entry"])
+                            dir_p = paper_doc.get("direction", direction)
+                            lev_p = paper_doc.get("leverage", leverage)
+                            size_p = paper_doc.get("size_usdt", size_usdt)
+                            raw_p = ((float(exit_price) - entry_p) / entry_p) * 100
+                            if dir_p == "SHORT":
+                                raw_p = -raw_p
+                            pnl_pct_p = round(raw_p * lev_p, 2)
+                            pnl_usdt_p = round(size_p * pnl_pct_p / 100, 2)
+                            new_balance = float(_get_db().paper_trades.find_one(
+                                {"_id": "state"}, {"balance": 1}
+                            ).get("balance", 0)) + pnl_usdt_p
+                            _get_db().paper_trades.update_one(
+                                {"trade_id": paper_id},
+                                {"$set": {
+                                    "status": reason,
+                                    "exit_price": float(exit_price),
+                                    "pnl_pct": pnl_pct_p,
+                                    "pnl_usdt": pnl_usdt_p,
+                                    "closed_at": _utcnow(),
+                                    "live_synced": True,
+                                }},
+                            )
+                            _get_db().paper_trades.update_one(
+                                {"_id": "state"},
+                                {"$set": {"balance": new_balance}}
+                            )
+                            logger.warning(
+                                f"[live→paper] sync close paper#{paper_id}: "
+                                f"{pos['symbol']} {reason} ${pnl_usdt_p:+.2f}"
+                            )
+                    except Exception as _pe:
+                        logger.warning(f"[live→paper] sync fail #{paper_id}: {_pe}",
+                                       exc_info=True)
+
                 # Уведомление о закрытии
                 try:
                     asyncio.create_task(
