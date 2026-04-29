@@ -366,7 +366,7 @@ async def _check_reversal_flip():
         # Записываем event для маркера на графиках
         try:
             from database import _market_events
-            await asyncio.to_thread(_market_events().insert_one, {
+            _market_events().insert_one({
                 "at": utcnow(),
                 "type": "reversal",
                 "from": old,
@@ -404,7 +404,7 @@ async def _check_kc_change():
             # Записываем event для маркера на графиках
             try:
                 from database import _market_events
-                await asyncio.to_thread(_market_events().insert_one, {
+                _market_events().insert_one({
                     "at": utcnow(),
                     "type": "kc",
                     "from": old,
@@ -843,10 +843,9 @@ async def _retry_failed_ai(db):
     for s in signals:
         # Проверяем количество попыток через events
         from database import _events
-        retry_count = await asyncio.to_thread(
-            _events().count_documents,
-            {"signal_id": s.id, "type": "ai_retry"},
-        )
+        retry_count = _events().count_documents({
+            "signal_id": s.id, "type": "ai_retry",
+        })
         if retry_count >= AI_RETRY_MAX:
             continue
 
@@ -1006,7 +1005,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     # Маячок что функция вызвана
     try:
         from database import _events
-        await asyncio.to_thread(_events().insert_one, {
+        _events().insert_one({
             "at": utcnow(),
             "type": "cv_alert_called",
             "data": {"signal_id": signal.id, "pair": signal.pair, "pattern": pattern},
@@ -1088,7 +1087,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
         # Оба attempts упали — пишем error и возвращаемся
         try:
             from database import _events
-            await asyncio.to_thread(_events().insert_one, {
+            _events().insert_one({
                 "at": utcnow(), "type": "cv_alert_error",
                 "data": {"signal_id": signal.id, "pair": signal.pair,
                          "error": f"{type(last_err).__name__}: {str(last_err)[:200]}",
@@ -1105,7 +1104,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
             logger.info(f"[CV-ALERT] sent #{signal.id} {pair_short} {pattern} → msg_id={msg_id}")
             try:
                 from database import _events
-                await asyncio.to_thread(_events().insert_one, {
+                _events().insert_one({
                     "at": utcnow(), "type": "cv_alert_sent",
                     "data": {"signal_id": signal.id, "pair": signal.pair,
                              "pattern": pattern, "message_id": msg_id, "kind": "pattern"},
@@ -1116,7 +1115,7 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
             logger.warning(f"[CV-ALERT] BOT2 error #{signal.id}: {resp}")
             try:
                 from database import _events
-                await asyncio.to_thread(_events().insert_one, {
+                _events().insert_one({
                     "at": utcnow(), "type": "cv_alert_error",
                     "data": {"signal_id": signal.id, "pair": signal.pair,
                              "error": str(resp)[:200], "kind": "pattern"},
@@ -1335,9 +1334,8 @@ async def _check_cryptovizor(db):
                             logger.error(f"[CV] alert TIMEOUT 45s #{sig_obj.id} {sig_obj.pair}")
                             try:
                                 from database import _events
-                                await asyncio.to_thread(_events().insert_one,
-                                    {"at": utcnow(), "type": "cv_alert_timeout_global",
-                                     "data": {"signal_id": sig_obj.id, "pair": sig_obj.pair}})
+                                _events().insert_one({"at": utcnow(), "type": "cv_alert_timeout_global",
+                                    "data": {"signal_id": sig_obj.id, "pair": sig_obj.pair}})
                             except Exception:
                                 pass
                         except Exception as e:
@@ -1390,13 +1388,11 @@ async def _fill_missing_ai_analysis(db):
     """Дозаполняет анализ для AI сигналов у которых comment пустой."""
     from database import _signals as _sc
 
-    def _load_docs():
-        return list(_sc().find({
-            "source": "cryptovizor",
-            "filter_reason": {"$regex": "^AI_SIGNAL"},
-            "$or": [{"comment": None}, {"comment": ""}],
-        }).limit(2))
-    docs = await asyncio.to_thread(_load_docs)
+    docs = list(_sc().find({
+        "source": "cryptovizor",
+        "filter_reason": {"$regex": "^AI_SIGNAL"},
+        "$or": [{"comment": None}, {"comment": ""}],
+    }).limit(2))
 
     for doc in docs:
         sig_id = doc.get("id")
@@ -1421,8 +1417,7 @@ async def _fill_missing_ai_analysis(db):
 
         analysis = await _generate_ai_deep_analysis(sig, current or doc.get("entry"), s1, r1)
         if analysis:
-            await asyncio.to_thread(_sc().update_one,
-                                    {"id": sig_id}, {"$set": {"comment": analysis}})
+            _sc().update_one({"id": sig_id}, {"$set": {"comment": analysis}})
             logger.info(f"AI analysis filled for #{sig_id} {pair}")
 
             # Отправляем в бот если ещё не отправлено
@@ -1447,9 +1442,7 @@ async def _run_ai_filter(s, current_price, db) -> bool:
     """Проверяет сигнал по AI критериям. True = проходит в Сигнал AI."""
     try:
         from database import _get_db
-        criteria_doc = await asyncio.to_thread(
-            _get_db().settings.find_one, {"_id": "ai_criteria"}
-        )
+        criteria_doc = _get_db().settings.find_one({"_id": "ai_criteria"})
         user_criteria = criteria_doc.get("criteria", []) if criteria_doc else []
 
         if not user_criteria:
@@ -1496,9 +1489,7 @@ async def _check_ai_signals(db):
 
     # Загружаем сохранённые критерии пользователя
     from database import _get_db
-    criteria_doc = await asyncio.to_thread(
-        _get_db().settings.find_one, {"_id": "ai_criteria"}
-    )
+    criteria_doc = _get_db().settings.find_one({"_id": "ai_criteria"})
     user_criteria = criteria_doc.get("criteria", []) if criteria_doc else []
 
     # Enabled критерии
@@ -1689,10 +1680,9 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     # Claude API падал на _generate_ai_full_analysis/tg_summary) ──
     try:
         from database import _events
-        await asyncio.to_thread(_events().insert_one,
-            {"at": utcnow(), "type": "ai_alert_called",
-             "data": {"signal_id": signal.id, "pair": signal.pair,
-                      "bot_ready": bool(target_bot), "chat_set": bool(_admin_chat_id)}})
+        _events().insert_one({"at": utcnow(), "type": "ai_alert_called",
+            "data": {"signal_id": signal.id, "pair": signal.pair,
+                     "bot_ready": bool(target_bot), "chat_set": bool(_admin_chat_id)}})
     except Exception:
         pass
 
@@ -1770,9 +1760,7 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
 
     try:
         from database import _signals as _sc2
-        await asyncio.to_thread(_sc2().update_one,
-            {"id": signal.id},
-            {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
+        _sc2().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
     except Exception as e:
         logger.warning(f"[AI-ALERT] pump save fail #{signal.id}: {e}")
 
@@ -1805,10 +1793,9 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
         try:
             from database import _events
             import traceback as _tb
-            await asyncio.to_thread(_events().insert_one,
-                {"at": utcnow(), "type": "ai_alert_all_failed",
-                 "data": {"signal_id": signal.id, "pair": signal.pair,
-                          "error": last_err, "attempts": len(unique_bots)}})
+            _events().insert_one({"at": utcnow(), "type": "ai_alert_all_failed",
+                "data": {"signal_id": signal.id, "pair": signal.pair,
+                         "error": last_err, "attempts": len(unique_bots)}})
         except Exception:
             pass
 
@@ -1837,8 +1824,7 @@ async def _ai_background_analysis(signal, current_price, s1, r1):
         )
         if full_analysis:
             from database import _signals as _sc_bg
-            await asyncio.to_thread(_sc_bg().update_one,
-                                    {"id": signal.id}, {"$set": {"comment": full_analysis}})
+            _sc_bg().update_one({"id": signal.id}, {"$set": {"comment": full_analysis}})
             logger.info(f"[AI-BG] analysis saved #{signal.id}")
     except asyncio.TimeoutError:
         logger.warning(f"[AI-BG] full_analysis TIMEOUT #{signal.id}")
@@ -1916,14 +1902,12 @@ async def _check_anomalies():
 
         # Дедупликация — та же пара за последние 4 часа (обновляем время если повторно)
         import datetime
-        existing = await asyncio.to_thread(_anomalies().find_one, {
+        existing = _anomalies().find_one({
             "symbol": r["symbol"],
             "detected_at": {"$gte": utcnow() - datetime.timedelta(hours=4)},
         })
         if existing:
-            await asyncio.to_thread(_anomalies().update_one,
-                {"_id": existing["_id"]},
-                {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}})
+            _anomalies().update_one({"_id": existing["_id"]}, {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}})
             continue
 
         # SuperTrend фильтр
@@ -1935,7 +1919,7 @@ async def _check_anomalies():
             "anomalies": r["anomalies"], "detected_at": now,
             "st_passed": st_passed,
         }
-        await asyncio.to_thread(_anomalies().insert_one, doc)
+        _anomalies().insert_one(doc)
         anomaly_scan_state["found"] += 1
         results.append(r)
         # Invalidate journal cache — anomaly сразу появляется в UI
@@ -2073,9 +2057,7 @@ async def _send_anomaly_alert(r: dict):
     text += await _pending_cluster_block(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
 
     from database import _anomalies as _anc
-    await asyncio.to_thread(_anc().update_one,
-        {"symbol": r["symbol"], "score": r["score"]},
-        {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
+    _anc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
 
     try:
         await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
@@ -2145,16 +2127,14 @@ async def _check_confluence():
             continue
 
         # Дедупликация — та же пара + направление за 4 часа (обновляем время если повторно)
-        existing = await asyncio.to_thread(_confluence().find_one, {
+        existing = _confluence().find_one({
             "symbol": r["symbol"],
             "direction": r["direction"],
             "detected_at": {"$gte": utcnow() - datetime.timedelta(hours=4)},
         })
         if existing:
             # Обновляем время последнего обнаружения
-            await asyncio.to_thread(_confluence().update_one,
-                {"_id": existing["_id"]},
-                {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}})
+            _confluence().update_one({"_id": existing["_id"]}, {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}})
             continue
 
         st_passed, st_data = _check_keltner_filter(r["direction"])
@@ -2174,7 +2154,7 @@ async def _check_confluence():
             "detected_at": now,
             "st_passed": st_passed,
         }
-        insert_res = await asyncio.to_thread(_confluence().insert_one, doc)
+        insert_res = _confluence().insert_one(doc)
         confluence_scan_state["found"] += 1
         results.append(r)
         # Invalidate journal cache — confluence сразу появляется в UI
@@ -2210,8 +2190,7 @@ async def _check_confluence():
     confluence_scan_state["current"] = ""
     confluence_scan_state["last_scanned"] = len(pairs)
     confluence_scan_state["last_found"] = len(results)
-    total_in_db = await asyncio.to_thread(_confluence().count_documents, {})
-    print(f"[CONFLUENCE] Done: {len(results)} new from {len(pairs)} pairs (total in DB: {total_in_db})", flush=True)
+    print(f"[CONFLUENCE] Done: {len(results)} new from {len(pairs)} pairs (total in DB: {_confluence().count_documents({})})", flush=True)
     if results:
         _broadcast("confluence_update", {"count": len(results)})
 
@@ -2605,12 +2584,9 @@ async def _check_forex_fvg_scan():
             return
         # Получаем snapshot waiting до скана, потом — после
         from database import _fvg_signals
-        def _load_waiting():
-            return list(_fvg_signals().find(
-                {"status": "WAITING_RETEST"}, {"instrument": 1, "formed_ts": 1}
-            ))
-        _waiting_docs = await asyncio.to_thread(_load_waiting)
-        before = {(s["instrument"], s.get("formed_ts")) for s in _waiting_docs}
+        before = {(s["instrument"], s.get("formed_ts")) for s in _fvg_signals().find(
+            {"status": "WAITING_RETEST"}, {"instrument": 1, "formed_ts": 1}
+        )}
         print("[FVG-SCAN] starting scan_all...", flush=True)
         stats = await asyncio.to_thread(scan_all)
         # Ставим timestamp ПОСЛЕ успешного скана — защита от timeout-loop
@@ -2824,9 +2800,7 @@ async def _check_cluster_outcomes():
     try:
         from cluster_detector import check_cluster_outcomes
         from database import _clusters
-        open_clusters = await asyncio.to_thread(
-            lambda: list(_clusters().find({"status": "OPEN"}))
-        )
+        open_clusters = list(_clusters().find({"status": "OPEN"}))
         if not open_clusters:
             return
         pairs = list({c.get("pair") for c in open_clusters if c.get("pair")})
@@ -2951,9 +2925,7 @@ async def _send_confluence_alert(r: dict):
     text += await _pending_cluster_block(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
 
     from database import _confluence as _cfc
-    await asyncio.to_thread(_cfc().update_one,
-        {"symbol": r["symbol"], "score": r["score"]},
-        {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
+    _cfc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
 
     try:
         await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
@@ -2974,12 +2946,12 @@ async def _check_paper_positions():
     не блокировала остальные."""
     try:
         import paper_trader as pt
-        positions = await asyncio.to_thread(pt.get_open_positions)
+        positions = pt.get_open_positions()
         if not positions:
             return
         pairs = list({p.get("pair", p["symbol"].replace("USDT", "/USDT")) for p in positions})
         prices = await get_prices_any(pairs)
-        closed = await asyncio.to_thread(pt.check_positions, prices)
+        closed = pt.check_positions(prices)
     except Exception as e:
         logger.warning(f"[paper-positions] fetch/check fail: {e}", exc_info=True)
         return
@@ -2989,7 +2961,7 @@ async def _check_paper_positions():
         try:
             import paper_trader as pt
             trades, _ = pt._get_collections()
-            trade = await asyncio.to_thread(trades.find_one, {"trade_id": c["trade_id"]})
+            trade = trades.find_one({"trade_id": c["trade_id"]})
             if not trade:
                 continue
             # 1. СНАЧАЛА отправляем alert (критично — без review если AI упал)
@@ -3315,8 +3287,7 @@ async def _live_balance_refresh_loop():
                     if res and res.get("ok"):
                         new_bal = res.get("usdt_total")
                         if new_bal is not None:
-                            await _asyncio.to_thread(
-                                _live_accounts().update_one,
+                            _live_accounts().update_one(
                                 {"_id": aid},
                                 {"$set": {"balance": float(new_bal),
                                           "balance_synced_from_exchange": True,
