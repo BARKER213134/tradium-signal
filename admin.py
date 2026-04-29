@@ -9987,6 +9987,9 @@ _CANDLES_TTL_BY_TF = {
     "1d":  7200.0, # 2 часа
 }
 _CANDLES_TTL_DEFAULT = 300.0
+# Single-flight registry: in-progress Binance fetch'и. Concurrent users
+# на одну пару шерят результат одного fetch вместо N параллельных.
+_candles_inflight: dict = {}
 
 
 def warm_candles_cache(symbol: str, tf: str, limit: int = 200) -> bool:
@@ -10109,8 +10112,27 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
                 pass
             return {"ok": True, "candles": fdata, "stale": True, "fuzzy_from": fkey}
 
-    # Hard miss — ждём Binance
-    candles = await asyncio.to_thread(get_klines_any, pair, tf, limit)
+    # Hard miss — ждём Binance.
+    # Single-flight: если уже есть in-flight fetch для этого ключа,
+    # ждём его результат вместо параллельного запроса. Это снижает нагрузку
+    # на Binance/BingX когда несколько пользователей открывают одну пару.
+    inflight = _candles_inflight.get(key)
+    if inflight is None:
+        loop = asyncio.get_event_loop()
+        inflight = loop.create_future()
+        _candles_inflight[key] = inflight
+        try:
+            candles = await asyncio.to_thread(get_klines_any, pair, tf, limit)
+            inflight.set_result(candles)
+        except Exception as _ex:
+            inflight.set_exception(_ex)
+            _candles_inflight.pop(key, None)
+            raise
+        finally:
+            _candles_inflight.pop(key, None)
+    else:
+        candles = await inflight
+
     if not candles:
         return {"ok": False, "error": "no data"}
     data = []
