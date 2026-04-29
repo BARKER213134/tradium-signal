@@ -1232,9 +1232,7 @@ async def sync_positions_for_account(account: dict) -> dict:
     except Exception as e:
         return {"ok": False, "error": f"fetch_positions fail: {e}", "account_id": str(aid)}
 
-    db_open = await asyncio.to_thread(
-        lambda: list(_live_trades().find({"status": "OPEN", "account_id": str(aid)}))
-    )
+    db_open = list(_live_trades().find({"status": "OPEN", "account_id": str(aid)}))
     # Грейс-период 90с: не закрываем позиции которые только что открылись —
     # на Binance может быть задержка eventual consistency между fill и
     # появлением в fetch_positions. Без этого race condition закрывает свежие.
@@ -1323,53 +1321,6 @@ async def sync_positions_for_account(account: dict) -> dict:
                     f"[live-{aid}] sync close #{pos['trade_id']}: "
                     f"{pos['symbol']} {reason} pnl={pnl_pct:+.2f}% ${pnl_usdt:+.2f}"
                 )
-
-                # ── LIVE → PAPER mirror close ──
-                # Биржа закрыла позицию по TP/SL, но paper всё ещё может
-                # показывать OPEN до своей price-loop проверки (5-30с лаг).
-                # Чтобы paper и live закрывались ОДНОВРЕМЕННО — закрываем
-                # paper прямо здесь по тому же exit_price.
-                paper_id = pos.get("paper_trade_id")
-                if paper_id:
-                    try:
-                        from database import _get_db
-                        paper_doc = _get_db().paper_trades.find_one({"trade_id": paper_id})
-                        if paper_doc and paper_doc.get("status") in (None, "OPEN"):
-                            entry_p = float(paper_doc.get("entry") or pos["entry"])
-                            dir_p = paper_doc.get("direction", direction)
-                            lev_p = paper_doc.get("leverage", leverage)
-                            size_p = paper_doc.get("size_usdt", size_usdt)
-                            raw_p = ((float(exit_price) - entry_p) / entry_p) * 100
-                            if dir_p == "SHORT":
-                                raw_p = -raw_p
-                            pnl_pct_p = round(raw_p * lev_p, 2)
-                            pnl_usdt_p = round(size_p * pnl_pct_p / 100, 2)
-                            new_balance = float(_get_db().paper_trades.find_one(
-                                {"_id": "state"}, {"balance": 1}
-                            ).get("balance", 0)) + pnl_usdt_p
-                            _get_db().paper_trades.update_one(
-                                {"trade_id": paper_id},
-                                {"$set": {
-                                    "status": reason,
-                                    "exit_price": float(exit_price),
-                                    "pnl_pct": pnl_pct_p,
-                                    "pnl_usdt": pnl_usdt_p,
-                                    "closed_at": _utcnow(),
-                                    "live_synced": True,
-                                }},
-                            )
-                            _get_db().paper_trades.update_one(
-                                {"_id": "state"},
-                                {"$set": {"balance": new_balance}}
-                            )
-                            logger.warning(
-                                f"[live→paper] sync close paper#{paper_id}: "
-                                f"{pos['symbol']} {reason} ${pnl_usdt_p:+.2f}"
-                            )
-                    except Exception as _pe:
-                        logger.warning(f"[live→paper] sync fail #{paper_id}: {_pe}",
-                                       exc_info=True)
-
                 # Уведомление о закрытии
                 try:
                     asyncio.create_task(
@@ -1658,98 +1609,27 @@ async def paper_to_live_sync_check() -> dict:
     - Если paper закрыл partial (TP1/TP2) — live тоже закрывает ту же долю
     - Если paper подвинул SL (BE/BE+/TRAIL) — live двигает SL на бирже
     - Если paper закрылся полностью (status != OPEN) — live тоже закрывается
-    - **NEW**: Если paper OPEN, но соответствующего live trade НЕТ ни в OPEN
-      ни в FAILED_OPEN — это пропавший mirror (race condition / GC). Создаём
-      mirror задним числом. Это failsafe для бага watcher mirror-task GC.
 
     Идемпотентно: запускается каждые 15с, ничего не дублирует.
     """
-    from datetime import timedelta as _td
+    from database import _get_db, _live_trades
     from live_safety import get_enabled_accounts
+    db = _get_db()
 
-    accounts = await asyncio.to_thread(get_enabled_accounts)
+    accounts = get_enabled_accounts()
     if not accounts:
         return {"ok": True, "synced": 0, "skipped_no_accounts": True}
 
-    # ── FAILSAFE: paper OPEN без соответствующего live mirror ──
-    # 6ч окно покрывает большинство paper-сделок (TP/SL обычно <24ч).
-    cutoff = _utcnow() - _td(hours=6)
-
-    def _failsafe_load():
-        from database import _get_db, _live_trades
-        db = _get_db()
-        paper_recent = list(db.paper_trades.find({
-            "status": "OPEN",
-            "opened_at": {"$gte": cutoff},
-            "trade_id": {"$exists": True},
-        }))
-        live_existing_ptids = set()
-        if paper_recent:
-            ptids = [p.get("trade_id") for p in paper_recent if p.get("trade_id")]
-            if ptids:
-                for lt in _live_trades().find({"paper_trade_id": {"$in": ptids}},
-                                               {"paper_trade_id": 1, "account_id": 1}):
-                    live_existing_ptids.add((lt.get("paper_trade_id"), lt.get("account_id")))
-        return paper_recent, live_existing_ptids
-
-    paper_recent, live_existing_ptids = await asyncio.to_thread(_failsafe_load)
-    recovery_actions = []
-    if paper_recent:
-        for p in paper_recent:
-            ptid = p.get("trade_id")
-            for acc in accounts:
-                aid = acc.get("_id")
-                if (ptid, aid) in live_existing_ptids:
-                    continue
-                # Пропавший mirror — открываем
-                logger.warning(f"[failsafe] paper#{ptid} {p.get('symbol')} {p.get('direction')} "
-                              f"OPEN без live mirror на {aid} → восстанавливаю")
-                signal_data = {
-                    "symbol": p.get("symbol", ""),
-                    "pair": p.get("pair", ""),
-                    "direction": p.get("direction", ""),
-                    "source": p.get("source", "unknown"),
-                    "entry": p.get("entry"),
-                    "paper_trade_id": ptid,
-                }
-                decision = {
-                    "enter": True,
-                    "leverage": p.get("leverage", 5),
-                    "size_pct": p.get("size_pct", 5),
-                    "tp1": p.get("tp1"),
-                    "sl": p.get("sl"),
-                    "reasoning": "[FAILSAFE-RECOVERY] paper OPEN без mirror — восстановлено sync-loop'ом",
-                }
-                try:
-                    r = await mirror_paper_for_account(signal_data, decision, acc)
-                    recovery_actions.append({
-                        "action": "failsafe_mirror",
-                        "paper_trade_id": ptid,
-                        "symbol": p.get("symbol"),
-                        "account_id": aid,
-                        "result": r,
-                    })
-                except Exception as e:
-                    logger.warning(f"[failsafe] mirror#{ptid} on {aid} fail: {e}", exc_info=True)
-    if recovery_actions:
-        logger.info(f"[failsafe] восстановлено {len(recovery_actions)} пропавших mirror")
-
-    # Все live OPEN с paper_trade_id + paper_docs — sync Mongo вынесен в to_thread
-    def _load_active():
-        from database import _get_db, _live_trades
-        live_open = list(_live_trades().find({
-            "status": "OPEN", "paper_trade_id": {"$ne": None},
-        }))
-        if not live_open:
-            return live_open, {}
-        paper_ids = list({lt.get("paper_trade_id") for lt in live_open if lt.get("paper_trade_id")})
-        paper_docs = {p["trade_id"]: p
-                      for p in _get_db().paper_trades.find({"trade_id": {"$in": paper_ids}})}
-        return live_open, paper_docs
-    live_open, paper_docs = await asyncio.to_thread(_load_active)
+    # Все live OPEN с paper_trade_id
+    live_open = list(_live_trades().find({
+        "status": "OPEN", "paper_trade_id": {"$ne": None},
+    }))
     if not live_open:
-        return {"ok": True, "synced": 0,
-                "failsafe_recovered": len(recovery_actions)}
+        return {"ok": True, "synced": 0}
+
+    # Все paper позиции (все статусы) для этих trade_ids
+    paper_ids = list({lt.get("paper_trade_id") for lt in live_open if lt.get("paper_trade_id")})
+    paper_docs = {p["trade_id"]: p for p in db.paper_trades.find({"trade_id": {"$in": paper_ids}})}
 
     actions = []
     accounts_by_id = {a["_id"]: a for a in accounts}
@@ -1801,12 +1681,7 @@ async def paper_to_live_sync_check() -> dict:
                 actions.append({"action": "sl_move", "trade_id": live["trade_id"],
                                 "new_sl": paper_sl, "result": r})
 
-    return {
-        "ok": True,
-        "synced": len(actions),
-        "actions": actions[:30],
-        "failsafe_recovered": len(recovery_actions) if paper_recent else 0,
-    }
+    return {"ok": True, "synced": len(actions), "actions": actions[:30]}
 
 
 async def sync_all_accounts() -> list:
