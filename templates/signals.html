@@ -621,16 +621,14 @@ async function openChartModal(symbol, pair, direction, pnl) {
     const candleLimit = limitByTF[tf] || 200;
 
     try {
-      const [candleR, sigR] = await Promise.all([
-        fetch(`/api/journal-candles?symbol=${sym}&tf=${tf}&limit=${candleLimit}`),
-        fetch(`/api/journal/by-symbol?symbol=${pairLabel}&days=14`).catch(() => null),
-      ]);
+      // Свечи — критичный путь, рендерим как только готовы.
+      // Маркеры сигналов (by-symbol) — добавляем после, не блокируем chart.
+      const candleR = await fetch(`/api/journal-candles?symbol=${sym}&tf=${tf}&limit=${candleLimit}`);
       const d = await candleR.json();
       if (!d.ok || !d.candles || !d.candles.length) {
         if (loading) loading.innerHTML = '<span style="color:var(--sell)">Нет данных по этой паре</span>';
         return;
       }
-      const allSigs = sigR ? ((await sigR.json()).items || []) : [];
 
       chartDiv.innerHTML = '';
       const chart = (window._createChartSafe || window.LightweightCharts.createChart)(chartDiv, {
@@ -652,46 +650,53 @@ async function openChartModal(symbol, pair, direction, pnl) {
       if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
       if (window._addSuperTrend) window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv });
       if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
-
-      // Маркеры сигналов
-      const markers = [];
-      const tfSec = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 3600;
-      const firstTs = d.candles[0].time;
-      const lastTs = d.candles[d.candles.length - 1].time;
-      const nearest = (ts) => {
-        if (!ts) return null;
-        let mc = d.candles[d.candles.length - 1], minD = Infinity;
-        for (const c of d.candles) {
-          const diff = Math.abs(c.time - ts);
-          if (diff < minD) { minD = diff; mc = c; }
-        }
-        return mc;
-      };
-      const inRange = (ts) => ts >= firstTs - tfSec && ts <= lastTs + tfSec * 2;
-      const byTime = new Map();
-      for (const s of allSigs) {
-        const ts = s.at_ts || 0;
-        if (!ts || !inRange(ts)) continue;
-        const mc = nearest(ts);
-        if (!mc) continue;
-        const isL = s.direction === 'LONG';
-        const key = mc.time + '_' + s.direction;
-        if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: isL, items: [] });
-        byTime.get(key).items.push(s);
-      }
-      for (const g of byTime.values()) {
-        markers.push({
-          time: g.time,
-          position: g.isLong ? 'belowBar' : 'aboveBar',
-          color: g.isLong ? '#00e5a0' : '#ff4d6d',
-          shape: g.isLong ? 'arrowUp' : 'arrowDown',
-          text: g.items.length > 1 ? `×${g.items.length}` : '',
-          size: 1,
-        });
-      }
-      if (markers.length && series.setMarkers) series.setMarkers(markers);
       chart.timeScale().fitContent();
       if (loading) loading.style.display = 'none';
+
+      // Маркеры в фоне — НЕ блокируют появление графика
+      fetch(`/api/journal/by-symbol?symbol=${pairLabel}&days=14`)
+        .then(r => r.json())
+        .then(sigD => {
+          const allSigs = (sigD || {}).items || [];
+          if (!allSigs.length || !series.setMarkers) return;
+          const markers = [];
+          const tfSec = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 3600;
+          const firstTs = d.candles[0].time;
+          const lastTs = d.candles[d.candles.length - 1].time;
+          const nearest = (ts) => {
+            if (!ts) return null;
+            let mc = d.candles[d.candles.length - 1], minD = Infinity;
+            for (const c of d.candles) {
+              const diff = Math.abs(c.time - ts);
+              if (diff < minD) { minD = diff; mc = c; }
+            }
+            return mc;
+          };
+          const inRange = (ts) => ts >= firstTs - tfSec && ts <= lastTs + tfSec * 2;
+          const byTime = new Map();
+          for (const s of allSigs) {
+            const ts = s.at_ts || 0;
+            if (!ts || !inRange(ts)) continue;
+            const mc = nearest(ts);
+            if (!mc) continue;
+            const isL = s.direction === 'LONG';
+            const key = mc.time + '_' + s.direction;
+            if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: isL, items: [] });
+            byTime.get(key).items.push(s);
+          }
+          for (const g of byTime.values()) {
+            markers.push({
+              time: g.time,
+              position: g.isLong ? 'belowBar' : 'aboveBar',
+              color: g.isLong ? '#00e5a0' : '#ff4d6d',
+              shape: g.isLong ? 'arrowUp' : 'arrowDown',
+              text: g.items.length > 1 ? `×${g.items.length}` : '',
+              size: 1,
+            });
+          }
+          if (markers.length) series.setMarkers(markers);
+        })
+        .catch(() => {});
     } catch (e) {
       if (loading) loading.innerHTML = `<span style="color:var(--sell)">Ошибка: ${e.message}</span>`;
     }
