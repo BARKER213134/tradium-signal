@@ -3267,6 +3267,79 @@ async def _live_balance_refresh_loop():
         await _asyncio.sleep(300)  # 5 минут
 
 
+async def _cache_cleanup_loop():
+    """Превентивная чистка кэшей раз в 30 мин — защита от memory leak.
+    Прод 28.04 залип через 1.5ч стабильной работы → подозрение на рост
+    cache dicts без TTL invalidation. Этот loop ограничивает размер
+    долгоживущих кэшей.
+    """
+    import asyncio as _asyncio
+    import time as _time
+    await _asyncio.sleep(60)  # стартовая задержка
+    while True:
+        try:
+            now = _time.time()
+            # exchange._volume_cache: записи с TTL 1ч, удаляем старые + cap 200
+            try:
+                from exchange import _volume_cache, _VOLUME_TTL
+                stale = [k for k, (_, ts) in _volume_cache.items() if now - ts > _VOLUME_TTL]
+                for k in stale:
+                    _volume_cache.pop(k, None)
+                # Если всё ещё >200 — удаляем самые старые
+                if len(_volume_cache) > 200:
+                    items = sorted(_volume_cache.items(), key=lambda kv: kv[1][1])
+                    for k, _ in items[:len(_volume_cache) - 200]:
+                        _volume_cache.pop(k, None)
+                logger.info(f"[cache-cleanup] volume_cache: removed {len(stale)} stale, "
+                            f"total now {len(_volume_cache)}")
+            except Exception as e:
+                logger.debug(f"[cache-cleanup] volume err: {e}")
+
+            # exchange._price_cache: TTL 5с, всё что старше — удаляем
+            try:
+                from exchange import _price_cache, _PRICE_TTL
+                stale_p = [k for k, (_, ts) in _price_cache.items() if now - ts > _PRICE_TTL * 2]
+                for k in stale_p:
+                    _price_cache.pop(k, None)
+                if len(_price_cache) > 500:
+                    items = sorted(_price_cache.items(), key=lambda kv: kv[1][1])
+                    for k, _ in items[:len(_price_cache) - 500]:
+                        _price_cache.pop(k, None)
+            except Exception:
+                pass
+
+            # exchange._futures_cache, _pump_cache, _kc_cache, _eth_ctx_cache —
+            # они с TTL короткие но без cleanup. Cap 300.
+            try:
+                from exchange import _futures_cache, _pump_cache
+                for cache in (_futures_cache, _pump_cache):
+                    if len(cache) > 300:
+                        keys = list(cache.keys())
+                        for k in keys[:len(cache) - 300]:
+                            cache.pop(k, None)
+            except Exception:
+                pass
+
+            # admin._candles_cache: tuples (ts, data), cap 500
+            try:
+                from admin import _candles_cache, _kl_recent_cache
+                for cache in (_candles_cache, _kl_recent_cache):
+                    if len(cache) > 500:
+                        # Sort by timestamp (assume ts at index 0 of value tuple)
+                        items = []
+                        for k, v in cache.items():
+                            ts = v[0] if isinstance(v, tuple) and len(v) >= 1 else 0
+                            items.append((k, ts))
+                        items.sort(key=lambda kv: kv[1])
+                        for k, _ in items[:len(cache) - 500]:
+                            cache.pop(k, None)
+            except Exception as e:
+                logger.debug(f"[cache-cleanup] admin err: {e}")
+        except Exception as e:
+            logger.warning(f"[cache-cleanup] loop error: {e}")
+        await _asyncio.sleep(1800)  # 30 минут
+
+
 async def _exchange_symbols_refresh_loop():
     """Раз в час обновляем списки пар на ОБЕИХ биржах.
     Каждый refresh защищён 25-секундным timeout — если биржа не ответит,
@@ -3345,6 +3418,13 @@ async def start_watcher():
         logger.info("[market-phase] loop started")
     except Exception:
         logger.exception("[market-phase] loop failed to start")
+    # Cache cleanup loop — каждые 30 мин чистит долгоживущие dict-кэши
+    # (защита от memory leak — прод залипал через 1.5ч стабильной работы)
+    try:
+        asyncio.create_task(_cache_cleanup_loop())
+        logger.info("[cache-cleanup] background loop started")
+    except Exception:
+        logger.exception("[cache-cleanup] loop failed to start")
     # Live sync — каждые 30с синхронизируем позиции live-аккаунтов с биржей
     try:
         asyncio.create_task(_live_sync_loop())

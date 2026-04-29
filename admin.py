@@ -271,7 +271,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             "/api/live/set-balance", "/api/live/enable", "/api/live/kill-switch",
             "/api/live/kill-switch/reset", "/api/live/test-connection",
             "/api/live/positions", "/api/live/history", "/api/live/close",
-            "/api/live/confirm", "/api/fvg-monitor-debug", "/api/fvg-entry-alert-test", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/cv-flip-results", "/api/cv-flips", "/api/cv-alert-diag", "/api/cv-pipeline-trace", "/api/cv-test-basic-alert", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static") or path.startswith("/api/live/accounts"):
+            "/api/live/confirm", "/api/fvg-monitor-debug", "/api/fvg-entry-alert-test", "/api/peek-tradium-setups", "/api/peek-tradium-forum", "/api/inspect-msg-neighbors", "/api/debug-fetch-chart", "/api/reversal-meter", "/api/pending-clusters", "/api/backfill-clusters", "/api/pair-signals", "/api/fvg-signals", "/api/fvg-journal", "/api/fvg-config", "/api/fvg-scan-now", "/api/fvg-candles", "/api/conflicts", "/api/conflicts/check", "/api/smart-levels", "/api/td-quota", "/api/ai-coin-analysis", "/api/top-picks", "/api/top-picks/backfill", "/api/claude-budget", "/api/tv-webhook", "/api/fvg-top-picks", "/api/fvg-rescore-all", "/api/cv-replay-last-alert", "/api/cv-flip-results", "/api/cv-flips", "/api/cv-alert-diag", "/api/cv-pipeline-trace", "/api/cv-test-basic-alert", "/api/admin/health-detail", "/api/journal/by-symbol", "/api/market-events", "/api/market-events/backfill", "/api/backtest/today") or path.startswith("/static") or path.startswith("/api/live/accounts"):
             resp = await call_next(request)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -2853,6 +2853,111 @@ async def api_cv_test_basic_alert():
         "data": e.get("data"),
     } for e in recent]
     return diag
+
+
+@app.get("/api/admin/health-detail")
+async def api_admin_health_detail():
+    """Детальная диагностика runtime состояния:
+       memory %, asyncio tasks count, размеры кэшей, Mongo conn pool.
+    Помогает диагностировать recurring hangs (28.04.2026 prod залипал
+    через 1.5ч стабильной работы → подозрение на memory leak / task leak)."""
+    import asyncio as _aio
+    detail = {"ok": True, "at": utcnow().isoformat()}
+
+    # Memory + CPU
+    try:
+        import psutil, os as _os
+        proc = psutil.Process(_os.getpid())
+        mem = proc.memory_info()
+        detail["process"] = {
+            "memory_rss_mb": round(mem.rss / 1024 / 1024, 1),
+            "memory_vms_mb": round(mem.vms / 1024 / 1024, 1),
+            "memory_percent": round(proc.memory_percent(), 2),
+            "cpu_percent": round(proc.cpu_percent(), 1),
+            "num_threads": proc.num_threads(),
+            "num_fds": proc.num_fds() if hasattr(proc, "num_fds") else None,
+        }
+        vm = psutil.virtual_memory()
+        detail["system_memory"] = {
+            "total_gb": round(vm.total / 1024**3, 2),
+            "available_gb": round(vm.available / 1024**3, 2),
+            "percent_used": vm.percent,
+        }
+    except Exception as e:
+        detail["process_error"] = str(e)
+
+    # Asyncio tasks
+    try:
+        all_tasks = _aio.all_tasks()
+        # Считаем по name префиксу
+        from collections import Counter as _C
+        names = _C()
+        for t in all_tasks:
+            n = t.get_name() or "unnamed"
+            # Группируем mirror задач
+            if "live-mirror-" in n:
+                names["live-mirror-*"] += 1
+            elif "Task-" in n:
+                names["Task-*"] += 1
+            else:
+                names[n] += 1
+        detail["asyncio_tasks"] = {
+            "total": len(all_tasks),
+            "by_name": dict(names.most_common(20)),
+        }
+    except Exception as e:
+        detail["tasks_error"] = str(e)
+
+    # Cache sizes
+    cache_sizes = {}
+    try:
+        from exchange import (_symbols_cache, _price_cache, _futures_cache,
+                              _kc_cache, _pump_cache, _eth_ctx_cache, _volume_cache)
+        cache_sizes["exchange"] = {
+            "symbols": len(_symbols_cache),
+            "price": len(_price_cache),
+            "futures": len(_futures_cache),
+            "kc": len(_kc_cache),
+            "pump": len(_pump_cache),
+            "eth_ctx": len(_eth_ctx_cache),
+            "volume": len(_volume_cache),
+        }
+    except Exception as e:
+        cache_sizes["exchange_err"] = str(e)
+    try:
+        from live_trader import _leverage_cache, _account_locks, _exchange_per_account
+        cache_sizes["live_trader"] = {
+            "leverage": len(_leverage_cache),
+            "account_locks": len(_account_locks),
+            "exchange_instances": len(_exchange_per_account),
+        }
+    except Exception as e:
+        cache_sizes["live_trader_err"] = str(e)
+    try:
+        cache_sizes["admin"] = {
+            "tradium_setups": len(_tradium_setups_cache),
+            "tradium_forum": len(_tradium_forum_cache),
+            "kl_recent": len(_kl_recent_cache),
+            "st_by_pair": len(_st_by_pair_cache),
+            "candles": len(_candles_cache),
+        }
+    except Exception:
+        pass
+    detail["caches"] = cache_sizes
+
+    # Mongo conn pool (если PyMongo доступен)
+    try:
+        from database import _get_db
+        db = _get_db()
+        srv = db.client._topology._description.server_descriptions()
+        detail["mongo"] = {
+            "servers": len(srv),
+            "address": str(list(srv.keys())[0]) if srv else None,
+        }
+    except Exception as e:
+        detail["mongo_err"] = str(e)
+
+    return detail
 
 
 @app.get("/api/cv-pipeline-trace")
