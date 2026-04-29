@@ -1609,10 +1609,14 @@ async def paper_to_live_sync_check() -> dict:
     - Если paper закрыл partial (TP1/TP2) — live тоже закрывает ту же долю
     - Если paper подвинул SL (BE/BE+/TRAIL) — live двигает SL на бирже
     - Если paper закрылся полностью (status != OPEN) — live тоже закрывается
+    - **NEW**: Если paper OPEN, но соответствующего live trade НЕТ ни в OPEN
+      ни в FAILED_OPEN — это пропавший mirror (race condition / GC). Создаём
+      mirror задним числом. Это failsafe для бага watcher mirror-task GC.
 
     Идемпотентно: запускается каждые 15с, ничего не дублирует.
     """
     from database import _get_db, _live_trades
+    from datetime import timedelta as _td
     from live_safety import get_enabled_accounts
     db = _get_db()
 
@@ -1620,12 +1624,72 @@ async def paper_to_live_sync_check() -> dict:
     if not accounts:
         return {"ok": True, "synced": 0, "skipped_no_accounts": True}
 
+    # ── FAILSAFE: paper OPEN без соответствующего live mirror ──
+    # Берём недавние paper позиции (за последние 30 мин) с status=OPEN.
+    # Если для них нет ни OPEN ни FAILED_OPEN записи в live_trades для
+    # каждого enabled account — пропавший mirror. Открываем сейчас.
+    cutoff = _utcnow() - _td(minutes=30)
+    paper_recent = list(db.paper_trades.find({
+        "status": "OPEN",
+        "opened_at": {"$gte": cutoff},
+        "trade_id": {"$exists": True},
+    }))
+    if paper_recent:
+        # Какие paper_trade_id уже имеют live запись (любого статуса)
+        ptids = [p.get("trade_id") for p in paper_recent if p.get("trade_id")]
+        live_existing_ptids = set()
+        if ptids:
+            for lt in _live_trades().find({"paper_trade_id": {"$in": ptids}},
+                                           {"paper_trade_id": 1, "account_id": 1}):
+                key = (lt.get("paper_trade_id"), lt.get("account_id"))
+                live_existing_ptids.add(key)
+        recovery_actions = []
+        for p in paper_recent:
+            ptid = p.get("trade_id")
+            for acc in accounts:
+                aid = acc.get("_id")
+                if (ptid, aid) in live_existing_ptids:
+                    continue
+                # Пропавший mirror — открываем
+                logger.warning(f"[failsafe] paper#{ptid} {p.get('symbol')} {p.get('direction')} "
+                              f"OPEN без live mirror на {aid} → восстанавливаю")
+                signal_data = {
+                    "symbol": p.get("symbol", ""),
+                    "pair": p.get("pair", ""),
+                    "direction": p.get("direction", ""),
+                    "source": p.get("source", "unknown"),
+                    "entry": p.get("entry"),
+                    "paper_trade_id": ptid,
+                }
+                decision = {
+                    "enter": True,
+                    "leverage": p.get("leverage", 5),
+                    "size_pct": p.get("size_pct", 5),
+                    "tp1": p.get("tp1"),
+                    "sl": p.get("sl"),
+                    "reasoning": "[FAILSAFE-RECOVERY] paper OPEN без mirror — восстановлено sync-loop'ом",
+                }
+                try:
+                    r = await mirror_paper_for_account(signal_data, decision, acc)
+                    recovery_actions.append({
+                        "action": "failsafe_mirror",
+                        "paper_trade_id": ptid,
+                        "symbol": p.get("symbol"),
+                        "account_id": aid,
+                        "result": r,
+                    })
+                except Exception as e:
+                    logger.warning(f"[failsafe] mirror#{ptid} on {aid} fail: {e}", exc_info=True)
+        if recovery_actions:
+            logger.info(f"[failsafe] восстановлено {len(recovery_actions)} пропавших mirror")
+
     # Все live OPEN с paper_trade_id
     live_open = list(_live_trades().find({
         "status": "OPEN", "paper_trade_id": {"$ne": None},
     }))
     if not live_open:
-        return {"ok": True, "synced": 0}
+        return {"ok": True, "synced": 0,
+                "failsafe_recovered": len(recovery_actions) if paper_recent else 0}
 
     # Все paper позиции (все статусы) для этих trade_ids
     paper_ids = list({lt.get("paper_trade_id") for lt in live_open if lt.get("paper_trade_id")})
@@ -1681,7 +1745,12 @@ async def paper_to_live_sync_check() -> dict:
                 actions.append({"action": "sl_move", "trade_id": live["trade_id"],
                                 "new_sl": paper_sl, "result": r})
 
-    return {"ok": True, "synced": len(actions), "actions": actions[:30]}
+    return {
+        "ok": True,
+        "synced": len(actions),
+        "actions": actions[:30],
+        "failsafe_recovered": len(recovery_actions) if paper_recent else 0,
+    }
 
 
 async def sync_all_accounts() -> list:

@@ -3024,6 +3024,13 @@ async def _send_live_confirmation_alert(pending: dict) -> None:
         logger.warning(f"[live-confirm] send fail: {e}")
 
 
+# Tracker фоновых live-mirror tasks. БЕЗ него Python GC может убить
+# task до выполнения (event loop держит только weak references).
+# Это была root cause "AZTEC paper opened но live mirror не создался"
+# при одновременном открытии двух сделок (29 апр 2026, AZTEC vs ONDO).
+_MIRROR_TASKS: set = set()
+
+
 async def _paper_on_signal(signal_data: dict):
     """Роутер сигнала по режиму торговли (paper | testnet | real).
     Paper → ai_decide + запись в MongoDB (симуляция).
@@ -3122,10 +3129,25 @@ async def _paper_on_signal(signal_data: dict):
             for acc in accounts:
                 # Каждый аккаунт независим — не блокируем друг друга
                 try:
-                    asyncio.create_task(
+                    aid = acc.get('_id','?')
+                    task = asyncio.create_task(
                         lt.mirror_paper_for_account(signal_data, mirror_decision, acc),
-                        name=f"live-mirror-{acc.get('_id','?')}",
+                        name=f"live-mirror-{aid}",
                     )
+                    # Сохраняем ссылку чтобы GC не убил task до выполнения.
+                    # Логируем непойманные exception'ы — иначе тихий crash и
+                    # paper-сделка остаётся без live-партнёра.
+                    _MIRROR_TASKS.add(task)
+                    def _on_done(t, _aid=aid, _sym=signal_data.get('symbol','?')):
+                        _MIRROR_TASKS.discard(t)
+                        if t.cancelled():
+                            logger.error(f"[live-{_aid}] mirror task CANCELLED for {_sym}")
+                            return
+                        exc = t.exception()
+                        if exc is not None:
+                            logger.error(f"[live-{_aid}] mirror task EXCEPTION for {_sym}: {exc}",
+                                         exc_info=exc)
+                    task.add_done_callback(_on_done)
                 except Exception as le:
                     logger.warning(f"[live-{acc.get('_id','?')}] mirror schedule fail: {le}",
                                    exc_info=True)
