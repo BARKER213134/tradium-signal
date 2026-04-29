@@ -496,14 +496,16 @@ async def healthz():
     return {"ok": True}
 
 
-@app.get("/health")
-async def health():
-    """Healthcheck для Docker / uptime monitors — без авторизации.
-    Возвращает полный статус подсистем для внешнего мониторинга."""
-    from datetime import datetime, timedelta
+_HEALTH_CACHE: dict = {"ts": 0.0, "data": None}
+_HEALTH_TTL_SEC = 30.0
+
+
+def _health_sync() -> dict:
+    """Синхронная Mongo-часть healthcheck. Вызывается через asyncio.to_thread
+    чтобы не блокировать event loop когда Atlas лагает."""
     from database import utcnow as _utcnow
+    from pymongo import DESCENDING
     status = {"ok": True, "checks": {}, "ts": _utcnow().isoformat()}
-    # 1. DB ping
     try:
         from database import _signals
         _signals().estimated_document_count()
@@ -511,17 +513,14 @@ async def health():
     except Exception as e:
         status["checks"]["db"] = f"fail: {str(e)[:100]}"
         status["ok"] = False
-    # 2. Userbot (Telethon)
     try:
         from userbot import _tg_client
         status["checks"]["userbot"] = ("connected" if _tg_client and _tg_client.is_connected()
                                         else "disconnected")
     except Exception as e:
         status["checks"]["userbot"] = f"fail: {str(e)[:100]}"
-    # 3. Последние активности по коллекциям (данные не старше 4ч = система живая)
     try:
-        from database import _signals, _anomalies, _confluence, _clusters
-        from pymongo import DESCENDING
+        from database import _signals, _anomalies, _confluence
         now = _utcnow()
         for name, col, date_field in [
             ("signals", _signals(), "received_at"),
@@ -532,11 +531,34 @@ async def health():
             if last and last.get(date_field):
                 age_min = (now - last[date_field]).total_seconds() / 60
                 status["checks"][f"{name}_last_age_min"] = int(age_min)
-                if age_min > 240:  # 4ч
+                if age_min > 240:
                     status["checks"][f"{name}_warning"] = "stale (>4h no new data)"
     except Exception as e:
         status["checks"]["activity"] = f"fail: {str(e)[:80]}"
     return status
+
+
+@app.get("/health")
+async def health():
+    """Healthcheck для uptime monitors — без авторизации.
+    Mongo-вызовы вынесены в thread pool + кеш 30s, чтобы лаг Atlas
+    не блокировал event loop и не клал весь сервис.
+    Docker/Railway healthcheck использует /healthz (lightweight)."""
+    import asyncio as _aio
+    import time as _time
+    now = _time.time()
+    if _HEALTH_CACHE["data"] is not None and (now - _HEALTH_CACHE["ts"]) < _HEALTH_TTL_SEC:
+        return _HEALTH_CACHE["data"]
+    try:
+        data = await _aio.wait_for(_aio.to_thread(_health_sync), timeout=8.0)
+    except _aio.TimeoutError:
+        data = {"ok": False, "checks": {"db": "timeout >8s (Atlas lag)"},
+                "stale": True}
+    except Exception as e:
+        data = {"ok": False, "checks": {"err": str(e)[:120]}}
+    _HEALTH_CACHE["ts"] = now
+    _HEALTH_CACHE["data"] = data
+    return data
 
 
 @app.post("/api/backfill-missed")
@@ -2721,28 +2743,49 @@ async def api_exchange_symbols_set_default(payload: dict):
     return set_default_exchange(ex_name)
 
 
+def _live_snapshot_sync():
+    """Sync Mongo-сборка для /api/live/snapshot. Вызывается через to_thread."""
+    from database import _live_trades, _live_accounts
+    accounts = list(_live_accounts().find({}))
+    open_trades = list(_live_trades().find({"status": "OPEN"}))
+    closed_filter = {"status": {"$in": ["TP", "SL", "BE", "TRAIL", "MANUAL", "AI_CLOSE"]}}
+    closed_count = _live_trades().count_documents(closed_filter)
+    failed_count = _live_trades().count_documents({"status": "FAILED_OPEN"})
+    total_pnl = 0.0
+    wins = 0
+    losses = 0
+    for d in _live_trades().find(closed_filter, {"pnl_usdt": 1}):
+        v = float(d.get("pnl_usdt") or 0)
+        total_pnl += v
+        if v > 0: wins += 1
+        elif v < 0: losses += 1
+    return {
+        "accounts": accounts, "open_trades": open_trades,
+        "closed_count": closed_count, "failed_count": failed_count,
+        "total_pnl": total_pnl, "wins": wins, "losses": losses,
+    }
+
+
 @app.get("/api/live/snapshot")
 async def api_live_snapshot():
-    """Агрегат всех enabled live аккаунтов: суммарный капитал, позиции, статы.
-    Это аналог /api/paper/status но для real-money."""
-    from database import _live_trades, _live_accounts
+    """Агрегат всех enabled live аккаунтов: суммарный капитал, позиции, статы."""
     import live_safety as ls
     from exchange import get_prices_any
 
-    accounts = list(_live_accounts().find({}))
+    raw = await asyncio.to_thread(_live_snapshot_sync)
+    accounts = raw["accounts"]
+    open_trades = raw["open_trades"]
+    closed_count = raw["closed_count"]
+    failed_count = raw["failed_count"]
+    total_pnl = raw["total_pnl"]
+    wins = raw["wins"]
+    losses = raw["losses"]
     enabled = [a for a in accounts if a.get("enabled")]
 
-    # Реальный баланс с биржи (если ключи настроены)
     total_balance = 0.0
-    total_equity = 0.0
-    total_free = 0.0
-    total_used = 0.0
     accounts_status = []
-    import live_trader as lt
     for a in accounts:
         aid = a.get("_id")
-        # Используем кешированный balance из аккаунта (обновляется при ⚡ Тест)
-        # для агрегации НЕ дёргаем биржу каждый раз
         bal = float(a.get("balance") or 0.0)
         total_balance += bal
         accounts_status.append({
@@ -2755,9 +2798,6 @@ async def api_live_snapshot():
             "balance": bal,
         })
 
-    # Все открытые live позиции
-    open_trades = list(_live_trades().find({"status": "OPEN"}))
-    # Live PnL по текущим ценам
     if open_trades:
         pairs = list({(p.get("symbol", "") or "").replace("USDT", "/USDT") for p in open_trades if p.get("symbol")})
         try:
@@ -2776,20 +2816,6 @@ async def api_live_snapshot():
                 if p.get(k) and hasattr(p[k], "isoformat"):
                     p[k] = p[k].isoformat()
 
-    # Статистика по ВСЕМ закрытым live трейдам
-    closed_filter = {"status": {"$in": ["TP", "SL", "BE", "TRAIL", "MANUAL", "AI_CLOSE"]}}
-    closed_count = _live_trades().count_documents(closed_filter)
-    failed_count = _live_trades().count_documents({"status": "FAILED_OPEN"})
-
-    # Win rate + total PnL
-    total_pnl = 0.0
-    wins = 0
-    losses = 0
-    for d in _live_trades().find(closed_filter, {"pnl_usdt": 1}):
-        v = float(d.get("pnl_usdt") or 0)
-        total_pnl += v
-        if v > 0: wins += 1
-        elif v < 0: losses += 1
     win_rate = round(wins / (wins + losses) * 100, 1) if (wins + losses) else 0
 
     # PnL% = насколько отличается текущий баланс от стартового депозита.
@@ -2832,27 +2858,33 @@ async def api_live_snapshot():
 @app.get("/api/live/history-all")
 async def api_live_history_all(limit: int = 200):
     """Последние N закрытых live трейдов (агрегат по всем аккаунтам)."""
-    from database import _live_trades
-    closed_filter = {"status": {"$in": ["TP", "SL", "BE", "TRAIL", "MANUAL", "AI_CLOSE"]}}
-    items = list(_live_trades().find(closed_filter).sort("closed_at", -1).limit(int(limit)))
-    for it in items:
-        it["_id"] = str(it.get("_id", ""))
-        for k in ("opened_at", "closed_at"):
-            if it.get(k) and hasattr(it[k], "isoformat"):
-                it[k] = it[k].isoformat()
+    def _sync():
+        from database import _live_trades
+        closed_filter = {"status": {"$in": ["TP", "SL", "BE", "TRAIL", "MANUAL", "AI_CLOSE"]}}
+        items = list(_live_trades().find(closed_filter).sort("closed_at", -1).limit(int(limit)))
+        for it in items:
+            it["_id"] = str(it.get("_id", ""))
+            for k in ("opened_at", "closed_at"):
+                if it.get(k) and hasattr(it[k], "isoformat"):
+                    it[k] = it[k].isoformat()
+        return items
+    items = await asyncio.to_thread(_sync)
     return {"ok": True, "count": len(items), "items": items}
 
 
 @app.get("/api/live/rejections-all")
 async def api_live_rejections_all(limit: int = 100):
     """Последние N FAILED_OPEN попыток (символ + причина)."""
-    from database import _live_trades
-    items = list(_live_trades().find({"status": "FAILED_OPEN"}).sort("opened_at", -1).limit(int(limit)))
-    for it in items:
-        it["_id"] = str(it.get("_id", ""))
-        for k in ("opened_at", "closed_at"):
-            if it.get(k) and hasattr(it[k], "isoformat"):
-                it[k] = it[k].isoformat()
+    def _sync():
+        from database import _live_trades
+        items = list(_live_trades().find({"status": "FAILED_OPEN"}).sort("opened_at", -1).limit(int(limit)))
+        for it in items:
+            it["_id"] = str(it.get("_id", ""))
+            for k in ("opened_at", "closed_at"):
+                if it.get(k) and hasattr(it[k], "isoformat"):
+                    it[k] = it[k].isoformat()
+        return items
+    items = await asyncio.to_thread(_sync)
     return {"ok": True, "count": len(items), "items": items}
 
 
@@ -5915,46 +5947,51 @@ async def api_header_data():
 @app.get("/api/paper/status")
 async def api_paper_status():
     import paper_trader as pt
-    balance = pt.get_balance()
-    positions = pt.get_open_positions()
-    stats = pt.get_stats()
-    # Текущие цены для PnL
     from exchange import get_prices_any
-    # ── OPTIMIZED Cross-reference: query только нужные live_trades ──
-    # Раньше брали ВСЕ live_trades в память и фильтровали Python'ом.
-    # При 1000+ live trades это 2-3 секунды на каждый запрос paper/status.
-    # Теперь: запрос только trade_ids/symbols соответствующих текущим
-    # открытым paper-позициям через MongoDB $in.
-    live_by_paper_id: dict = {}
-    live_by_sym_dir: dict = {}
-    if positions:
-        try:
-            from database import _live_trades
-            paper_trade_ids = [p.get("trade_id") for p in positions if p.get("trade_id")]
-            paper_sym_dirs = [(p.get("symbol"), p.get("direction")) for p in positions]
-            paper_symbols = list({sd[0] for sd in paper_sym_dirs if sd[0]})
 
-            # Один запрос: trade с paper_trade_id ИЛИ symbol из открытых paper
-            query = {
-                "$or": [
-                    {"paper_trade_id": {"$in": paper_trade_ids}},
-                    {"symbol": {"$in": paper_symbols}},
-                ]
-            }
-            live_relevant = list(_live_trades().find(
-                query,
-                {"paper_trade_id": 1, "symbol": 1, "direction": 1, "env": 1,
-                 "account_id": 1, "trade_id": 1, "status": 1, "fail_reason": 1,
-                 "opened_at": 1}
-            ).sort("opened_at", -1).limit(200))
-            for lt in live_relevant:
-                pid = lt.get("paper_trade_id")
-                if pid is not None:
-                    live_by_paper_id.setdefault(pid, []).append(lt)
-                key = f"{lt.get('symbol')}_{lt.get('direction')}"
-                live_by_sym_dir.setdefault(key, []).append(lt)
-        except Exception as _le:
-            logging.getLogger(__name__).debug(f"[paper-status] live xref fail: {_le}")
+    def _sync_load():
+        balance = pt.get_balance()
+        positions = pt.get_open_positions()
+        stats = pt.get_stats()
+        live_by_paper_id: dict = {}
+        live_by_sym_dir: dict = {}
+        if positions:
+            try:
+                from database import _live_trades
+                paper_trade_ids = [p.get("trade_id") for p in positions if p.get("trade_id")]
+                paper_sym_dirs = [(p.get("symbol"), p.get("direction")) for p in positions]
+                paper_symbols = list({sd[0] for sd in paper_sym_dirs if sd[0]})
+                query = {
+                    "$or": [
+                        {"paper_trade_id": {"$in": paper_trade_ids}},
+                        {"symbol": {"$in": paper_symbols}},
+                    ]
+                }
+                live_relevant = list(_live_trades().find(
+                    query,
+                    {"paper_trade_id": 1, "symbol": 1, "direction": 1, "env": 1,
+                     "account_id": 1, "trade_id": 1, "status": 1, "fail_reason": 1,
+                     "opened_at": 1}
+                ).sort("opened_at", -1).limit(200))
+                for lt in live_relevant:
+                    pid = lt.get("paper_trade_id")
+                    if pid is not None:
+                        live_by_paper_id.setdefault(pid, []).append(lt)
+                    key = f"{lt.get('symbol')}_{lt.get('direction')}"
+                    live_by_sym_dir.setdefault(key, []).append(lt)
+            except Exception as _le:
+                logging.getLogger(__name__).debug(f"[paper-status] live xref fail: {_le}")
+        initial = pt.INITIAL_BALANCE
+        try:
+            from database import _get_db
+            state_doc = _get_db().paper_trades.find_one({"_id": "state"}, {"initial_balance": 1})
+            if state_doc and state_doc.get("initial_balance"):
+                initial = float(state_doc["initial_balance"])
+        except Exception:
+            pass
+        return balance, positions, stats, live_by_paper_id, live_by_sym_dir, initial
+
+    balance, positions, stats, live_by_paper_id, live_by_sym_dir, initial = await asyncio.to_thread(_sync_load)
     if positions:
         pairs = [p.get("pair", p["symbol"].replace("USDT", "/USDT")) for p in positions]
         prices = await asyncio.to_thread(get_prices_any, pairs)
@@ -5988,15 +6025,6 @@ async def api_paper_status():
                  "fail_reason": m.get("fail_reason")}
                 for m in unique_matches
             ]
-    # Initial balance: из state-doc (после set_balance) или fallback на константу
-    initial = pt.INITIAL_BALANCE
-    try:
-        from database import _get_db
-        state_doc = _get_db().paper_trades.find_one({"_id": "state"}, {"initial_balance": 1})
-        if state_doc and state_doc.get("initial_balance"):
-            initial = float(state_doc["initial_balance"])
-    except Exception:
-        pass
     pnl_pct = round((balance - initial) / initial * 100, 2) if initial > 0 else 0
     return {
         "balance": balance,
@@ -6010,12 +6038,15 @@ async def api_paper_status():
 @app.get("/api/paper/history")
 async def api_paper_history(limit: int = 50):
     import paper_trader as pt
-    history = pt.get_history(limit)
-    for h in history:
-        h["_id"] = str(h.get("_id", ""))
-        for f in ("opened_at", "closed_at"):
-            if h.get(f) and hasattr(h[f], "isoformat"):
-                h[f] = h[f].isoformat()
+    def _sync():
+        history = pt.get_history(limit)
+        for h in history:
+            h["_id"] = str(h.get("_id", ""))
+            for f in ("opened_at", "closed_at"):
+                if h.get(f) and hasattr(h[f], "isoformat"):
+                    h[f] = h[f].isoformat()
+        return history
+    history = await asyncio.to_thread(_sync)
     return {"items": history}
 
 
