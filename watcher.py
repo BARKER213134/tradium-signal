@@ -3333,21 +3333,9 @@ async def _cache_cleanup_loop():
             except Exception:
                 pass
 
-            # admin._candles_cache: tuples (ts, data), cap 500
-            try:
-                from admin import _candles_cache, _kl_recent_cache
-                for cache in (_candles_cache, _kl_recent_cache):
-                    if len(cache) > 500:
-                        # Sort by timestamp (assume ts at index 0 of value tuple)
-                        items = []
-                        for k, v in cache.items():
-                            ts = v[0] if isinstance(v, tuple) and len(v) >= 1 else 0
-                            items.append((k, ts))
-                        items.sort(key=lambda kv: kv[1])
-                        for k, _ in items[:len(cache) - 500]:
-                            cache.pop(k, None)
-            except Exception as e:
-                logger.debug(f"[cache-cleanup] admin err: {e}")
+            # admin caches cap'аются inline после write через _cap_admin_cache
+            # (см. admin.py). Cleanup loop в watcher НЕ импортирует admin
+            # чтобы избежать circular import при cold start.
         except Exception as e:
             logger.warning(f"[cache-cleanup] loop error: {e}")
         await _asyncio.sleep(300)  # 5 минут (было 30 — слишком редко)

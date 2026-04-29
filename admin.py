@@ -81,11 +81,11 @@ async def lifespan(app):
                 print(f"[LIFESPAN] cv_flip_watcher start skipped: {_e}", flush=True)
 
             # [Phase 3 fix] Миграция chart'ов в GridFS — запускаем в фоне
-            # с задержкой 60с после startup, чтобы не блокировать lifespan.
-            # Раньше делалась синхронно в main.py на module load → 5-10 мин cold start.
+            # с задержкой 5 минут (даём system'у полностью прогреться, threadpool
+            # не должен быть забит миграцией). Старая логика блокировала main.py.
             try:
                 async def _bg_migrate_charts():
-                    await asyncio.sleep(60)  # wait until other init done
+                    await asyncio.sleep(300)  # 5 мин — system warmup first
                     try:
                         import main as _m
                         await asyncio.to_thread(_m._migrate_charts_to_gridfs)
@@ -2904,27 +2904,34 @@ async def api_admin_health_detail():
     import asyncio as _aio
     detail = {"ok": True, "at": utcnow().isoformat()}
 
-    # Memory + CPU
+    # Memory + CPU (psutil опциональный — может не быть установлен)
     try:
         import psutil, os as _os
         proc = psutil.Process(_os.getpid())
         mem = proc.memory_info()
         detail["process"] = {
             "memory_rss_mb": round(mem.rss / 1024 / 1024, 1),
-            "memory_vms_mb": round(mem.vms / 1024 / 1024, 1),
             "memory_percent": round(proc.memory_percent(), 2),
-            "cpu_percent": round(proc.cpu_percent(), 1),
             "num_threads": proc.num_threads(),
-            "num_fds": proc.num_fds() if hasattr(proc, "num_fds") else None,
         }
         vm = psutil.virtual_memory()
         detail["system_memory"] = {
             "total_gb": round(vm.total / 1024**3, 2),
-            "available_gb": round(vm.available / 1024**3, 2),
             "percent_used": vm.percent,
         }
+    except ImportError:
+        # psutil не установлен — используем resource (POSIX) как fallback
+        try:
+            import resource as _res
+            ru = _res.getrusage(_res.RUSAGE_SELF)
+            detail["process"] = {
+                "memory_rss_mb_approx": round(ru.ru_maxrss / 1024, 1),
+                "note": "psutil not installed; using resource fallback",
+            }
+        except Exception:
+            detail["process"] = {"note": "psutil not installed"}
     except Exception as e:
-        detail["process_error"] = str(e)
+        detail["process_error"] = f"{type(e).__name__}: {str(e)[:200]}"
 
     # Asyncio tasks
     try:
