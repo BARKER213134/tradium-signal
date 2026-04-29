@@ -201,7 +201,7 @@ async def refresh_ai_memory() -> dict:
     Цель: дать пользователю прозрачность (что AI знает) + улучшить решения."""
     import anthropic
     from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
-    learnings = get_learnings(50)
+    learnings = await asyncio.to_thread(get_learnings, 50)
     if not learnings:
         return {"summary": "Ещё нет закрытых сделок для анализа", "top_lessons": [], "based_on_trades": 0}
     reviews_text = "\n".join(
@@ -283,7 +283,9 @@ async def refresh_ai_memory() -> dict:
         data["updated_at"] = _utcnow().isoformat()
         data["based_on_trades"] = len(learnings)
         _, stats = _get_collections()
-        stats.update_one({"_id": "ai_memory"}, {"$set": data}, upsert=True)
+        await asyncio.to_thread(
+            lambda: stats.update_one({"_id": "ai_memory"}, {"$set": data}, upsert=True)
+        )
         logger.info(f"[paper.ai-memory] refreshed from {len(learnings)} trades, lessons={len(data.get('top_lessons', []))}")
         return data
     except Exception as e:
@@ -446,7 +448,9 @@ async def close_manual(trade_id: int) -> dict | None:
     со статусом MANUAL. Возвращает {trade_id, pnl_pct, pnl_usdt} или None.
     Шлёт уведомление в BOT6 при успехе."""
     trades, _ = _get_collections()
-    pos = trades.find_one({"trade_id": int(trade_id), "status": "OPEN"})
+    pos = await asyncio.to_thread(
+        trades.find_one, {"trade_id": int(trade_id), "status": "OPEN"}
+    )
     if not pos:
         return None
     from exchange import get_prices_any
@@ -455,11 +459,13 @@ async def close_manual(trade_id: int) -> dict | None:
     cur = prices.get(pos["symbol"])
     if cur is None:
         cur = pos.get("entry", 0)
-    result = close_position(int(trade_id), cur, "MANUAL")
+    result = await asyncio.to_thread(close_position, int(trade_id), cur, "MANUAL")
     # ── Telegram-уведомление о ручном закрытии ──
     if result:
         try:
-            updated = trades.find_one({"trade_id": int(trade_id)})
+            updated = await asyncio.to_thread(
+                trades.find_one, {"trade_id": int(trade_id)}
+            )
             if updated:
                 await _send_close_alert(updated, "")
         except Exception as e:
@@ -472,7 +478,7 @@ async def close_all_manual() -> dict:
     Возвращает {closed: [{trade_id, symbol, pnl_pct, pnl_usdt}, ...], total_pnl_usdt, total_count}.
     """
     from exchange import get_prices_any
-    open_positions = get_open_positions()
+    open_positions = await asyncio.to_thread(get_open_positions)
     if not open_positions:
         return {"closed": [], "total_pnl_usdt": 0, "total_count": 0, "note": "no open positions"}
 
@@ -492,14 +498,16 @@ async def close_all_manual() -> dict:
         cur = prices.get(sym)
         if cur is None:
             cur = pos.get("entry", 0)
-        r = close_position(int(trade_id), cur, "MANUAL")
+        r = await asyncio.to_thread(close_position, int(trade_id), cur, "MANUAL")
         if r:
             r["symbol"] = sym
             results.append(r)
             total_pnl += r.get("pnl_usdt", 0) or 0
             # Собираем закрытые docs для алертов
             try:
-                updated = trades_coll.find_one({"trade_id": int(trade_id)})
+                updated = await asyncio.to_thread(
+                    trades_coll.find_one, {"trade_id": int(trade_id)}
+                )
                 if updated:
                     closed_docs.append(updated)
             except Exception:
@@ -701,7 +709,7 @@ async def ai_review_open_positions() -> list:
     from exchange import get_prices_any
     from datetime import timedelta
     trades, _ = _get_collections()
-    positions = get_open_positions()
+    positions = await asyncio.to_thread(get_open_positions)
     if not positions:
         return []
 
@@ -780,8 +788,11 @@ async def ai_review_open_positions() -> list:
             decision = json.loads(text)
         except Exception as e:
             logger.warning(f"[ai-review] #{pos.get('trade_id')} fail: {e}")
-            trades.update_one({"trade_id": pos["trade_id"]},
-                              {"$set": {"last_ai_review_at": _utcnow()}})
+            await asyncio.to_thread(
+                trades.update_one,
+                {"trade_id": pos["trade_id"]},
+                {"$set": {"last_ai_review_at": _utcnow()}},
+            )
             continue
 
         action = (decision.get("action") or "").upper()
@@ -789,7 +800,7 @@ async def ai_review_open_positions() -> list:
         logger.info(f"[ai-review] #{pos.get('trade_id')} {sym}: {action} — {reasoning[:80]}")
 
         if action == "CLOSE":
-            r = close_position(pos["trade_id"], cur, "AI_CLOSE")
+            r = await asyncio.to_thread(close_position, pos["trade_id"], cur, "AI_CLOSE")
             if r: actions.append({"trade_id": pos["trade_id"], "action": "CLOSE", "reasoning": reasoning})
         elif action == "MOVE_SL":
             new_sl = decision.get("new_sl")
@@ -803,7 +814,8 @@ async def ai_review_open_positions() -> list:
                 elif not is_long and new_sl > cur and new_sl < (old_sl or 9e12):
                     valid = True
                 if valid:
-                    trades.update_one(
+                    await asyncio.to_thread(
+                        trades.update_one,
                         {"trade_id": pos["trade_id"]},
                         {"$set": {"sl": new_sl, "last_ai_review_at": _utcnow()},
                          "$push": {"exit_events": {
@@ -814,8 +826,11 @@ async def ai_review_open_positions() -> list:
                     actions.append({"trade_id": pos["trade_id"], "action": "MOVE_SL",
                                     "new_sl": new_sl, "reasoning": reasoning})
 
-        trades.update_one({"trade_id": pos["trade_id"]},
-                          {"$set": {"last_ai_review_at": _utcnow()}})
+        await asyncio.to_thread(
+            trades.update_one,
+            {"trade_id": pos["trade_id"]},
+            {"$set": {"last_ai_review_at": _utcnow()}},
+        )
         # Пауза чтоб не долбить Claude API
         await asyncio.sleep(1.0)
 
@@ -964,11 +979,11 @@ async def ai_decide(signal_data: dict) -> dict:
     from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
     from exchange import get_keltner_eth, get_eth_market_context
 
-    balance = get_balance()
-    open_pos = get_open_positions()
-    stats = get_stats()
-    kc = get_keltner_eth()
-    eth = get_eth_market_context()
+    balance = await asyncio.to_thread(get_balance)
+    open_pos = await asyncio.to_thread(get_open_positions)
+    stats = await asyncio.to_thread(get_stats)
+    kc = await asyncio.to_thread(get_keltner_eth)
+    eth = await asyncio.to_thread(get_eth_market_context)
 
     if len(open_pos) >= MAX_POSITIONS:
         # Тихий отказ БЕЗ Claude вызова (экономим токены) и БЕЗ записи в
@@ -1014,11 +1029,12 @@ async def ai_decide(signal_data: dict) -> dict:
                 pair_norm = pair_norm + "USDT"
             cutoff = _utcnow() - _td(minutes=15)
             opposite = "LONG" if direction == "SHORT" else "SHORT"
-            recent = _supertrend_signals().find_one({
-                "pair_norm": pair_norm,
-                "direction": opposite,
-                "flip_at": {"$gte": cutoff},
-            })
+            recent = await asyncio.to_thread(
+                _supertrend_signals().find_one,
+                {"pair_norm": pair_norm,
+                 "direction": opposite,
+                 "flip_at": {"$gte": cutoff}},
+            )
             if recent:
                 flip_tier = str(recent.get("tier", "?")).upper()
                 flip_tf = recent.get("tf") or recent.get("aligned_tfs") or ""
@@ -1097,7 +1113,7 @@ async def ai_decide(signal_data: dict) -> dict:
     for p in open_pos:
         open_str += f"  - {p['symbol']} {p['direction']} ×{p.get('leverage',1)} entry={p['entry']}\n"
 
-    history = get_history(10)
+    history = await asyncio.to_thread(get_history, 10)
     hist_str = ""
     for h in history:
         r = "✅" if (h.get("pnl_usdt") or 0) > 0 else "❌"
@@ -1121,12 +1137,12 @@ async def ai_decide(signal_data: dict) -> dict:
             cluster_block += "  ⚠️ НО кластер ПРОТИВ Reversal — опасно, снизь размер!\n"
 
     # Режим и диапазоны (aggressive vs conservative)
-    mode = get_mode()
+    mode = await asyncio.to_thread(get_mode)
     size_min, size_max = mode["size_min"], mode["size_max"]
     lev_min, lev_max = mode["lev_min"], mode["lev_max"]
 
     # AI memory — сводка уроков (что AI выучил за все сделки)
-    memory = get_ai_memory()
+    memory = await asyncio.to_thread(get_ai_memory)
     memory_block = ""
     if memory.get("summary"):
         memory_block = (
@@ -1275,7 +1291,7 @@ async def ai_decide(signal_data: dict) -> dict:
             try:
                 from database import _get_db
                 db = _get_db()
-                db.paper_rejections.insert_one({
+                await asyncio.to_thread(db.paper_rejections.insert_one, {
                     "symbol": signal_data.get("symbol", ""),
                     "pair": signal_data.get("pair", ""),
                     "direction": signal_data.get("direction", ""),
@@ -1535,7 +1551,7 @@ async def on_signal(signal_data: dict):
         logger.debug("[paper] anti-cluster check fail", exc_info=True)
 
     # ── 2. Max positions ──
-    open_pos = get_open_positions()
+    open_pos = await asyncio.to_thread(get_open_positions)
     if len(open_pos) >= MAX_POSITIONS:
         logger.info(f"Paper SKIP (max): {symbol} — {MAX_POSITIONS} открыто")
         return None  # тихий отказ без rejections-лога
@@ -1621,7 +1637,7 @@ async def on_signal(signal_data: dict):
                        f"[NO-LEVELS] entry={entry} tp={tp1} sl={sl} — сигнал без полных уровней")
         return None
 
-    mode_cfg = get_mode()
+    mode_cfg = await asyncio.to_thread(get_mode)
     size_pct, leverage, param_note = _calc_position_params(signal_data, phase, verdict, mode_cfg)
 
     # Reasoning для истории
@@ -1631,16 +1647,17 @@ async def on_signal(signal_data: dict):
                  f"{summary}{param_note}")
 
     # ── 5. Открытие ──
-    pos = open_position(
-        symbol=symbol,
-        direction=direction,
-        entry=entry,
-        tp1=tp1,
-        sl=sl,
-        leverage=leverage,
-        size_pct=size_pct,
-        source=source or "?",
-        reasoning=reasoning,
+    pos = await asyncio.to_thread(
+        open_position,
+        symbol,
+        direction,
+        entry,
+        tp1,
+        sl,
+        leverage,
+        size_pct,
+        source or "?",
+        reasoning,
     )
     # Alert в BOT6
     try:
@@ -1676,7 +1693,7 @@ async def _send_open_alert(pos: dict, decision: dict):
 
     pair = pos["symbol"].replace("USDT", "")
     dirE = "🟢" if pos["direction"] == "LONG" else "🔴"
-    balance = get_balance()
+    balance = await asyncio.to_thread(get_balance)
 
     text = (
         f"📈 <b>PAPER TRADE · ОТКРЫТИЕ</b>\n"
@@ -1728,7 +1745,7 @@ async def _send_close_alert(trade: dict, review: str = ""):
     icon = status_icon.get(status, "❌")
     if status in ("TRAIL", "AI_CLOSE", "MANUAL") and pnl > 0:
         icon = status_icon.get(status, "✅")
-    balance = get_balance()
+    balance = await asyncio.to_thread(get_balance)
 
     text = (
         f"{icon} <b>PAPER TRADE · ЗАКРЫТИЕ · {status}</b>\n"
