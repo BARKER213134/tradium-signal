@@ -2767,9 +2767,20 @@ def _live_snapshot_sync():
     }
 
 
+_LIVE_SNAPSHOT_CACHE: dict = {"ts": 0.0, "data": None}
+_LIVE_SNAPSHOT_TTL = 8.0  # секунды; UI polling каждые 15с — компромисс свежесть/нагрузка
+
+
 @app.get("/api/live/snapshot")
 async def api_live_snapshot():
-    """Агрегат всех enabled live аккаунтов: суммарный капитал, позиции, статы."""
+    """Агрегат всех enabled live аккаунтов: суммарный капитал, позиции, статы.
+    Кеш 8с — снижает нагрузку на Atlas при частом polling UI."""
+    import time as _t
+    now_ts = _t.time()
+    cached = _LIVE_SNAPSHOT_CACHE.get("data")
+    if cached is not None and (now_ts - _LIVE_SNAPSHOT_CACHE["ts"]) < _LIVE_SNAPSHOT_TTL:
+        return cached
+
     import live_safety as ls
     from exchange import get_prices_any
 
@@ -2833,7 +2844,7 @@ async def api_live_snapshot():
         preset = ls.SAFETY_PRESETS.get(a.get("safety_preset", "paper_mirror"), {})
         max_positions_total += preset.get("max_positions", 0)
 
-    return {
+    response = {
         "ok": True,
         "count_accounts": len(accounts),
         "count_enabled": len(enabled),
@@ -2854,6 +2865,9 @@ async def api_live_snapshot():
         "positions": open_trades,
         "accounts": accounts_status,
     }
+    _LIVE_SNAPSHOT_CACHE["ts"] = now_ts
+    _LIVE_SNAPSHOT_CACHE["data"] = response
+    return response
 
 
 @app.get("/api/live/history-all")
