@@ -2946,12 +2946,12 @@ async def _check_paper_positions():
     не блокировала остальные."""
     try:
         import paper_trader as pt
-        positions = pt.get_open_positions()
+        positions = await asyncio.to_thread(pt.get_open_positions)
         if not positions:
             return
         pairs = list({p.get("pair", p["symbol"].replace("USDT", "/USDT")) for p in positions})
         prices = await get_prices_any(pairs)
-        closed = pt.check_positions(prices)
+        closed = await asyncio.to_thread(pt.check_positions, prices)
     except Exception as e:
         logger.warning(f"[paper-positions] fetch/check fail: {e}", exc_info=True)
         return
@@ -2961,7 +2961,7 @@ async def _check_paper_positions():
         try:
             import paper_trader as pt
             trades, _ = pt._get_collections()
-            trade = trades.find_one({"trade_id": c["trade_id"]})
+            trade = await asyncio.to_thread(trades.find_one, {"trade_id": c["trade_id"]})
             if not trade:
                 continue
             # 1. СНАЧАЛА отправляем alert (критично — без review если AI упал)

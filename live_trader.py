@@ -1177,23 +1177,33 @@ async def _close_position_market(ex, account: dict, pos: dict, reason: str) -> d
         entry = float(pos["entry"])
         leverage = pos.get("leverage", 1)
         size_usdt = pos.get("size_usdt", 0)
+        # PnL только на ОСТАВШЕЙСЯ доле — после TP1/TP2 partials уже частично
+        # реализованы в realized_pnl_usdt. Без множителя на remaining_fraction
+        # итоговый PnL завышался на 2-3x. См. mirror_full_close_for_account как эталон.
+        remaining = float(pos.get("remaining_fraction", 1.0) or 1.0)
         raw = ((float(exit_price) - entry) / entry) * 100
         if direction == "SHORT":
             raw = -raw
-        pnl_pct = round(raw * leverage, 2)
-        pnl_usdt = round(size_usdt * pnl_pct / 100, 2)
+        pnl_pct_remaining = round(raw * leverage, 2)
+        pnl_usdt_remaining = round(size_usdt * remaining * pnl_pct_remaining / 100, 2)
+        # Суммарный PnL = реализованный (от partials) + текущее закрытие
+        total_pnl = round(float(pos.get("realized_pnl_usdt", 0) or 0) + pnl_usdt_remaining, 2)
+        total_pct = round(total_pnl / size_usdt * 100, 2) if size_usdt else 0
         _live_trades().update_one(
             {"trade_id": pos["trade_id"]},
             {"$set": {
                 "status": reason,
                 "exit_price": exit_price,
-                "pnl_pct": pnl_pct,
-                "pnl_usdt": pnl_usdt,
+                "pnl_pct": total_pct,
+                "pnl_usdt": total_pnl,
                 "closed_at": _utcnow(),
                 "close_order_id": order.get("id"),
+                "remaining_fraction": 0,
                 "db_managed_tpsl": True,
             }},
         )
+        # Для логов и alert'а используем total_pct/total_pnl (полная картина)
+        pnl_pct, pnl_usdt = total_pct, total_pnl
         logger.warning(
             f"[live-{aid}] DB-managed close #{pos['trade_id']}: "
             f"{symbol} {reason} {pnl_pct:+.2f}% ${pnl_usdt:+.2f}"

@@ -553,7 +553,7 @@ async function runAnomalyBacktest() {
   }
 }
 
-function openChartModal(symbol, pair, direction, pnl) {
+async function openChartModal(symbol, pair, direction, pnl) {
   // Создаём модаль если нет
   let m = document.getElementById('chartModal');
   if (!m) {
@@ -562,40 +562,145 @@ function openChartModal(symbol, pair, direction, pnl) {
     m.style.cssText = 'position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);';
     m.onclick = (e) => { if (e.target === m) m.style.display = 'none'; };
     document.body.appendChild(m);
-    // ESC закрывает
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') m.style.display = 'none'; });
   }
 
-  const dirE = direction === 'LONG' ? '🟢' : direction === 'SHORT' ? '🔴' : '⚪';
-  const pnlF = parseFloat(pnl||0);
-  const pnlC = pnlF >= 0 ? 'var(--buy)' : 'var(--sell)';
+  // Нормализация: openChartModal может быть вызвана с (sym) или (sym,pair,dir,pnl)
+  const sym = String(symbol || '').toUpperCase();
+  const pairLabel = pair || sym.replace('USDT','');
+  const dirE = direction === 'LONG' ? '🟢' : direction === 'SHORT' ? '🔴' : '';
+  const pnlF = parseFloat(pnl);
+  const pnlPart = !isNaN(pnlF) ? `<span style="color:${pnlF>=0?'var(--buy)':'var(--sell)'}">${pnlF>=0?'+':''}${pnlF}%</span>` : '';
 
   m.innerHTML = `
-    <div style="width:80vw;max-width:900px;height:70vh;background:var(--dark);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);" onclick="event.stopPropagation();">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);">
+    <div style="width:90vw;max-width:1100px;height:75vh;background:var(--dark);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);display:flex;flex-direction:column;" onclick="event.stopPropagation();">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);">
         <div style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--text);">
-          ${pair}/USDT ${dirE} <span style="color:${pnlC}">${pnlF>=0?'+':''}${pnlF}%</span>
+          ${pairLabel}/USDT ${dirE ? dirE + ' ' + (direction||'') : ''} ${pnlPart}
         </div>
-        <button onclick="document.getElementById('chartModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;padding:0 8px;">×</button>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <select id="chartModalTF" style="background:var(--dark);color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-size:11px;">
+            <option value="15m">15m</option>
+            <option value="30m">30m</option>
+            <option value="1h" selected>1h</option>
+            <option value="4h">4h</option>
+            <option value="1d">1d</option>
+          </select>
+          <button onclick="document.getElementById('chartModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;padding:0 6px;">×</button>
+        </div>
       </div>
-      <div id="chartModalTV" style="height:calc(100% - 48px);"></div>
+      <div id="chartModalBody" style="flex:1;position:relative;padding:6px;">
+        <div id="chartModalChart" style="width:100%;height:100%;"></div>
+        <div id="chartModalLoading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;">Загрузка графика…</div>
+      </div>
     </div>`;
   m.style.display = 'flex';
 
-  // Загружаем TradingView
-  const loadTV = () => {
-    new TradingView.widget({container_id:'chartModalTV', symbol:'BINANCE:'+symbol, interval:'60',
-      timezone:'Etc/UTC', theme:'dark', style:'1', locale:'ru', enable_publishing:false,
-      hide_side_toolbar:false, hide_top_toolbar:false, allow_symbol_change:false,
-      save_image:false, width:'100%', height:'100%'});
+  const renderModalChart = async (tf) => {
+    const chartDiv = document.getElementById('chartModalChart');
+    const loading = document.getElementById('chartModalLoading');
+    if (!chartDiv) return;
+    if (loading) loading.style.display = 'flex';
+
+    // Lightweight Charts — load once, cache in window._lwcLoaded
+    if (!window._lwcLoaded) {
+      await new Promise(resolve => {
+        const sc = document.createElement('script');
+        sc.src = 'https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js';
+        sc.onload = () => { window._lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat(); resolve(); };
+        sc.onerror = () => { window._lwcLoaded = false; resolve(); };
+        document.head.appendChild(sc);
+      });
+    }
+    if (!window.LightweightCharts) {
+      if (loading) loading.innerHTML = '<span style="color:var(--sell)">Lightweight Charts не загрузились</span>';
+      return;
+    }
+
+    const limitByTF = { '1h': 300, '4h': 200, '1d': 60, '30m': 300, '15m': 400 };
+    const candleLimit = limitByTF[tf] || 200;
+
+    try {
+      const [candleR, sigR] = await Promise.all([
+        fetch(`/api/journal-candles?symbol=${sym}&tf=${tf}&limit=${candleLimit}`),
+        fetch(`/api/journal/by-symbol?symbol=${pairLabel}&days=14`).catch(() => null),
+      ]);
+      const d = await candleR.json();
+      if (!d.ok || !d.candles || !d.candles.length) {
+        if (loading) loading.innerHTML = '<span style="color:var(--sell)">Нет данных по этой паре</span>';
+        return;
+      }
+      const allSigs = sigR ? ((await sigR.json()).items || []) : [];
+
+      chartDiv.innerHTML = '';
+      const chart = (window._createChartSafe || window.LightweightCharts.createChart)(chartDiv, {
+        layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
+        grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
+        crosshair: { mode: 0 },
+        rightPriceScale: { borderColor: '#1a1e2a' },
+        timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
+        width: chartDiv.clientWidth,
+        height: chartDiv.clientHeight,
+      });
+      const series = chart.addCandlestickSeries({
+        upColor: '#00e5a0', downColor: '#ff4d6d',
+        borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
+        wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
+      });
+      series.setData(d.candles);
+      if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
+      if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
+      if (window._addSuperTrend) window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv });
+      if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
+
+      // Маркеры сигналов
+      const markers = [];
+      const tfSec = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 3600;
+      const firstTs = d.candles[0].time;
+      const lastTs = d.candles[d.candles.length - 1].time;
+      const nearest = (ts) => {
+        if (!ts) return null;
+        let mc = d.candles[d.candles.length - 1], minD = Infinity;
+        for (const c of d.candles) {
+          const diff = Math.abs(c.time - ts);
+          if (diff < minD) { minD = diff; mc = c; }
+        }
+        return mc;
+      };
+      const inRange = (ts) => ts >= firstTs - tfSec && ts <= lastTs + tfSec * 2;
+      const byTime = new Map();
+      for (const s of allSigs) {
+        const ts = s.at_ts || 0;
+        if (!ts || !inRange(ts)) continue;
+        const mc = nearest(ts);
+        if (!mc) continue;
+        const isL = s.direction === 'LONG';
+        const key = mc.time + '_' + s.direction;
+        if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: isL, items: [] });
+        byTime.get(key).items.push(s);
+      }
+      for (const g of byTime.values()) {
+        markers.push({
+          time: g.time,
+          position: g.isLong ? 'belowBar' : 'aboveBar',
+          color: g.isLong ? '#00e5a0' : '#ff4d6d',
+          shape: g.isLong ? 'arrowUp' : 'arrowDown',
+          text: g.items.length > 1 ? `×${g.items.length}` : '',
+          size: 1,
+        });
+      }
+      if (markers.length && series.setMarkers) series.setMarkers(markers);
+      chart.timeScale().fitContent();
+      if (loading) loading.style.display = 'none';
+    } catch (e) {
+      if (loading) loading.innerHTML = `<span style="color:var(--sell)">Ошибка: ${e.message}</span>`;
+    }
   };
-  if (window.TradingView) loadTV();
-  else {
-    const sc = document.createElement('script');
-    sc.src = 'https://s3.tradingview.com/tv.js';
-    sc.onload = loadTV;
-    document.head.appendChild(sc);
-  }
+
+  // initial render + TF change
+  const tfSel = document.getElementById('chartModalTF');
+  if (tfSel) tfSel.onchange = () => renderModalChart(tfSel.value);
+  await renderModalChart('1h');
 }
 
 async function pollScanStatus() {

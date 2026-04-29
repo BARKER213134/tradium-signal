@@ -298,9 +298,25 @@ def open_position(symbol: str, direction: str, entry: float, tp1: float, sl: flo
     balance = get_balance()
     size_usdt = round(balance * size_pct / 100, 2)
 
-    # Генерируем ID
-    last = trades.find_one({"status": {"$exists": True}}, sort=[("trade_id", -1)])
-    trade_id = (last.get("trade_id", 0) if last else 0) + 1
+    # Атомарный counter — без race при параллельном open_position.
+    # Раньше find_one(sort=trade_id desc)+1 давал дубликаты при бурсте.
+    from database import _get_db
+    db = _get_db()
+    # Инициализируем counter из max(trade_id) если ещё не существует
+    if not db.counters.find_one({"_id": "paper_trades"}):
+        last = trades.find_one({"trade_id": {"$exists": True}}, sort=[("trade_id", -1)])
+        max_id = (last or {}).get("trade_id", 0) or 0
+        db.counters.update_one(
+            {"_id": "paper_trades"},
+            {"$setOnInsert": {"seq": max_id}},
+            upsert=True,
+        )
+    counter = db.counters.find_one_and_update(
+        {"_id": "paper_trades"},
+        {"$inc": {"seq": 1}},
+        upsert=True, return_document=True,
+    )
+    trade_id = (counter or {}).get("seq", 1)
 
     doc = {
         "trade_id": trade_id,
@@ -1552,8 +1568,16 @@ async def on_signal(signal_data: dict):
         return None
 
     # ── 3. Entry Checker ──
+    # Timeout 30s: внутри check_entry sync HTTP к Binance (ST 1h state).
+    # Без таймаута зависал hot path on_signal на 60+ сек при лагах сети.
     try:
-        check = await asyncio.to_thread(ve.check_entry, pair, direction, signal_data)
+        check = await asyncio.wait_for(
+            asyncio.to_thread(ve.check_entry, pair, direction, signal_data),
+            timeout=30.0,
+        )
+    except asyncio.TimeoutError:
+        _log_rejection(signal_data, "[ENTRY-CHECK TIMEOUT] check_entry >30s — пропуск")
+        return None
     except Exception as _e:
         logger.exception(f"[paper on_signal] check_entry crashed: {_e}")
         _log_rejection(signal_data, f"[ENTRY-CHECK CRASH] {_e}")
