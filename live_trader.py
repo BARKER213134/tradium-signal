@@ -1672,10 +1672,12 @@ async def paper_to_live_sync_check() -> dict:
         return {"ok": True, "synced": 0, "skipped_no_accounts": True}
 
     # ── FAILSAFE: paper OPEN без соответствующего live mirror ──
-    # Берём недавние paper позиции (за последние 30 мин) с status=OPEN.
+    # Берём paper позиции (за последние 6ч) с status=OPEN.
     # Если для них нет ни OPEN ни FAILED_OPEN записи в live_trades для
     # каждого enabled account — пропавший mirror. Открываем сейчас.
-    cutoff = _utcnow() - _td(minutes=30)
+    # 6ч окно покрывает большинство paper-сделок (TP/SL обычно <24ч).
+    # Старые orphan'ы (>6ч) пропускаются — цена ушла, smysla уже нет.
+    cutoff = _utcnow() - _td(hours=6)
     paper_recent = list(db.paper_trades.find({
         "status": "OPEN",
         "opened_at": {"$gte": cutoff},
