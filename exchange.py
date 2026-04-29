@@ -27,6 +27,33 @@ _symbols_cache_ts: float = 0
 _SYMBOLS_TTL = 3600  # 1 час
 
 _price_cache: dict[str, tuple[float, float]] = {}  # symbol -> (price, ts)
+# Memory bound — гарантирует что dict не растёт неограниченно между cleanup
+# циклами (раз в 5 мин в watcher._cache_cleanup_loop). Critical для prod hangs.
+_PRICE_CACHE_MAX = 800
+_FUTURES_CACHE_MAX = 800
+_PUMP_CACHE_MAX = 500
+_VOLUME_CACHE_MAX = 500
+
+
+def _cap_dict_inplace(d: dict, max_size: int) -> None:
+    """Если dict > max_size — удаляет самые старые (по ts в value tuple)."""
+    if len(d) <= max_size:
+        return
+    # Сортируем по ts (предполагаем что value = (X, ts) или (ts, X))
+    try:
+        items = []
+        for k, v in d.items():
+            if isinstance(v, tuple) and len(v) >= 2:
+                # Pick the timestamp — float close to time.time() (>10**9)
+                ts = v[1] if isinstance(v[1], (int, float)) and v[1] > 10**9 else v[0]
+                if not (isinstance(ts, (int, float)) and ts > 10**9):
+                    ts = 0
+                items.append((k, ts))
+        items.sort(key=lambda kv: kv[1])
+        for k, _ in items[:len(d) - max_size]:
+            d.pop(k, None)
+    except Exception:
+        pass
 _PRICE_TTL = 5  # 5 секунд
 
 
@@ -80,6 +107,7 @@ def get_price(pair: str) -> float | None:
             return None
         price = float(r.json().get("price", 0))
         _price_cache[symbol] = (price, now)
+        if len(_price_cache) > _PRICE_CACHE_MAX: _cap_dict_inplace(_price_cache, _PRICE_CACHE_MAX)
         return price
     except Exception as e:
         logger.debug(f"Ошибка цены {symbol}: {e}")
@@ -145,6 +173,7 @@ def _fetch_batch(symbols: list[str]) -> dict[str, float] | None:
             price = float(item["price"])
             _price_cache[sym] = (price, now)
             out[sym] = price
+        if len(_price_cache) > _PRICE_CACHE_MAX: _cap_dict_inplace(_price_cache, _PRICE_CACHE_MAX)
         return out
     except Exception as e:
         logger.debug(f"Batch prices error: {e}")
@@ -192,6 +221,7 @@ def get_futures_price(pair: str) -> float | None:
             return None
         price = float(r.json().get("price", 0))
         _futures_cache[symbol] = (price, now)
+        if len(_futures_cache) > _FUTURES_CACHE_MAX: _cap_dict_inplace(_futures_cache, _FUTURES_CACHE_MAX)
         return price
     except Exception:
         return None
@@ -440,6 +470,7 @@ def check_pump_potential(symbol: str) -> dict:
         result["label"] = ""
 
     _pump_cache[symbol] = (now, result)
+    if len(_pump_cache) > _PUMP_CACHE_MAX: _cap_dict_inplace(_pump_cache, _PUMP_CACHE_MAX)
     # Lazy eviction старых записей (чтобы кеш не рос бесконечно)
     if len(_pump_cache) > 500:
         for k in [k for k, v in _pump_cache.items() if (now - v[0]) > _PUMP_TTL * 2]:
@@ -573,6 +604,7 @@ def get_24h_volume_usd(pair: str) -> float:
         logger.debug(f"24h volume fetch fail {sym}: {e}")
         vol = 0.0
     _volume_cache[sym] = (vol, now)
+    if len(_volume_cache) > _VOLUME_CACHE_MAX: _cap_dict_inplace(_volume_cache, _VOLUME_CACHE_MAX)
     return vol
 
 

@@ -80,6 +80,21 @@ async def lifespan(app):
             except Exception as _e:
                 print(f"[LIFESPAN] cv_flip_watcher start skipped: {_e}", flush=True)
 
+            # [Phase 3 fix] Миграция chart'ов в GridFS — запускаем в фоне
+            # с задержкой 60с после startup, чтобы не блокировать lifespan.
+            # Раньше делалась синхронно в main.py на module load → 5-10 мин cold start.
+            try:
+                async def _bg_migrate_charts():
+                    await asyncio.sleep(60)  # wait until other init done
+                    try:
+                        import main as _m
+                        await asyncio.to_thread(_m._migrate_charts_to_gridfs)
+                    except Exception as _ce:
+                        logging.getLogger(__name__).warning(f"[bg-migrate-charts] {_ce}")
+                _bg_tasks.append(asyncio.create_task(_bg_migrate_charts()))
+            except Exception as _e:
+                print(f"[LIFESPAN] bg migrate skipped: {_e}", flush=True)
+
             # Userbot health watchdog — алерт в Telegram при disconnect >10 мин.
             # Работает независимо от userbot'ного supervisor'а (тот reconnect'ится
             # сам, но молча; этот watchdog даёт юзеру знать что что-то не так).
@@ -600,6 +615,27 @@ _tradium_forum_cache: dict = {}
 _TRADIUM_FORUM_TTL = 600  # 10 мин — список тем меняется редко
 
 
+def _cap_admin_cache(d: dict, max_size: int = 300) -> None:
+    """Cap для admin кэшей. Большинство хранят (ts, value) tuple — удаляем
+    самые старые. Запускается inline после каждого write — защита от
+    неограниченного роста между _cache_cleanup_loop циклами (5 мин)."""
+    if len(d) <= max_size:
+        return
+    try:
+        items = []
+        for k, v in d.items():
+            ts = 0
+            if isinstance(v, tuple) and v:
+                if isinstance(v[0], (int, float)) and v[0] > 10**9:
+                    ts = v[0]
+            items.append((k, ts))
+        items.sort(key=lambda kv: kv[1])
+        for k, _ in items[:len(d) - max_size]:
+            d.pop(k, None)
+    except Exception:
+        pass
+
+
 @app.get("/api/peek-tradium-forum")
 async def api_peek_tradium_forum():
     """Проверяет форумные топики в Tradium группе. Кеш 10 мин."""
@@ -653,6 +689,7 @@ async def api_peek_tradium_forum():
                 info["forum_error"] = str(e)
         result_doc = {"ok": True, **info}
         _tradium_forum_cache["v"] = (now, result_doc)
+        # forum_cache имеет только ключ 'v' — не растёт, cap не нужен
         return result_doc
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -713,6 +750,7 @@ async def api_peek_tradium_setups(hours: int = 48):
             })
         result = {"ok": True, "scanned_total": total, "setups_found": len(setups), "messages": setups}
         _tradium_setups_cache[cache_key] = (now, result)
+        _cap_admin_cache(_tradium_setups_cache, 100)
         return result
     except Exception as e:
         return {"ok": False, "error": str(e), "scanned_total": total, "setups_found": len(setups), "messages": setups}
@@ -766,6 +804,7 @@ async def api_key_levels_recent(pair: str, hours: int = 48):
         return {"pair": pair, "hours": hours, "count": len(hit[1]), "items": hit[1], "cached": True}
     items = await asyncio.to_thread(get_recent_levels, pair, hours)
     _kl_recent_cache[key] = (now, items)
+    _cap_admin_cache(_kl_recent_cache, 500)
     # Чистим старые записи (lazy eviction)
     if len(_kl_recent_cache) > 500:
         for k in [k for k, v in _kl_recent_cache.items() if (now - v[0]) > _KL_RECENT_TTL * 2]:
@@ -1525,6 +1564,7 @@ async def api_supertrend_signals_by_pair(pair: str, hours: int = 336):
     resp = {**resp, "items": deduped, "count": len(deduped), "deduped": True}
 
     _st_by_pair_cache[key] = (now, resp)
+    _cap_admin_cache(_st_by_pair_cache, 300)
     if len(_st_by_pair_cache) > 300:
         for k in [k for k, v in _st_by_pair_cache.items() if (now - v[0]) > _ST_BY_PAIR_TTL * 2]:
             _st_by_pair_cache.pop(k, None)
@@ -8772,6 +8812,7 @@ async def api_verified_signals(pair: str = "", hours: int = 168, limit: int = 50
 
     result = await asyncio.to_thread(_sync)
     _verified_cache[cache_key] = (now_ts, result)
+    _cap_admin_cache(_verified_cache, 200)
     # Lazy eviction
     if len(_verified_cache) > 200:
         for k in [k for k, v in _verified_cache.items() if (now_ts - v[0]) > _VERIFIED_TTL * 3]:
@@ -9277,6 +9318,7 @@ async def api_market_events(since_ts: int = 0, until_ts: int = 0, types: str = "
     # sync Mongo cursor — выносим в thread, чтоб не блокировать event loop
     resp = await asyncio.to_thread(_sync)
     _mkt_events_cache[key] = (now, resp)
+    _cap_admin_cache(_mkt_events_cache, 200)
     if len(_mkt_events_cache) > 100:
         for k in [k for k, v in _mkt_events_cache.items() if (now - v[0]) > _MKT_EVENTS_TTL * 2]:
             _mkt_events_cache.pop(k, None)

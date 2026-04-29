@@ -104,7 +104,10 @@ def _migrate_charts_to_gridfs():
         logging.error(f"Chart migration: {e}")
 
 
-_migrate_charts_to_gridfs()
+# [Phase 3 fix] Раньше вызывалось синхронно на module load — блокировало
+# main.py startup на 5-10 минут (1000+ chart × 2-5MB IO + GridFS sync write).
+# Теперь admin.lifespan запускает миграцию в фоне через asyncio.create_task.
+# _migrate_charts_to_gridfs()  # отключено — см. admin.lifespan
 
 logging.basicConfig(
     level=logging.INFO,

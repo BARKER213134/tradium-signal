@@ -160,7 +160,16 @@ async def _eth_kc_prewarm_loop():
     except Exception:
         logger.exception("[prewarm] ETH/KC initial warm failed")
     # ST+pump — асинхронно чтобы не задерживать запуск watcher'а
-    _asyncio.create_task(_warm_st_top_pairs())
+    # Bounded task — если _warm_st_top_pairs зависнет, asyncio.wait_for cancel'ит
+    # его через 60с. Без этого guard task мог висеть бесконечно → worker leak.
+    async def _warm_bounded():
+        try:
+            await _asyncio.wait_for(_warm_st_top_pairs(), timeout=60.0)
+        except _asyncio.TimeoutError:
+            logger.warning("[prewarm] _warm_st_top_pairs timeout 60s — cancelled")
+        except Exception:
+            logger.debug("[prewarm] _warm_st_top_pairs error", exc_info=True)
+    _asyncio.create_task(_warm_bounded())
 
     while True:
         try:
@@ -168,7 +177,8 @@ async def _eth_kc_prewarm_loop():
             await _asyncio.to_thread(get_keltner_eth)
             await _asyncio.to_thread(get_eth_market_context)
             # На Pro можем себе позволить ST+pump prewarm для топ-10
-            _asyncio.create_task(_warm_st_top_pairs())
+            # Bounded — переиспользуем _warm_bounded из start блока
+            _asyncio.create_task(_warm_bounded())
         except Exception:
             logger.exception("[prewarm] ETH/KC loop error")
 
@@ -947,7 +957,10 @@ async def _check_once():
                 print(f"[WATCHER] step: {step_name}", flush=True)
                 # fvg_scan: 22 forex через TwelveData батчами по 7 с 65с throttle (~4 мин)
                 #         + 10 yfinance (~30s). Поднимаем таймаут до 600с с запасом.
-                step_timeout = 600 if step_name == "fvg_scan" else 120
+                # fvg_scan ранее имел timeout 600с — слишком долго блокировал
+                # event loop при зависании. Уменьшаем до 90с (TwelveData
+                # batch ~22с × 4 = ~90с, при превышении skip и идём дальше).
+                step_timeout = 90 if step_name == "fvg_scan" else 120
                 await asyncio.wait_for(step_fn(), timeout=step_timeout)
             except asyncio.TimeoutError:
                 print(f"[WATCHER] step '{step_name}' TIMEOUT (120s)", flush=True)
@@ -3337,7 +3350,7 @@ async def _cache_cleanup_loop():
                 logger.debug(f"[cache-cleanup] admin err: {e}")
         except Exception as e:
             logger.warning(f"[cache-cleanup] loop error: {e}")
-        await _asyncio.sleep(1800)  # 30 минут
+        await _asyncio.sleep(300)  # 5 минут (было 30 — слишком редко)
 
 
 async def _exchange_symbols_refresh_loop():
