@@ -3930,7 +3930,9 @@ async function _drawPaperHistChart(idx) {
   }
 
   // Параллельно: свечи + все сигналы по монете из journal/by-symbol
-  const limitByTF = { '1h': 720, '4h': 200, '1d': 60, '30m': 300, '15m': 400 };
+  // 1h уменьшено 720→300 (12 дней истории) — first-load 2x быстрее.
+  // Если нужна более длинная история — переключи на 4h/1d.
+  const limitByTF = { '1h': 300, '4h': 200, '1d': 60, '30m': 300, '15m': 400 };
   const candleLimit = limitByTF[tf] || 200;
   try {
     const [candleR, sigR] = await Promise.all([
