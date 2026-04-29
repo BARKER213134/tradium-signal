@@ -1322,7 +1322,7 @@ async def ai_review_trade(trade: dict) -> str:
 
 
 def _log_rejection_sync(signal_data: dict, reason: str):
-    """Пишет в paper_rejections БЕЗ AI. Используется rule-based версией."""
+    """Пишет в paper_rejections БЕЗ AI. Sync-версия для не-async вызывающих."""
     try:
         from database import _get_db
         _get_db().paper_rejections.insert_one({
@@ -1339,6 +1339,24 @@ def _log_rejection_sync(signal_data: dict, reason: str):
         })
     except Exception:
         logger.debug("[rule-based] rejection log fail", exc_info=True)
+
+
+# Tracker фоновых tasks чтобы GC не уничтожил их до завершения
+_REJ_LOG_TASKS: set = set()
+
+
+def _log_rejection(signal_data: dict, reason: str):
+    """Async-friendly fire-and-forget вариант: не блокирует event loop при
+    лаге Atlas. Если loop отсутствует (вызвано из синхронного кода) —
+    падает на sync-вариант. Сохраняет ссылку на task в _REJ_LOG_TASKS до
+    завершения, чтобы GC не убил task раньше времени."""
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(asyncio.to_thread(_log_rejection_sync, signal_data, reason))
+        _REJ_LOG_TASKS.add(task)
+        task.add_done_callback(_REJ_LOG_TASKS.discard)
+    except RuntimeError:
+        _log_rejection_sync(signal_data, reason)
 
 
 def _calc_position_params(signal_data: dict, phase: str, verdict: str,
@@ -1488,16 +1506,16 @@ async def on_signal(signal_data: dict):
             rsi_1h = 100.0 if _avg_l == 0 else 100.0 - 100.0 / (1 + _avg_g / _avg_l)
         except Exception as e:
             logger.warning(f"supertrend RSI filter error {symbol}: {e}")
-            _log_rejection_sync(signal_data, f"[RSI-FILTER ERROR] supertrend RSI calc failed: {e}")
+            _log_rejection(signal_data, f"[RSI-FILTER ERROR] supertrend RSI calc failed: {e}")
             return None
 
         if direction == "LONG" and rsi_1h >= 60:
             logger.info(f"Paper SKIP (supertrend RSI): {symbol} LONG 1h-RSI={rsi_1h:.1f}≥60")
-            _log_rejection_sync(signal_data, f"[RSI-FILTER] supertrend LONG: 1h-RSI={rsi_1h:.1f}≥60 (late entry, бэктест: WR 36% / -175 USDT)")
+            _log_rejection(signal_data, f"[RSI-FILTER] supertrend LONG: 1h-RSI={rsi_1h:.1f}≥60 (late entry, бэктест: WR 36% / -175 USDT)")
             return None
         if direction == "SHORT" and rsi_1h <= 40:
             logger.info(f"Paper SKIP (supertrend RSI): {symbol} SHORT 1h-RSI={rsi_1h:.1f}≤40")
-            _log_rejection_sync(signal_data, f"[RSI-FILTER] supertrend SHORT: 1h-RSI={rsi_1h:.1f}≤40 (falling knife)")
+            _log_rejection(signal_data, f"[RSI-FILTER] supertrend SHORT: 1h-RSI={rsi_1h:.1f}≤40 (falling knife)")
             return None
         logger.info(f"Paper ACCEPT (supertrend RSI): {symbol} {direction} 1h-RSI={rsi_1h:.1f}")
 
@@ -1508,10 +1526,10 @@ async def on_signal(signal_data: dict):
         if conflict["has_conflict"] and conflict["severity"] in ("strong", "nuclear"):
             logger.info(f"Paper SKIP (anti-cluster): {symbol} {direction} — "
                         f"CONFLICT {conflict['severity']}")
-            _log_rejection_sync(signal_data,
-                                f"[ANTI-CLUSTER] severity={conflict['severity']} · "
-                                f"LONG-вес {conflict['long_weight']} vs SHORT-вес {conflict['short_weight']} · "
-                                f"конфликт сигналов на паре")
+            _log_rejection(signal_data,
+                           f"[ANTI-CLUSTER] severity={conflict['severity']} · "
+                           f"LONG-вес {conflict['long_weight']} vs SHORT-вес {conflict['short_weight']} · "
+                           f"конфликт сигналов на паре")
             return None
     except Exception:
         logger.debug("[paper] anti-cluster check fail", exc_info=True)
@@ -1527,7 +1545,7 @@ async def on_signal(signal_data: dict):
     if not pair_norm.endswith("USDT"):
         pair_norm += "USDT"
     if any((p.get("symbol") or "").upper() == pair_norm for p in open_pos):
-        _log_rejection_sync(signal_data, f"[DUPLICATE] уже есть открытая позиция на {pair_norm}")
+        _log_rejection(signal_data, f"[DUPLICATE] уже есть открытая позиция на {pair_norm}")
         return None
 
     # ── 3. Entry Checker ──
@@ -1535,10 +1553,10 @@ async def on_signal(signal_data: dict):
         check = await asyncio.to_thread(ve.check_entry, pair, direction, signal_data)
     except Exception as _e:
         logger.exception(f"[paper on_signal] check_entry crashed: {_e}")
-        _log_rejection_sync(signal_data, f"[ENTRY-CHECK CRASH] {_e}")
+        _log_rejection(signal_data, f"[ENTRY-CHECK CRASH] {_e}")
         return None
     if not check.get("ok"):
-        _log_rejection_sync(signal_data, f"[ENTRY-CHECK ERROR] {check.get('error','?')}")
+        _log_rejection(signal_data, f"[ENTRY-CHECK ERROR] {check.get('error','?')}")
         return None
 
     verdict = check.get("verdict")
@@ -1553,8 +1571,8 @@ async def on_signal(signal_data: dict):
 
     if verdict == "skip":
         bad_str = " | ".join(bad_full) if bad_full else "—"
-        _log_rejection_sync(signal_data,
-                            f"[ENTRY-CHECK SKIP] src={source} {summary} → BAD: {bad_str}")
+        _log_rejection(signal_data,
+                       f"[ENTRY-CHECK SKIP] src={source} {summary} → BAD: {bad_str}")
         logger.info(f"Paper SKIP (rule): {symbol} {direction} — {summary}")
         return None
 
@@ -1582,9 +1600,9 @@ async def on_signal(signal_data: dict):
         if not (is_strong or zero_red):
             bad_str = " | ".join(bad_full) if bad_full else "—"
             warn_str = " | ".join(warn_full[:3]) if warn_full else "—"
-            _log_rejection_sync(signal_data,
-                                f"[ENTRY-CHECK CAUTION] src={source} not in whitelist · "
-                                f"{summary} · BAD: {bad_str} · WARN: {warn_str}")
+            _log_rejection(signal_data,
+                           f"[ENTRY-CHECK CAUTION] src={source} not in whitelist · "
+                           f"{summary} · BAD: {bad_str} · WARN: {warn_str}")
             logger.info(f"Paper SKIP (caution, src={source}): {symbol} {direction}")
             return None
         if zero_red and not is_strong:
@@ -1599,8 +1617,8 @@ async def on_signal(signal_data: dict):
     tp1 = sig.get("tp1")
     sl = sig.get("sl")
     if not (entry and tp1 and sl):
-        _log_rejection_sync(signal_data,
-                            f"[NO-LEVELS] entry={entry} tp={tp1} sl={sl} — сигнал без полных уровней")
+        _log_rejection(signal_data,
+                       f"[NO-LEVELS] entry={entry} tp={tp1} sl={sl} — сигнал без полных уровней")
         return None
 
     mode_cfg = get_mode()

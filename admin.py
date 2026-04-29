@@ -2251,21 +2251,22 @@ async def api_live_confirm(payload: dict):
 async def api_live_accounts_list():
     """Список всех аккаунтов (без api_secret). С балансом и кол-вом позиций."""
     import live_safety as ls
-    from database import _live_trades
     try:
-        accounts = await asyncio.to_thread(ls.list_accounts)
-        # Добавим runtime-инфу: открытые позиции
-        for a in accounts:
-            a["open_positions"] = _live_trades().count_documents({
-                "account_id": a["_id"], "status": "OPEN",
-            })
-            for f in ("created_at", "updated_at", "last_trade_at", "kill_at", "daily_reset_at"):
-                if a.get(f) and hasattr(a[f], "isoformat"):
-                    a[f] = a[f].isoformat()
-            # Преsет конфиг для UI
-            preset_cfg = ls.SAFETY_PRESETS.get(a.get("safety_preset", "paper_mirror"))
-            if preset_cfg:
-                a["preset_config"] = preset_cfg
+        def _sync_load():
+            from database import _live_trades
+            accs = ls.list_accounts()
+            for a in accs:
+                a["open_positions"] = _live_trades().count_documents({
+                    "account_id": a["_id"], "status": "OPEN",
+                })
+                for f in ("created_at", "updated_at", "last_trade_at", "kill_at", "daily_reset_at"):
+                    if a.get(f) and hasattr(a[f], "isoformat"):
+                        a[f] = a[f].isoformat()
+                preset_cfg = ls.SAFETY_PRESETS.get(a.get("safety_preset", "paper_mirror"))
+                if preset_cfg:
+                    a["preset_config"] = preset_cfg
+            return accs
+        accounts = await asyncio.to_thread(_sync_load)
         return {"ok": True, "count": len(accounts), "accounts": accounts}
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -3041,21 +3042,23 @@ async def api_admin_health_detail():
 
 @app.get("/api/cv-pipeline-trace")
 async def api_cv_pipeline_trace(signal_id: int):
-    """Трасса конкретного CV-сигнала через pipeline:
-      received → СЛЕЖУ → паттерн → ПАТТЕРН → AI score → alert.
-    Возвращает все события + текущее состояние сигнала + последние klines."""
-    from database import _signals as _sig_col, _events as _ev_col
-    sig = _sig_col().find_one({"id": int(signal_id)})
-    if not sig:
+    """Трасса CV-сигнала через pipeline. Mongo-вызовы вынесены в to_thread."""
+    def _sync_load():
+        from database import _signals as _sig_col, _events as _ev_col
+        sig = _sig_col().find_one({"id": int(signal_id)})
+        if not sig:
+            return None, []
+        events = list(_ev_col().find({
+            "$or": [
+                {"signal_id": int(signal_id)},
+                {"data.signal_id": int(signal_id)},
+                {"data.id": int(signal_id)},
+            ]
+        }).sort("at", 1).limit(50))
+        return sig, events
+    sig, events = await asyncio.to_thread(_sync_load)
+    if sig is None:
         return {"ok": False, "error": "signal not found"}
-
-    events = list(_ev_col().find({
-        "$or": [
-            {"signal_id": int(signal_id)},          # log_event format (top-level)
-            {"data.signal_id": int(signal_id)},     # cv-alert format (in data)
-            {"data.id": int(signal_id)},
-        ]
-    }).sort("at", 1).limit(50))
 
     out_events = []
     for e in events:
@@ -3088,11 +3091,11 @@ async def api_cv_pipeline_trace(signal_id: int):
         "is_filtered": sig.get("is_filtered"),
         "filter_reason": sig.get("filter_reason"),
     }
-    # Последние 5 1h свечей этой пары для ручной проверки паттернов
+    # Последние 5 1h свечей этой пары — sync HTTP, вынос в to_thread
     candles_summary = None
     try:
         from exchange import get_futures_klines
-        candles = get_futures_klines(sig.get("pair", ""), "1h", 5) or []
+        candles = await asyncio.to_thread(get_futures_klines, sig.get("pair", ""), "1h", 5) or []
         candles_summary = [
             {"t": c["t"], "o": c["o"], "h": c["h"], "l": c["l"], "c": c["c"]}
             for c in candles[-5:]
@@ -3118,41 +3121,42 @@ async def api_cv_alert_diag(hours: int = 24, limit: int = 50):
       - нет 'called' → не вызывается _send_cryptovizor_alert (st_passed=False?)
       - есть 'sent' с message_id → реально отправлено в Telegram
     """
-    from database import _signals as _sig_col, _events as _ev_col, utcnow
+    from database import utcnow
     from datetime import timedelta
     since = utcnow() - timedelta(hours=hours)
 
-    # Recent CV сигналы — берём всё что либо received либо pattern_triggered за since
-    # (паттерн может сработать на старом сигнале — UI показывает по pattern_triggered_at)
-    cv_docs = list(_sig_col().find({
-        "source": "cryptovizor",
-        "$or": [
-            {"received_at": {"$gte": since}},
-            {"pattern_triggered_at": {"$gte": since}},
-        ],
-    }, {
-        "id": 1, "pair": 1, "direction": 1, "status": 1,
-        "pattern_name": 1, "pattern_triggered": 1, "pattern_triggered_at": 1,
-        "received_at": 1,
-        "st_passed": 1, "ai_score": 1, "ai_verdict": 1,
-    }).sort("received_at", -1).limit(int(limit)))
-
-    sig_ids = [d.get("id") for d in cv_docs if d.get("id")]
-    events_by_sid: dict = {}
-    if sig_ids:
-        for ev in _ev_col().find({
-            "type": {"$in": ["cv_alert_called", "cv_alert_sent",
-                             "cv_alert_timeout", "cv_alert_error",
-                             "cv_alert_timeout_global"]},
-            "data.signal_id": {"$in": sig_ids},
-            "at": {"$gte": since},
-        }).sort("at", 1):
-            sid = ev.get("data", {}).get("signal_id")
-            events_by_sid.setdefault(sid, []).append({
-                "type": ev.get("type"),
-                "at": ev.get("at").isoformat() if hasattr(ev.get("at"), "isoformat") else None,
-                "data": {k: v for k, v in (ev.get("data") or {}).items() if k != "signal_id"},
-            })
+    def _sync_load():
+        from database import _signals as _sig_col, _events as _ev_col
+        cv_docs = list(_sig_col().find({
+            "source": "cryptovizor",
+            "$or": [
+                {"received_at": {"$gte": since}},
+                {"pattern_triggered_at": {"$gte": since}},
+            ],
+        }, {
+            "id": 1, "pair": 1, "direction": 1, "status": 1,
+            "pattern_name": 1, "pattern_triggered": 1, "pattern_triggered_at": 1,
+            "received_at": 1,
+            "st_passed": 1, "ai_score": 1, "ai_verdict": 1,
+        }).sort("received_at", -1).limit(int(limit)))
+        sig_ids = [d.get("id") for d in cv_docs if d.get("id")]
+        events_by_sid: dict = {}
+        if sig_ids:
+            for ev in _ev_col().find({
+                "type": {"$in": ["cv_alert_called", "cv_alert_sent",
+                                 "cv_alert_timeout", "cv_alert_error",
+                                 "cv_alert_timeout_global"]},
+                "data.signal_id": {"$in": sig_ids},
+                "at": {"$gte": since},
+            }).sort("at", 1):
+                sid = ev.get("data", {}).get("signal_id")
+                events_by_sid.setdefault(sid, []).append({
+                    "type": ev.get("type"),
+                    "at": ev.get("at").isoformat() if hasattr(ev.get("at"), "isoformat") else None,
+                    "data": {k: v for k, v in (ev.get("data") or {}).items() if k != "signal_id"},
+                })
+        return cv_docs, events_by_sid
+    cv_docs, events_by_sid = await asyncio.to_thread(_sync_load)
 
     # Аггрегаты
     counts = {"total": len(cv_docs), "with_pattern": 0,
@@ -3206,8 +3210,10 @@ async def api_cv_alert_diag(hours: int = 24, limit: int = 50):
 @app.get("/api/live/debug-recent")
 async def api_live_debug_recent(limit: int = 10):
     """Последние live_trades любого статуса — для диагностики mirror/sync."""
-    from database import _live_trades
-    docs = list(_live_trades().find({}).sort("opened_at", -1).limit(int(limit)))
+    def _sync():
+        from database import _live_trades
+        return list(_live_trades().find({}).sort("opened_at", -1).limit(int(limit)))
+    docs = await asyncio.to_thread(_sync)
     out = []
     for d in docs:
         out.append({
@@ -4866,14 +4872,19 @@ async def api_userbot_reload_session():
 @app.get("/api/userbot-status")
 async def api_userbot_status():
     """Диагностика userbot: подключён ли Telethon, когда был последний сигнал из каждого канала."""
-    from database import _signals, utcnow
-    from pymongo import DESCENDING
+    from database import utcnow
     try:
         from userbot import _tg_client
     except Exception:
         _tg_client = None
-    last_cv = _signals().find_one({"source": "cryptovizor"}, sort=[("received_at", DESCENDING)])
-    last_tr = _signals().find_one({"source": "tradium"}, sort=[("received_at", DESCENDING)])
+    def _sync_load():
+        from database import _signals
+        from pymongo import DESCENDING
+        return (
+            _signals().find_one({"source": "cryptovizor"}, sort=[("received_at", DESCENDING)]),
+            _signals().find_one({"source": "tradium"}, sort=[("received_at", DESCENDING)]),
+        )
+    last_cv, last_tr = await asyncio.to_thread(_sync_load)
     now = utcnow()
     def _info(doc):
         if not doc or not doc.get("received_at"):
@@ -5246,13 +5257,15 @@ async def api_delete_signals(payload: dict):
 @app.post("/api/signals/clear-processed")
 async def api_clear_processed():
     """Удаляет отработанные Cryptovizor сигналы + сохраняет summary в историю."""
-    from database import _signals as _sc, _get_db, utcnow
+    from database import utcnow
 
-    # Собираем данные перед удалением
-    signals = list(_sc().find(
-        {"source": "cryptovizor", "status": {"$in": ["ПАТТЕРН", "VOLUME"]}},
-        {"pair": 1, "direction": 1, "pattern_name": 1, "entry": 1, "pattern_price": 1, "ai_score": 1}
-    ))
+    def _fetch():
+        from database import _signals as _sc
+        return list(_sc().find(
+            {"source": "cryptovizor", "status": {"$in": ["ПАТТЕРН", "VOLUME"]}},
+            {"pair": 1, "direction": 1, "pattern_name": 1, "entry": 1, "pattern_price": 1, "ai_score": 1}
+        ))
+    signals = await asyncio.to_thread(_fetch)
 
     if not signals:
         return {"ok": True, "deleted": 0}
@@ -5284,17 +5297,17 @@ async def api_clear_processed():
         "coins": coins,
     }
 
-    # Сохраняем в историю
-    _get_db().backtest_history.insert_one(summary)
+    def _commit():
+        from database import _signals as _sc, _get_db
+        _get_db().backtest_history.insert_one(summary)
+        return _sc().delete_many({
+            "source": "cryptovizor",
+            "status": {"$in": ["ПАТТЕРН", "VOLUME"]},
+        }).deleted_count
+    deleted = await asyncio.to_thread(_commit)
 
-    # Удаляем
-    result = _sc().delete_many({
-        "source": "cryptovizor",
-        "status": {"$in": ["ПАТТЕРН", "VOLUME"]},
-    })
-
-    broadcast_event("signal_deleted", {"count": result.deleted_count})
-    return {"ok": True, "deleted": result.deleted_count, "summary": summary}
+    broadcast_event("signal_deleted", {"count": deleted})
+    return {"ok": True, "deleted": deleted, "summary": summary}
 
 
 @app.get("/api/backtest/history")
@@ -5630,21 +5643,25 @@ async def api_anomaly_analyze(payload: dict):
 
 @app.post("/api/anomalies/clear")
 async def api_anomalies_clear():
-    from database import _anomalies
-    r = _anomalies().delete_many({})
-    return {"ok": True, "deleted": r.deleted_count}
+    def _sync():
+        from database import _anomalies
+        return _anomalies().delete_many({}).deleted_count
+    deleted = await asyncio.to_thread(_sync)
+    return {"ok": True, "deleted": deleted}
 
 
 @app.get("/api/anomalies/backtest")
 async def api_anomalies_backtest(st: int = 0):
     """Бектест аномалий. st=1 — только прошедшие SuperTrend фильтр."""
-    from database import _anomalies
     from exchange import get_futures_prices_only
 
-    query = {}
-    if st:
-        query["st_passed"] = True
-    docs = list(_anomalies().find(query).sort("detected_at", -1).limit(200))
+    def _fetch():
+        from database import _anomalies
+        query = {}
+        if st:
+            query["st_passed"] = True
+        return list(_anomalies().find(query).sort("detected_at", -1).limit(200))
+    docs = await asyncio.to_thread(_fetch)
     if not docs:
         return {"ok": True, "results": [], "summary": {}, "st_filter": bool(st)}
 
@@ -5837,19 +5854,23 @@ async def confluence_scan_status():
 
 @app.post("/api/confluence/clear")
 async def api_confluence_clear():
-    from database import _confluence
-    r = _confluence().delete_many({})
-    return {"ok": True, "deleted": r.deleted_count}
+    def _sync():
+        from database import _confluence
+        return _confluence().delete_many({}).deleted_count
+    deleted = await asyncio.to_thread(_sync)
+    return {"ok": True, "deleted": deleted}
 
 
 @app.get("/api/confluence/backtest")
 async def api_confluence_backtest(st: int = 0):
     """st=1 — только прошедшие SuperTrend фильтр."""
-    from database import _confluence
     from exchange import get_futures_prices_only
 
-    query = {"st_passed": True} if st else {}
-    docs = list(_confluence().find(query).sort("detected_at", -1).limit(200))
+    def _fetch():
+        from database import _confluence
+        query = {"st_passed": True} if st else {}
+        return list(_confluence().find(query).sort("detected_at", -1).limit(200))
+    docs = await asyncio.to_thread(_fetch)
     if not docs:
         return {"ok": True, "results": [], "summary": {}}
 

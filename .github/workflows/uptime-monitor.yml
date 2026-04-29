@@ -1,0 +1,24 @@
+name: Tradium Uptime Monitor
+
+# Каждые 30 минут пингует прод и шлёт Telegram-алерт если что-то упало.
+# Также можно запустить вручную из Actions tab.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run monitor
+        env:
+          PROD_URL: https://tradium-signal-production.up.railway.app
+          BOT2_BOT_TOKEN: ${{ secrets.BOT2_BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          MONITOR_QUIET_OK: "1"
+        run: |
+          python monitor.py
