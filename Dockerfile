@@ -32,10 +32,12 @@ COPY . .
 # Папка для графиков и session (mount через volume)
 RUN mkdir -p /app/charts /app/data
 
-# Healthcheck — lightweight /healthz (без Mongo I/O чтобы не рестарт
-# контейнера при лагах Atlas). /health для ручной диагностики.
-# interval 60s + timeout 10s + retries 5 = 5 минут грейса перед unhealthy.
-HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=5 \
+# Healthcheck — lightweight /healthz. Хотя сам endpoint не делает I/O,
+# при забитом event loop (sync Mongo в watcher background loops при лаге
+# Atlas) ответ может задержаться 10-25с. Большой timeout + start-period
+# дают грейс на cold start (миграция charts, ST warmup).
+# interval 90s + timeout 30s + retries 5 + start 180s = ~10 мин грейса.
+HEALTHCHECK --interval=90s --timeout=30s --start-period=180s --retries=5 \
   CMD curl -fsS http://localhost:${PORT:-8080}/healthz || exit 1
 
 EXPOSE 8080
