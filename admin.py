@@ -10113,17 +10113,23 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
             return {"ok": True, "candles": fdata, "stale": True, "fuzzy_from": fkey}
 
     # Hard miss — ждём Binance.
-    # Single-flight: если уже есть in-flight fetch для этого ключа,
-    # ждём его результат вместо параллельного запроса. Это снижает нагрузку
-    # на Binance/BingX когда несколько пользователей открывают одну пару.
+    # Single-flight: concurrent users одной пары шерят результат одного fetch.
+    # Timeout 10s — если BingX/Binance тормозит, не висим на UI.
     inflight = _candles_inflight.get(key)
     if inflight is None:
         loop = asyncio.get_event_loop()
         inflight = loop.create_future()
         _candles_inflight[key] = inflight
         try:
-            candles = await asyncio.to_thread(get_klines_any, pair, tf, limit)
+            candles = await asyncio.wait_for(
+                asyncio.to_thread(get_klines_any, pair, tf, limit),
+                timeout=10.0,
+            )
             inflight.set_result(candles)
+        except asyncio.TimeoutError:
+            inflight.set_exception(asyncio.TimeoutError("candles fetch >10s"))
+            _candles_inflight.pop(key, None)
+            return {"ok": False, "error": "fetch timeout >10s"}
         except Exception as _ex:
             inflight.set_exception(_ex)
             _candles_inflight.pop(key, None)
@@ -10131,7 +10137,10 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
         finally:
             _candles_inflight.pop(key, None)
     else:
-        candles = await inflight
+        try:
+            candles = await asyncio.wait_for(inflight, timeout=10.0)
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "shared fetch timeout"}
 
     if not candles:
         return {"ok": False, "error": "no data"}
