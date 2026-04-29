@@ -1488,16 +1488,16 @@ async def on_signal(signal_data: dict):
             rsi_1h = 100.0 if _avg_l == 0 else 100.0 - 100.0 / (1 + _avg_g / _avg_l)
         except Exception as e:
             logger.warning(f"supertrend RSI filter error {symbol}: {e}")
-            _log_rejection_sync(signal_data, f"⛔ supertrend: RSI filter error ({e})")
+            _log_rejection_sync(signal_data, f"[RSI-FILTER ERROR] supertrend RSI calc failed: {e}")
             return None
 
         if direction == "LONG" and rsi_1h >= 60:
             logger.info(f"Paper SKIP (supertrend RSI): {symbol} LONG 1h-RSI={rsi_1h:.1f}≥60")
-            _log_rejection_sync(signal_data, f"⛔ supertrend LONG: 1h-RSI={rsi_1h:.1f}≥60 (late entry)")
+            _log_rejection_sync(signal_data, f"[RSI-FILTER] supertrend LONG: 1h-RSI={rsi_1h:.1f}≥60 (late entry, бэктест: WR 36% / -175 USDT)")
             return None
         if direction == "SHORT" and rsi_1h <= 40:
             logger.info(f"Paper SKIP (supertrend RSI): {symbol} SHORT 1h-RSI={rsi_1h:.1f}≤40")
-            _log_rejection_sync(signal_data, f"⛔ supertrend SHORT: 1h-RSI={rsi_1h:.1f}≤40 (falling knife)")
+            _log_rejection_sync(signal_data, f"[RSI-FILTER] supertrend SHORT: 1h-RSI={rsi_1h:.1f}≤40 (falling knife)")
             return None
         logger.info(f"Paper ACCEPT (supertrend RSI): {symbol} {direction} 1h-RSI={rsi_1h:.1f}")
 
@@ -1509,7 +1509,9 @@ async def on_signal(signal_data: dict):
             logger.info(f"Paper SKIP (anti-cluster): {symbol} {direction} — "
                         f"CONFLICT {conflict['severity']}")
             _log_rejection_sync(signal_data,
-                                f"⛔ Anti-cluster {conflict['severity']}: L={conflict['long_weight']} S={conflict['short_weight']}")
+                                f"[ANTI-CLUSTER] severity={conflict['severity']} · "
+                                f"LONG-вес {conflict['long_weight']} vs SHORT-вес {conflict['short_weight']} · "
+                                f"конфликт сигналов на паре")
             return None
     except Exception:
         logger.debug("[paper] anti-cluster check fail", exc_info=True)
@@ -1525,7 +1527,7 @@ async def on_signal(signal_data: dict):
     if not pair_norm.endswith("USDT"):
         pair_norm += "USDT"
     if any((p.get("symbol") or "").upper() == pair_norm for p in open_pos):
-        _log_rejection_sync(signal_data, f"Уже есть открытая позиция на {pair_norm}")
+        _log_rejection_sync(signal_data, f"[DUPLICATE] уже есть открытая позиция на {pair_norm}")
         return None
 
     # ── 3. Entry Checker ──
@@ -1533,20 +1535,26 @@ async def on_signal(signal_data: dict):
         check = await asyncio.to_thread(ve.check_entry, pair, direction, signal_data)
     except Exception as _e:
         logger.exception(f"[paper on_signal] check_entry crashed: {_e}")
+        _log_rejection_sync(signal_data, f"[ENTRY-CHECK CRASH] {_e}")
         return None
     if not check.get("ok"):
-        _log_rejection_sync(signal_data, f"check_entry: {check.get('error','?')}")
+        _log_rejection_sync(signal_data, f"[ENTRY-CHECK ERROR] {check.get('error','?')}")
         return None
 
     verdict = check.get("verdict")
     counts = check.get("counts", {})
     summary = check.get("summary", "")
 
+    # Готовим читаемый список bad/warn чеков с конкретикой
+    bad_full = [f"{c['name']}: {c.get('comment', '')}".strip()
+                for c in check.get("checks", []) if c.get("status") == "bad"]
+    warn_full = [f"{c['name']}: {c.get('comment', '')}".strip()
+                 for c in check.get("checks", []) if c.get("status") == "warn"]
+
     if verdict == "skip":
-        # Читаемый лог причин
-        bad_checks = [c["name"] for c in check.get("checks", []) if c.get("status") == "bad"]
+        bad_str = " | ".join(bad_full) if bad_full else "—"
         _log_rejection_sync(signal_data,
-                            f"⛔ SKIP {summary} (bad: {', '.join(bad_checks)})")
+                            f"[ENTRY-CHECK SKIP] src={source} {summary} → BAD: {bad_str}")
         logger.info(f"Paper SKIP (rule): {symbol} {direction} — {summary}")
         return None
 
@@ -1556,33 +1564,29 @@ async def on_signal(signal_data: dict):
         #   confluence:  201 sig, WR 33.7%, +79R ✅
         #   cluster:     6 sig,   WR 60%,   +1.7R ✅
         #   tradium:     9 sig,   WR 100%,  +9R ✅
-        # Блокируем убыточные:
-        #   supertrend_mtf: 264 sig, WR 21%, -83R ❌
-        #   supertrend_vip: 55 sig,  WR 31%, -17R ❌ (только если is_top_pick)
-        #   anomaly:        20 sig,  WR 26%, -5R ❌ (только cluster/top_pick override)
+        # Бэктест cap=10 за 27-29 апр (725 сигналов): supertrend все tier'ы
+        # дают +$153 на 44 сделках (avg +$3.48, WR 61%). Поэтому пропускаем
+        # ВСЕ supertrend (vip/mtf/daily) в CAUTION — старый блок -83R
+        # перекрывался плохой ST UNK при отвалившемся API.
         is_strong = (
-            source in ("cluster", "cryptovizor", "confluence", "tradium") or
-            source == "supertrend_vip" and bool(signal_data.get("is_top_pick")) or
-            (source == "supertrend" and (signal_data.get("tier") or "").lower() == "vip"
-                and bool(signal_data.get("is_top_pick"))) or
+            source in ("cluster", "cryptovizor", "confluence", "tradium",
+                       "supertrend", "supertrend_vip", "supertrend_mtf",
+                       "supertrend_daily") or
             bool(signal_data.get("is_top_pick"))
         )
 
         # ZERO_RED исключение — разрешаем CAUTION с 0 красных флагов
-        # (только warnings, без блокеров). Бэктест 153 ST CAUTION zero-red
-        # сделок за 5 дней (23-28 апр) дал +$26.82 / WR 53.6% / avg +$0.18.
-        # Логика: CAUTION возникает либо при 1 bad, либо при 3+ warn без bad.
-        # Второй случай (counts.bad == 0) — мягче: чек-лист в основном ОК,
-        # только нюансы — стоит попробовать. 1 bad всё ещё блокируется
-        # (бэктест: -$92 на 374 сделок).
+        # (только warnings, без блокеров).
         zero_red = (counts.get("bad", 1) == 0)
 
         if not (is_strong or zero_red):
+            bad_str = " | ".join(bad_full) if bad_full else "—"
+            warn_str = " | ".join(warn_full[:3]) if warn_full else "—"
             _log_rejection_sync(signal_data,
-                                f"⚠ CAUTION без strong-source (src={source}): {summary}")
+                                f"[ENTRY-CHECK CAUTION] src={source} not in whitelist · "
+                                f"{summary} · BAD: {bad_str} · WARN: {warn_str}")
             logger.info(f"Paper SKIP (caution, src={source}): {symbol} {direction}")
             return None
-        # Помечаем zero-red в reasoning для разбора потом
         if zero_red and not is_strong:
             logger.info(f"Paper ALLOW (CAUTION zero-red, src={source}): {symbol} {direction}")
 
@@ -1595,7 +1599,8 @@ async def on_signal(signal_data: dict):
     tp1 = sig.get("tp1")
     sl = sig.get("sl")
     if not (entry and tp1 and sl):
-        _log_rejection_sync(signal_data, "Нет entry/tp/sl после check_entry")
+        _log_rejection_sync(signal_data,
+                            f"[NO-LEVELS] entry={entry} tp={tp1} sl={sl} — сигнал без полных уровней")
         return None
 
     mode_cfg = get_mode()
