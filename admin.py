@@ -5979,8 +5979,21 @@ async def api_header_data():
     return {"eth_ctx": _sync_eth_ctx(), "st_eth": _sync_kc_eth()}
 
 
+_PAPER_STATUS_CACHE: dict = {"ts": 0.0, "data": None}
+_PAPER_STATUS_TTL = 6.0  # 6с — UI polling каждые 15с, swing комфортный
+
+
 @app.get("/api/paper/status")
 async def api_paper_status():
+    """Paper Trading статус. Cache 6с — раньше при лагах Atlas
+    функция занимала 25+ секунд (балансы + xref live trades + цены),
+    UI polling каждые 15с забивал loop. 6с TTL — компромис свежесть/нагрузка."""
+    import time as _t
+    now_ts = _t.time()
+    cached = _PAPER_STATUS_CACHE.get("data")
+    if cached is not None and (now_ts - _PAPER_STATUS_CACHE["ts"]) < _PAPER_STATUS_TTL:
+        return cached
+
     import paper_trader as pt
     from exchange import get_prices_any
 
@@ -6061,13 +6074,16 @@ async def api_paper_status():
                 for m in unique_matches
             ]
     pnl_pct = round((balance - initial) / initial * 100, 2) if initial > 0 else 0
-    return {
+    response = {
         "balance": balance,
         "initial": initial,
         "pnl_pct": pnl_pct,
         "positions": positions,
         "stats": stats,
     }
+    _PAPER_STATUS_CACHE["ts"] = now_ts
+    _PAPER_STATUS_CACHE["data"] = response
+    return response
 
 
 @app.get("/api/paper/history")
