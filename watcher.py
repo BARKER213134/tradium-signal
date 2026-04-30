@@ -617,14 +617,18 @@ async def _send_pattern_alert(signal: Signal, pattern: str, current_price: float
 
 async def _check_dca4(db):
     """Этап 1: СЛЕЖУ → ОТКРЫТ при касании DCA #4."""
-    signals = (
-        db.query(Signal)
-        .filter(Signal.status == "СЛЕЖУ")
-        .filter(Signal.dca4_triggered == False)
-        .filter(Signal.dca4 != None)
-        .filter(Signal.pair != None)
-        .all()
-    )
+    # SQLAlchemy query — sync. В async-функции блокирует event loop
+    # на время роста таблицы Signal. Выносим в to_thread.
+    def _query_dca():
+        return list(
+            db.query(Signal)
+            .filter(Signal.status == "СЛЕЖУ")
+            .filter(Signal.dca4_triggered == False)
+            .filter(Signal.dca4 != None)
+            .filter(Signal.pair != None)
+            .all()
+        )
+    signals = await asyncio.to_thread(_query_dca)
     if not signals:
         return
     pairs = list({s.pair for s in signals})
@@ -641,7 +645,7 @@ async def _check_dca4(db):
             s.status = "ОТКРЫТ"
             s.is_forwarded = True
             s.forwarded_at = utcnow()
-            db.commit()
+            await asyncio.to_thread(db.commit)
             log_event(
                 s.id, "dca4_hit", price=current,
                 data={"dca4": s.dca4, "direction": s.direction, "pair": s.pair},
@@ -652,13 +656,15 @@ async def _check_dca4(db):
 
 async def _check_patterns(db):
     """Этап 2: ОТКРЫТ → ПАТТЕРН при обнаружении подтверждающего паттерна."""
-    signals = (
-        db.query(Signal)
-        .filter(Signal.status == "ОТКРЫТ")
-        .filter(Signal.pattern_triggered == False)
-        .filter(Signal.pair != None)
-        .all()
-    )
+    def _query_open():
+        return list(
+            db.query(Signal)
+            .filter(Signal.status == "ОТКРЫТ")
+            .filter(Signal.pattern_triggered == False)
+            .filter(Signal.pair != None)
+            .all()
+        )
+    signals = await asyncio.to_thread(_query_open)
     for s in signals:
         candles = await get_klines(s.pair, s.timeframe or "1h", limit=30)
         if not candles or len(candles) < 3:
@@ -674,7 +680,7 @@ async def _check_patterns(db):
         s.pattern_triggered_at = utcnow()
         s.pattern_price = current
         s.status = "ПАТТЕРН"
-        db.commit()
+        await asyncio.to_thread(db.commit)
         log_event(
             s.id, "pattern_detected", price=current,
             data={"pattern": pattern, "pair": s.pair, "direction": s.direction},
@@ -742,17 +748,19 @@ async def _check_tp_sl(db, allowed_ids: set[int] | None = None):
     Если передан allowed_ids — проверяем только сигналы из этого множества
     (grace period для свежеоткрытых на текущем тике).
     """
-    q = (
-        db.query(Signal)
-        .filter(Signal.status.in_(["ОТКРЫТ", "ПАТТЕРН"]))
-        .filter(Signal.pair != None)
-    )
-    if allowed_ids is not None:
-        if not allowed_ids:
-            return
-        q = q.filter(Signal.id.in_(allowed_ids))
-    signals = q.all()
-    if not signals:
+    def _query_tp_sl():
+        q_ = (
+            db.query(Signal)
+            .filter(Signal.status.in_(["ОТКРЫТ", "ПАТТЕРН"]))
+            .filter(Signal.pair != None)
+        )
+        if allowed_ids is not None:
+            if not allowed_ids:
+                return None
+            q_ = q_.filter(Signal.id.in_(allowed_ids))
+        return list(q_.all())
+    signals = await asyncio.to_thread(_query_tp_sl)
+    if signals is None or not signals:
         return
     pairs = list({s.pair for s in signals})
     prices = await get_prices(pairs)
@@ -772,7 +780,7 @@ async def _check_tp_sl(db, allowed_ids: set[int] | None = None):
         s.exit_price = exit_price
         s.pnl_percent = pnl
         s.closed_at = utcnow()
-        db.commit()
+        await asyncio.to_thread(db.commit)
         log_event(
             s.id, f"{result.lower()}_hit", price=exit_price,
             data={
