@@ -1528,9 +1528,9 @@ async def on_signal(signal_data: dict):
             _log_rejection(signal_data, f"[RSI-FILTER ERROR] supertrend RSI calc failed: {e}")
             return None
 
-        if direction == "LONG" and rsi_1h >= 60:
-            logger.info(f"Paper SKIP (supertrend RSI): {symbol} LONG 1h-RSI={rsi_1h:.1f}≥60")
-            _log_rejection(signal_data, f"[RSI-FILTER] supertrend LONG: 1h-RSI={rsi_1h:.1f}≥60 (late entry, бэктест: WR 36% / -175 USDT)")
+        if direction == "LONG" and rsi_1h >= 65:
+            logger.info(f"Paper SKIP (supertrend RSI): {symbol} LONG 1h-RSI={rsi_1h:.1f}≥65")
+            _log_rejection(signal_data, f"[RSI-FILTER] supertrend LONG: 1h-RSI={rsi_1h:.1f}≥65 (late entry)")
             return None
         if direction == "SHORT" and rsi_1h <= 40:
             logger.info(f"Paper SKIP (supertrend RSI): {symbol} SHORT 1h-RSI={rsi_1h:.1f}≤40")

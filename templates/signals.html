@@ -606,7 +606,7 @@ async function openChartModal(symbol, pair, direction, pnl) {
     if (!window._lwcLoaded) {
       await new Promise(resolve => {
         const sc = document.createElement('script');
-        sc.src = 'https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js';
+        sc.src = '/static/lightweight-charts.js';
         sc.onload = () => { window._lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat(); resolve(); };
         sc.onerror = () => { window._lwcLoaded = false; resolve(); };
         document.head.appendChild(sc);
@@ -4033,7 +4033,7 @@ async function _drawPaperHistChart(idx) {
   if (!window._lwcLoaded) {
     await new Promise(resolve => {
       const sc = document.createElement('script');
-      sc.src = 'https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js';
+      sc.src = '/static/lightweight-charts.js';
       sc.onload = () => { window._lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat(); resolve(); };
       document.head.appendChild(sc);
     });
@@ -4314,7 +4314,7 @@ async function _renderPaperChart(idx, tf) {
   if (!_lwcPaperLoaded) {
     await new Promise(resolve => {
       const sc = document.createElement('script');
-      sc.src = 'https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js';
+      sc.src = '/static/lightweight-charts.js';
       sc.onload = () => { _lwcPaperLoaded = true; resolve(); };
       if (window.LightweightCharts) { _lwcPaperLoaded = true; resolve(); }
       else document.head.appendChild(sc);
@@ -6454,7 +6454,7 @@ async function loadCoinChart(coin) {
   if (!_lwcLoaded) {
     await new Promise(resolve => {
       const sc = document.createElement('script');
-      sc.src = 'https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js';
+      sc.src = '/static/lightweight-charts.js';
       sc.onload = () => { _lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat(); resolve(); };
       if (window.LightweightCharts) { _lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat(); resolve(); }
       else document.head.appendChild(sc);
@@ -7153,7 +7153,7 @@ async function openJournalChart(idx, forceTF) {
   if (!_lwcLoaded) {
     await new Promise((resolve) => {
       const sc = document.createElement('script');
-      sc.src = 'https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js';
+      sc.src = '/static/lightweight-charts.js';
       sc.onload = () => { _lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat(); resolve(); };
       document.head.appendChild(sc);
     });

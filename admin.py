@@ -215,6 +215,20 @@ except ImportError:
 
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates"))
 
+# Static files (lightweight-charts.js + future assets) — отдаются с того же
+# сервера → HTTP/2 multiplexing + нет stranger TLS. CDN unpkg даёт ~0.9с,
+# локально — 50-100мс.
+try:
+    from fastapi.staticfiles import StaticFiles
+    _static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    if os.path.isdir(_static_dir):
+        app.mount("/static",
+                  StaticFiles(directory=_static_dir, check_dir=False),
+                  name="static")
+        # Cache headers устанавливаются через middleware ниже
+except Exception as _se:
+    logging.getLogger(__name__).warning(f"[STATIC] mount failed: {_se}")
+
 
 # ── Session cookie auth ───────────────────────────────────────────────
 SESSION_COOKIE = "tradium_session"
