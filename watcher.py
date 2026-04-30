@@ -3488,19 +3488,24 @@ async def start_watcher():
         logger.info("[st-tracker] background loop started")
     except Exception:
         logger.exception("[st-tracker] failed to start loop")
-    # Candles prewarm — каждые 3 мин для топ-80 активных пар
-    try:
-        asyncio.create_task(_candles_prewarm_loop())
-        logger.info("[prewarm] candles loop started")
-    except Exception:
-        logger.exception("[prewarm] failed to start loop")
-    # ETH/KC prewarm — каждые 4 мин, чтобы рендер /signals не упирался
-    # в холодный HTTP к Binance (раньше 20+ сек на холодный старт страницы)
-    try:
-        asyncio.create_task(_eth_kc_prewarm_loop())
-        logger.info("[prewarm] ETH/KC loop started")
-    except Exception:
-        logger.exception("[prewarm] ETH/KC loop failed to start")
+    # [DISABLED — Atlas Free M0 throttle protection]
+    # Background prewarm loops отключены чтобы НЕ дополнительно нагружать
+    # перегруженный Atlas Free Tier. UI справится через user-driven cache —
+    # первый запрос холодный (~1с), следующие из cache (8-60с TTL).
+    # При upgrade Atlas до M2+ можно включить обратно.
+    if os.getenv("ENABLE_PREWARM", "0") == "1":
+        try:
+            asyncio.create_task(_candles_prewarm_loop())
+            logger.info("[prewarm] candles loop started")
+        except Exception:
+            logger.exception("[prewarm] failed to start loop")
+        try:
+            asyncio.create_task(_eth_kc_prewarm_loop())
+            logger.info("[prewarm] ETH/KC loop started")
+        except Exception:
+            logger.exception("[prewarm] ETH/KC loop failed to start")
+    else:
+        logger.warning("[prewarm] DISABLED (set ENABLE_PREWARM=1 to enable)")
     # Market phase loop — каждые 3 мин определяем фазу + alert при смене
     try:
         asyncio.create_task(_market_phase_loop())
@@ -3539,12 +3544,13 @@ async def start_watcher():
         logger.info("[live-balance-refresh] background loop started")
     except Exception:
         logger.exception("[live-balance-refresh] failed to start loop")
-    # UI prewarm — прогрев тяжёлых endpoint'ов после cold-start
-    try:
-        asyncio.create_task(_ui_prewarm_loop())
-        logger.info("[ui-prewarm] background loop started")
-    except Exception:
-        logger.exception("[ui-prewarm] failed to start loop")
+    # UI prewarm — отключён по умолчанию (Atlas throttle)
+    if os.getenv("ENABLE_PREWARM", "0") == "1":
+        try:
+            asyncio.create_task(_ui_prewarm_loop())
+            logger.info("[ui-prewarm] background loop started")
+        except Exception:
+            logger.exception("[ui-prewarm] failed to start loop")
     # [ОТКЛЮЧЕНО] AI memory refresh + AI review open positions —
     # система переведена на rule-based (Entry Checker 8 проверок + TP ladder).
     # AI больше не используется для торговых решений.

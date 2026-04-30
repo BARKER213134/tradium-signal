@@ -73,20 +73,22 @@ class AsyncTTLCache:
 
 
 # ── Глобальные инстансы для admin.py ──
-journal_cache = AsyncTTLCache(ttl=20)       # /api/journal — 20с (мгновенная инвалидация при push от источников, сбалансировано с UI polling)
-kl_enrich_cache = AsyncTTLCache(ttl=30)     # /api/key-levels/enrich — обогащение идёт сразу после журнала
-journal_by_symbol_cache = AsyncTTLCache(ttl=60)  # /api/journal/by-symbol
-top_picks_cache = AsyncTTLCache(ttl=60)     # /api/top-picks
-pending_clusters_cache = AsyncTTLCache(ttl=90)  # /api/pending-clusters
-confluence_cache = AsyncTTLCache(ttl=30)    # /api/confluence
-anomalies_cache = AsyncTTLCache(ttl=30)     # /api/anomalies
-smart_levels_cache = AsyncTTLCache(ttl=120) # /api/smart-levels
-fvg_signals_cache = AsyncTTLCache(ttl=30)   # /api/fvg-signals
-fvg_journal_cache = AsyncTTLCache(ttl=30)   # /api/fvg-journal
-paper_learnings_cache = AsyncTTLCache(ttl=60)   # /api/paper/learnings
-paper_rejections_cache = AsyncTTLCache(ttl=30)  # /api/paper/rejections
-paper_history_cache = AsyncTTLCache(ttl=30)     # /api/paper/history — was timing out 15s
-cv_flips_cache = AsyncTTLCache(ttl=45)          # /api/cv-flips — медленный
-cv_flip_results_cache = AsyncTTLCache(ttl=60)   # /api/cv-flip-results — крутой sync compute, был 15s timeout
-clusters_cache = AsyncTTLCache(ttl=30)          # /api/clusters — 3s без cache
-market_events_cache = AsyncTTLCache(ttl=30)     # /api/market-events
+# TTL увеличены для разгрузки Atlas Free Tier M0 (30.04.2026 throttle issue).
+# UI обновляется реже, но платформа стабильнее. После upgrade Atlas можно вернуть.
+journal_cache = AsyncTTLCache(ttl=60)       # /api/journal — 60с (было 20)
+kl_enrich_cache = AsyncTTLCache(ttl=120)    # /api/key-levels/enrich
+journal_by_symbol_cache = AsyncTTLCache(ttl=180)  # /api/journal/by-symbol — 3 мин
+top_picks_cache = AsyncTTLCache(ttl=120)    # /api/top-picks
+pending_clusters_cache = AsyncTTLCache(ttl=180)  # /api/pending-clusters
+confluence_cache = AsyncTTLCache(ttl=90)    # /api/confluence
+anomalies_cache = AsyncTTLCache(ttl=90)     # /api/anomalies
+smart_levels_cache = AsyncTTLCache(ttl=300)
+fvg_signals_cache = AsyncTTLCache(ttl=90)   # /api/fvg-signals
+fvg_journal_cache = AsyncTTLCache(ttl=90)   # /api/fvg-journal
+paper_learnings_cache = AsyncTTLCache(ttl=120)
+paper_rejections_cache = AsyncTTLCache(ttl=60)  # 30→60
+paper_history_cache = AsyncTTLCache(ttl=60)     # 30→60
+cv_flips_cache = AsyncTTLCache(ttl=120)         # 45→120
+cv_flip_results_cache = AsyncTTLCache(ttl=180)  # 60→180
+clusters_cache = AsyncTTLCache(ttl=90)          # 30→90
+market_events_cache = AsyncTTLCache(ttl=120)
