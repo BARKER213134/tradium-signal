@@ -1902,12 +1902,16 @@ async def _check_anomalies():
 
         # Дедупликация — та же пара за последние 4 часа (обновляем время если повторно)
         import datetime
-        existing = _anomalies().find_one({
-            "symbol": r["symbol"],
-            "detected_at": {"$gte": utcnow() - datetime.timedelta(hours=4)},
-        })
+        existing = await asyncio.to_thread(
+            _anomalies().find_one,
+            {"symbol": r["symbol"], "detected_at": {"$gte": utcnow() - datetime.timedelta(hours=4)}},
+        )
         if existing:
-            _anomalies().update_one({"_id": existing["_id"]}, {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}})
+            await asyncio.to_thread(
+                _anomalies().update_one,
+                {"_id": existing["_id"]},
+                {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}},
+            )
             continue
 
         # SuperTrend фильтр
@@ -1919,7 +1923,7 @@ async def _check_anomalies():
             "anomalies": r["anomalies"], "detected_at": now,
             "st_passed": st_passed,
         }
-        _anomalies().insert_one(doc)
+        await asyncio.to_thread(_anomalies().insert_one, doc)
         anomaly_scan_state["found"] += 1
         results.append(r)
         # Invalidate journal cache — anomaly сразу появляется в UI
@@ -2127,14 +2131,18 @@ async def _check_confluence():
             continue
 
         # Дедупликация — та же пара + направление за 4 часа (обновляем время если повторно)
-        existing = _confluence().find_one({
-            "symbol": r["symbol"],
-            "direction": r["direction"],
-            "detected_at": {"$gte": utcnow() - datetime.timedelta(hours=4)},
-        })
+        existing = await asyncio.to_thread(
+            _confluence().find_one,
+            {"symbol": r["symbol"], "direction": r["direction"],
+             "detected_at": {"$gte": utcnow() - datetime.timedelta(hours=4)}},
+        )
         if existing:
             # Обновляем время последнего обнаружения
-            _confluence().update_one({"_id": existing["_id"]}, {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}})
+            await asyncio.to_thread(
+                _confluence().update_one,
+                {"_id": existing["_id"]},
+                {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}},
+            )
             continue
 
         st_passed, st_data = _check_keltner_filter(r["direction"])
@@ -2154,7 +2162,7 @@ async def _check_confluence():
             "detected_at": now,
             "st_passed": st_passed,
         }
-        insert_res = _confluence().insert_one(doc)
+        insert_res = await asyncio.to_thread(_confluence().insert_one, doc)
         confluence_scan_state["found"] += 1
         results.append(r)
         # Invalidate journal cache — confluence сразу появляется в UI
