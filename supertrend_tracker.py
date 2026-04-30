@@ -233,26 +233,20 @@ async def _save_signal(pair_norm: str, flip_bar: dict, tier: str, extras: dict,
         "flip_at": flip_at,
         "created_at": utcnow(),
     }
-    # Next autoincrement id (через to_thread — иначе блокирует event loop)
-    def _get_seq():
+    # Next autoincrement id
+    try:
         from database import _get_db
-        return _get_db().counters.find_one_and_update(
+        counter = _get_db().counters.find_one_and_update(
             {"_id": "supertrend_signals"},
             {"$inc": {"seq": 1}},
             upsert=True, return_document=True,
         )
-    try:
-        counter = await asyncio.wait_for(asyncio.to_thread(_get_seq), timeout=5.0)
         doc["id"] = (counter or {}).get("seq", 1)
-    except (asyncio.TimeoutError, Exception):
+    except Exception:
         doc["id"] = int(utcnow().timestamp())
 
-    # Insert через to_thread — в горячем 5-минутном цикле обрабатывается
-    # ~486 пар, sync insert вешал event loop пока Atlas отвечает.
-    def _do_insert():
-        _supertrend_signals().insert_one(doc)
     try:
-        await asyncio.wait_for(asyncio.to_thread(_do_insert), timeout=5.0)
+        _supertrend_signals().insert_one(doc)
         # Инвалидация journal cache чтоб новый ST-сигнал сразу появился в UI
         try:
             from cache_utils import journal_cache
@@ -260,9 +254,6 @@ async def _save_signal(pair_norm: str, flip_bar: dict, tier: str, extras: dict,
         except Exception:
             pass
         return doc
-    except asyncio.TimeoutError:
-        logger.warning(f"[st-tracker] save TIMEOUT {pair_norm}/{tier}")
-        return None
     except Exception as e:
         # DuplicateKeyError (этот флип уже был записан) — тихо пропускаем
         if "duplicate" in str(e).lower() or "E11000" in str(e):
@@ -433,15 +424,7 @@ async def _process_pair(pair_norm: str, alert_enabled: bool = True) -> int:
     created = 0
     for fidx in fresh_flip_indices:
         flip_bar = st_1h[fidx]
-        # _classify_flip содержит 3× sync Mongo find — через to_thread.
-        # Без этого 5-мин цикл по ~486 парам блокировал event loop надолго.
-        try:
-            tier, extras = await asyncio.wait_for(
-                asyncio.to_thread(_classify_flip, pair_norm, flip_bar, st_4h, st_1d),
-                timeout=10.0,
-            )
-        except (asyncio.TimeoutError, Exception):
-            continue
+        tier, extras = _classify_flip(pair_norm, flip_bar, st_4h, st_1d)
         if tier is None:
             continue
         sig = await _save_signal(pair_norm, flip_bar, tier, extras, ST_PERIOD, ST_MULT)
@@ -520,13 +503,7 @@ async def backfill(days: int = 14, alert_enabled: bool = False,
         window_flips = [i for i in flips if st_1h[i]["t"] >= since_ms]
         for fidx in window_flips:
             flip_bar = st_1h[fidx]
-            try:
-                tier, extras = await asyncio.wait_for(
-                    asyncio.to_thread(_classify_flip, pair_norm, flip_bar, st_4h, st_1d),
-                    timeout=10.0,
-                )
-            except (asyncio.TimeoutError, Exception):
-                continue
+            tier, extras = _classify_flip(pair_norm, flip_bar, st_4h, st_1d)
             if tier is None:
                 continue
             sig = await _save_signal(pair_norm, flip_bar, tier, extras, ST_PERIOD, ST_MULT)
