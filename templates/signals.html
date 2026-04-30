@@ -3583,8 +3583,21 @@ safeInterval(loadConflicts, 30000);
       <div id="atPositions" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;min-height:100px;">
         <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет открытых позиций</div>
       </div>
-      <!-- 🛑 Лог отказов — почему не вошёл в сделку (rule-based причины) -->
+      <!-- ✅ Лог входов — почему вошёл в сделку (что совпало) -->
       <div style="margin-top:16px;">
+        <div style="border:1px solid rgba(0,229,160,0.25);border-radius:10px;overflow:hidden;">
+          <div id="atAccHeader" onclick="toggleAccepts()" style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;background:rgba(0,229,160,0.04);user-select:none;">
+            <span id="atAccArrow" style="transition:transform 0.2s;display:inline-block;font-size:10px;">▶</span>
+            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text);font-weight:600;">✅ Входы</span>
+            <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted);">— почему зашли в позицию (что совпало)</span>
+            <span id="atAccMeta" style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
+          </div>
+          <div id="atAccBody" style="display:none;max-height:500px;overflow-y:auto;background:var(--dark-2);"></div>
+        </div>
+      </div>
+
+      <!-- 🛑 Лог отказов — почему не вошёл в сделку (rule-based причины) -->
+      <div style="margin-top:10px;">
         <div style="border:1px solid rgba(255,77,109,0.25);border-radius:10px;overflow:hidden;">
           <div id="atRejHeader" onclick="toggleRejections()" style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;background:rgba(255,77,109,0.04);user-select:none;">
             <span id="atRejArrow" style="transition:transform 0.2s;display:inline-block;font-size:10px;">▶</span>
@@ -5500,6 +5513,109 @@ async function deleteAccount(id) {
   }, 30000);
 })();
 
+// ✅ Входы — гармошка (почему зашли в позицию, что совпало)
+async function toggleAccepts() {
+  const body = document.getElementById('atAccBody');
+  const arr  = document.getElementById('atAccArrow');
+  if (!body) return;
+  const opened = body.style.display === 'block';
+  if (opened) {
+    body.style.display = 'none';
+    if (arr) arr.style.transform = 'rotate(0deg)';
+    return;
+  }
+  body.style.display = 'block';
+  if (arr) arr.style.transform = 'rotate(90deg)';
+  await loadAccepts();
+}
+
+async function loadAccepts() {
+  const body = document.getElementById('atAccBody');
+  const meta = document.getElementById('atAccMeta');
+  if (!body) return;
+  try {
+    const r = await fetch('/api/paper/accepts?limit=200');
+    const d = await r.json();
+    if (!d.ok) {
+      body.innerHTML = `<div style="padding:20px;color:var(--sell);">Ошибка: ${d.error || '?'}</div>`;
+      return;
+    }
+    const items = d.items || [];
+    if (meta) meta.textContent = `${items.length} входов`;
+    if (!items.length) {
+      body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:11px;">Пока нет открытых сделок</div>';
+      return;
+    }
+    const srcEmoji = {
+      tradium:'📡', cryptovizor:'🚀', anomaly:'⚠', confluence:'🎯',
+      cluster:'💠', paper:'🤖', supertrend:'🌀', ai_signal:'🧠',
+    };
+    body.innerHTML = items.map(it => {
+      const when = it.opened_at ? new Date(it.opened_at).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '';
+      const pair = (it.symbol || '').replace('USDT','');
+      const dirC = it.direction === 'LONG' ? '#00e5a0' : '#ff4d6d';
+      const se = srcEmoji[it.source] || '•';
+      const tp = it.is_top_pick ? '👑' : '';
+      // Цвета для PnL
+      const pnl = it.pnl_usdt;
+      let pnlBadge = '';
+      if (pnl != null) {
+        const pColor = pnl > 0 ? '#00e5a0' : pnl < 0 ? '#ff4d6d' : 'var(--muted)';
+        const pSign = pnl > 0 ? '+' : '';
+        const status = it.status === 'OPEN' ? '🟢 OPEN' : `${it.status}`;
+        pnlBadge = `<span style="color:${pColor};font-weight:700;">${status} · ${pSign}${pnl.toFixed(2)}$</span>`;
+      } else if (it.live_pnl != null) {
+        const lp = it.live_pnl;
+        const pColor = lp > 0 ? '#00e5a0' : '#ff4d6d';
+        const pSign = lp > 0 ? '+' : '';
+        pnlBadge = `<span style="color:${pColor};">🟢 OPEN · live ${pSign}${lp.toFixed(2)}$</span>`;
+      }
+
+      // Парсим reasoning — ищем секции
+      const reasoning = (it.ai_reasoning || it.reasoning || '');
+      // Извлечь основные сигналы для матча
+      const signals = [];
+      if (it.entry) signals.push(`Entry: <b>${it.entry}</b>`);
+      if (it.tp1) signals.push(`TP1: <b>${it.tp1}</b>`);
+      if (it.sl) signals.push(`SL: <b>${it.sl}</b>`);
+      if (it.leverage) signals.push(`×${it.leverage}`);
+      if (it.size_pct) signals.push(`${it.size_pct}%`);
+      if (it.score != null) signals.push(`score=<b>${it.score}</b>`);
+
+      // Phase + checks из reasoning
+      const checksList = (it.entry_checks || []).map(c => {
+        const sCol = c.status === 'ok' ? '#00e5a0' : c.status === 'warn' ? '#ffa24e' : '#ff4d6d';
+        const sIco = c.status === 'ok' ? '✓' : c.status === 'warn' ? '⚠' : '✕';
+        return `<div style="padding:3px 6px;display:flex;gap:6px;font-size:10.5px;">
+          <span style="color:${sCol};font-weight:700;width:14px;">${sIco}</span>
+          <span style="flex:0 0 110px;color:var(--text);">${c.name||''}</span>
+          <span style="color:var(--muted);">${(c.comment||'').replace(/</g,'&lt;')}</span>
+        </div>`;
+      }).join('');
+
+      return `<div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:11px;">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:5px;flex-wrap:wrap;">
+          <span class="mono text-muted" style="font-size:10px;">${when}</span>
+          <span class="mono fw-700" style="min-width:55px;">${pair}</span>
+          <span class="mono fw-700" style="color:${dirC};">${it.direction || ''}</span>
+          <span>${se} ${it.source || ''}</span>
+          <span class="mono text-muted" style="font-size:10px;">${tp}</span>
+          <span style="margin-left:auto;font-family:var(--font-mono);font-size:10.5px;">${pnlBadge}</span>
+        </div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-bottom:5px;">
+          ${signals.join(' · ')}
+        </div>
+        <div style="color:var(--text);padding:4px 6px;background:rgba(0,229,160,0.05);border-left:2px solid rgba(0,229,160,0.4);font-size:11px;line-height:1.4;margin-bottom:6px;">
+          ${reasoning.replace(/</g,'&lt;') || '<span style="color:var(--muted)">нет описания</span>'}
+        </div>
+        ${checksList ? `<div style="background:rgba(255,255,255,0.02);border-radius:4px;padding:4px;margin-top:4px;">${checksList}</div>` : ''}
+      </div>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = `<div style="padding:20px;color:var(--sell);">Ошибка сети: ${e.message}</div>`;
+  }
+}
+
 // 🛑 Отказы AI — гармошка (почему не вошёл в сделку)
 async function toggleRejections() {
   const body = document.getElementById('atRejBody');
@@ -5577,10 +5693,16 @@ safeInterval(() => {
   const body = document.getElementById('atRejBody');
   if (body) loadRejections();  // обновляет и счётчик и список
 }, 20000);
+// Auto-refresh входов
+safeInterval(() => {
+  const body = document.getElementById('atAccBody');
+  if (body) loadAccepts();
+}, 20000);
 // Initial load: сразу при загрузке страницы (чтобы счётчик не был пустым 20с)
 setTimeout(() => {
   try {
     if (typeof loadRejections === 'function') loadRejections();
+    if (typeof loadAccepts === 'function') loadAccepts();
   } catch(_) {}
 }, 1500);
 </script>

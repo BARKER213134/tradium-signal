@@ -6269,6 +6269,74 @@ async def api_paper_status():
     return response
 
 
+@app.get("/api/paper/accepts")
+async def api_paper_accepts(limit: int = 200):
+    """Лог входов в позиции — что совпало для принятия решения.
+    Объединяет открытые + закрытые сделки, добавляет verified_entry checks
+    из verified_signals collection если есть.
+
+    Используется UI 'Входы' гармошкой (атрейдинг)."""
+    def _sync():
+        from database import _get_db
+        db = _get_db()
+        # Берём последние paper_trades с trade_id (открытые + закрытые)
+        trades = list(db.paper_trades.find(
+            {"trade_id": {"$exists": True}},
+            sort=[("opened_at", -1)],
+        ).limit(int(limit)))
+        # Cross-reference с verified_signals для получения checks
+        results = []
+        for t in trades:
+            sym = t.get("symbol", "")
+            pair = (sym.replace("USDT", "/USDT") if sym.endswith("USDT") else sym)
+            opened_at = t.get("opened_at")
+            # Ищем verified_signals в окне ±5 мин от opened_at
+            entry_checks = []
+            verdict = None
+            try:
+                from datetime import timedelta as _td
+                if opened_at:
+                    win_start = opened_at - _td(minutes=5)
+                    win_end = opened_at + _td(minutes=5)
+                    vs = db.verified_signals.find_one(
+                        {"pair": pair, "direction": t.get("direction"),
+                         "created_at": {"$gte": win_start, "$lte": win_end}},
+                        sort=[("created_at", -1)],
+                    )
+                    if vs:
+                        entry_checks = vs.get("checks", [])
+                        verdict = vs.get("verdict")
+            except Exception:
+                pass
+
+            results.append({
+                "trade_id": t.get("trade_id"),
+                "symbol": sym,
+                "pair": pair,
+                "direction": t.get("direction"),
+                "source": t.get("source"),
+                "entry": t.get("entry"),
+                "tp1": t.get("tp1"),
+                "sl": t.get("sl"),
+                "leverage": t.get("leverage"),
+                "size_pct": t.get("size_pct"),
+                "size_usdt": t.get("size_usdt"),
+                "score": t.get("score"),
+                "is_top_pick": bool(t.get("is_top_pick")),
+                "ai_reasoning": t.get("ai_reasoning"),
+                "status": t.get("status"),
+                "pnl_usdt": t.get("pnl_usdt"),
+                "pnl_pct": t.get("pnl_pct"),
+                "opened_at": opened_at.isoformat() if hasattr(opened_at, "isoformat") else str(opened_at),
+                "closed_at": t.get("closed_at").isoformat() if hasattr(t.get("closed_at"), "isoformat") else None,
+                "verdict": verdict,
+                "entry_checks": entry_checks,
+            })
+        return {"ok": True, "count": len(results), "items": results}
+
+    return await asyncio.to_thread(_sync)
+
+
 @app.get("/api/paper/history")
 async def api_paper_history(limit: int = 50):
     """Cache 30s — UI polling каждые 15с, история меняется редко (только
