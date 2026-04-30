@@ -92,3 +92,4 @@ cv_flips_cache = AsyncTTLCache(ttl=120)         # 45→120
 cv_flip_results_cache = AsyncTTLCache(ttl=180)  # 60→180
 clusters_cache = AsyncTTLCache(ttl=90)          # 30→90
 market_events_cache = AsyncTTLCache(ttl=120)
+supertrend_signals_cache = AsyncTTLCache(ttl=30)  # /api/supertrend-signals — UI poll, 30с

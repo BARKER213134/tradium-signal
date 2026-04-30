@@ -1230,32 +1230,44 @@ async def api_backtest_st_status():
 async def api_supertrend_signals(tier: str = "", pair: str = "",
                                  hours: int = 336, limit: int = 300):
     """Список ST-сигналов для UI-таблиц.
-    Фильтры: tier (vip/mtf/daily), pair, hours (окно от текущего времени)."""
-    from database import _supertrend_signals, utcnow
-    from datetime import timedelta
-    since = utcnow() - timedelta(hours=hours)
-    query: dict = {"flip_at": {"$gte": since}}
-    if tier:
-        query["tier"] = tier
-    if pair:
-        p = pair.replace("/", "").upper()
-        if not p.endswith("USDT"): p = p + "USDT"
-        query["pair_norm"] = p
-    items = []
-    for doc in _supertrend_signals().find(query).sort("flip_at", -1).limit(limit):
-        doc.pop("_id", None)
-        for k in ("flip_at", "created_at"):
-            v = doc.get(k)
-            if hasattr(v, "isoformat"):
-                doc[k] = v.isoformat()
-        # aligned_bots may have datetime inside
-        for ab in doc.get("aligned_bots", []):
-            v = ab.get("at")
-            if hasattr(v, "isoformat"):
-                ab["at"] = v.isoformat()
-        items.append(doc)
-    return {"ok": True, "count": len(items), "items": items,
-            "tier": tier, "pair": pair, "hours": hours}
+    Фильтры: tier (vip/mtf/daily), pair, hours (окно от текущего времени).
+
+    Cache 30s + sync find в to_thread. Раньше был sync Mongo прямо в
+    event loop + no cache — каждый poll давал 1-3s блокировки.
+    """
+    from cache_utils import supertrend_signals_cache
+
+    async def _compute():
+        def _sync():
+            from database import _supertrend_signals, utcnow
+            from datetime import timedelta
+            since = utcnow() - timedelta(hours=hours)
+            query: dict = {"flip_at": {"$gte": since}}
+            if tier:
+                query["tier"] = tier
+            if pair:
+                p = pair.replace("/", "").upper()
+                if not p.endswith("USDT"): p = p + "USDT"
+                query["pair_norm"] = p
+            items = []
+            for doc in _supertrend_signals().find(query).sort("flip_at", -1).limit(limit):
+                doc.pop("_id", None)
+                for k in ("flip_at", "created_at"):
+                    v = doc.get(k)
+                    if hasattr(v, "isoformat"):
+                        doc[k] = v.isoformat()
+                for ab in doc.get("aligned_bots", []):
+                    v = ab.get("at")
+                    if hasattr(v, "isoformat"):
+                        ab["at"] = v.isoformat()
+                items.append(doc)
+            return items
+        items = await asyncio.to_thread(_sync)
+        return {"ok": True, "count": len(items), "items": items,
+                "tier": tier, "pair": pair, "hours": hours}
+
+    cache_key = f"st|{tier}|{pair}|{hours}|{limit}"
+    return await supertrend_signals_cache.get_or_compute(cache_key, _compute)
 
 
 def _cv_flip_backfill_sync(hours: int = 48) -> dict:
