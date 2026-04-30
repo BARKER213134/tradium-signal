@@ -4882,6 +4882,36 @@ async def api_reversal_meter():
         return {"error": str(e), "traceback": traceback.format_exc()[-2000:]}
 
 
+@app.post("/api/userbot/login/start")
+async def api_userbot_login_start(payload: dict):
+    """Начать re-login flow Telethon. Шлёт код на phone через Telegram.
+    Используется когда session заблокирована/expired (сообщение
+    'authorization key was used under two different IP addresses')."""
+    phone = (payload or {}).get("phone", "").strip()
+    if not phone or not phone.startswith("+") or len(phone) < 8:
+        return {"ok": False, "error": "phone должен начинаться с + и содержать код страны"}
+    from userbot import login_start
+    return await login_start(phone)
+
+
+@app.post("/api/userbot/login/code")
+async def api_userbot_login_code(payload: dict):
+    """Шаг 2: завершить login кодом. Если 2FA включена — повторно с password."""
+    code = str((payload or {}).get("code", "")).strip()
+    password = (payload or {}).get("password", "") or None
+    if not code:
+        return {"ok": False, "error": "code обязателен"}
+    from userbot import login_complete
+    return await login_complete(code, password)
+
+
+@app.get("/api/userbot/login/state")
+async def api_userbot_login_state():
+    """Текущее состояние login flow (in_progress / needs_2fa / phone)."""
+    from userbot import get_login_state
+    return await asyncio.to_thread(get_login_state)
+
+
 @app.post("/api/userbot/reload-session")
 async def api_userbot_reload_session():
     """Форсированная перезагрузка session_userbot.session из Mongo.

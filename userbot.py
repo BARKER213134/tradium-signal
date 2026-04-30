@@ -32,6 +32,134 @@ _last_setup_error = None       # str последней ошибки из _setup
 _last_disconnect_at = None     # datetime последнего run_until_disconnected exit
 _reconnect_count = 0           # сколько раз перезапускал setup
 
+# ── Login flow state (для UI re-login через браузер) ─────────────────
+# Когда session expired/blocked, админ может через UI:
+# 1. POST /api/userbot/login/start { phone } → шлём SMS код
+# 2. POST /api/userbot/login/code { code } → авторизация
+# 3. POST /api/userbot/login/2fa { password } → если двухфакторка
+# Pending клиент хранится в _login_state до завершения flow.
+_login_state: dict = {
+    "client": None,         # активный TelegramClient в процессе авторизации
+    "phone": None,
+    "phone_code_hash": None,
+    "needs_2fa": False,
+    "started_at": None,
+}
+
+
+async def login_start(phone: str) -> dict:
+    """Шаг 1: послать код подтверждения на phone (Telegram пришлёт SMS/in-app).
+    Возвращает {ok, message} или {ok: False, error}."""
+    global _login_state
+    from telethon import TelegramClient
+    from datetime import datetime, timezone
+    # Закрыть предыдущую попытку если была
+    try:
+        if _login_state.get("client"):
+            await _login_state["client"].disconnect()
+    except Exception:
+        pass
+    # Удаляем старый session_userbot.session чтобы создать новый
+    here = os.path.dirname(os.path.abspath(__file__))
+    session_path = os.path.join(here, "session_userbot")
+    try:
+        for ext in ("", ".session", ".session-journal"):
+            p = session_path + ext
+            if os.path.exists(p):
+                os.remove(p)
+    except Exception as _e:
+        logger.warning(f"[login] cleanup session fail: {_e}")
+    # Создаём новый клиент с новой сессией
+    client = TelegramClient(session_path, API_ID, API_HASH)
+    try:
+        await client.connect()
+    except Exception as e:
+        return {"ok": False, "error": f"connect failed: {e}"}
+    try:
+        sent = await client.send_code_request(phone)
+    except Exception as e:
+        await client.disconnect()
+        return {"ok": False, "error": f"send_code: {e}"}
+    _login_state.update({
+        "client": client,
+        "phone": phone,
+        "phone_code_hash": sent.phone_code_hash,
+        "needs_2fa": False,
+        "started_at": datetime.now(timezone.utc),
+    })
+    return {"ok": True, "message": f"Код отправлен на {phone}. Проверь Telegram."}
+
+
+async def login_complete(code: str, password: str | None = None) -> dict:
+    """Шаг 2: завершить login кодом из Telegram (+ опционально 2FA password)."""
+    global _tg_client, _login_state, _last_setup_at, _last_setup_error
+    from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
+    from datetime import datetime, timezone
+    client = _login_state.get("client")
+    phone = _login_state.get("phone")
+    phone_code_hash = _login_state.get("phone_code_hash")
+    if not (client and phone and phone_code_hash):
+        return {"ok": False, "error": "no_pending_login — сначала вызови /login/start"}
+    try:
+        await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+    except SessionPasswordNeededError:
+        if not password:
+            _login_state["needs_2fa"] = True
+            return {"ok": False, "needs_2fa": True,
+                    "error": "Для аккаунта включена 2FA — нужен пароль"}
+        try:
+            await client.sign_in(password=password)
+        except Exception as e:
+            return {"ok": False, "error": f"2fa fail: {e}"}
+    except PhoneCodeInvalidError:
+        return {"ok": False, "error": "Неверный код"}
+    except Exception as e:
+        return {"ok": False, "error": f"sign_in: {e}"}
+    # Авторизация прошла → сохраняем session в Mongo + переподключаем supervisor
+    try:
+        await client.disconnect()
+    except Exception:
+        pass
+    # Persist session bytes в Mongo
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        session_path = os.path.join(here, "session_userbot.session")
+        if os.path.exists(session_path):
+            from database import _get_db
+            with open(session_path, "rb") as f:
+                data = f.read()
+            _get_db().system.update_one(
+                {"_id": "telethon_session"},
+                {"$set": {"data": data, "size": len(data),
+                          "updated_at": datetime.now(timezone.utc)}},
+                upsert=True,
+            )
+            logger.info(f"✅ Telethon session saved to Mongo ({len(data)} bytes)")
+    except Exception as e:
+        logger.warning(f"[login] persist to Mongo fail: {e}")
+    _login_state.update({
+        "client": None, "phone": None, "phone_code_hash": None,
+        "needs_2fa": False, "started_at": None,
+    })
+    # Trigger supervisor reconnect — отключаем старый client если есть
+    try:
+        if _tg_client:
+            await _tg_client.disconnect()
+    except Exception:
+        pass
+    _last_setup_error = None
+    return {"ok": True, "message": "Авторизация успешна! Сессия сохранена. Userbot подключится автоматически."}
+
+
+def get_login_state() -> dict:
+    """Текущее состояние login flow для UI."""
+    return {
+        "in_progress": bool(_login_state.get("phone_code_hash")),
+        "phone": _login_state.get("phone"),
+        "needs_2fa": _login_state.get("needs_2fa", False),
+        "started_at": _login_state.get("started_at"),
+    }
+
 # Буфер: message_id текста -> Signal.id в БД
 # Ждём следующее фото для этого сигнала
 _pending_charts: dict[int, int] = {}  # telegram_msg_id -> signal DB id
