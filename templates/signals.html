@@ -855,7 +855,7 @@ async function openChartModal(symbol, pair, direction, pnl) {
       return;
     }
 
-    const limitByTF = { '1h': 300, '4h': 200, '1d': 60, '30m': 300, '15m': 400 };
+    const limitByTF = { '1h': 200, '4h': 150, '1d': 60, '30m': 200, '15m': 250 };
     const candleLimit = limitByTF[tf] || 200;
 
     try {
@@ -4304,7 +4304,7 @@ async function _drawPaperHistChart(idx) {
   // Параллельно: свечи + все сигналы по монете из journal/by-symbol
   // 1h уменьшено 720→300 (12 дней истории) — first-load 2x быстрее.
   // Если нужна более длинная история — переключи на 4h/1d.
-  const limitByTF = { '1h': 300, '4h': 200, '1d': 60, '30m': 300, '15m': 400 };
+  const limitByTF = { '1h': 200, '4h': 150, '1d': 60, '30m': 200, '15m': 250 };
   const candleLimit = limitByTF[tf] || 200;
   try {
     const [candleR, sigR] = await Promise.all([
@@ -6834,7 +6834,7 @@ async function loadCoinChart(coin) {
 
   // Свечи — динамический limit под TF, чтобы покрыть ≥30 дней сигналов
   // 1h × 720 = 30д, 4h × 180 = 30д, 1d × 60 = 60д, 15m/30m оставляем 200
-  const limitByTF = { '1h': 720, '4h': 200, '1d': 60, '30m': 300, '15m': 400 };
+  const limitByTF = { '1h': 200, '4h': 150, '1d': 60, '30m': 200, '15m': 250 };
   const candleLimit = limitByTF[_coinTF] || 200;
   try {
     const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=${_coinTF}&limit=${candleLimit}`);

@@ -10322,9 +10322,10 @@ def _find_compatible_cache(symbol: str, tf: str, limit: int):
 
 
 @app.get("/api/journal-candles")
-async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
+async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100,
+                               response: Response = None):
     """Свечи для Lightweight Charts. Сервер-кеш по TTL per TF со
-    stale-while-revalidate + fuzzy limit-match.
+    stale-while-revalidate + fuzzy limit-match + browser Cache-Control.
 
     Lookup order:
       1. Точный {sym}|{tf}|{limit} hit → fresh / stale-revalidate
@@ -10339,6 +10340,11 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
     STALE_MAX = 5.0  # 5×TTL — считаем stale, но ещё приемлемо
     hit = _candles_cache.get(key)
     pair = symbol.replace("USDT", "/USDT") if "USDT" in symbol else symbol
+    # Browser cache: re-открытие того же графика берёт из браузера, не сервера.
+    # max-age = половина TTL чтобы клиент чаще обновлялся чем сервер expirится.
+    if response is not None:
+        browser_cache_s = max(30, int(ttl / 2))
+        response.headers["Cache-Control"] = f"public, max-age={browser_cache_s}"
 
     async def _bg_prefetch_other_tfs():
         for other_tf in ["15m", "30m", "1h", "4h", "1d"]:
@@ -10428,8 +10434,10 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100):
             "volume": c.get("v", 0),
         })
     _candles_cache[key] = (now, data)
-    # Lazy eviction старых записей (>STALE_MAX×TTL точно бесполезны)
-    if len(_candles_cache) > 500:
+    # Lazy eviction старых записей (>STALE_MAX×TTL точно бесполезны).
+    # 2000 entries × ~200 candles × ~50 bytes ≈ 20 MB — комфортно для
+    # active multi-symbol browsing, экономит cold fetches.
+    if len(_candles_cache) > 2000:
         for k in [k for k, v in _candles_cache.items() if (now - v[0]) > ttl * STALE_MAX]:
             _candles_cache.pop(k, None)
     # Background prefetch остальных TF — юзер вероятнее всего переключит

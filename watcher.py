@@ -3493,7 +3493,7 @@ async def start_watcher():
     # перегруженный Atlas Free Tier. UI справится через user-driven cache —
     # первый запрос холодный (~1с), следующие из cache (8-60с TTL).
     # При upgrade Atlas до M2+ можно включить обратно.
-    if os.getenv("ENABLE_PREWARM", "0") == "1":
+    if os.getenv("ENABLE_PREWARM", "1") == "1":
         try:
             asyncio.create_task(_candles_prewarm_loop())
             logger.info("[prewarm] candles loop started")
@@ -3545,7 +3545,7 @@ async def start_watcher():
     except Exception:
         logger.exception("[live-balance-refresh] failed to start loop")
     # UI prewarm — отключён по умолчанию (Atlas throttle)
-    if os.getenv("ENABLE_PREWARM", "0") == "1":
+    if os.getenv("ENABLE_PREWARM", "1") == "1":
         try:
             asyncio.create_task(_ui_prewarm_loop())
             logger.info("[ui-prewarm] background loop started")
