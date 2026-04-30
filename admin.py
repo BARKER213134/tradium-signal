@@ -4215,8 +4215,9 @@ async def _run_backfill_patterns(limit: int, status: str):
 @app.get("/api/clusters")
 async def api_clusters(status: str = "all", limit: int = 200):
     """Список кластеров для UI вкладки "Кластеры".
-    Sync Mongo (2 .find() + full-scan) выносим в to_thread и считаем stats
-    одним aggregate pipeline вместо полного чтения коллекции."""
+    Cache 30s — sync Mongo find+aggregate ~3с при лагах Atlas.
+    UI polling каждые 30с — кеш мгновенно, нагрузка снижается."""
+    from cache_utils import clusters_cache
     from database import _clusters
     from pymongo import DESCENDING
 
@@ -4265,7 +4266,9 @@ async def api_clusters(status: str = "all", limit: int = 200):
             stats = {"total": 0, "wins": 0, "losses": 0, "open": 0, "mega": 0, "strong": 0, "wr": 0, "sum_pnl": 0}
         return {"items": out, "stats": stats}
 
-    return await asyncio.to_thread(_sync)
+    async def _compute():
+        return await asyncio.to_thread(_sync)
+    return await clusters_cache.get_or_compute(f"clusters|{status}|{limit}", _compute)
 
 
 @app.get("/api/cluster-config")
