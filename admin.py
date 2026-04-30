@@ -304,12 +304,15 @@ _OPEN_PATHS = {"/login", "/static"}
 
 
 class StaticCacheMiddleware(BaseHTTPMiddleware):
-    """Cache-Control headers для /static/ — браузер кеширует на 1 сутки.
-    LWC и шрифты не меняются часто → нет смысла качать каждый reload."""
+    """Cache-Control headers для /static/ — браузер кеширует на 1 год.
+    LWC bundle ~196KB, шрифты — immutable. После первого скачивания
+    браузер использует disk cache, не делает запросов на сервер.
+    Если обновляется JS — нужно переименовать файл (busting).
+    """
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         if request.url.path.startswith("/static"):
-            response.headers["Cache-Control"] = "public, max-age=86400, immutable"
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
 
 
