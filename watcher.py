@@ -37,6 +37,28 @@ async def get_klines_any(pair, timeframe, limit=50):
 
 logger = logging.getLogger(__name__)
 
+
+async def _safe_log_event(event_type: str, data: dict) -> None:
+    """Записывает event в Mongo через to_thread (await — но НЕ блокирует event loop).
+    Caller ждёт до 5с, но другие coroutines в это время свободно работают.
+    Замена sync `_events().insert_one()` в hot paths (alert функции).
+    Раньше: sync вызов блокировал loop пока Atlas не ответит → весь tick застывал."""
+    def _sync():
+        try:
+            from database import _events
+            _events().insert_one({
+                "at": utcnow(),
+                "type": event_type,
+                "data": data,
+            })
+        except Exception:
+            pass
+    try:
+        await asyncio.wait_for(asyncio.to_thread(_sync), timeout=5.0)
+    except (asyncio.TimeoutError, Exception):
+        pass
+
+
 POLL_INTERVAL = 30  # секунд (было 15, снижаем нагрузку)
 
 _bot = None
@@ -365,8 +387,8 @@ async def _check_reversal_flip():
         _last_reversal_zone = zone
         print(f"[REVERSAL] {old} → {zone} (score={score})", flush=True)
         logger.info(f"Reversal zone change: {old} → {zone} (score={score})")
-        # Записываем event для маркера на графиках
-        try:
+        # Записываем event для маркера на графиках (await to_thread)
+        def _save_rev_event():
             from database import _market_events
             _market_events().insert_one({
                 "at": utcnow(),
@@ -377,7 +399,9 @@ async def _check_reversal_flip():
                 "direction": direction,
                 "strength": strength,
             })
-        except Exception as e:
+        try:
+            await asyncio.wait_for(asyncio.to_thread(_save_rev_event), timeout=5.0)
+        except (asyncio.TimeoutError, Exception) as e:
             logger.warning(f"[REVERSAL] event save fail: {e}")
         # Уведомления в боты отключены (решение 2026-04-17). Маркеры на
         # графиках — через /api/market-events.
@@ -390,7 +414,7 @@ async def _check_kc_change():
     global _last_kc_direction
     try:
         from exchange import get_keltner_eth
-        kc = get_keltner_eth()
+        kc = await asyncio.to_thread(get_keltner_eth)
         d = kc.get("direction", "NEUTRAL")
 
         if _last_kc_direction is None:
@@ -403,8 +427,8 @@ async def _check_kc_change():
             _last_kc_direction = d
             print(f"[KC] CHANGED: {old} → {d}", flush=True)
             logger.info(f"KC CHANGED: {old} → {d}")
-            # Записываем event для маркера на графиках
-            try:
+            # Записываем event для маркера на графиках (await to_thread)
+            def _save_kc_event():
                 from database import _market_events
                 _market_events().insert_one({
                     "at": utcnow(),
@@ -415,7 +439,9 @@ async def _check_kc_change():
                     "upper": kc.get("upper"),
                     "lower": kc.get("lower"),
                 })
-            except Exception as e:
+            try:
+                await asyncio.wait_for(asyncio.to_thread(_save_kc_event), timeout=5.0)
+            except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"[KC] event save fail: {e}")
             # Уведомления в боты отключены (решение 2026-04-17).
             # Маркеры на графиках — через /api/market-events.
@@ -1031,16 +1057,9 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
     if not BOT2_BOT_TOKEN or not ADMIN_CHAT_ID:
         return
 
-    # Маячок что функция вызвана
-    try:
-        from database import _events
-        _events().insert_one({
-            "at": utcnow(),
-            "type": "cv_alert_called",
-            "data": {"signal_id": signal.id, "pair": signal.pair, "pattern": pattern},
-        })
-    except Exception:
-        pass
+    # Маячок что функция вызвана (await to_thread — не блокирует event loop)
+    await _safe_log_event("cv_alert_called",
+                           {"signal_id": signal.id, "pair": signal.pair, "pattern": pattern})
 
     is_long = signal.direction in ("LONG", "BUY")
     dir_emoji = "🟢" if is_long else "🔴"
@@ -1113,44 +1132,24 @@ async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: f
                 await asyncio.sleep(2)
             continue
     if resp is None:
-        # Оба attempts упали — пишем error и возвращаемся
-        try:
-            from database import _events
-            _events().insert_one({
-                "at": utcnow(), "type": "cv_alert_error",
-                "data": {"signal_id": signal.id, "pair": signal.pair,
-                         "error": f"{type(last_err).__name__}: {str(last_err)[:200]}",
-                         "kind": "pattern", "attempts": 2},
-            })
-        except Exception:
-            pass
+        await _safe_log_event("cv_alert_error",
+                               {"signal_id": signal.id, "pair": signal.pair,
+                                "error": f"{type(last_err).__name__}: {str(last_err)[:200]}",
+                                "kind": "pattern", "attempts": 2})
         # Не возвращаемся — paper_on_signal всё равно нужен
         msg_id = None
     else:
-        # resp получен (200 от Telegram) — обрабатываем успех/ошибку Telegram-уровня
         if resp.get("ok"):
             msg_id = resp.get("result", {}).get("message_id")
             logger.info(f"[CV-ALERT] sent #{signal.id} {pair_short} {pattern} → msg_id={msg_id}")
-            try:
-                from database import _events
-                _events().insert_one({
-                    "at": utcnow(), "type": "cv_alert_sent",
-                    "data": {"signal_id": signal.id, "pair": signal.pair,
-                             "pattern": pattern, "message_id": msg_id, "kind": "pattern"},
-                })
-            except Exception:
-                pass
+            await _safe_log_event("cv_alert_sent",
+                                   {"signal_id": signal.id, "pair": signal.pair,
+                                    "pattern": pattern, "message_id": msg_id, "kind": "pattern"})
         else:
             logger.warning(f"[CV-ALERT] BOT2 error #{signal.id}: {resp}")
-            try:
-                from database import _events
-                _events().insert_one({
-                    "at": utcnow(), "type": "cv_alert_error",
-                    "data": {"signal_id": signal.id, "pair": signal.pair,
-                             "error": str(resp)[:200], "kind": "pattern"},
-                })
-            except Exception:
-                pass
+            await _safe_log_event("cv_alert_error",
+                                   {"signal_id": signal.id, "pair": signal.pair,
+                                    "error": str(resp)[:200], "kind": "pattern"})
 
     # ── ЭТАП 2: Background tasks (НЕ блокируют — fire-and-forget) ──
     # Paper trader: важная задача, но если упадёт — Telegram уже отправлен.
@@ -1361,12 +1360,8 @@ async def _check_cryptovizor(db):
                             )
                         except asyncio.TimeoutError:
                             logger.error(f"[CV] alert TIMEOUT 45s #{sig_obj.id} {sig_obj.pair}")
-                            try:
-                                from database import _events
-                                _events().insert_one({"at": utcnow(), "type": "cv_alert_timeout_global",
-                                    "data": {"signal_id": sig_obj.id, "pair": sig_obj.pair}})
-                            except Exception:
-                                pass
+                            await _safe_log_event("cv_alert_timeout_global",
+                                                   {"signal_id": sig_obj.id, "pair": sig_obj.pair})
                         except Exception as e:
                             logger.error(f"[CV] alert exception #{sig_obj.id}: {e}")
                     asyncio.create_task(_fire_and_forget_alert(s, strongest, current_price, s1, r1, chart_png))
@@ -1417,11 +1412,16 @@ async def _fill_missing_ai_analysis(db):
     """Дозаполняет анализ для AI сигналов у которых comment пустой."""
     from database import _signals as _sc
 
-    docs = list(_sc().find({
-        "source": "cryptovizor",
-        "filter_reason": {"$regex": "^AI_SIGNAL"},
-        "$or": [{"comment": None}, {"comment": ""}],
-    }).limit(2))
+    def _find_docs():
+        return list(_sc().find({
+            "source": "cryptovizor",
+            "filter_reason": {"$regex": "^AI_SIGNAL"},
+            "$or": [{"comment": None}, {"comment": ""}],
+        }).limit(2))
+    try:
+        docs = await asyncio.wait_for(asyncio.to_thread(_find_docs), timeout=10.0)
+    except (asyncio.TimeoutError, Exception):
+        return
 
     for doc in docs:
         sig_id = doc.get("id")
@@ -1446,7 +1446,12 @@ async def _fill_missing_ai_analysis(db):
 
         analysis = await _generate_ai_deep_analysis(sig, current or doc.get("entry"), s1, r1)
         if analysis:
-            _sc().update_one({"id": sig_id}, {"$set": {"comment": analysis}})
+            def _save_comment():
+                _sc().update_one({"id": sig_id}, {"$set": {"comment": analysis}})
+            try:
+                await asyncio.wait_for(asyncio.to_thread(_save_comment), timeout=5.0)
+            except (asyncio.TimeoutError, Exception):
+                pass
             logger.info(f"AI analysis filled for #{sig_id} {pair}")
 
             # Отправляем в бот если ещё не отправлено
@@ -1471,7 +1476,12 @@ async def _run_ai_filter(s, current_price, db) -> bool:
     """Проверяет сигнал по AI критериям. True = проходит в Сигнал AI."""
     try:
         from database import _get_db
-        criteria_doc = _get_db().settings.find_one({"_id": "ai_criteria"})
+        def _find_criteria():
+            return _get_db().settings.find_one({"_id": "ai_criteria"})
+        try:
+            criteria_doc = await asyncio.wait_for(asyncio.to_thread(_find_criteria), timeout=5.0)
+        except (asyncio.TimeoutError, Exception):
+            criteria_doc = None
         user_criteria = criteria_doc.get("criteria", []) if criteria_doc else []
 
         if not user_criteria:
@@ -1516,9 +1526,14 @@ async def _check_ai_signals(db):
     from backtest import backtest_summary_for_ai
     from ai_signal_filter import should_send_signal
 
-    # Загружаем сохранённые критерии пользователя
+    # Загружаем сохранённые критерии пользователя (через to_thread)
     from database import _get_db
-    criteria_doc = _get_db().settings.find_one({"_id": "ai_criteria"})
+    def _find_criteria2():
+        return _get_db().settings.find_one({"_id": "ai_criteria"})
+    try:
+        criteria_doc = await asyncio.wait_for(asyncio.to_thread(_find_criteria2), timeout=5.0)
+    except (asyncio.TimeoutError, Exception):
+        criteria_doc = None
     user_criteria = criteria_doc.get("criteria", []) if criteria_doc else []
 
     # Enabled критерии
@@ -1705,15 +1720,10 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     # CV-алерты. Fallback на _bot (главный) если BOT2 упал.
     target_bot = _bot2 or _bot
 
-    # ── Маячок СРАЗУ (раньше был в середине — до него не доходило если
-    # Claude API падал на _generate_ai_full_analysis/tg_summary) ──
-    try:
-        from database import _events
-        _events().insert_one({"at": utcnow(), "type": "ai_alert_called",
-            "data": {"signal_id": signal.id, "pair": signal.pair,
-                     "bot_ready": bool(target_bot), "chat_set": bool(_admin_chat_id)}})
-    except Exception:
-        pass
+    # ── Маячок СРАЗУ (await to_thread — не блокирует event loop) ──
+    await _safe_log_event("ai_alert_called",
+                           {"signal_id": signal.id, "pair": signal.pair,
+                            "bot_ready": bool(target_bot), "chat_set": bool(_admin_chat_id)})
 
     if not target_bot or not _admin_chat_id:
         return
@@ -1787,11 +1797,18 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
     except Exception as e:
         logger.warning(f"[AI-ALERT] cluster_block fail #{signal.id}: {e}")
 
+    def _save_pump():
+        try:
+            from database import _signals as _sc2
+            _sc2().update_one({"id": signal.id},
+                              {"$set": {"pump_score": _pump.get("score", 0),
+                                        "pump_factors": _pump.get("factors", [])}})
+        except Exception as e:
+            logger.warning(f"[AI-ALERT] pump save fail #{signal.id}: {e}")
     try:
-        from database import _signals as _sc2
-        _sc2().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
-    except Exception as e:
-        logger.warning(f"[AI-ALERT] pump save fail #{signal.id}: {e}")
+        await asyncio.wait_for(asyncio.to_thread(_save_pump), timeout=5.0)
+    except (asyncio.TimeoutError, Exception):
+        pass
 
     # Главная отправка — с fallback на BOT2/BOT если основной бот упал
     # (типичный случай: BOT4_BOT_TOKEN невалиден, но Bot объект создан).
@@ -1819,14 +1836,9 @@ async def _send_ai_signal_alert(signal, ai_result, current_price):
 
     if not sent:
         logger.error(f"[AI-ALERT] ALL BOTS FAILED #{signal.id}: {last_err}")
-        try:
-            from database import _events
-            import traceback as _tb
-            _events().insert_one({"at": utcnow(), "type": "ai_alert_all_failed",
-                "data": {"signal_id": signal.id, "pair": signal.pair,
-                         "error": last_err, "attempts": len(unique_bots)}})
-        except Exception:
-            pass
+        await _safe_log_event("ai_alert_all_failed",
+                               {"signal_id": signal.id, "pair": signal.pair,
+                                "error": last_err, "attempts": len(unique_bots)})
 
     try:
         await _paper_on_signal({"symbol": sym, "direction": signal.direction, "entry": current_price, "source": "ai_signal", "pattern": signal.pattern_name, "score": score, "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
@@ -1852,8 +1864,13 @@ async def _ai_background_analysis(signal, current_price, s1, r1):
             timeout=30.0,
         )
         if full_analysis:
-            from database import _signals as _sc_bg
-            _sc_bg().update_one({"id": signal.id}, {"$set": {"comment": full_analysis}})
+            def _save_comment_bg():
+                from database import _signals as _sc_bg
+                _sc_bg().update_one({"id": signal.id}, {"$set": {"comment": full_analysis}})
+            try:
+                await asyncio.wait_for(asyncio.to_thread(_save_comment_bg), timeout=5.0)
+            except (asyncio.TimeoutError, Exception):
+                pass
             logger.info(f"[AI-BG] analysis saved #{signal.id}")
     except asyncio.TimeoutError:
         logger.warning(f"[AI-BG] full_analysis TIMEOUT #{signal.id}")
@@ -2090,7 +2107,14 @@ async def _send_anomaly_alert(r: dict):
     text += await _pending_cluster_block(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
 
     from database import _anomalies as _anc
-    _anc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
+    def _save_anc_pump():
+        _anc().update_one({"symbol": r["symbol"], "score": r["score"]},
+                          {"$set": {"pump_score": _pump.get("score", 0),
+                                    "pump_factors": _pump.get("factors", [])}})
+    try:
+        await asyncio.wait_for(asyncio.to_thread(_save_anc_pump), timeout=5.0)
+    except (asyncio.TimeoutError, Exception):
+        pass
 
     try:
         await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
@@ -2619,11 +2643,16 @@ async def _check_forex_fvg_scan():
         now = _t.time()
         if now - _fvg_last_scan_ts < interval:
             return
-        # Получаем snapshot waiting до скана, потом — после
+        # Получаем snapshot waiting до скана, потом — после (через to_thread)
         from database import _fvg_signals
-        before = {(s["instrument"], s.get("formed_ts")) for s in _fvg_signals().find(
-            {"status": "WAITING_RETEST"}, {"instrument": 1, "formed_ts": 1}
-        )}
+        def _find_before():
+            return {(s["instrument"], s.get("formed_ts")) for s in _fvg_signals().find(
+                {"status": "WAITING_RETEST"}, {"instrument": 1, "formed_ts": 1}
+            )}
+        try:
+            before = await asyncio.wait_for(asyncio.to_thread(_find_before), timeout=10.0)
+        except (asyncio.TimeoutError, Exception):
+            before = set()
         print("[FVG-SCAN] starting scan_all...", flush=True)
         stats = await asyncio.to_thread(scan_all)
         # Ставим timestamp ПОСЛЕ успешного скана — защита от timeout-loop
@@ -2964,7 +2993,14 @@ async def _send_confluence_alert(r: dict):
     text += await _pending_cluster_block(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
 
     from database import _confluence as _cfc
-    _cfc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
+    def _save_cfc_pump():
+        _cfc().update_one({"symbol": r["symbol"], "score": r["score"]},
+                          {"$set": {"pump_score": _pump.get("score", 0),
+                                    "pump_factors": _pump.get("factors", [])}})
+    try:
+        await asyncio.wait_for(asyncio.to_thread(_save_cfc_pump), timeout=5.0)
+    except (asyncio.TimeoutError, Exception):
+        pass
 
     try:
         await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
@@ -3326,12 +3362,18 @@ async def _live_balance_refresh_loop():
                     if res and res.get("ok"):
                         new_bal = res.get("usdt_total")
                         if new_bal is not None:
-                            _live_accounts().update_one(
-                                {"_id": aid},
-                                {"$set": {"balance": float(new_bal),
-                                          "balance_synced_from_exchange": True,
-                                          "updated_at": utcnow()}},
-                            )
+                            def _save_bal():
+                                _live_accounts().update_one(
+                                    {"_id": aid},
+                                    {"$set": {"balance": float(new_bal),
+                                              "balance_synced_from_exchange": True,
+                                              "updated_at": utcnow()}},
+                                )
+                            try:
+                                await _asyncio.wait_for(_asyncio.to_thread(_save_bal),
+                                                         timeout=5.0)
+                            except (_asyncio.TimeoutError, Exception):
+                                pass
                 except _asyncio.TimeoutError:
                     pass
                 except Exception as e:
