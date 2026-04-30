@@ -802,27 +802,31 @@ async def _retry_failed_ai(db):
     AI_RETRY_MAX = 3
 
     # 1) Сигналы без dca4 — повторный analyze_chart
-    signals = (
-        db.query(Signal)
-        .filter(Signal.status == "СЛЕЖУ")
-        .filter(Signal.is_filtered == False)
-        .filter(Signal.has_chart == True)
-        .filter(Signal.dca4 == None)
-        .filter(Signal.chart_path != None)
-        .limit(3)
-        .all()
-    )
+    def _query_no_dca4():
+        return list(
+            db.query(Signal)
+            .filter(Signal.status == "СЛЕЖУ")
+            .filter(Signal.is_filtered == False)
+            .filter(Signal.has_chart == True)
+            .filter(Signal.dca4 == None)
+            .filter(Signal.chart_path != None)
+            .limit(3)
+            .all()
+        )
+    signals = await asyncio.to_thread(_query_no_dca4)
 
     # 2) Сигналы с dca4 но без ai_score — досчитываем оценку
-    need_score = (
-        db.query(Signal)
-        .filter(Signal.has_chart == True)
-        .filter(Signal.chart_path != None)
-        .filter(Signal.dca4 != None)
-        .filter(Signal.ai_score == None)
-        .limit(2)
-        .all()
-    )
+    def _query_need_score():
+        return list(
+            db.query(Signal)
+            .filter(Signal.has_chart == True)
+            .filter(Signal.chart_path != None)
+            .filter(Signal.dca4 != None)
+            .filter(Signal.ai_score == None)
+            .limit(2)
+            .all()
+        )
+    need_score = await asyncio.to_thread(_query_need_score)
     for s in need_score:
         chart_path = _resolve_chart(s.chart_path)
         if not chart_path:
@@ -840,7 +844,7 @@ async def _retry_failed_ai(db):
                 s.ai_reasoning = q.get("reasoning")
                 s.ai_risks = q.get("risks") or []
                 s.ai_verdict = q.get("verdict")
-                db.commit()
+                await asyncio.to_thread(db.commit)
                 log_event(s.id, "ai_scored",
                     data={"score": s.ai_score, "verdict": s.ai_verdict},
                     message=f"AI {s.ai_score}/100 ({s.ai_verdict})")
@@ -853,9 +857,10 @@ async def _retry_failed_ai(db):
     for s in signals:
         # Проверяем количество попыток через events
         from database import _events
-        retry_count = _events().count_documents({
-            "signal_id": s.id, "type": "ai_retry",
-        })
+        retry_count = await asyncio.to_thread(
+            _events().count_documents,
+            {"signal_id": s.id, "type": "ai_retry"},
+        )
         if retry_count >= AI_RETRY_MAX:
             continue
 
@@ -890,7 +895,7 @@ async def _retry_failed_ai(db):
                 s.sl = _to_float(chart_data.get("sl"))
             if not s.entry:
                 s.entry = _to_float(chart_data.get("entry"))
-            db.commit()
+            await asyncio.to_thread(db.commit)
             log_event(
                 s.id, "ai_recovered",
                 data={"dca4": s.dca4},
@@ -901,13 +906,15 @@ async def _retry_failed_ai(db):
 async def _filter_stuck(db):
     """Сигналы СЛЕЖУ без dca4/entry/tp1/sl никогда не смогут продвинуться —
     помечаем их как отфильтрованные, чтобы не висели в UI вечно."""
-    stuck = (
-        db.query(Signal)
-        .filter(Signal.status == "СЛЕЖУ")
-        .filter(Signal.is_filtered == False)
-        .filter((Signal.dca4 == None) | (Signal.entry == None) | (Signal.tp1 == None) | (Signal.sl == None))
-        .all()
-    )
+    def _query_stuck():
+        return list(
+            db.query(Signal)
+            .filter(Signal.status == "СЛЕЖУ")
+            .filter(Signal.is_filtered == False)
+            .filter((Signal.dca4 == None) | (Signal.entry == None) | (Signal.tp1 == None) | (Signal.sl == None))
+            .all()
+        )
+    stuck = await asyncio.to_thread(_query_stuck)
     for s in stuck:
         missing = []
         if s.dca4 is None: missing.append("dca4")
@@ -917,7 +924,7 @@ async def _filter_stuck(db):
         s.is_filtered = True
         s.filter_reason = "missing: " + ", ".join(missing)
     if stuck:
-        db.commit()
+        await asyncio.to_thread(db.commit)
         logger.info(f"Отфильтровано {len(stuck)} застрявших сигналов")
 
 
