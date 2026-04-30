@@ -877,7 +877,9 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
                 logger.warning(f"[live-{aid}] SL fail {symbol}: {e}\n{_tb.format_exc()[-600:]}")
 
         from database import _get_db
-        counter = _get_db().counters.find_one_and_update(
+        # Атомарный counter — без race при concurrent open. Sync Mongo в to_thread.
+        counter = await asyncio.to_thread(
+            _get_db().counters.find_one_and_update,
             {"_id": "live_trades"}, {"$inc": {"seq": 1}},
             upsert=True, return_document=True,
         )
@@ -907,7 +909,7 @@ async def open_position_for_account(signal_data: dict, decision: dict, account: 
             "opened_at": _utcnow(), "closed_at": None,
             "exit_price": None, "pnl_usdt": None, "pnl_pct": None,
         }
-        _live_trades().insert_one(doc)
+        await asyncio.to_thread(_live_trades().insert_one, doc)
         record_account_trade_opened(aid)
         logger.warning(
             f"🔴 LIVE OPEN [{aid}] #{trade_id}: {symbol} {direction} "
@@ -979,13 +981,14 @@ async def mirror_paper_for_account(signal_data: dict, decision: dict, account: d
             from database import _live_trades, _get_db
             error_msg = str(result.get("error", "unknown"))
             symbol = signal_data.get("symbol", "")
-            counter = _get_db().counters.find_one_and_update(
+            counter = await asyncio.to_thread(
+                _get_db().counters.find_one_and_update,
                 {"_id": "live_trades"},
                 {"$inc": {"seq": 1}},
                 upsert=True, return_document=True,
             )
             trade_id = (counter or {}).get("seq", 1)
-            _live_trades().insert_one({
+            await asyncio.to_thread(_live_trades().insert_one, {
                 "trade_id": trade_id,
                 "account_id": aid,
                 "env": account.get("mode", "testnet"),
@@ -1212,7 +1215,8 @@ async def _close_position_market(ex, account: dict, pos: dict, reason: str) -> d
         # Суммарный PnL = реализованный (от partials) + текущее закрытие
         total_pnl = round(float(pos.get("realized_pnl_usdt", 0) or 0) + pnl_usdt_remaining, 2)
         total_pct = round(total_pnl / size_usdt * 100, 2) if size_usdt else 0
-        _live_trades().update_one(
+        await asyncio.to_thread(
+            _live_trades().update_one,
             {"trade_id": pos["trade_id"]},
             {"$set": {
                 "status": reason,
