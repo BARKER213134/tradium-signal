@@ -184,12 +184,14 @@ async def _eth_kc_prewarm_loop():
 
 
 async def _candles_prewarm_loop():
-    """Фоновый прогрев candles cache. На Pro плане (8 vCPU) больше пар:
-      — топ-40 пар каждые 5 мин на 4 TF (15m/1h/4h/1d)
-      — cold-100 каждые 10 мин на 2 TF (1h/4h)
+    """Фоновый прогрев candles cache. Снижено с 40→25 hot пар + sleep
+    0.03→0.08 чтобы НЕ забивать threadpool — он нужен для UI запросов.
+      — топ-25 пар каждые 5 мин на 3 TF (15m/1h/4h) [было 40×4]
+      — cold-50 каждые 15 мин на 2 TF (1h/4h) [было 100]
+    Total tasks per cycle: 25×3=75 (было 250) → меньше CPU давление.
     """
     import asyncio as _asyncio
-    HOT_TFS = ["15m", "1h", "4h", "1d"]
+    HOT_TFS = ["15m", "1h", "4h"]
     COLD_TFS = ["1h", "4h"]
     tick = 0
     while True:
@@ -197,8 +199,8 @@ async def _candles_prewarm_loop():
             from supertrend_tracker import get_tracked_pairs
             from admin import warm_candles_cache
             pairs = await _asyncio.to_thread(get_tracked_pairs)
-            hot = pairs[:40]
-            cold = pairs[40:140] if len(pairs) > 40 else []
+            hot = pairs[:25]
+            cold = pairs[25:75] if len(pairs) > 25 else []
             warmed_hot = 0
             for p in hot:
                 for tf in HOT_TFS:
@@ -207,8 +209,8 @@ async def _candles_prewarm_loop():
                             warmed_hot += 1
                     except Exception:
                         pass
-                    await _asyncio.sleep(0.03)
-            # Cold пары — только раз в 3-й цикл (~10 мин)
+                    await _asyncio.sleep(0.08)
+            # Cold пары — только раз в 3-й цикл (~15 мин)
             warmed_cold = 0
             if tick % 3 == 0:
                 for p in cold:
@@ -218,7 +220,7 @@ async def _candles_prewarm_loop():
                                 warmed_cold += 1
                         except Exception:
                             pass
-                        await _asyncio.sleep(0.03)
+                        await _asyncio.sleep(0.08)
             tick += 1
             logger.info(f"[prewarm] hot={warmed_hot} cold={warmed_cold} (hot {len(hot)} × {len(HOT_TFS)}TF + cold {len(cold)} × {len(COLD_TFS)}TF)")
         except Exception:
@@ -2808,12 +2810,14 @@ async def _check_cluster_outcomes():
     try:
         from cluster_detector import check_cluster_outcomes
         from database import _clusters
-        open_clusters = list(_clusters().find({"status": "OPEN"}))
+        open_clusters = await asyncio.to_thread(
+            lambda: list(_clusters().find({"status": "OPEN"}))
+        )
         if not open_clusters:
             return
         pairs = list({c.get("pair") for c in open_clusters if c.get("pair")})
         prices = await get_prices_any(pairs)
-        closed = check_cluster_outcomes(prices)
+        closed = await asyncio.to_thread(check_cluster_outcomes, prices)
         for cl in closed:
             await _send_cluster_close_alert(cl)
             try:

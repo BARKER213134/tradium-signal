@@ -512,8 +512,12 @@ async def _watchdog(client):
                 continue
             # Проверяем тишину обоих каналов
             try:
-                last_cv = _signals().find_one({"source": "cryptovizor"}, sort=[("received_at", DESCENDING)])
-                last_tr = _signals().find_one({"source": "tradium"}, sort=[("received_at", DESCENDING)])
+                last_cv = await asyncio.to_thread(
+                    _signals().find_one, {"source": "cryptovizor"}, sort=[("received_at", DESCENDING)]
+                )
+                last_tr = await asyncio.to_thread(
+                    _signals().find_one, {"source": "tradium"}, sort=[("received_at", DESCENDING)]
+                )
                 cv_age = (utcnow() - last_cv["received_at"]).total_seconds() if last_cv and last_cv.get("received_at") else 9e9
                 tr_age = (utcnow() - last_tr["received_at"]).total_seconds() if last_tr and last_tr.get("received_at") else 9e9
                 # Оба молчат >3ч — подозреваем что подписки умерли (редкий кейс),
