@@ -1015,17 +1015,40 @@ async def mirror_paper_for_account(signal_data: dict, decision: dict, account: d
     return result
 
 
+# Singleton aiogram Bot для всех BOT6 alert'ов. Раньше каждый alert
+# создавал НОВЫЙ Bot() → новый TLS handshake. На multi-account burst
+# (4 акк × 4 события) — 16 параллельных handshakes, лагало.
+_bot6_singleton = None
+
+def _get_bot6():
+    global _bot6_singleton
+    if _bot6_singleton is not None:
+        return _bot6_singleton
+    try:
+        from config import BOT6_BOT_TOKEN
+        if not BOT6_BOT_TOKEN:
+            return None
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        _bot6_singleton = Bot(
+            token=BOT6_BOT_TOKEN,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
+        return _bot6_singleton
+    except Exception:
+        return None
+
+
 async def _send_mirror_failed_alert(symbol: str, direction: str, error: str, account: dict):
     """DESYNC alert когда paper открыл, а live зеркалить не получилось."""
     try:
         from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
         if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
             return
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-        bot = Bot(token=BOT6_BOT_TOKEN,
-                  default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        bot = _get_bot6()
+        if bot is None:
+            return
         mode = account.get("mode", "testnet")
         label = account.get("label") or str(account.get("_id", "?"))
         nice_err = _humanize_error(error, symbol, mode)
@@ -1038,7 +1061,6 @@ async def _send_mirror_failed_alert(symbol: str, direction: str, error: str, acc
             f"PnL paper и live теперь будут расходиться по этой сделке.</i>"
         )
         await bot.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
-        await bot.session.close()
     except Exception as e:
         logger.warning(f"[live-trader] mirror-fail alert error: {e}")
 
@@ -1094,11 +1116,9 @@ async def _send_live_open_alert(trade: dict, account: dict) -> None:
         from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
         if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
             return
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-        bot = Bot(token=BOT6_BOT_TOKEN,
-                  default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        bot = _get_bot6()
+        if bot is None:
+            return
         mode = account.get("mode", "testnet")
         label = account.get("label") or account.get("owner") or str(account.get("_id", "?"))
         mode_emoji = "🧪" if mode == "testnet" else "🔴"
@@ -1116,7 +1136,10 @@ async def _send_live_open_alert(trade: dict, account: dict) -> None:
         if ptid:
             try:
                 from database import _get_db
-                paper = _get_db().paper_trades.find_one({"trade_id": ptid}, {"entry": 1})
+                paper = await asyncio.to_thread(
+                    _get_db().paper_trades.find_one,
+                    {"trade_id": ptid}, {"entry": 1}
+                )
                 if paper and paper.get("entry"):
                     paper_entry = float(paper["entry"])
                     live_entry = float(trade.get("entry") or 0)
@@ -1141,7 +1164,7 @@ async def _send_live_open_alert(trade: dict, account: dict) -> None:
         if trade.get("ai_reasoning"):
             text += f"\n📝 {str(trade['ai_reasoning'])[:120]}"
         await bot.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
-        await bot.session.close()
+        # NOTE: НЕ закрываем session — singleton переиспользуется
     except Exception as e:
         logger.warning(f"[live-trader] open alert fail: {e}")
 
@@ -1788,11 +1811,9 @@ async def _send_live_close_alert(
         from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
         if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
             return
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-        bot = Bot(token=BOT6_BOT_TOKEN,
-                  default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        bot = _get_bot6()
+        if bot is None:
+            return
         mode = account.get("mode", "testnet")
         label = account.get("label") or account.get("owner") or str(account.get("_id", "?"))
         mode_emoji = "🧪" if mode == "testnet" else "🔴"
@@ -1808,7 +1829,8 @@ async def _send_live_close_alert(
         if ptid:
             try:
                 from database import _get_db
-                paper = _get_db().paper_trades.find_one(
+                paper = await asyncio.to_thread(
+                    _get_db().paper_trades.find_one,
                     {"trade_id": ptid},
                     {"pnl_pct": 1, "pnl_usdt": 1, "status": 1}
                 )
@@ -1832,7 +1854,7 @@ async def _send_live_close_alert(
             f"{paper_pnl_str}"
         )
         await bot.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
-        await bot.session.close()
+        # NOTE: НЕ закрываем session — singleton переиспользуется
     except Exception as e:
         logger.warning(f"[live-trader] close alert fail: {e}")
 
@@ -1845,11 +1867,9 @@ async def _send_live_partial_alert(
         from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
         if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
             return
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-        bot = Bot(token=BOT6_BOT_TOKEN,
-                  default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        bot = _get_bot6()
+        if bot is None:
+            return
         mode = account.get("mode", "testnet")
         label = account.get("label") or str(account.get("_id", "?"))
         mode_emoji = "🧪" if mode == "testnet" else "🔴"
@@ -1862,6 +1882,6 @@ async def _send_live_partial_alert(
             f"📈 Realized cumulative: ${float(live_pos.get('realized_pnl_usdt') or 0) + pnl_usdt:+.2f}"
         )
         await bot.send_message(int(ADMIN_CHAT_ID), text, parse_mode="HTML")
-        await bot.session.close()
+        # NOTE: НЕ закрываем session — singleton переиспользуется
     except Exception as e:
         logger.warning(f"[live-trader] partial alert fail: {e}")
