@@ -1611,8 +1611,18 @@ async def api_cv_flips(state: str = "all", pair: str = "",
                     query["$or"] = [{"pair": pair}, {"pair": f"{base}/USDT"}]
                 else:
                     query["pair"] = pair
+            # Projection: только UI-нужные поля. Раньше тащили весь doc
+            # (~250 байт × 500 = 129KB). UI использует 9 полей, остальные
+            # просто скачивались зря (st_params dict, raw_text и т.д.).
+            projection = {
+                "_id": 1, "state": 1, "direction": 1, "pair": 1,
+                "entry": 1, "flip_price": 1, "sl": 1, "risk_pct": 1,
+                "cv_triggered_at": 1, "flip_at": 1,
+                "cv_pattern_name": 1, "cv_signal_id": 1,
+                "created_at": 1, "updated_at": 1,
+            }
             items = []
-            for doc in _cv_flip_signals().find(query).sort("cv_triggered_at", -1).limit(limit):
+            for doc in _cv_flip_signals().find(query, projection).sort("cv_triggered_at", -1).limit(limit):
                 doc["_id"] = str(doc.get("_id"))
                 for k in ("cv_triggered_at", "flip_at", "created_at", "updated_at"):
                     v = doc.get(k)
