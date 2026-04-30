@@ -537,22 +537,25 @@ async def close_all_manual() -> dict:
 # Параметры rule-based exit management (TP ladder + BE+ + trailing).
 # Все пороги — в "raw" %, то есть без учёта leverage (процент движения цены).
 #
-# TP LADDER:
+# EXIT STRATEGY D1 (best of 18 backtested на 112 сделках за 7 дней):
 #   +1.0%  → закрыть 30% позиции (зафиксировать первую прибыль)
-#   +2.0%  → закрыть ещё 30% (итого закрыто 60%, осталось 40%)
-#   +3.0%  → SL в entry + 1% (защищаем уже большую часть прибыли)
-#   +4.0%  → включаем trailing на 1.5% от максимума
+#   +2.0%  → SL в entry +0.5% (BE+) И включаем tight trailing (dist 0.5%)
+# Trailing-SL движется за max_fav на расстоянии 0.5% (агрессивно ловит
+# хвосты движения).
 #
-# Это заменяет прежнюю простую логику (+1%→BE, +2%→trail). Теперь сделки
-# фиксируют прибыль поэтапно — психологически устойчивее к откатам.
+# Бэктест: D1 даёт +$174.68 / 7 дней vs текущая старая (+$38.57). ×4.5×!
+# Max DD на сделку остаётся −$10 (контролируемый риск, в отличие от
+# ATR-based вариантов где −$50 single-trade).
+#
+# Логика: фиксируем 30% сразу при +1%, остаток 70% едет с очень тугим
+# trail (0.5% от max_fav) — ловим хвосты больших движений.
 TP_LADDER = [
     {"at_pct": 1.0, "close_fraction": 0.30, "name": "TP1_PARTIAL"},
-    {"at_pct": 2.0, "close_fraction": 0.30, "name": "TP2_PARTIAL"},
 ]
-BE_PLUS_TRIGGER_PCT = 3.0       # при +3% raw-движения → двигаем SL вверх
-BE_PLUS_OFFSET_PCT  = 1.0       # SL ставим на entry +1% (для LONG) / entry -1% (для SHORT)
-TRAILING_TRIGGER_PCT = 4.0      # при +4% → trailing
-TRAILING_DISTANCE_PCT = 1.5     # отступ trailing-SL от максимума
+BE_PLUS_TRIGGER_PCT = 2.0       # при +2% — SL → BE+0.5
+BE_PLUS_OFFSET_PCT  = 0.5       # SL ставим на entry +0.5% (агрессивная защита прибыли)
+TRAILING_TRIGGER_PCT = 2.0      # при +2% → trailing (одновременно с BE+)
+TRAILING_DISTANCE_PCT = 0.5     # отступ trailing-SL от максимума (тугой)
 
 
 def check_positions(prices: dict):
