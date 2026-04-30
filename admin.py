@@ -5577,6 +5577,30 @@ async def api_anomalies():
     return await asyncio.to_thread(_sync)
 
 
+@app.post("/api/anomalies/force-scan")
+async def api_anomalies_force_scan():
+    """Запускает _check_anomalies прямо сейчас. Используется когда watcher
+    висит и сканы остановились."""
+    try:
+        import watcher
+        # Запускаем в фоне чтобы не держать HTTP запрос
+        asyncio.create_task(watcher._check_anomalies())
+        return {"ok": True, "started": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/confluence/force-scan")
+async def api_confluence_force_scan():
+    """Запускает _check_confluence прямо сейчас."""
+    try:
+        import watcher
+        asyncio.create_task(watcher._check_confluence())
+        return {"ok": True, "started": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/anomalies/scan-status")
 async def api_scan_status():
     """Читает состояние скана из watcher."""
