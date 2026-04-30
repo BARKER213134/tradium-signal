@@ -1787,24 +1787,29 @@ async def paper_to_live_sync_check() -> dict:
 
 
 async def sync_all_accounts() -> list:
-    """Синхронизация всех enabled аккаунтов. Вызывается из watcher каждые 30с."""
+    """Синхронизация всех enabled аккаунтов. Вызывается из watcher каждые 30с.
+    Раньше последовательно (for + await) — N аккаунтов × ~2-5с ccxt = N×lag.
+    Теперь asyncio.gather — все аккаунты параллельно. Per-account lock
+    защищает от race внутри одного аккаунта."""
     try:
         from live_safety import get_enabled_accounts
-        accounts = get_enabled_accounts()
+        accounts = await asyncio.to_thread(get_enabled_accounts)
     except Exception:
         return []
-    results = []
-    for acc in accounts:
+    if not accounts:
+        return []
+
+    async def _safe_sync(acc):
         try:
-            r = await sync_positions_for_account(acc)
-            results.append(r)
+            return await sync_positions_for_account(acc)
         except Exception as e:
-            results.append({
+            return {
                 "ok": False,
                 "account_id": str(acc.get("_id", "?")),
                 "error": str(e),
-            })
-    return results
+            }
+
+    return list(await asyncio.gather(*[_safe_sync(acc) for acc in accounts]))
 
 
 async def _send_live_close_alert(
