@@ -4782,12 +4782,18 @@ async def api_td_quota():
 @app.get("/api/top-picks")
 async def api_top_picks(hours: int = 96, limit: int = 200):
     """👑 Top Picks — сигналы подтверждённые STRONG Confluence ≤ 48h.
-    Cache 60s (async-lock safe)."""
+    Cache 60s (async-lock safe).
+
+    items + stats считаются параллельно через gather — раньше sequential
+    await давал 3+ сек на cold cache (8 Mongo counts в stats последовательно).
+    """
     from cache_utils import top_picks_cache
     async def _compute():
         from top_picks import get_all_top_picks, get_top_picks_stats
-        items = await asyncio.to_thread(get_all_top_picks, hours, limit)
-        stats = await asyncio.to_thread(get_top_picks_stats, 720)
+        items, stats = await asyncio.gather(
+            asyncio.to_thread(get_all_top_picks, hours, limit),
+            asyncio.to_thread(get_top_picks_stats, 720),
+        )
         return {"items": items, "stats": stats, "total": len(items)}
     return await top_picks_cache.get_or_compute(f"tp_{hours}_{limit}", _compute)
 
