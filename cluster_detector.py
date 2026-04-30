@@ -284,21 +284,36 @@ def should_trigger_cluster(pair: str, direction: str, at: datetime) -> tuple[boo
 
 # ── Cluster strength (комбо с Reversal Meter) ──────────────────
 def cluster_strength(direction: str, reversal_score: int, reversal_dir: str) -> str:
-    """Комбо: STRONG если |reversal| >= 50 и совпадает направление."""
+    """Комбо: STRONG если |reversal| >= 50 и cluster ПРОТИВ meter (contrarian).
+
+    Бэктест на 202 закрытых кластерах (29.04.2026) показал:
+      meter=BULLISH + cluster_LONG  (раньше STRONG/MEGA): WR 40.0% (n=20)
+      meter=BULLISH + cluster_SHORT (раньше RISKY):       WR 70.3% (n=37)
+
+    Причина: компоненты reversal_meter (pattern_imbalance, velocity_cluster,
+    contrarian_bounce, btc_eth_lead) считают continuation/momentum, не
+    reversal. Когда CV выдаёт 80%+ LONG → meter говорит «BULLISH», но это
+    пик накачки → цена откатывает. Cluster_LONG в этот момент — разворот
+    вниз, поэтому проигрывает.
+
+    Поэтому STRONG/MEGA = cluster ПРОТИВ meter (contrarian),
+    RISKY = cluster в направлении meter (momentum-trap).
+    """
     sig_bull = direction in ("LONG", "BUY")
     rev_bull = reversal_dir == "BULLISH"
     rev_bear = reversal_dir == "BEARISH"
 
-    aligned = (sig_bull and rev_bull) or (not sig_bull and rev_bear)
-    against = (sig_bull and rev_bear) or (not sig_bull and rev_bull)
+    # Inverted vs meter direction — потому что meter сейчас считает momentum
+    aligned = (sig_bull and rev_bear) or (not sig_bull and rev_bull)  # cluster ПРОТИВ meter
+    against = (sig_bull and rev_bull) or (not sig_bull and rev_bear)  # cluster ПО meter (momentum)
 
     if aligned and abs(reversal_score) >= 50:
-        return "MEGA"        # 🔥 cluster + strong reversal confirmation
+        return "MEGA"        # 🔥 contrarian к сильному momentum — лучший сетап (n=29 → 72.4% WR)
     if aligned:
-        return "STRONG"      # ⚡ с reversal
+        return "STRONG"      # ⚡ contrarian к умеренному momentum (62.5% WR)
     if against and abs(reversal_score) >= 30:
-        return "RISKY"       # ⚠️ против reversal — опасно
-    return "NORMAL"          # ⚡ обычный кластер
+        return "RISKY"       # ⚠️ momentum-trap — кластер на пике накачки (40% WR)
+    return "NORMAL"          # ⚡ meter NEUTRAL — обычный кластер (54.5% WR)
 
 
 # ── Создание кластера в БД ─────────────────────────────────────
