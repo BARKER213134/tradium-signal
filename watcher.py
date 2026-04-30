@@ -3556,14 +3556,23 @@ async def start_watcher():
     # AI больше не используется для торговых решений.
     tick = 0
     await _write_heartbeat("entering_main_loop", {"tick": 0})
+    # Hard limit на длину тика — если sub-task залип (Atlas slow / network),
+    # сбросить через 3 мин и перейти к следующему тику. Раньше первый тик
+    # на cold start мог зависнуть навсегда (heartbeat tick=1 stage=tick_start
+    # 9+ минут), watcher не двигался вперёд.
+    TICK_TIMEOUT_SEC = 180
     while True:
         tick += 1
         await _write_heartbeat("tick_start", {"tick": tick})
         try:
             print(f"[WATCHER] tick {tick}", flush=True)
-            await _check_once()
+            await asyncio.wait_for(_check_once(), timeout=TICK_TIMEOUT_SEC)
             await _write_heartbeat("tick_done", {"tick": tick})
             print(f"[WATCHER] tick {tick} done", flush=True)
+        except asyncio.TimeoutError:
+            logger.warning(f"[watcher] tick {tick} timed out after {TICK_TIMEOUT_SEC}s — skipping")
+            await _write_heartbeat("tick_timeout", {"tick": tick,
+                                                     "timeout_s": TICK_TIMEOUT_SEC})
         except Exception as e:
             import traceback as _tb
             err_str = f"{type(e).__name__}: {str(e)[:200]}"
