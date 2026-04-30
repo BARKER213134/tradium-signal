@@ -935,9 +935,17 @@ async def _check_once():
     db = SessionLocal()
     try:
         print("[WATCHER] _check_once start", flush=True)
-        await _check_kc_change()
+        # KC + reversal_flip — оба с timeout 30с чтобы не блокировать tick
         try:
-            await _check_reversal_flip()
+            await asyncio.wait_for(_check_kc_change(), timeout=30.0)
+        except asyncio.TimeoutError:
+            print("[WATCHER] _check_kc_change TIMEOUT", flush=True)
+        except Exception as e:
+            print(f"[WATCHER] _check_kc_change ERROR: {e}", flush=True)
+        try:
+            await asyncio.wait_for(_check_reversal_flip(), timeout=30.0)
+        except asyncio.TimeoutError:
+            print("[WATCHER] _check_reversal_flip TIMEOUT", flush=True)
         except Exception as e:
             print(f"[WATCHER] _check_reversal_flip ERROR: {e}", flush=True)
         try:
@@ -951,12 +959,16 @@ async def _check_once():
         except (asyncio.TimeoutError, Exception) as e:
             print(f"[WATCHER] _filter_stuck: {e}", flush=True)
 
-        # Снимок id до _check_dca4 — чтобы не проверять TP/SL на свежеоткрытых
-        opened_before = {
-            s.id for s in db.query(Signal.id, Signal.status)
-            .filter(Signal.status.in_(["ОТКРЫТ", "ПАТТЕРН"]))
-            .all()
-        }
+        # Снимок id до _check_dca4 — чтобы не проверять TP/SL на свежеоткрытых.
+        # SQLAlchemy .all() — sync, выносим в to_thread (без этого блокировал
+        # event loop при росте таблицы Signal → весь _check_once застревал).
+        def _snapshot_opened():
+            return {
+                s.id for s in db.query(Signal.id, Signal.status)
+                .filter(Signal.status.in_(["ОТКРЫТ", "ПАТТЕРН"]))
+                .all()
+            }
+        opened_before = await asyncio.to_thread(_snapshot_opened)
 
         for step_name, step_fn in [
             ("dca4", lambda: _check_dca4(db)),
