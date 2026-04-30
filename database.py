@@ -52,6 +52,9 @@ def _get_db():
     # - connectTimeoutMS=15000 — TCP handshake
     # - maxPoolSize=50, minPoolSize=5 — keep warm connections
     # - heartbeatFrequencyMS=10000 — проверяем replica каждые 10с
+    # readPreference=secondaryPreferred — критически важно для Free tier M0:
+    # primary shard перегружается при burst, secondary разгружают нагрузку.
+    # Read консистентность не критична (наши данные eventual consistent).
     _client = MongoClient(
         MONGO_URL,
         serverSelectionTimeoutMS=15000,
@@ -62,6 +65,7 @@ def _get_db():
         retryWrites=True,
         retryReads=True,
         heartbeatFrequencyMS=10000,
+        readPreference="secondaryPreferred",
     )
     _db = _client[MONGO_DB]
     return _db
