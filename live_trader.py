@@ -1242,7 +1242,9 @@ async def sync_positions_for_account(account: dict) -> dict:
     except Exception as e:
         return {"ok": False, "error": f"fetch_positions fail: {e}", "account_id": str(aid)}
 
-    db_open = list(_live_trades().find({"status": "OPEN", "account_id": str(aid)}))
+    db_open = await asyncio.to_thread(
+        lambda: list(_live_trades().find({"status": "OPEN", "account_id": str(aid)}))
+    )
     # Грейс-период 90с: не закрываем позиции которые только что открылись —
     # на Binance может быть задержка eventual consistency между fill и
     # появлением в fetch_positions. Без этого race condition закрывает свежие.
@@ -1315,7 +1317,8 @@ async def sync_positions_for_account(account: dict) -> dict:
                 pnl_usdt = round(size_usdt * pnl_pct / 100, 2)
                 reason = "TP" if pnl_usdt > 0 else "SL"
 
-                _live_trades().update_one(
+                await asyncio.to_thread(
+                    _live_trades().update_one,
                     {"trade_id": pos["trade_id"]},
                     {"$set": {
                         "status": reason,
