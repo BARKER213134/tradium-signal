@@ -3,6 +3,12 @@
 {% block page_title %}Сигналы{% endblock %}
 
 {% block content %}
+<!-- ── Userbot Status Pill (постоянный индикатор подключения) ── -->
+<div id="ubStatusPill" style="position:fixed; top:14px; right:18px; z-index:150; background:var(--dark); border:1px solid var(--border); padding:6px 12px; border-radius:18px; font-family:var(--font-mono); font-size:11px; display:flex; align-items:center; gap:6px; box-shadow:0 4px 12px rgba(0,0,0,0.3); cursor:pointer; user-select:none;" title="Telethon userbot status — клик для деталей" onclick="document.getElementById('ubLoginBanner').scrollIntoView({behavior:'smooth'})">
+  <span id="ubStatusDot" style="width:8px; height:8px; border-radius:50%; background:#888;"></span>
+  <span id="ubStatusText" style="color:var(--muted);">…</span>
+</div>
+
 <!-- ── Userbot Re-login Banner (показывается когда Telethon disconnected) ── -->
 <div id="ubLoginBanner" style="display:none; background:linear-gradient(135deg,rgba(255,77,109,0.15),rgba(255,162,78,0.1)); border:1px solid rgba(255,77,109,0.4); border-left:4px solid #ff4d6d; padding:14px 18px; margin-bottom:14px; border-radius:8px; font-family:var(--font-mono); font-size:12px;">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;">
@@ -44,8 +50,33 @@ async function _ubCheckStatus() {
     const d = await r.json();
     const banner = document.getElementById('ubLoginBanner');
     const msgEl = document.getElementById('ubBannerMsg');
+    const dot = document.getElementById('ubStatusDot');
+    const txt = document.getElementById('ubStatusText');
     const isDown = !d.client_connected || !d.is_connected;
     const errMsg = d.last_setup_error || '';
+
+    // Status pill (постоянно видим вверху-справа)
+    if (dot && txt) {
+      if (isDown) {
+        dot.style.background = '#ff4d6d';
+        dot.style.boxShadow = '0 0 8px rgba(255,77,109,0.6)';
+        txt.textContent = 'Telegram OFFLINE';
+        txt.style.color = '#ff4d6d';
+      } else {
+        dot.style.background = '#00e5a0';
+        dot.style.boxShadow = '0 0 8px rgba(0,229,160,0.6)';
+        const cvAge = (d.cryptovizor || {}).age_minutes;
+        const stale = cvAge != null && cvAge > 60;
+        if (stale) {
+          txt.textContent = `Telegram ON · CV ${cvAge}m`;
+          txt.style.color = 'var(--muted)';
+        } else {
+          txt.textContent = 'Telegram ON';
+          txt.style.color = '#00e5a0';
+        }
+      }
+    }
+
     if (isDown) {
       let why = 'Userbot не подключён.';
       if (errMsg.includes('two different IP') || errMsg.includes('authorization key')) {
