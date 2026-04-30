@@ -1658,16 +1658,12 @@ async def on_signal(signal_data: dict):
                  f"{summary}{param_note}")
 
     # ── 5. Открытие ──
-    pos = open_position(
-        symbol=symbol,
-        direction=direction,
-        entry=entry,
-        tp1=tp1,
-        sl=sl,
-        leverage=leverage,
-        size_pct=size_pct,
-        source=source or "?",
-        reasoning=reasoning,
+    # open_position() — sync function с counter+insert+balance update.
+    # Вызов из async on_signal обёрнут в to_thread чтобы не блокировать loop.
+    pos = await asyncio.to_thread(
+        open_position,
+        symbol, direction, entry, tp1, sl,
+        leverage, size_pct, source or "?", reasoning,
     )
     # Alert в BOT6
     try:
