@@ -1361,6 +1361,56 @@ async def sync_positions_for_account(account: dict) -> dict:
                     f"[live-{aid}] sync close #{pos['trade_id']}: "
                     f"{pos['symbol']} {reason} pnl={pnl_pct:+.2f}% ${pnl_usdt:+.2f}"
                 )
+
+                # ── LIVE → PAPER mirror close ──
+                # Биржа закрыла позицию по TP/SL, но paper всё ещё OPEN.
+                # Закрываем paper с тем же exit_price/reason → синхронизация.
+                paper_id = pos.get("paper_trade_id")
+                if paper_id:
+                    try:
+                        from database import _get_db
+                        def _close_paper_sync():
+                            db_ = _get_db()
+                            paper_doc = db_.paper_trades.find_one({"trade_id": paper_id})
+                            if not paper_doc or paper_doc.get("status") not in (None, "OPEN"):
+                                return None  # уже закрыт
+                            entry_p = float(paper_doc.get("entry") or pos["entry"])
+                            dir_p = paper_doc.get("direction", direction)
+                            lev_p = paper_doc.get("leverage", leverage)
+                            size_p = paper_doc.get("size_usdt", size_usdt)
+                            raw_p = ((float(exit_price) - entry_p) / entry_p) * 100
+                            if dir_p == "SHORT":
+                                raw_p = -raw_p
+                            pnl_pct_p = round(raw_p * lev_p, 2)
+                            pnl_usdt_p = round(size_p * pnl_pct_p / 100, 2)
+                            db_.paper_trades.update_one(
+                                {"trade_id": paper_id},
+                                {"$set": {
+                                    "status": reason,
+                                    "exit_price": float(exit_price),
+                                    "pnl_pct": pnl_pct_p,
+                                    "pnl_usdt": pnl_usdt_p,
+                                    "closed_at": _utcnow(),
+                                    "live_synced": True,
+                                }},
+                            )
+                            # Обновим paper balance
+                            state = db_.paper_trades.find_one({"_id": "state"}, {"balance": 1})
+                            new_bal = float((state or {}).get("balance", 0)) + pnl_usdt_p
+                            db_.paper_trades.update_one(
+                                {"_id": "state"},
+                                {"$set": {"balance": new_bal}},
+                            )
+                            return pnl_usdt_p
+                        pp = await asyncio.to_thread(_close_paper_sync)
+                        if pp is not None:
+                            logger.warning(
+                                f"[live→paper] sync close paper#{paper_id}: "
+                                f"{pos['symbol']} {reason} ${pp:+.2f}"
+                            )
+                    except Exception as _pe:
+                        logger.warning(f"[live→paper] sync fail #{paper_id}: {_pe}")
+
                 # Уведомление о закрытии
                 try:
                     asyncio.create_task(
