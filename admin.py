@@ -1696,30 +1696,41 @@ async def api_supertrend_signals_by_pair(pair: str, hours: int = 336):
 
 @app.get("/api/supertrend-stats")
 async def api_supertrend_stats(days: int = 14):
-    """Агрегированная статистика по tiers (count + распределение по LONG/SHORT)."""
-    from database import _supertrend_signals, utcnow
-    from datetime import timedelta
-    since = utcnow() - timedelta(days=days)
-    pipeline = [
-        {"$match": {"flip_at": {"$gte": since}}},
-        {"$group": {
-            "_id": {"tier": "$tier", "direction": "$direction"},
-            "n": {"$sum": 1},
-        }},
-    ]
-    by_tier: dict = {"vip": {"LONG": 0, "SHORT": 0, "total": 0},
-                     "mtf": {"LONG": 0, "SHORT": 0, "total": 0},
-                     "daily": {"LONG": 0, "SHORT": 0, "total": 0}}
-    try:
-        for row in _supertrend_signals().aggregate(pipeline):
-            k = row["_id"]
-            t, d, n = k.get("tier"), k.get("direction"), row["n"]
-            if t in by_tier and d in ("LONG", "SHORT"):
-                by_tier[t][d] = n
-                by_tier[t]["total"] += n
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    return {"ok": True, "days": days, "by_tier": by_tier}
+    """Агрегированная статистика по tiers (count + распределение по LONG/SHORT).
+
+    Cache 120s + sync aggregate в to_thread. Раньше aggregate шёл в
+    event loop, при медленном Atlas блокировал ~500ms каждый запрос.
+    """
+    from cache_utils import supertrend_stats_cache
+
+    async def _compute():
+        def _sync():
+            from database import _supertrend_signals, utcnow
+            from datetime import timedelta
+            since = utcnow() - timedelta(days=days)
+            pipeline = [
+                {"$match": {"flip_at": {"$gte": since}}},
+                {"$group": {
+                    "_id": {"tier": "$tier", "direction": "$direction"},
+                    "n": {"$sum": 1},
+                }},
+            ]
+            by_tier: dict = {"vip": {"LONG": 0, "SHORT": 0, "total": 0},
+                             "mtf": {"LONG": 0, "SHORT": 0, "total": 0},
+                             "daily": {"LONG": 0, "SHORT": 0, "total": 0}}
+            try:
+                for row in _supertrend_signals().aggregate(pipeline):
+                    k = row["_id"]
+                    t, d, n = k.get("tier"), k.get("direction"), row["n"]
+                    if t in by_tier and d in ("LONG", "SHORT"):
+                        by_tier[t][d] = n
+                        by_tier[t]["total"] += n
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+            return {"ok": True, "days": days, "by_tier": by_tier}
+        return await asyncio.to_thread(_sync)
+
+    return await supertrend_stats_cache.get_or_compute(f"st_stats_{days}", _compute)
 
 
 @app.post("/api/st-enrich")
