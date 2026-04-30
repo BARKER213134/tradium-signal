@@ -347,21 +347,8 @@ async def _alert_signal(sig: dict) -> None:
                 text = _format_alert_html(sig)
                 try:
                     await _bot10.send_message(_admin_chat_id, text, parse_mode="HTML")
-                    try:
-                        from database import _events, utcnow
-                        _events().insert_one({"at": utcnow(), "type": "st_alert_sent",
-                                              "data": {"pair": sig.get("pair"), "direction": sig.get("direction"),
-                                                       "tier": tier}})
-                    except Exception:
-                        pass
                 except Exception as e:
                     logger.warning(f"[st-tracker] BOT10 send fail: {e}")
-                    try:
-                        from database import _events, utcnow
-                        _events().insert_one({"at": utcnow(), "type": "st_alert_error",
-                                              "data": {"pair": sig.get("pair"), "error": str(e)[:200]}})
-                    except Exception:
-                        pass
         except Exception:
             logger.debug("[st-tracker] watcher module not ready for BOT10")
 

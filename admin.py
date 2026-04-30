@@ -3612,20 +3612,18 @@ async def api_bots_status():
         "bot9 (top picks)": bool(getattr(_w, "_bot9", None)),
         "bot10 (supertrend)": bool(getattr(_w, "_bot10", None)),
     }
-    # Tokens present in env (BOT3 для anomaly, BOT12 для cv_flip — раньше пропускали)
-    from config import (BOT_TOKEN, BOT2_BOT_TOKEN, BOT3_BOT_TOKEN, BOT4_BOT_TOKEN,
+    # Tokens present in env
+    from config import (BOT_TOKEN, BOT2_BOT_TOKEN, BOT4_BOT_TOKEN,
                         BOT5_BOT_TOKEN, BOT7_BOT_TOKEN, BOT9_BOT_TOKEN,
-                        BOT10_BOT_TOKEN, BOT12_BOT_TOKEN)
+                        BOT10_BOT_TOKEN)
     tokens = {
         "BOT_TOKEN":        bool(BOT_TOKEN),
         "BOT2_BOT_TOKEN":   bool(BOT2_BOT_TOKEN),
-        "BOT3_BOT_TOKEN":   bool(BOT3_BOT_TOKEN),
         "BOT4_BOT_TOKEN":   bool(BOT4_BOT_TOKEN),
         "BOT5_BOT_TOKEN":   bool(BOT5_BOT_TOKEN),
         "BOT7_BOT_TOKEN":   bool(BOT7_BOT_TOKEN),
         "BOT9_BOT_TOKEN":   bool(BOT9_BOT_TOKEN),
         "BOT10_BOT_TOKEN":  bool(BOT10_BOT_TOKEN),
-        "BOT12_BOT_TOKEN":  bool(BOT12_BOT_TOKEN),
     }
     # Recent DB activity — 8 count_documents параллельно через gather(to_thread) вместо последовательно
     from database import _supertrend_signals as _sts
@@ -3676,57 +3674,6 @@ async def api_bots_status():
         },
         "note": "Confluence alerts отправляются только при score>=5 AND st_passed=True",
     }
-
-
-@app.post("/api/bots-ping")
-async def api_bots_ping():
-    """Отправляет тест-сообщение в КАЖДЫЙ настроенный бот, возвращает результат
-    (ok / error per bot). Используется для проверки что Telegram alerts реально
-    доходят, без ожидания органического сигнала. Идеально после redeploy."""
-    from config import (BOT_TOKEN, BOT2_BOT_TOKEN, BOT3_BOT_TOKEN, BOT4_BOT_TOKEN,
-                        BOT5_BOT_TOKEN, BOT7_BOT_TOKEN, BOT9_BOT_TOKEN,
-                        BOT10_BOT_TOKEN, BOT12_BOT_TOKEN, ADMIN_CHAT_ID,
-                        CV_FLIP_CHAT_ID)
-    import httpx
-    bots = [
-        ("BOT (tradium)",     BOT_TOKEN,        ADMIN_CHAT_ID),
-        ("BOT2 (cryptovizor)", BOT2_BOT_TOKEN,  ADMIN_CHAT_ID),
-        ("BOT3 (anomaly)",    BOT3_BOT_TOKEN,   ADMIN_CHAT_ID),
-        ("BOT4 (ai)",         BOT4_BOT_TOKEN,   ADMIN_CHAT_ID),
-        ("BOT5 (confluence)", BOT5_BOT_TOKEN,   ADMIN_CHAT_ID),
-        ("BOT7 (cluster)",    BOT7_BOT_TOKEN,   ADMIN_CHAT_ID),
-        ("BOT9 (top picks)",  BOT9_BOT_TOKEN,   ADMIN_CHAT_ID),
-        ("BOT10 (supertrend)", BOT10_BOT_TOKEN, ADMIN_CHAT_ID),
-        ("BOT12 (cv flip)",   BOT12_BOT_TOKEN,  CV_FLIP_CHAT_ID or ADMIN_CHAT_ID),
-    ]
-    results = []
-    async with httpx.AsyncClient(timeout=10) as client:
-        for name, token, chat_id in bots:
-            if not token:
-                results.append({"bot": name, "ok": False, "reason": "no_token"})
-                continue
-            if not chat_id:
-                results.append({"bot": name, "ok": False, "reason": "no_chat_id"})
-                continue
-            text = f"🔔 ping from /api/bots-ping ({name})"
-            try:
-                r = await client.post(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": chat_id, "text": text,
-                          "disable_notification": True},
-                )
-                resp = r.json()
-                if resp.get("ok"):
-                    results.append({"bot": name, "ok": True,
-                                    "msg_id": resp.get("result", {}).get("message_id")})
-                else:
-                    results.append({"bot": name, "ok": False,
-                                    "reason": str(resp)[:200]})
-            except Exception as e:
-                results.append({"bot": name, "ok": False,
-                                "reason": f"http_error: {str(e)[:150]}"})
-    n_ok = sum(1 for r in results if r["ok"])
-    return {"ok": True, "total": len(bots), "delivered": n_ok, "results": results}
 
 
 @app.get("/api/key-levels/coverage")

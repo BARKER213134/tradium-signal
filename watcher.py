@@ -2095,23 +2095,10 @@ async def _send_anomaly_alert(r: dict):
     try:
         await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Anomaly alert sent: {r.get('symbol')}")
-        try:
-            from database import _events
-            _events().insert_one({"at": utcnow(), "type": "anomaly_alert_sent",
-                                  "data": {"symbol": r.get("symbol"), "direction": r.get("direction"),
-                                           "score": r.get("score")}})
-        except Exception:
-            pass
         await _paper_on_signal({"symbol": r["symbol"], "direction": r["direction"], "entry": r.get("price",0), "source": "anomaly", "score": r.get("score",0), "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
         await _cluster_check_on_signal(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
     except Exception as e:
         logger.error(f"Anomaly alert fail: {e}")
-        try:
-            from database import _events
-            _events().insert_one({"at": utcnow(), "type": "anomaly_alert_error",
-                                  "data": {"symbol": r.get("symbol"), "error": str(e)[:200]}})
-        except Exception:
-            pass
 
 
 # ── Confluence Scanner ────────────────────────────────────────────────
@@ -2789,13 +2776,6 @@ async def _send_cluster_alert(cl: dict):
     try:
         await _bot7.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Cluster alert sent: {pair} {direction} strength={strength}")
-        try:
-            from database import _events
-            _events().insert_one({"at": utcnow(), "type": "cluster_alert_sent",
-                                  "data": {"pair": cl.get("pair"), "direction": direction,
-                                           "strength": strength, "id": cl.get("id")}})
-        except Exception:
-            pass
         # Paper Trading pickup
         try:
             await _paper_on_signal({
@@ -2812,12 +2792,6 @@ async def _send_cluster_alert(cl: dict):
             logger.warning(f"[paper-cluster] {e}", exc_info=True)
     except Exception as e:
         logger.error(f"Cluster alert fail: {e}")
-        try:
-            from database import _events
-            _events().insert_one({"at": utcnow(), "type": "cluster_alert_error",
-                                  "data": {"pair": cl.get("pair"), "error": str(e)[:200]}})
-        except Exception:
-            pass
 
 
 async def _send_cluster_close_alert(cl: dict):
@@ -2995,23 +2969,10 @@ async def _send_confluence_alert(r: dict):
     try:
         await _bot5.send_message(_admin_chat_id, text, parse_mode="HTML")
         logger.info(f"Confluence alert: {r['symbol']}")
-        try:
-            from database import _events
-            _events().insert_one({"at": utcnow(), "type": "confluence_alert_sent",
-                                  "data": {"symbol": r.get("symbol"), "direction": r.get("direction"),
-                                           "score": r.get("score"), "strength": r.get("strength")}})
-        except Exception:
-            pass
         await _paper_on_signal({"symbol": r["symbol"], "direction": r["direction"], "entry": r.get("price",0), "source": "confluence", "pattern": r.get("pattern",""), "score": r.get("score",0), "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
         await _cluster_check_on_signal(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
     except Exception as e:
         logger.error(f"Confluence alert fail: {e}")
-        try:
-            from database import _events
-            _events().insert_one({"at": utcnow(), "type": "confluence_alert_error",
-                                  "data": {"symbol": r.get("symbol"), "error": str(e)[:200]}})
-        except Exception:
-            pass
 
 
 # ── Paper Trading positions check ─────────────────────────────────────
