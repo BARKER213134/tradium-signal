@@ -3441,9 +3441,30 @@ async def _exchange_symbols_refresh_loop():
 
 _watcher_running = False
 
+
+def _write_heartbeat(stage: str, data: dict | None = None):
+    """Heartbeat в Mongo для диагностики где watcher застрял.
+    Пишет в system.watcher_heartbeat каждый tick + при критичных моментах."""
+    try:
+        from database import _get_db, utcnow
+        from datetime import datetime, timezone
+        _get_db().system.update_one(
+            {"_id": "watcher_heartbeat"},
+            {"$set": {
+                "stage": stage,
+                "at": datetime.now(timezone.utc),
+                "data": data or {},
+            }},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+
 async def start_watcher():
     global _watcher_running
     _watcher_running = True
+    _write_heartbeat("start_watcher_called")
     print(f"[WATCHER] Started (interval={POLL_INTERVAL}s)", flush=True)
     logger.info(f"Price watcher запущен (интервал {POLL_INTERVAL}s)")
     # Прогрев ВСЕХ ботов сразу на старте (раньше была ленивая init только при первом алерте —
@@ -3522,12 +3543,19 @@ async def start_watcher():
     # система переведена на rule-based (Entry Checker 8 проверок + TP ladder).
     # AI больше не используется для торговых решений.
     tick = 0
+    _write_heartbeat("entering_main_loop", {"tick": 0})
     while True:
         tick += 1
+        _write_heartbeat("tick_start", {"tick": tick})
         try:
             print(f"[WATCHER] tick {tick}", flush=True)
             await _check_once()
+            _write_heartbeat("tick_done", {"tick": tick})
             print(f"[WATCHER] tick {tick} done", flush=True)
         except Exception as e:
-            logger.error(f"Watcher ошибка: {e}")
+            import traceback as _tb
+            err_str = f"{type(e).__name__}: {str(e)[:200]}"
+            logger.error(f"Watcher ошибка: {e}\n{_tb.format_exc()[-1500:]}")
+            _write_heartbeat("tick_error", {"tick": tick, "error": err_str,
+                                             "traceback": _tb.format_exc()[-500:]})
         await asyncio.sleep(POLL_INTERVAL)

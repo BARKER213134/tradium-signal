@@ -67,9 +67,47 @@ async def lifespan(app):
                         pass
                 setup_watcher(bot, ADMIN_CHAT_ID, bot2=bot2, bot4=bot4)
 
+            # Auto-restart wrapper для watcher — если start_watcher падает
+            # с exception, перезапускаем через 30с (раньше тихо умирал).
+            async def _watcher_supervisor():
+                attempt = 0
+                while True:
+                    attempt += 1
+                    try:
+                        from database import _get_db
+                        from datetime import datetime, timezone
+                        _get_db().system.update_one(
+                            {"_id": "watcher_heartbeat"},
+                            {"$set": {"stage": f"supervisor_attempt_{attempt}",
+                                      "at": datetime.now(timezone.utc)}},
+                            upsert=True,
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        await start_watcher()
+                    except Exception as e:
+                        logging.getLogger(__name__).error(
+                            f"[watcher-supervisor] start_watcher crashed (attempt {attempt}): {e}",
+                            exc_info=True,
+                        )
+                        try:
+                            from database import _get_db
+                            from datetime import datetime, timezone
+                            _get_db().system.update_one(
+                                {"_id": "watcher_heartbeat"},
+                                {"$set": {"stage": f"crashed_attempt_{attempt}",
+                                          "error": f"{type(e).__name__}: {str(e)[:200]}",
+                                          "at": datetime.now(timezone.utc)}},
+                                upsert=True,
+                            )
+                        except Exception:
+                            pass
+                    await asyncio.sleep(30)
+
             _bg_tasks.append(asyncio.create_task(start_userbot()))
             _bg_tasks.append(asyncio.create_task(start_bot()))
-            _bg_tasks.append(asyncio.create_task(start_watcher()))
+            _bg_tasks.append(asyncio.create_task(_watcher_supervisor()))
             if bot2:
                 _bg_tasks.append(asyncio.create_task(start_bot2()))
 
@@ -5585,6 +5623,35 @@ async def api_anomalies():
                 d["detected_at"] = d["detected_at"].isoformat() if hasattr(d["detected_at"], "isoformat") else str(d["detected_at"])
         return {"items": docs, "eth_ctx": _sync_eth_ctx()}
 
+    return await asyncio.to_thread(_sync)
+
+
+@app.get("/api/watcher-heartbeat")
+async def api_watcher_heartbeat():
+    """Состояние watcher main loop. Показывает stage (где сейчас находится
+    цикл) + последний tick + если crash — error и traceback."""
+    def _sync():
+        from database import _get_db
+        doc = _get_db().system.find_one({"_id": "watcher_heartbeat"})
+        if not doc:
+            return {"ok": False, "error": "no heartbeat — watcher не стартует"}
+        from datetime import datetime, timezone
+        at = doc.get("at")
+        age_sec = None
+        if at:
+            try:
+                at_naive = at.replace(tzinfo=None) if getattr(at, "tzinfo", None) else at
+                age_sec = int((datetime.now(timezone.utc).replace(tzinfo=None) - at_naive).total_seconds())
+            except Exception:
+                pass
+        return {
+            "ok": True,
+            "stage": doc.get("stage"),
+            "at": at.isoformat() if hasattr(at, "isoformat") else str(at),
+            "age_sec": age_sec,
+            "data": doc.get("data") or {},
+            "error": doc.get("error"),
+        }
     return await asyncio.to_thread(_sync)
 
 
