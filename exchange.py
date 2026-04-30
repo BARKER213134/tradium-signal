@@ -541,27 +541,18 @@ def get_eth_market_context(cache_only: bool = False) -> dict:
 
 
 def get_klines_any(pair: str, timeframe: str, limit: int = 50) -> list[dict]:
-    """Race spot+futures klines — первый непустой результат побеждает.
+    """Сначала spot klines, если пусто → futures.
 
-    Раньше последовательно: spot → если пусто → futures. На futures-only
-    парах (USDT-M перпетуалы) терялся 1 RTT (~500ms) на пустой spot
-    запрос. Race параллельно отправляет оба запроса в маленький pool,
-    отдаёт первый успешный — ускоряет cold candle-fetch на ~30-50%.
+    [Откат 30.04: race spot+futures через ThreadPoolExecutor создавал
+    pool на каждый вызов; в комбинации с watcher tick (десятки fetch/min)
+    это перегружало threadpool и /healthz отвечал >20s. Возвращён
+    последовательный fallback — на ~500ms медленнее для futures-only пар,
+    но не утаскивает event loop.]
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        futures = {
-            ex.submit(get_klines, pair, timeframe, limit): "spot",
-            ex.submit(get_futures_klines, pair, timeframe, limit): "fut",
-        }
-        for f in as_completed(futures):
-            try:
-                r = f.result()
-                if r:
-                    return r
-            except Exception:
-                pass
-    return []
+    candles = get_klines(pair, timeframe, limit)
+    if candles:
+        return candles
+    return get_futures_klines(pair, timeframe, limit)
 
 
 def get_prices(pairs: list[str]) -> dict[str, float]:
