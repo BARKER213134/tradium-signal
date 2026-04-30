@@ -313,7 +313,7 @@ async def _send_telegram(pair: str, direction: str, entry: float, sl: float,
         )
         url = f"https://api.telegram.org/bot{BOT12_BOT_TOKEN}/sendMessage"
         async with httpx.AsyncClient(timeout=10) as c:
-            await c.post(
+            r = await c.post(
                 url,
                 json={
                     "chat_id": CV_FLIP_CHAT_ID,
@@ -322,8 +322,27 @@ async def _send_telegram(pair: str, direction: str, entry: float, sl: float,
                     "disable_web_page_preview": True,
                 },
             )
+            ok = False
+            try:
+                ok = bool(r.json().get("ok"))
+            except Exception:
+                pass
+            try:
+                from database import _events, utcnow
+                _events().insert_one({"at": utcnow(),
+                                      "type": "cv_flip_alert_sent" if ok else "cv_flip_alert_error",
+                                      "data": {"pair": pair, "direction": direction,
+                                               "status_code": r.status_code}})
+            except Exception:
+                pass
     except Exception as e:
         logger.warning(f"[cv-flip] telegram send failed: {e}")
+        try:
+            from database import _events, utcnow
+            _events().insert_one({"at": utcnow(), "type": "cv_flip_alert_error",
+                                  "data": {"pair": pair, "error": str(e)[:200]}})
+        except Exception:
+            pass
 
 
 async def start_cv_flip_watcher():
