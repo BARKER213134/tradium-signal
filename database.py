@@ -44,13 +44,24 @@ def _get_db():
     # connectTimeoutMS — таймаут на установку TCP connection.
     # maxPoolSize — лимит одновременных connections (по умолчанию 100).
     #   Уменьшаем чтобы не plate Atlas connections при burst.
+    # PyMongo с агрессивными retry settings:
+    # - retryReads=True — авто-retry read операций при NetworkTimeout/AutoReconnect
+    # - retryWrites=True — то же для writes
+    # - serverSelectionTimeoutMS=15000 — больше времени найти живой replica
+    # - socketTimeoutMS=30000 — даём 30с на операцию (Railway↔Atlas RTT)
+    # - connectTimeoutMS=15000 — TCP handshake
+    # - maxPoolSize=50, minPoolSize=5 — keep warm connections
+    # - heartbeatFrequencyMS=10000 — проверяем replica каждые 10с
     _client = MongoClient(
         MONGO_URL,
-        serverSelectionTimeoutMS=10000,
-        socketTimeoutMS=20000,
-        connectTimeoutMS=10000,
+        serverSelectionTimeoutMS=15000,
+        socketTimeoutMS=30000,
+        connectTimeoutMS=15000,
         maxPoolSize=50,
+        minPoolSize=5,
         retryWrites=True,
+        retryReads=True,
+        heartbeatFrequencyMS=10000,
     )
     _db = _client[MONGO_DB]
     return _db
