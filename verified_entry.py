@@ -492,6 +492,9 @@ def record_verified(result: dict) -> str | None:
             "verdict": result.get("verdict"),
             "summary": result.get("summary"),
             "counts": result.get("counts", {}),
+            # Без checks UI показывал только verdict без 8-пунктового breakdown
+            # (вкладка "Входы" + /api/paper/accepts cross-ref → 0/0).
+            "checks": result.get("checks", []),
             "signal_source": sig.get("source"),
             "signal_tier": sig.get("tier"),
             "signal_score": sig.get("score"),
