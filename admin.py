@@ -1516,42 +1516,55 @@ def _cv_flip_results_sync(since_hours: int = 24) -> dict:
 @app.get("/api/cv-flip-results")
 async def api_cv_flip_results(since_hours: int = 24):
     """Бэктест отработанных FLIPPED сигналов за N часов (default 24 = сегодня).
-    Показывает что сработало первым: SL / TP1 / TP2 / TP3 / OPEN."""
-    return await asyncio.to_thread(_cv_flip_results_sync, since_hours)
+    Cache 60s — heavy compute, был 15s timeout при cold cache."""
+    from cache_utils import cv_flip_results_cache
+
+    async def _compute():
+        return await asyncio.to_thread(_cv_flip_results_sync, since_hours)
+
+    return await cv_flip_results_cache.get_or_compute(f"results|{since_hours}", _compute)
 
 
 @app.get("/api/cv-flips")
 async def api_cv_flips(state: str = "all", pair: str = "",
                        hours: int = 72, limit: int = 500):
-    """CV+ST Flip observation feed для journal.
+    """CV+ST Flip observation feed для journal. Cache 45s + sync Mongo в to_thread.
 
     state ∈ {all, WAITING, FLIPPED, TIMEOUT, INVALIDATED}
     hours — окно от cv_triggered_at
     """
-    from database import _cv_flip_signals, utcnow
-    from datetime import timedelta
-    since = utcnow() - timedelta(hours=hours)
-    query: dict = {"cv_triggered_at": {"$gte": since}}
-    if state and state.lower() != "all":
-        query["state"] = state.upper()
-    if pair:
-        p = pair.replace("/", "").upper()
-        if p.endswith("USDT") and "/" not in pair:
-            # пользователь передал как 'BTCUSDT'; наш pair хранится 'BTC/USDT'
-            base = p[:-4]
-            query["$or"] = [{"pair": pair}, {"pair": f"{base}/USDT"}]
-        else:
-            query["pair"] = pair
-    items = []
-    for doc in _cv_flip_signals().find(query).sort("cv_triggered_at", -1).limit(limit):
-        doc["_id"] = str(doc.get("_id"))
-        for k in ("cv_triggered_at", "flip_at", "created_at", "updated_at"):
-            v = doc.get(k)
-            if hasattr(v, "isoformat"):
-                doc[k] = v.isoformat()
-        items.append(doc)
-    return {"ok": True, "count": len(items), "items": items,
-            "state": state, "pair": pair, "hours": hours}
+    from cache_utils import cv_flips_cache
+
+    async def _compute():
+        def _sync():
+            from database import _cv_flip_signals, utcnow
+            from datetime import timedelta
+            since = utcnow() - timedelta(hours=hours)
+            query: dict = {"cv_triggered_at": {"$gte": since}}
+            if state and state.lower() != "all":
+                query["state"] = state.upper()
+            if pair:
+                p = pair.replace("/", "").upper()
+                if p.endswith("USDT") and "/" not in pair:
+                    base = p[:-4]
+                    query["$or"] = [{"pair": pair}, {"pair": f"{base}/USDT"}]
+                else:
+                    query["pair"] = pair
+            items = []
+            for doc in _cv_flip_signals().find(query).sort("cv_triggered_at", -1).limit(limit):
+                doc["_id"] = str(doc.get("_id"))
+                for k in ("cv_triggered_at", "flip_at", "created_at", "updated_at"):
+                    v = doc.get(k)
+                    if hasattr(v, "isoformat"):
+                        doc[k] = v.isoformat()
+                items.append(doc)
+            return items
+        items = await asyncio.to_thread(_sync)
+        return {"ok": True, "count": len(items), "items": items,
+                "state": state, "pair": pair, "hours": hours}
+
+    cache_key = f"flips|{state}|{pair}|{hours}|{limit}"
+    return await cv_flips_cache.get_or_compute(cache_key, _compute)
 
 
 # Серверный кеш для /api/supertrend-signals/by-pair (TTL 60с)
@@ -6102,17 +6115,23 @@ async def api_paper_status():
 
 @app.get("/api/paper/history")
 async def api_paper_history(limit: int = 50):
+    """Cache 30s — UI polling каждые 15с, история меняется редко (только
+    при закрытии позиции). Раньше зависало 15с при лагах Atlas."""
+    from cache_utils import paper_history_cache
     import paper_trader as pt
-    def _sync():
-        history = pt.get_history(limit)
-        for h in history:
-            h["_id"] = str(h.get("_id", ""))
-            for f in ("opened_at", "closed_at"):
-                if h.get(f) and hasattr(h[f], "isoformat"):
-                    h[f] = h[f].isoformat()
-        return history
-    history = await asyncio.to_thread(_sync)
-    return {"items": history}
+
+    async def _compute():
+        def _sync():
+            history = pt.get_history(limit)
+            for h in history:
+                h["_id"] = str(h.get("_id", ""))
+                for f in ("opened_at", "closed_at"):
+                    if h.get(f) and hasattr(h[f], "isoformat"):
+                        h[f] = h[f].isoformat()
+            return history
+        return {"items": await asyncio.to_thread(_sync)}
+
+    return await paper_history_cache.get_or_compute(f"history|{limit}", _compute)
 
 
 _by_state: dict = {

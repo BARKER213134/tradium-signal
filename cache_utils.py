@@ -85,3 +85,8 @@ fvg_signals_cache = AsyncTTLCache(ttl=30)   # /api/fvg-signals
 fvg_journal_cache = AsyncTTLCache(ttl=30)   # /api/fvg-journal
 paper_learnings_cache = AsyncTTLCache(ttl=60)   # /api/paper/learnings
 paper_rejections_cache = AsyncTTLCache(ttl=30)  # /api/paper/rejections
+paper_history_cache = AsyncTTLCache(ttl=30)     # /api/paper/history — was timing out 15s
+cv_flips_cache = AsyncTTLCache(ttl=45)          # /api/cv-flips — медленный
+cv_flip_results_cache = AsyncTTLCache(ttl=60)   # /api/cv-flip-results — крутой sync compute, был 15s timeout
+clusters_cache = AsyncTTLCache(ttl=30)          # /api/clusters — 3s без cache
+market_events_cache = AsyncTTLCache(ttl=30)     # /api/market-events
