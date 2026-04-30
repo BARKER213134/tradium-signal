@@ -4882,6 +4882,27 @@ async def api_reversal_meter():
         return {"error": str(e), "traceback": traceback.format_exc()[-2000:]}
 
 
+_SYSTEM_HEALTH_CACHE = {"ts": 0.0, "data": None}
+_SYSTEM_HEALTH_TTL = 15.0  # 15с — UI polling может быть чаще, нагрузку снизим
+
+
+@app.get("/api/system-health")
+async def api_system_health():
+    """Комплексный health-monitor: все подсистемы + видимые проблемы.
+    Cache 15с — все checks делают Mongo find_one, не хочется тяжелить
+    при частом UI polling."""
+    import time as _t
+    now = _t.time()
+    cached = _SYSTEM_HEALTH_CACHE.get("data")
+    if cached is not None and (now - _SYSTEM_HEALTH_CACHE["ts"]) < _SYSTEM_HEALTH_TTL:
+        return cached
+    from system_health import collect_health
+    data = await asyncio.to_thread(collect_health)
+    _SYSTEM_HEALTH_CACHE["ts"] = now
+    _SYSTEM_HEALTH_CACHE["data"] = data
+    return data
+
+
 @app.post("/api/userbot/login/start")
 async def api_userbot_login_start(payload: dict):
     """Начать re-login flow Telethon. Шлёт код на phone через Telegram.

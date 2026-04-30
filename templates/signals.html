@@ -3,10 +3,24 @@
 {% block page_title %}Сигналы{% endblock %}
 
 {% block content %}
-<!-- ── Userbot Status Pill (постоянный индикатор подключения) ── -->
-<div id="ubStatusPill" style="position:fixed; top:14px; right:18px; z-index:150; background:var(--dark); border:1px solid var(--border); padding:6px 12px; border-radius:18px; font-family:var(--font-mono); font-size:11px; display:flex; align-items:center; gap:6px; box-shadow:0 4px 12px rgba(0,0,0,0.3); cursor:pointer; user-select:none;" title="Telethon userbot status — клик для деталей" onclick="document.getElementById('ubLoginBanner').scrollIntoView({behavior:'smooth'})">
-  <span id="ubStatusDot" style="width:8px; height:8px; border-radius:50%; background:#888;"></span>
-  <span id="ubStatusText" style="color:var(--muted);">…</span>
+<!-- ── System Health Pill (постоянный индикатор всей платформы) ── -->
+<div id="sysHealthPill" style="position:fixed; top:14px; right:18px; z-index:150; background:var(--dark); border:1px solid var(--border); padding:6px 12px; border-radius:18px; font-family:var(--font-mono); font-size:11px; display:flex; align-items:center; gap:8px; box-shadow:0 4px 12px rgba(0,0,0,0.3); cursor:pointer; user-select:none;" title="Здоровье системы — клик для деталей" onclick="document.getElementById('sysHealthPanel').style.display = document.getElementById('sysHealthPanel').style.display==='block' ? 'none' : 'block'">
+  <span id="sysHealthDot" style="width:8px; height:8px; border-radius:50%; background:#888;"></span>
+  <span id="sysHealthText" style="color:var(--muted);">проверка…</span>
+  <span id="ubStatusDot" style="width:8px; height:8px; border-radius:50%; background:#888; margin-left:4px; border-left:1px solid var(--border); padding-left:8px;"></span>
+  <span id="ubStatusText" style="color:var(--muted); font-size:10px;">tg…</span>
+</div>
+
+<!-- ── System Health Panel (раскрывается при клике на pill) ── -->
+<div id="sysHealthPanel" style="display:none; position:fixed; top:50px; right:18px; z-index:160; background:var(--dark); border:1px solid var(--border); border-radius:8px; padding:14px 18px; max-width:540px; min-width:380px; box-shadow:0 12px 32px rgba(0,0,0,0.5); font-family:var(--font-mono); font-size:11px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+    <div style="font-weight:700; font-size:13px; color:var(--text);">⚙ Состояние системы</div>
+    <button onclick="document.getElementById('sysHealthPanel').style.display='none'" style="background:none; border:none; color:var(--muted); font-size:18px; cursor:pointer;">×</button>
+  </div>
+  <div id="sysHealthList" style="max-height:60vh; overflow-y:auto;"></div>
+  <div style="margin-top:10px; font-size:9.5px; color:var(--muted); text-align:right;">
+    Обновляется каждые 30с · <span id="sysHealthTs">—</span>
+  </div>
 </div>
 
 <!-- ── Userbot Re-login Banner (показывается когда Telethon disconnected) ── -->
@@ -44,6 +58,65 @@
 </div>
 
 <script>
+async function _sysHealthCheck() {
+  try {
+    const r = await fetch('/api/system-health');
+    const d = await r.json();
+    const dot = document.getElementById('sysHealthDot');
+    const txt = document.getElementById('sysHealthText');
+    const list = document.getElementById('sysHealthList');
+    const tsEl = document.getElementById('sysHealthTs');
+    if (!dot || !txt) return;
+
+    const overall = d.overall || 'ok';
+    const colors = { ok: '#00e5a0', warn: '#ffa24e', error: '#ff4d6d' };
+    const icons = { ok: '✓', warn: '⚠', error: '✕' };
+    dot.style.background = colors[overall];
+    dot.style.boxShadow = `0 0 8px ${colors[overall]}80`;
+    if (overall === 'ok') {
+      txt.textContent = 'Всё OK';
+      txt.style.color = '#00e5a0';
+    } else if (overall === 'warn') {
+      txt.textContent = `${d.n_warn || 0} замечаний`;
+      txt.style.color = '#ffa24e';
+    } else {
+      txt.textContent = `${d.n_error || 0} ошибок!`;
+      txt.style.color = '#ff4d6d';
+    }
+
+    // Список деталей
+    if (list) {
+      const checks = d.checks || [];
+      list.innerHTML = checks.map(c => {
+        const color = colors[c.status] || '#888';
+        const icon = icons[c.status] || '·';
+        const det = c.details ? Object.entries(c.details).map(([k,v]) => `${k}=${typeof v==='object'?JSON.stringify(v).slice(0,80):v}`).join(' · ') : '';
+        return `<div style="padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.04);">
+          <div style="display:flex; gap:8px; align-items:flex-start;">
+            <span style="color:${color}; font-weight:700; flex:0 0 14px;">${icon}</span>
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:600; color:var(--text); margin-bottom:2px;">${c.name || '?'}</div>
+              <div style="color:var(--muted); font-size:10.5px; line-height:1.4;">${(c.message||'').replace(/</g,'&lt;')}</div>
+              ${det ? `<div style="color:#666; font-size:9.5px; margin-top:2px;">${det.replace(/</g,'&lt;').slice(0,200)}</div>` : ''}
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+    if (tsEl) {
+      const t = new Date(d.ts || Date.now());
+      tsEl.textContent = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+    }
+
+    // Auto-show panel при error
+    const panel = document.getElementById('sysHealthPanel');
+    if (overall === 'error' && panel && !window._sysHealthAutoShown) {
+      panel.style.display = 'block';
+      window._sysHealthAutoShown = true;
+    }
+  } catch (e) { /* ignore */ }
+}
+
 async function _ubCheckStatus() {
   try {
     const r = await fetch('/api/userbot-status');
@@ -163,7 +236,9 @@ function ubLoginReset() {
 }
 // Check status on page load + every 30s
 _ubCheckStatus();
+_sysHealthCheck();
 setInterval(_ubCheckStatus, 30000);
+setInterval(_sysHealthCheck, 30000);
 </script>
 
 <style>
