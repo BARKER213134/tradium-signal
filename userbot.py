@@ -49,36 +49,57 @@ _login_state: dict = {
 
 async def login_start(phone: str) -> dict:
     """Шаг 1: послать код подтверждения на phone (Telegram пришлёт SMS/in-app).
-    Возвращает {ok, message} или {ok: False, error}."""
+    Возвращает {ok, message} или {ok: False, error}.
+
+    Все блокирующие операции обёрнуты в timeout/to_thread — login через UI
+    не должен ронять event loop, даже если Telegram/disk залипли.
+    """
     global _login_state
     from telethon import TelegramClient
     from datetime import datetime, timezone
-    # Закрыть предыдущую попытку если была
+    # Закрыть предыдущую попытку если была — с timeout, иначе залипший
+    # disconnect утащит весь event loop
     try:
         if _login_state.get("client"):
-            await _login_state["client"].disconnect()
-    except Exception:
+            await asyncio.wait_for(_login_state["client"].disconnect(), timeout=5.0)
+    except (asyncio.TimeoutError, Exception):
         pass
-    # Удаляем старый session_userbot.session чтобы создать новый
+    # Удаляем старый session_userbot.session чтобы создать новый — file I/O в thread
     here = os.path.dirname(os.path.abspath(__file__))
     session_path = os.path.join(here, "session_userbot")
+    def _cleanup_files():
+        try:
+            for ext in ("", ".session", ".session-journal"):
+                p = session_path + ext
+                if os.path.exists(p):
+                    os.remove(p)
+        except Exception as _e:
+            logger.warning(f"[login] cleanup session fail: {_e}")
     try:
-        for ext in ("", ".session", ".session-journal"):
-            p = session_path + ext
-            if os.path.exists(p):
-                os.remove(p)
-    except Exception as _e:
-        logger.warning(f"[login] cleanup session fail: {_e}")
+        await asyncio.wait_for(asyncio.to_thread(_cleanup_files), timeout=5.0)
+    except asyncio.TimeoutError:
+        logger.warning("[login] session cleanup timed out — продолжаем")
     # Создаём новый клиент с новой сессией
     client = TelegramClient(session_path, API_ID, API_HASH)
     try:
-        await client.connect()
+        await asyncio.wait_for(client.connect(), timeout=15.0)
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": "connect timeout (15s) — Telegram/network не отвечает"}
     except Exception as e:
         return {"ok": False, "error": f"connect failed: {e}"}
     try:
-        sent = await client.send_code_request(phone)
+        sent = await asyncio.wait_for(client.send_code_request(phone), timeout=20.0)
+    except asyncio.TimeoutError:
+        try:
+            await asyncio.wait_for(client.disconnect(), timeout=5.0)
+        except Exception:
+            pass
+        return {"ok": False, "error": "send_code timeout (20s)"}
     except Exception as e:
-        await client.disconnect()
+        try:
+            await asyncio.wait_for(client.disconnect(), timeout=5.0)
+        except Exception:
+            pass
         return {"ok": False, "error": f"send_code: {e}"}
     _login_state.update({
         "client": client,
@@ -91,7 +112,12 @@ async def login_start(phone: str) -> dict:
 
 
 async def login_complete(code: str, password: str | None = None) -> dict:
-    """Шаг 2: завершить login кодом из Telegram (+ опционально 2FA password)."""
+    """Шаг 2: завершить login кодом из Telegram (+ опционально 2FA password).
+
+    Все блокирующие операции (sign_in, disconnect, sync Mongo, file I/O)
+    обёрнуты в wait_for/to_thread, чтобы залипший Telegram или Mongo
+    не утащили event loop платформы.
+    """
     global _tg_client, _login_state, _last_setup_at, _last_setup_error
     from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
     from datetime import datetime, timezone
@@ -101,51 +127,70 @@ async def login_complete(code: str, password: str | None = None) -> dict:
     if not (client and phone and phone_code_hash):
         return {"ok": False, "error": "no_pending_login — сначала вызови /login/start"}
     try:
-        await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+        await asyncio.wait_for(
+            client.sign_in(phone, code, phone_code_hash=phone_code_hash),
+            timeout=30.0,
+        )
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": "sign_in timeout (30s) — Telegram не отвечает"}
     except SessionPasswordNeededError:
         if not password:
             _login_state["needs_2fa"] = True
             return {"ok": False, "needs_2fa": True,
                     "error": "Для аккаунта включена 2FA — нужен пароль"}
         try:
-            await client.sign_in(password=password)
+            await asyncio.wait_for(client.sign_in(password=password), timeout=30.0)
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "2fa sign_in timeout (30s)"}
         except Exception as e:
             return {"ok": False, "error": f"2fa fail: {e}"}
     except PhoneCodeInvalidError:
         return {"ok": False, "error": "Неверный код"}
     except Exception as e:
         return {"ok": False, "error": f"sign_in: {e}"}
-    # Авторизация прошла → сохраняем session в Mongo + переподключаем supervisor
+    # Авторизация прошла → disconnect старого pending клиента (с timeout!)
     try:
-        await client.disconnect()
-    except Exception:
+        await asyncio.wait_for(client.disconnect(), timeout=5.0)
+    except (asyncio.TimeoutError, Exception):
         pass
-    # Persist session bytes в Mongo
+    # Persist session bytes в Mongo — sync I/O вынесен в thread с timeout.
+    # Это была одна из причин зависаний: open()+read()+update_one() в event loop.
+    here = os.path.dirname(os.path.abspath(__file__))
+    session_path = os.path.join(here, "session_userbot.session")
+
+    def _persist_session_sync():
+        if not os.path.exists(session_path):
+            return None
+        from database import _get_db
+        with open(session_path, "rb") as f:
+            data = f.read()
+        _get_db().system.update_one(
+            {"_id": "telethon_session"},
+            {"$set": {"data": data, "size": len(data),
+                      "updated_at": datetime.now(timezone.utc)}},
+            upsert=True,
+        )
+        return len(data)
+
     try:
-        here = os.path.dirname(os.path.abspath(__file__))
-        session_path = os.path.join(here, "session_userbot.session")
-        if os.path.exists(session_path):
-            from database import _get_db
-            with open(session_path, "rb") as f:
-                data = f.read()
-            _get_db().system.update_one(
-                {"_id": "telethon_session"},
-                {"$set": {"data": data, "size": len(data),
-                          "updated_at": datetime.now(timezone.utc)}},
-                upsert=True,
-            )
-            logger.info(f"✅ Telethon session saved to Mongo ({len(data)} bytes)")
+        size = await asyncio.wait_for(asyncio.to_thread(_persist_session_sync), timeout=15.0)
+        if size:
+            logger.info(f"✅ Telethon session saved to Mongo ({size} bytes)")
+    except asyncio.TimeoutError:
+        logger.warning("[login] persist to Mongo timed out (15s) — session не сохранена в Atlas")
     except Exception as e:
         logger.warning(f"[login] persist to Mongo fail: {e}")
     _login_state.update({
         "client": None, "phone": None, "phone_code_hash": None,
         "needs_2fa": False, "started_at": None,
     })
-    # Trigger supervisor reconnect — отключаем старый client если есть
+    # Trigger supervisor reconnect — отключаем старый _tg_client с timeout.
+    # Раньше: if залип disconnect, эта строка вешала весь POST handler
+    # (а заодно и event loop, т.к. pending Future никогда не разрешался).
     try:
         if _tg_client:
-            await _tg_client.disconnect()
-    except Exception:
+            await asyncio.wait_for(_tg_client.disconnect(), timeout=5.0)
+    except (asyncio.TimeoutError, Exception):
         pass
     _last_setup_error = None
     return {"ok": True, "message": "Авторизация успешна! Сессия сохранена. Userbot подключится автоматически."}
