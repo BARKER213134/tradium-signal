@@ -597,65 +597,66 @@ async def handle_cryptovizor_message(text: str, message_id: int):
             logger.exception(f"[CV] futures prices fetch failed: {e}")
             prices_raw = {}
 
-        db = SessionLocal()
+        # Sync DB section вынесен в to_thread — раньше блокировал event loop
+        # на каждое CV сообщение (handle_text_message → handle_cryptovizor → query+commit).
+        def _persist_cv_signals():
+            db = SessionLocal()
+            results = []
+            try:
+                created_local = 0
+                for sd in signals_data:
+                    pair = sd["pair"]
+                    norm = pair.replace("/", "").upper()
+                    current_price = prices_raw.get(norm)
+                    if current_price is None:
+                        continue
+                    unique_msg_id = message_id * 100 + created_local
+                    existing = db.query(Signal).filter(
+                        Signal.source == BOT2_NAME
+                    ).filter(Signal.message_id == unique_msg_id).first()
+                    if existing:
+                        continue
+                    signal = Signal(
+                        source=BOT2_NAME, message_id=unique_msg_id, raw_text=text,
+                        pair=pair, direction=sd["direction"], trend=sd["trend"],
+                        timeframe="1h", entry=current_price, status="СЛЕЖУ",
+                        received_at=utcnow(),
+                    )
+                    db.add(signal)
+                    db.commit()
+                    db.refresh(signal)
+                    created_local += 1
+                    results.append({
+                        "id": signal.id, "pair": pair,
+                        "direction": sd["direction"], "price": current_price,
+                    })
+            finally:
+                db.close()
+            return results
+
+        created_signals = await asyncio.to_thread(_persist_cv_signals)
         try:
-            created = 0
-            for sd in signals_data:
-                pair = sd["pair"]
-                norm = pair.replace("/", "").upper()
-                current_price = prices_raw.get(norm)
-
-                # Если ни spot ни futures не дали цену — пропускаем
-                if current_price is None:
-                    logger.debug(f"[CV] {pair} — нет цены на futures, пропускаем")
-                    continue
-
-                # Уникальность: не создаём дубликаты если message_id уже был с тем же pair
-                unique_msg_id = message_id * 100 + created
-                existing = db.query(Signal).filter(
-                    Signal.source == BOT2_NAME
-                ).filter(Signal.message_id == unique_msg_id).first()
-                if existing:
-                    continue
-
-                signal = Signal(
-                    source=BOT2_NAME,
-                    message_id=unique_msg_id,
-                    raw_text=text,
-                    pair=pair,
-                    direction=sd["direction"],
-                    trend=sd["trend"],
-                    timeframe="1h",
-                    entry=current_price,
-                    status="СЛЕЖУ",
-                    received_at=utcnow(),
-                )
-                db.add(signal)
-                db.commit()
-                db.refresh(signal)
-                created += 1
+            created = len(created_signals)
+            for sig_info in created_signals:
                 logger.info(
-                    f"[CV] #{signal.id} {pair} {sd['direction']} entry={current_price}"
+                    f"[CV] #{sig_info['id']} {sig_info['pair']} "
+                    f"{sig_info['direction']} entry={sig_info['price']}"
                 )
                 log_event(
-                    signal.id, "created",
-                    data={"pair": pair, "direction": sd["direction"], "source": BOT2_NAME},
+                    sig_info['id'], "created",
+                    data={"pair": sig_info['pair'], "direction": sig_info['direction'],
+                          "source": BOT2_NAME},
                     message="Cryptovizor signal parsed",
                 )
                 try:
                     from admin import broadcast_event
-                    broadcast_event("signal_new", {"id": signal.id, "source": BOT2_NAME})
+                    broadcast_event("signal_new", {"id": sig_info['id'], "source": BOT2_NAME})
                 except Exception:
                     pass
-                # Прямой Telegram-алерт ОТКЛЮЧЁН (28.04.2026):
-                # минимальные basic alerts (только pair + direction + trend)
-                # дублировались с rich pattern alerts → юзер видел сначала
-                # минимальную "хуйню", потом красивый. Сейчас:
-                # CV сигнал → СЛЕЖУ → watcher._check_cryptovizor находит паттерн
-                # → status=ПАТТЕРН → _send_cryptovizor_alert (rich httpx) → BOT2.
-                # Если паттерн не находится за 24ч — алерт не идёт (by design).
-        finally:
-            db.close()
+        except Exception:
+            logger.exception("[CV] log/broadcast post-persist failed")
+        # Прямой Telegram-алерт ОТКЛЮЧЁН (28.04.2026): pattern alert
+        # шлётся отдельно из watcher._check_cryptovizor.
     except Exception:
         logger.exception(f"[CV] handle_cryptovizor_message crashed (msg_id={message_id})")
 
