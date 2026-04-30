@@ -265,6 +265,16 @@ def _verify_token(token: str | None) -> str | None:
 _OPEN_PATHS = {"/login", "/static"}
 
 
+class StaticCacheMiddleware(BaseHTTPMiddleware):
+    """Cache-Control headers для /static/ — браузер кеширует на 1 сутки.
+    LWC и шрифты не меняются часто → нет смысла качать каждый reload."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static"):
+            response.headers["Cache-Control"] = "public, max-age=86400, immutable"
+        return response
+
+
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -326,6 +336,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(SessionAuthMiddleware)
+app.add_middleware(StaticCacheMiddleware)
 
 
 @app.get("/login", response_class=HTMLResponse)

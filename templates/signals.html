@@ -884,11 +884,22 @@ async function openChartModal(symbol, pair, direction, pnl) {
         wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
       });
       series.setData(d.candles);
+      // Pre-set пустых маркеров — резервируем space заранее чтобы при
+      // добавлении real markers chart не "прыгал" (autoscale не пересчитывается).
+      if (series.setMarkers) series.setMarkers([]);
       if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
       if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
       if (window._addSuperTrend) window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv });
       if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
       chart.timeScale().fitContent();
+      // Lock scale margins — отключаем autoscale при последующих setMarkers
+      // (markers могут быть выше/ниже bars, lightweight-charts расширяет range).
+      try {
+        series.priceScale().applyOptions({
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+          autoScale: false,
+        });
+      } catch {}
       if (loading) loading.style.display = 'none';
 
       // Маркеры в фоне — НЕ блокируют появление графика
