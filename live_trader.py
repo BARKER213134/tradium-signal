@@ -1622,24 +1622,86 @@ async def paper_to_live_sync_check() -> dict:
 
     Идемпотентно: запускается каждые 15с, ничего не дублирует.
     """
-    from database import _get_db, _live_trades
+    from datetime import timedelta as _td
     from live_safety import get_enabled_accounts
-    db = _get_db()
 
-    accounts = get_enabled_accounts()
+    accounts = await asyncio.to_thread(get_enabled_accounts)
     if not accounts:
         return {"ok": True, "synced": 0, "skipped_no_accounts": True}
 
-    # Все live OPEN с paper_trade_id
-    live_open = list(_live_trades().find({
-        "status": "OPEN", "paper_trade_id": {"$ne": None},
-    }))
-    if not live_open:
-        return {"ok": True, "synced": 0}
+    # ── FAILSAFE RECOVERY: paper OPEN без live mirror ──
+    # AZTEC-style bug: asyncio.create_task без save reference → GC может убить
+    # mirror task до выполнения. Защита от повторных потерь — sweep раз в 15с.
+    # Окно 6ч (TP/SL обычно <24ч). Старые orphan'ы (>6ч) пропускаются.
+    cutoff = _utcnow() - _td(hours=6)
 
-    # Все paper позиции (все статусы) для этих trade_ids
-    paper_ids = list({lt.get("paper_trade_id") for lt in live_open if lt.get("paper_trade_id")})
-    paper_docs = {p["trade_id"]: p for p in db.paper_trades.find({"trade_id": {"$in": paper_ids}})}
+    def _scan_for_orphans():
+        from database import _get_db, _live_trades
+        db_ = _get_db()
+        recent_paper = list(db_.paper_trades.find({
+            "status": "OPEN",
+            "opened_at": {"$gte": cutoff},
+            "trade_id": {"$exists": True},
+        }))
+        if not recent_paper:
+            return [], set()
+        ptids = [p.get("trade_id") for p in recent_paper if p.get("trade_id")]
+        existing = set()
+        for lt in _live_trades().find({"paper_trade_id": {"$in": ptids}},
+                                       {"paper_trade_id": 1, "account_id": 1}):
+            existing.add((lt.get("paper_trade_id"), lt.get("account_id")))
+        return recent_paper, existing
+
+    recent_paper, existing_pairs = await asyncio.to_thread(_scan_for_orphans)
+    recovered = 0
+    for p in recent_paper:
+        ptid = p.get("trade_id")
+        for acc in accounts:
+            aid = acc.get("_id")
+            if (ptid, aid) in existing_pairs:
+                continue
+            # Orphan! Открываем mirror задним числом
+            logger.warning(f"[failsafe] orphan paper#{ptid} {p.get('symbol')} {p.get('direction')} "
+                          f"OPEN без live на {aid} → восстанавливаю")
+            signal_data = {
+                "symbol": p.get("symbol", ""),
+                "pair": p.get("pair", ""),
+                "direction": p.get("direction", ""),
+                "source": p.get("source", "unknown"),
+                "entry": p.get("entry"),
+                "paper_trade_id": ptid,
+            }
+            decision = {
+                "enter": True,
+                "leverage": p.get("leverage", 5),
+                "size_pct": p.get("size_pct", 5),
+                "tp1": p.get("tp1"),
+                "sl": p.get("sl"),
+                "reasoning": "[FAILSAFE-RECOVERY] paper OPEN без mirror — auto-восстановлено",
+            }
+            try:
+                r = await mirror_paper_for_account(signal_data, decision, acc)
+                if r and r.get("ok"):
+                    recovered += 1
+            except Exception as e:
+                logger.warning(f"[failsafe] recovery#{ptid}/{aid} fail: {e}")
+    if recovered:
+        logger.info(f"[failsafe] восстановлено {recovered} orphan mirror(s)")
+
+    # Все live OPEN с paper_trade_id + paper_docs
+    def _load_active():
+        from database import _get_db, _live_trades
+        live_open_ = list(_live_trades().find({
+            "status": "OPEN", "paper_trade_id": {"$ne": None},
+        }))
+        if not live_open_:
+            return live_open_, {}
+        paper_ids = list({lt.get("paper_trade_id") for lt in live_open_ if lt.get("paper_trade_id")})
+        paper_docs_ = {p["trade_id"]: p for p in _get_db().paper_trades.find({"trade_id": {"$in": paper_ids}})}
+        return live_open_, paper_docs_
+    live_open, paper_docs = await asyncio.to_thread(_load_active)
+    if not live_open:
+        return {"ok": True, "synced": 0, "failsafe_recovered": recovered}
 
     actions = []
     accounts_by_id = {a["_id"]: a for a in accounts}
