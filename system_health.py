@@ -145,37 +145,36 @@ def check_signals_freshness() -> list[dict]:
 
 
 def check_watcher_tick() -> dict:
-    """Свежесть последних событий watcher loop."""
+    """Свежесть watcher heartbeat. Раньше смотрели на _events с типами
+    cv_alert_*/anomaly_detected/etc — но эти события пишутся только когда
+    реально срабатывает алерт. Если CV-сигналов нет 2ч — false alarm
+    "Watcher заглох" хотя watcher жив. Теперь смотрим на heartbeat
+    document который watcher пишет КАЖДЫЙ тик (30с) — настоящий liveness."""
     try:
-        from database import _events
-        from pymongo import DESCENDING
-        # Берём любое событие из watcher pipeline
-        last = _events().find_one(
-            {"type": {"$in": [
-                "pattern_detected", "dca4_hit", "cv_alert_called",
-                "cv_alert_sent", "ai_scored", "anomaly_detected",
-                "confluence_detected", "cluster_open", "cluster_close",
-                "sl_hit", "tp_hit",
-            ]}},
-            sort=[("at", DESCENDING)],
-        )
-        if not last:
+        from database import _get_db
+        hb = _get_db().system.find_one({"_id": "watcher_heartbeat"})
+        if not hb:
             return {"name": "Watcher tick", "status": "warn",
-                    "message": "Нет событий в _events — watcher молчит"}
-        age = _age_minutes(last.get("at"))
+                    "message": "heartbeat ещё не писался — watcher не стартовал"}
+        age = _age_minutes(hb.get("at"))
+        stage = hb.get("stage", "?")
         if age is None:
             return {"name": "Watcher tick", "status": "warn",
-                    "message": "at не парсится"}
-        if age > 120:  # 2 часа без событий
+                    "message": "heartbeat at не парсится"}
+        # Heartbeat пишется каждый tick (30с) + при supervisor attempts.
+        # Norm: <2 мин. Warn: 2-5 мин (Atlas slow / one tick stuck).
+        # Error: >5 мин (loop точно мёртв).
+        if age > 5:
             return {"name": "Watcher tick", "status": "error",
-                    "message": f"Watcher заглох — последний event '{last.get('type')}' {age}мин назад. Нужен redeploy.",
-                    "details": {"age_min": age, "last_type": last.get("type")}}
-        if age > 60:
+                    "message": f"Watcher заглох — heartbeat stage='{stage}' {age}мин назад. Нужен redeploy.",
+                    "details": {"age_min": age, "stage": stage}}
+        if age > 2:
             return {"name": "Watcher tick", "status": "warn",
-                    "message": f"Watcher вял — {age}мин без событий",
-                    "details": {"age_min": age}}
+                    "message": f"Watcher вял — heartbeat {age}мин назад (stage='{stage}')",
+                    "details": {"age_min": age, "stage": stage}}
         return {"name": "Watcher tick", "status": "ok",
-                "message": f"Последний event '{last.get('type')}': {age}мин назад"}
+                "message": f"Heartbeat свежий: {age}мин назад (stage='{stage}')",
+                "details": {"age_min": age, "stage": stage}}
     except Exception as e:
         return {"name": "Watcher tick", "status": "error",
                 "message": f"check: {e}"}
