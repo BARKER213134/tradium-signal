@@ -3169,6 +3169,11 @@ async def _send_live_confirmation_alert(pending: dict) -> None:
 # при одновременном открытии двух сделок (29 апр 2026, AZTEC vs ONDO).
 _MIRROR_TASKS: set = set()
 
+# Тот же AZTEC-style fix для verified_entry — раньше create_task без save
+# reference, GC ел task при загруженном event loop. 30 апр 2026 verified
+# просел до 0 за день когда были tick stalls (cryptovizor + anomaly/conf).
+_VERIFIED_TASKS: set = set()
+
 
 async def _paper_on_signal(signal_data: dict):
     """Роутер сигнала по режиму торговли (paper | testnet | real).
@@ -3216,11 +3221,17 @@ async def _paper_on_signal(signal_data: dict):
         if not _bot9:
             _setup_bot9()  # ленивая инициализация если ещё не было
         verified_bot = _bot9 or _bot
-        asyncio.create_task(
+        # Save task reference в set чтобы GC не съел task под нагрузкой
+        # (30 апр 2026 verified просел до 0 — задачи терялись когда event
+        # loop был забит cryptovizor stalls). discard через done_callback.
+        _ve_task = asyncio.create_task(
             ve.run_verified_check(signal_data, bot=verified_bot,
                                   chat_id=_admin_chat_id,
-                                  topic_id=VERIFIED_TOPIC_ID)
+                                  topic_id=VERIFIED_TOPIC_ID),
+            name=f"verified-{signal_data.get('symbol','?')}",
         )
+        _VERIFIED_TASKS.add(_ve_task)
+        _ve_task.add_done_callback(_VERIFIED_TASKS.discard)
     except Exception:
         logger.debug("[verified-check] schedule fail", exc_info=True)
 
