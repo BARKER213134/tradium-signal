@@ -964,6 +964,28 @@ async def mirror_paper_for_account(signal_data: dict, decision: dict, account: d
         logger.warning(f"[live-{aid}] kill_switch active — skip mirror")
         return None
 
+    # ── IDEMPOTENCY: если live trade для этой (ptid, aid) уже есть — skip.
+    # Защита от race condition между Path A (watcher.process_signal create_task)
+    # и Path B (paper_to_live_sync_check failsafe). 01.05.2026 проявлялся
+    # как 2 live позиции на одну paper за ~2с, биржа схлопывала в 1
+    # позицию с 2x маржой.
+    ptid = signal_data.get("paper_trade_id")
+    if ptid is not None:
+        try:
+            from database import _live_trades
+            existing = await asyncio.to_thread(
+                _live_trades().find_one,
+                {"paper_trade_id": ptid, "account_id": aid},
+                {"_id": 1, "status": 1},
+            )
+            if existing:
+                logger.info(f"[live-{aid}] mirror SKIP — уже есть live trade "
+                            f"для paper#{ptid} (status={existing.get('status')})")
+                return {"ok": True, "skipped": "already_mirrored",
+                        "trade_id": existing.get("_id")}
+        except Exception as e:
+            logger.debug(f"[live-{aid}] idempotency check fail: {e}")
+
     # 🪞 size_pct берётся из paper-decision напрямую (decision[size_pct]),
     # а size_usdt вычисляется в open_position_for_account на основе
     # paper.balance (через signal_data["_paper_balance_for_sizing"] override),
@@ -1712,15 +1734,20 @@ async def paper_to_live_sync_check() -> dict:
     # ── FAILSAFE RECOVERY: paper OPEN без live mirror ──
     # AZTEC-style bug: asyncio.create_task без save reference → GC может убить
     # mirror task до выполнения. Защита от повторных потерь — sweep раз в 15с.
-    # Окно 6ч (TP/SL обычно <24ч). Старые orphan'ы (>6ч) пропускаются.
-    cutoff = _utcnow() - _td(hours=6)
+    # Окно: opened ≥60с назад (даём Path A в watcher.process_signal время
+    # завершить mirror task, иначе double-open) и не старше 6ч.
+    # Раньше cutoff_old=6h только → race condition: failsafe видел что live
+    # trade ещё не записан и открывал второй mirror, биржа схлопывала в 1
+    # позицию с 2x размером (juser жалоба 01.05.2026 "в 2 раза больше моржа").
+    cutoff_old = _utcnow() - _td(hours=6)
+    cutoff_recent = _utcnow() - _td(seconds=60)
 
     def _scan_for_orphans():
         from database import _get_db, _live_trades
         db_ = _get_db()
         recent_paper = list(db_.paper_trades.find({
             "status": "OPEN",
-            "opened_at": {"$gte": cutoff},
+            "opened_at": {"$gte": cutoff_old, "$lte": cutoff_recent},
             "trade_id": {"$exists": True},
         }))
         if not recent_paper:
