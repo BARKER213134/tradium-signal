@@ -44,23 +44,39 @@ def _to_utc_ts(d: datetime) -> float:
 
 async def _create_waiting_duplicates():
     """Для каждого CV сигнала за последние TIMEOUT_H часов без дубля — создать WAITING.
-    Фильтр по received_at (момент прихода сообщения в бота), не по pattern_triggered_at."""
+    Фильтр по received_at (момент прихода сообщения в бота), не по pattern_triggered_at.
+
+    ВСЕ Mongo вызовы через to_thread — функция вызывается каждые 30с,
+    sync find/insert блокировал event loop (прод hang каждые 30с).
+    """
     from database import _signals, _cv_flip_signals, utcnow
     since = utcnow() - timedelta(hours=TIMEOUT_H)
     cv_col = _signals()
     dup_col = _cv_flip_signals()
 
+    # Материализуем CV сигналы списком через to_thread.
+    def _fetch_cvs():
+        return list(cv_col.find(
+            {"source": "cryptovizor", "received_at": {"$gte": since}},
+            {"_id": 1, "pair": 1, "direction": 1, "pattern_name": 1,
+             "received_at": 1},
+        ))
+    try:
+        cvs = await asyncio.wait_for(asyncio.to_thread(_fetch_cvs), timeout=10.0)
+    except (asyncio.TimeoutError, Exception):
+        return
+
     created = 0
-    for cv in cv_col.find(
-        {
-            "source": "cryptovizor",
-            "received_at": {"$gte": since},
-        },
-        {"_id": 1, "pair": 1, "direction": 1, "pattern_name": 1,
-         "received_at": 1},
-    ):
+    for cv in cvs:
         sid = str(cv["_id"])
-        if dup_col.find_one({"cv_signal_id": sid}, {"_id": 1}):
+        # Проверка дубля — через to_thread.
+        def _check_dup(_sid=sid):
+            return dup_col.find_one({"cv_signal_id": _sid}, {"_id": 1})
+        try:
+            existing = await asyncio.wait_for(asyncio.to_thread(_check_dup), timeout=5.0)
+        except (asyncio.TimeoutError, Exception):
+            continue
+        if existing:
             continue
         direction = (cv.get("direction") or "").upper()
         if direction not in ("LONG", "SHORT"):
@@ -88,10 +104,12 @@ async def _create_waiting_duplicates():
             "updated_at": now,
             "source": "cv_flip",  # для унификации с journal
         }
+        def _do_insert(_doc=doc):
+            dup_col.insert_one(_doc)
         try:
-            dup_col.insert_one(doc)
+            await asyncio.wait_for(asyncio.to_thread(_do_insert), timeout=5.0)
             created += 1
-        except Exception as e:
+        except (asyncio.TimeoutError, Exception) as e:
             logger.debug(f"[cv-flip] skip insert {pair}: {e}")
     if created:
         logger.info(f"[cv-flip] created {created} WAITING duplicates")
@@ -111,27 +129,38 @@ async def _check_doc(doc, closed_candles, st_series, now_dt, dup_col):
     # 1) Timeout
     age_h = (now_dt - cv_at).total_seconds() / 3600.0
     if age_h > TIMEOUT_H:
-        dup_col.update_one(
-            {"_id": doc["_id"]},
-            {"$set": {"state": "TIMEOUT", "updated_at": utcnow()}},
-        )
+        def _set_timeout():
+            dup_col.update_one(
+                {"_id": doc["_id"]},
+                {"$set": {"state": "TIMEOUT", "updated_at": utcnow()}},
+            )
+        try:
+            await asyncio.wait_for(asyncio.to_thread(_set_timeout), timeout=5.0)
+        except (asyncio.TimeoutError, Exception):
+            pass
         logger.info(f"[cv-flip] TIMEOUT {pair} {direction} ({doc.get('cv_pattern_name')})")
         return
 
-    # 2) Invalidation — есть более новый CV на ту же пару
-    newer = _signals().find_one(
-        {
-            "source": "cryptovizor",
-            "pair": pair,
-            "received_at": {"$gt": cv_at},
-        },
-        {"_id": 1},
-    )
-    if newer:
-        dup_col.update_one(
-            {"_id": doc["_id"]},
-            {"$set": {"state": "INVALIDATED", "updated_at": utcnow()}},
+    # 2) Invalidation — есть более новый CV на ту же пару (через to_thread)
+    def _find_newer():
+        return _signals().find_one(
+            {"source": "cryptovizor", "pair": pair, "received_at": {"$gt": cv_at}},
+            {"_id": 1},
         )
+    try:
+        newer = await asyncio.wait_for(asyncio.to_thread(_find_newer), timeout=5.0)
+    except (asyncio.TimeoutError, Exception):
+        newer = None
+    if newer:
+        def _set_invalid():
+            dup_col.update_one(
+                {"_id": doc["_id"]},
+                {"$set": {"state": "INVALIDATED", "updated_at": utcnow()}},
+            )
+        try:
+            await asyncio.wait_for(asyncio.to_thread(_set_invalid), timeout=5.0)
+        except (asyncio.TimeoutError, Exception):
+            pass
         logger.info(f"[cv-flip] INVALIDATED {pair} {direction} (newer CV)")
         return
 
@@ -169,10 +198,15 @@ async def _check_doc(doc, closed_candles, st_series, now_dt, dup_col):
             if st_series[j].get("trend") == opp_trend
         )
         if bars_before != doc.get("bars_under_st", 0):
-            dup_col.update_one(
-                {"_id": doc["_id"]},
-                {"$set": {"bars_under_st": bars_before, "updated_at": utcnow()}},
-            )
+            def _update_bars():
+                dup_col.update_one(
+                    {"_id": doc["_id"]},
+                    {"$set": {"bars_under_st": bars_before, "updated_at": utcnow()}},
+                )
+            try:
+                await asyncio.wait_for(asyncio.to_thread(_update_bars), timeout=5.0)
+            except (asyncio.TimeoutError, Exception):
+                pass
         return
 
     # FLIPPED
@@ -199,22 +233,27 @@ async def _check_doc(doc, closed_candles, st_series, now_dt, dup_col):
     tp3 = round(flip_price + sign * 3 * risk, 8)
     risk_pct = (risk / flip_price) * 100.0 if flip_price else 0.0
 
-    dup_col.update_one(
-        {"_id": doc["_id"]},
-        {"$set": {
-            "state": "FLIPPED",
-            "flip_at": flip_at,
-            "flip_price": flip_price,
-            "entry": entry,
-            "sl": sl,
-            "tp1": tp1,
-            "tp2": tp2,
-            "tp3": tp3,
-            "st_value_at_flip": st_value,
-            "risk_pct": round(risk_pct, 3),
-            "updated_at": utcnow(),
-        }},
-    )
+    def _set_flipped():
+        dup_col.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {
+                "state": "FLIPPED",
+                "flip_at": flip_at,
+                "flip_price": flip_price,
+                "entry": entry,
+                "sl": sl,
+                "tp1": tp1,
+                "tp2": tp2,
+                "tp3": tp3,
+                "st_value_at_flip": st_value,
+                "risk_pct": round(risk_pct, 3),
+                "updated_at": utcnow(),
+            }},
+        )
+    try:
+        await asyncio.wait_for(asyncio.to_thread(_set_flipped), timeout=5.0)
+    except (asyncio.TimeoutError, Exception):
+        pass
     logger.info(f"[cv-flip] FLIPPED {pair} {direction} entry={entry} "
                 f"SL={sl} TP3={tp3} R%={risk_pct:.2f}")
 
@@ -233,7 +272,14 @@ async def _scan_waiting():
 
     now = utcnow()
     dup_col = _cv_flip_signals()
-    waiting = list(dup_col.find({"state": "WAITING"}))
+    # Материализуем WAITING список через to_thread — без этого 100+ docs
+    # блокировали event loop при каждом 30-секундном цикле.
+    def _fetch_waiting():
+        return list(dup_col.find({"state": "WAITING"}))
+    try:
+        waiting = await asyncio.wait_for(asyncio.to_thread(_fetch_waiting), timeout=10.0)
+    except (asyncio.TimeoutError, Exception):
+        return
     if not waiting:
         return
     logger.debug(f"[cv-flip] scan: {len(waiting)} WAITING")
