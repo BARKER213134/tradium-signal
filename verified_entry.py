@@ -646,6 +646,22 @@ async def run_verified_check(signal_data: dict, bot=None, chat_id=None, topic_id
 
     if not emoji:
         logger.info(f"[verified] {pair_norm} {direction} verdict={verdict} src={source} — skip")
+        # Diag log в Mongo events чтобы видеть статистику почему verified молчит.
+        # Юзер: "verified не работает" — оказывается check_entry скипает всё.
+        # Этот event покажет какие verdicts приходят и сколько.
+        try:
+            from database import _events, utcnow as _u
+            counts = result.get("counts", {})
+            await _asyncio.to_thread(
+                _events().insert_one,
+                {"at": _u(), "type": "verified_skip",
+                 "data": {"pair": pair_norm, "direction": direction,
+                          "verdict": verdict, "source": source,
+                          "ok": counts.get("ok", 0), "warn": counts.get("warn", 0),
+                          "bad": counts.get("bad", 0)}},
+            )
+        except Exception:
+            pass
         return
 
     # 4. Запись в БД
