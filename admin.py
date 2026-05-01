@@ -12,6 +12,7 @@ from fastapi import FastAPI, Depends, Form, HTTPException, Request, WebSocket, W
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, Response, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 from config import ADMIN_USERNAME, ADMIN_PASSWORD, SECRET_KEY, BOTS
 from database import get_db, Signal, Session, desc, func, get_events
@@ -378,6 +379,9 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(SessionAuthMiddleware)
 app.add_middleware(StaticCacheMiddleware)
+# GZipMiddleware — компресс JSON >1KB (CV-flips/ST-signals 100KB → ~10KB).
+# minimum_size=1024 чтобы не тратить CPU на маленькие /healthz/login ответы.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1055,25 +1059,59 @@ async def api_key_levels_enrich(payload: dict):
     return resp
 
 
+_kl_stats_cache: dict = {"ts": 0.0, "data": None}
+_KL_STATS_TTL = 60.0
+
+
 @app.get("/api/key-levels/stats")
 async def api_key_levels_stats():
-    """Количество записей в БД по типам."""
-    from database import _key_levels, utcnow as _unow
-    from datetime import timedelta as _td
-    from collections import Counter
-    col = _key_levels()
-    total = col.count_documents({})
-    since24h = _unow() - _td(hours=24)
-    since7d = _unow() - _td(days=7)
-    by_event = Counter()
-    for kl in col.find({}, {"event": 1}):
-        by_event[kl.get("event", "?")] += 1
-    return {
-        "total": total,
-        "last_24h": col.count_documents({"detected_at": {"$gte": since24h}}),
-        "last_7d": col.count_documents({"detected_at": {"$gte": since7d}}),
-        "by_event": dict(by_event.most_common()),
-    }
+    """Количество записей в БД по типам.
+    Раньше: 4 sync calls (3× count_documents + 1× full collection scan для
+    by_event подсчёта) — 0.4-1с compute. Теперь: 1 aggregate с $facet — все
+    счётчики за один query, через to_thread, + cache 60s."""
+    import time as _t
+    now = _t.time()
+    if _kl_stats_cache["data"] is not None and now - _kl_stats_cache["ts"] < _KL_STATS_TTL:
+        return _kl_stats_cache["data"]
+
+    def _compute_stats():
+        from database import _key_levels, utcnow as _unow
+        from datetime import timedelta as _td
+        col = _key_levels()
+        since24h = _unow() - _td(hours=24)
+        since7d = _unow() - _td(days=7)
+        # Single aggregate via $facet — заменяет 4 query на 1.
+        pipeline = [{
+            "$facet": {
+                "total": [{"$count": "n"}],
+                "last_24h": [
+                    {"$match": {"detected_at": {"$gte": since24h}}},
+                    {"$count": "n"},
+                ],
+                "last_7d": [
+                    {"$match": {"detected_at": {"$gte": since7d}}},
+                    {"$count": "n"},
+                ],
+                "by_event": [
+                    {"$group": {"_id": "$event", "n": {"$sum": 1}}},
+                    {"$sort": {"n": -1}},
+                ],
+            }
+        }]
+        result = list(col.aggregate(pipeline))
+        if not result:
+            return {"total": 0, "last_24h": 0, "last_7d": 0, "by_event": {}}
+        f = result[0]
+        return {
+            "total": (f["total"][0]["n"] if f["total"] else 0),
+            "last_24h": (f["last_24h"][0]["n"] if f["last_24h"] else 0),
+            "last_7d": (f["last_7d"][0]["n"] if f["last_7d"] else 0),
+            "by_event": {b["_id"] or "?": b["n"] for b in f["by_event"]},
+        }
+    data = await asyncio.to_thread(_compute_stats)
+    _kl_stats_cache["ts"] = now
+    _kl_stats_cache["data"] = data
+    return data
 
 
 # Глобальный стейт прогресса KL backfill (не блокирует контейнер)
