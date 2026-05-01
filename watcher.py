@@ -998,17 +998,28 @@ async def _check_once():
     finally:
         db.close()
 
-    # Аномалии — вне db сессии (свой MongoDB доступ)
-    try:
-        await _check_anomalies()
-    except Exception as e:
-        print(f"[ANOMALY] ERROR: {e}", flush=True)
+    # Аномалии + Confluence — fire-and-forget (раньше await блокировал tick).
+    # Эти scans проходят 1000+ пар sequentially через to_thread, что занимает
+    # 60-200с. При await tick застревал, /healthz timeout, графики не грузились.
+    # Теперь tick завершается за ~5-10с, scans работают в фоне.
+    # Guard "уже запущен" — чтобы новый tick не запустил второй scan если
+    # предыдущий ещё крутится (иначе накопление tasks).
+    global _anomaly_bg_task, _confluence_bg_task
+    if _anomaly_bg_task is None or _anomaly_bg_task.done():
+        async def _safe_anomaly():
+            try:
+                await _check_anomalies()
+            except Exception as e:
+                print(f"[ANOMALY] ERROR: {e}", flush=True)
+        _anomaly_bg_task = asyncio.create_task(_safe_anomaly())
 
-    # Confluence Scanner
-    try:
-        await _check_confluence()
-    except Exception as e:
-        print(f"[CONFLUENCE] ERROR: {e}", flush=True)
+    if _confluence_bg_task is None or _confluence_bg_task.done():
+        async def _safe_confluence():
+            try:
+                await _check_confluence()
+            except Exception as e:
+                print(f"[CONFLUENCE] ERROR: {e}", flush=True)
+        _confluence_bg_task = asyncio.create_task(_safe_confluence())
 
 
 async def _send_cryptovizor_alert(signal: Signal, pattern: str, current_price: float,
@@ -1879,6 +1890,12 @@ async def _ai_background_analysis(signal, current_price, s1, r1):
 _anomaly_batch_idx = 0
 _ANOMALY_INTERVAL = 10  # каждый 10-й тик (10×30с = 5 мин)
 _anomaly_tick = _ANOMALY_INTERVAL - 1  # первый скан на первом тике
+
+# Background tasks для anomaly + confluence scans — чтобы не блокировать tick
+# (раньше await блокировал _check_once на 60-200с при 1000+ pairs sequential
+# scan; tick застревал → /healthz timeout → графики не грузились).
+_anomaly_bg_task: "asyncio.Task | None" = None
+_confluence_bg_task: "asyncio.Task | None" = None
 
 # Состояние скана — читается из admin API
 anomaly_scan_state = {
