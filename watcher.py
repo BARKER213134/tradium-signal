@@ -1942,18 +1942,37 @@ async def _check_anomalies():
     anomaly_scan_state["batch"] = 1
     anomaly_scan_state["batches"] = 1
 
-    print(f"[ANOMALY] Scanning {len(batch)} pairs", flush=True)
+    print(f"[ANOMALY] Scanning {len(batch)} pairs (chunked parallel)", flush=True)
 
     now = utcnow()
     results = []
-    for idx, symbol in enumerate(batch):
-        anomaly_scan_state["current"] = symbol.replace("USDT", "")
-        anomaly_scan_state["progress"] = int((idx / len(batch)) * 100)
 
+    # ── Phase 1: parallel scan_symbol через gather в чанках по 10 ──
+    # Раньше sequential await asyncio.to_thread(scan_symbol, symbol) на 1000+
+    # пар занимал 60-200с. Теперь chunks по 10 параллельно = ~12с.
+    # Chunk size 10 безопасен для Binance rate limit (1200 weight/min).
+    CHUNK_SIZE = 10
+    scanned = []  # list of (symbol, scan_result)
+    for chunk_start in range(0, len(batch), CHUNK_SIZE):
+        chunk = batch[chunk_start:chunk_start + CHUNK_SIZE]
+        anomaly_scan_state["current"] = chunk[0].replace("USDT", "")
+        anomaly_scan_state["progress"] = int((chunk_start / len(batch)) * 100)
         try:
-            r = await asyncio.to_thread(scan_symbol, symbol)
-        except Exception:
+            chunk_results = await asyncio.gather(
+                *[asyncio.to_thread(scan_symbol, sym) for sym in chunk],
+                return_exceptions=True,
+            )
+        except Exception as e:
+            logger.warning(f"[ANOMALY] chunk gather fail at idx {chunk_start}: {e}")
             continue
+        for sym, r in zip(chunk, chunk_results):
+            if isinstance(r, Exception):
+                continue
+            scanned.append((sym, r))
+
+    # ── Phase 2: sequential обработка результатов (фильтрация + Mongo writes) ──
+    # Большинство отвалится по фильтрам, real Mongo work только для anomalies.
+    for symbol, r in scanned:
         if not r or r["score"] < 10:
             continue
         if not r.get("has_ftt") and not r.get("has_delta"):
@@ -2182,18 +2201,35 @@ async def _check_confluence():
         return
 
     confluence_scan_state["total"] = len(pairs)
-    print(f"[CONFLUENCE] Scanning {len(pairs)} pairs", flush=True)
+    print(f"[CONFLUENCE] Scanning {len(pairs)} pairs (chunked parallel)", flush=True)
 
     now = utcnow()
     results = []
-    for idx, symbol in enumerate(pairs):
-        confluence_scan_state["current"] = symbol.replace("USDT", "")
-        confluence_scan_state["progress"] = int((idx / len(pairs)) * 100)
 
+    # ── Phase 1: parallel scan_confluence через gather в чанках ──
+    # Раньше sequential await на 1000+ парах = 60-200с. Чанки по 10 параллельно
+    # = ~12с. Безопасно для Binance rate limit (1200 weight/min).
+    CHUNK_SIZE = 10
+    scanned = []
+    for chunk_start in range(0, len(pairs), CHUNK_SIZE):
+        chunk = pairs[chunk_start:chunk_start + CHUNK_SIZE]
+        confluence_scan_state["current"] = chunk[0].replace("USDT", "")
+        confluence_scan_state["progress"] = int((chunk_start / len(pairs)) * 100)
         try:
-            r = await asyncio.to_thread(scan_confluence, symbol)
-        except Exception:
+            chunk_results = await asyncio.gather(
+                *[asyncio.to_thread(scan_confluence, sym) for sym in chunk],
+                return_exceptions=True,
+            )
+        except Exception as e:
+            logger.warning(f"[CONFLUENCE] chunk gather fail at idx {chunk_start}: {e}")
             continue
+        for sym, r in zip(chunk, chunk_results):
+            if isinstance(r, Exception):
+                continue
+            scanned.append((sym, r))
+
+    # ── Phase 2: sequential обработка ──
+    for symbol, r in scanned:
         if not r:
             continue
 
