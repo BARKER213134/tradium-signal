@@ -540,19 +540,70 @@ def get_eth_market_context(cache_only: bool = False) -> dict:
     return ctx
 
 
+# BingX public ccxt instance — для fetching klines без авторизации.
+# Используется как fallback когда пара не на Binance (стоки/коммодити/
+# alt coins типа TSLA, XAU, COIN, MSTR — они только на BingX swap).
+_bingx_public = None
+
+def _get_bingx_public():
+    global _bingx_public
+    if _bingx_public is None:
+        try:
+            import ccxt
+            _bingx_public = ccxt.bingx({
+                "options": {"defaultType": "swap"},
+                "enableRateLimit": True,
+            })
+        except Exception as e:
+            logger.debug(f"bingx ccxt init fail: {e}")
+            return None
+    return _bingx_public
+
+
+def get_bingx_klines(pair: str, timeframe: str, limit: int = 50) -> list[dict]:
+    """Fetch OHLCV из BingX swap (perpetual futures). Public, без auth.
+    Возвращает тот же формат что get_klines: [{'t','o','h','l','c','v'}]."""
+    ex = _get_bingx_public()
+    if ex is None:
+        return []
+    try:
+        # ccxt expects 'BTC/USDT:USDT' format для swap pairs
+        norm = pair.replace("/", "").upper()
+        if norm.endswith("USDT"):
+            base = norm[:-4]
+            symbol = f"{base}/USDT:USDT"
+        else:
+            symbol = pair  # как есть
+        # ccxt timeframe matches ('1h', '4h', '1d' etc) — проверим
+        tf = timeframe if timeframe in ("1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w") else "1h"
+        ohlcv = ex.fetch_ohlcv(symbol, tf, limit=limit)
+        return [
+            {"t": int(c[0]), "o": float(c[1]), "h": float(c[2]),
+             "l": float(c[3]), "c": float(c[4]), "v": float(c[5])}
+            for c in ohlcv
+        ]
+    except Exception as e:
+        logger.debug(f"bingx klines {pair} {timeframe}: {e}")
+        return []
+
+
 def get_klines_any(pair: str, timeframe: str, limit: int = 50) -> list[dict]:
-    """Сначала spot klines, если пусто → futures.
+    """Сначала Binance spot, если пусто → Binance futures, если пусто → BingX swap.
+
+    BingX fallback добавлен 01.05.2026 — пары типа TSLA/XAU/COIN/MSTR/PLTR
+    есть только на BingX, без этого fallback графики показывали 'нет данных'.
 
     [Откат 30.04: race spot+futures через ThreadPoolExecutor создавал
     pool на каждый вызов; в комбинации с watcher tick (десятки fetch/min)
-    это перегружало threadpool и /healthz отвечал >20s. Возвращён
-    последовательный fallback — на ~500ms медленнее для futures-only пар,
-    но не утаскивает event loop.]
+    это перегружало threadpool. Sequential — медленнее но безопаснее.]
     """
     candles = get_klines(pair, timeframe, limit)
     if candles:
         return candles
-    return get_futures_klines(pair, timeframe, limit)
+    candles = get_futures_klines(pair, timeframe, limit)
+    if candles:
+        return candles
+    return get_bingx_klines(pair, timeframe, limit)
 
 
 def get_prices(pairs: list[str]) -> dict[str, float]:
