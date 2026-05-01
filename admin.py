@@ -74,16 +74,19 @@ async def lifespan(app):
                 attempt = 0
                 while True:
                     attempt += 1
-                    try:
+                    def _update_heartbeat_start(_attempt=attempt):
                         from database import _get_db
                         from datetime import datetime, timezone
                         _get_db().system.update_one(
                             {"_id": "watcher_heartbeat"},
-                            {"$set": {"stage": f"supervisor_attempt_{attempt}",
+                            {"$set": {"stage": f"supervisor_attempt_{_attempt}",
                                       "at": datetime.now(timezone.utc)}},
                             upsert=True,
                         )
-                    except Exception:
+                    try:
+                        await asyncio.wait_for(asyncio.to_thread(_update_heartbeat_start),
+                                                timeout=5.0)
+                    except (asyncio.TimeoutError, Exception):
                         pass
                     try:
                         await start_watcher()
@@ -92,17 +95,20 @@ async def lifespan(app):
                             f"[watcher-supervisor] start_watcher crashed (attempt {attempt}): {e}",
                             exc_info=True,
                         )
-                        try:
+                        def _update_heartbeat_crash(_attempt=attempt, _err=e):
                             from database import _get_db
                             from datetime import datetime, timezone
                             _get_db().system.update_one(
                                 {"_id": "watcher_heartbeat"},
-                                {"$set": {"stage": f"crashed_attempt_{attempt}",
-                                          "error": f"{type(e).__name__}: {str(e)[:200]}",
+                                {"$set": {"stage": f"crashed_attempt_{_attempt}",
+                                          "error": f"{type(_err).__name__}: {str(_err)[:200]}",
                                           "at": datetime.now(timezone.utc)}},
                                 upsert=True,
                             )
-                        except Exception:
+                        try:
+                            await asyncio.wait_for(asyncio.to_thread(_update_heartbeat_crash),
+                                                    timeout=5.0)
+                        except (asyncio.TimeoutError, Exception):
                             pass
                     await asyncio.sleep(30)
 

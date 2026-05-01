@@ -614,11 +614,18 @@ async def run_verified_check(signal_data: dict, bot=None, chat_id=None, topic_id
     if not pair or direction not in ("LONG", "SHORT"):
         return
 
-    # 1. Анти-дубль
+    # 1. Анти-дубль (sync Mongo find_one — обёрнут в to_thread)
     pair_norm = pair.replace("/", "").upper()
     if not pair_norm.endswith("USDT"):
         pair_norm = pair_norm + "USDT"
-    if is_duplicate(pair_norm, direction, hours=1):
+    try:
+        is_dup = await _asyncio.wait_for(
+            _asyncio.to_thread(is_duplicate, pair_norm, direction, 1),
+            timeout=5.0,
+        )
+    except (_asyncio.TimeoutError, Exception):
+        is_dup = False
+    if is_dup:
         logger.info(f"[verified] duplicate skip {pair_norm} {direction}")
         return
 
@@ -648,8 +655,14 @@ async def run_verified_check(signal_data: dict, bot=None, chat_id=None, topic_id
         logger.info(f"[verified] {pair_norm} {direction} verdict={verdict} src={source} — skip")
         return
 
-    # 4. Запись в БД
-    record_verified(result)
+    # 4. Запись в БД (sync insert — через to_thread)
+    try:
+        await _asyncio.wait_for(
+            _asyncio.to_thread(record_verified, result),
+            timeout=5.0,
+        )
+    except (_asyncio.TimeoutError, Exception):
+        pass
 
     # 5. Отправка
     sent = await send_verified_alert(bot, chat_id, topic_id, result, emoji_prefix=emoji)
