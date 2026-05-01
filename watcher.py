@@ -1331,10 +1331,14 @@ async def _check_cryptovizor(db):
                 except Exception as e:
                     logger.warning(f"[CV] ai_score fail #{s.id}: {e}")
 
-                # SuperTrend ETH фильтр — фильтрует контртренд
+                # SuperTrend ETH фильтр — фильтрует контртренд (через to_thread,
+                # _check_keltner_filter sync делает API call к Binance)
                 try:
-                    st_passed, st_data = _check_keltner_filter(s.direction)
-                except Exception as e:
+                    st_passed, st_data = await asyncio.wait_for(
+                        asyncio.to_thread(_check_keltner_filter, s.direction),
+                        timeout=10.0,
+                    )
+                except (asyncio.TimeoutError, Exception) as e:
                     logger.warning(f"[CV] keltner fail #{s.id}: {e}")
                     st_passed, st_data = True, {}
 
@@ -1414,14 +1418,20 @@ async def _ai_score_and_alert_pattern(s, pattern, price, s1, r1, chart_png, cand
 
 
 async def _fill_missing_ai_analysis(db):
-    """Дозаполняет анализ для AI сигналов у которых comment пустой."""
+    """Дозаполняет анализ для AI сигналов у которых comment пустой.
+    Каждый 30с тик main loop — sync find/update раньше блокировали event loop."""
     from database import _signals as _sc
 
-    docs = list(_sc().find({
-        "source": "cryptovizor",
-        "filter_reason": {"$regex": "^AI_SIGNAL"},
-        "$or": [{"comment": None}, {"comment": ""}],
-    }).limit(2))
+    def _fetch_docs():
+        return list(_sc().find({
+            "source": "cryptovizor",
+            "filter_reason": {"$regex": "^AI_SIGNAL"},
+            "$or": [{"comment": None}, {"comment": ""}],
+        }).limit(2))
+    try:
+        docs = await asyncio.wait_for(asyncio.to_thread(_fetch_docs), timeout=10.0)
+    except (asyncio.TimeoutError, Exception):
+        return
 
     for doc in docs:
         sig_id = doc.get("id")
@@ -1446,7 +1456,12 @@ async def _fill_missing_ai_analysis(db):
 
         analysis = await _generate_ai_deep_analysis(sig, current or doc.get("entry"), s1, r1)
         if analysis:
-            _sc().update_one({"id": sig_id}, {"$set": {"comment": analysis}})
+            def _save_analysis():
+                _sc().update_one({"id": sig_id}, {"$set": {"comment": analysis}})
+            try:
+                await asyncio.wait_for(asyncio.to_thread(_save_analysis), timeout=5.0)
+            except (asyncio.TimeoutError, Exception):
+                pass
             logger.info(f"AI analysis filled for #{sig_id} {pair}")
 
             # Отправляем в бот если ещё не отправлено
@@ -1943,8 +1958,14 @@ async def _check_anomalies():
             )
             continue
 
-        # SuperTrend фильтр
-        st_passed, st_data = _check_keltner_filter(r["direction"])
+        # SuperTrend фильтр (через to_thread)
+        try:
+            st_passed, st_data = await asyncio.wait_for(
+                asyncio.to_thread(_check_keltner_filter, r["direction"]),
+                timeout=10.0,
+            )
+        except (asyncio.TimeoutError, Exception):
+            st_passed, st_data = True, {}
 
         doc = {
             "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
@@ -2174,7 +2195,13 @@ async def _check_confluence():
             )
             continue
 
-        st_passed, st_data = _check_keltner_filter(r["direction"])
+        try:
+            st_passed, st_data = await asyncio.wait_for(
+                asyncio.to_thread(_check_keltner_filter, r["direction"]),
+                timeout=10.0,
+            )
+        except (asyncio.TimeoutError, Exception):
+            st_passed, st_data = True, {}
 
         # Гейт для score=4: пропускаем только если st_passed=True (KC-подтверждение)
         # Score ≥ 5 записываем всегда (STRONG и выше).
