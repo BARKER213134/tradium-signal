@@ -569,19 +569,29 @@ async def _setup_telethon_client():
     except Exception as e:
         logger.warning(f"[userbot] Tradium entity warmup failed: {e}")
 
-    # Резолвим Cryptovizor диалог по имени (пересоздаём на каждом reconnect)
+    # Резолвим Cryptovizor диалог по имени (пересоздаём на каждом reconnect).
+    # 01.05.2026: добавлен retry с задержкой — раньше при первом reconnect
+    # iter_dialogs мог отдавать пустой список (cache не прогрет), и тогда
+    # cryptovizor_id оставался None навсегда → handler не регистрировался →
+    # CV сигналы тихо терялись (юзер: "5 messages пропали 19:31-20:31").
     cryptovizor_id = None
     if BOT2_SOURCE_GROUP:
-        try:
-            async for d in client.iter_dialogs():
-                if BOT2_SOURCE_GROUP.lower() in (d.name or "").lower():
-                    cryptovizor_id = d.id
-                    logger.info(f"✅ Cryptovizor найден: id={d.id} name='{d.name}'")
+        for attempt in range(3):
+            try:
+                async for d in client.iter_dialogs():
+                    if BOT2_SOURCE_GROUP.lower() in (d.name or "").lower():
+                        cryptovizor_id = d.id
+                        logger.info(f"✅ Cryptovizor найден (attempt {attempt+1}): id={d.id} name='{d.name}'")
+                        break
+                if cryptovizor_id is not None:
                     break
-            if cryptovizor_id is None:
-                logger.warning(f"[userbot] Cryptovizor '{BOT2_SOURCE_GROUP}' не найден среди диалогов")
-        except Exception as e:
-            logger.error(f"[userbot] Не удалось найти Cryptovizor: {e}")
+                logger.warning(f"[userbot] Cryptovizor '{BOT2_SOURCE_GROUP}' не найден (attempt {attempt+1}/3) — retry через 5с")
+                await asyncio.sleep(5)
+            except Exception as e:
+                logger.error(f"[userbot] iter_dialogs fail (attempt {attempt+1}): {e}")
+                await asyncio.sleep(5)
+        if cryptovizor_id is None:
+            logger.error(f"[userbot] Cryptovizor handler НЕ зарегистрирован — CV signals будут потеряны до следующего reconnect")
 
     # ── Handler Tradium (текст/фото) — только топик "Trade Setup Screener" ──
     @client.on(events.NewMessage(chats=SOURCE_GROUP_ID))
