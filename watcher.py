@@ -984,17 +984,20 @@ async def _check_once():
         ]:
             try:
                 print(f"[WATCHER] step: {step_name}", flush=True)
-                # fvg_scan: 22 forex через TwelveData батчами по 7 с 65с throttle (~4 мин)
-                #         + 10 yfinance (~30s). Поднимаем таймаут до 600с с запасом.
-                # fvg_scan ранее имел timeout 600с — слишком долго блокировал
-                # event loop при зависании. Уменьшаем до 90с (TwelveData
-                # batch ~22с × 4 = ~90с, при превышении skip и идём дальше).
+                # Heartbeat per step — диагностика какой step тормозит.
+                # Раньше только tick_start/tick_done в heartbeat — невозможно
+                # понять застрял ли в dca4/patterns/tp_sl/cryptovizor/etc.
+                await _write_heartbeat(f"step_{step_name}")
                 step_timeout = 90 if step_name == "fvg_scan" else 120
                 await asyncio.wait_for(step_fn(), timeout=step_timeout)
             except asyncio.TimeoutError:
-                print(f"[WATCHER] step '{step_name}' TIMEOUT (120s)", flush=True)
+                print(f"[WATCHER] step '{step_name}' TIMEOUT", flush=True)
+                await _write_heartbeat(f"step_{step_name}_timeout",
+                                        {"timeout_s": step_timeout})
             except Exception as e:
                 print(f"[WATCHER] step '{step_name}' FAILED: {e}", flush=True)
+                await _write_heartbeat(f"step_{step_name}_error",
+                                        {"error": str(e)[:100]})
     finally:
         db.close()
 
