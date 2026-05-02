@@ -569,19 +569,28 @@ async def _setup_telethon_client():
     except Exception as e:
         logger.warning(f"[userbot] Tradium entity warmup failed: {e}")
 
-    # Резолвим Cryptovizor диалог по имени (пересоздаём на каждом reconnect).
-    # 01.05.2026: добавлен retry с задержкой — раньше при первом reconnect
-    # iter_dialogs мог отдавать пустой список (cache не прогрет), и тогда
-    # cryptovizor_id оставался None навсегда → handler не регистрировался →
-    # CV сигналы тихо терялись (юзер: "5 messages пропали 19:31-20:31").
+    # Резолв Cryptovizor: сначала пробуем CRYPTOVIZOR_CHANNEL_ID env (надёжно),
+    # затем fallback на iter_dialogs по имени с 3 retry.
+    # 02.05.2026: name resolution часто фейлит при reconnect (iter_dialogs
+    # возвращает короткий список). CRYPTOVIZOR_CHANNEL_ID=5703939817 для
+    # 'TRENDS Cryptovizor' (нашли через прямой Telethon login). Tradium
+    # уже использует raw ID (SOURCE_GROUP_ID), CV теперь так же.
     cryptovizor_id = None
-    if BOT2_SOURCE_GROUP:
+    cv_id_env = os.getenv("CRYPTOVIZOR_CHANNEL_ID", "").strip()
+    if cv_id_env:
+        try:
+            cryptovizor_id = int(cv_id_env)
+            logger.info(f"✅ Cryptovizor channel из env: id={cryptovizor_id}")
+        except ValueError:
+            logger.warning(f"[userbot] CRYPTOVIZOR_CHANNEL_ID '{cv_id_env}' не int — игнор")
+
+    if cryptovizor_id is None and BOT2_SOURCE_GROUP:
         for attempt in range(3):
             try:
                 async for d in client.iter_dialogs():
                     if BOT2_SOURCE_GROUP.lower() in (d.name or "").lower():
                         cryptovizor_id = d.id
-                        logger.info(f"✅ Cryptovizor найден (attempt {attempt+1}): id={d.id} name='{d.name}'")
+                        logger.info(f"✅ Cryptovizor найден по имени (attempt {attempt+1}): id={d.id} name='{d.name}'")
                         break
                 if cryptovizor_id is not None:
                     break
@@ -591,7 +600,7 @@ async def _setup_telethon_client():
                 logger.error(f"[userbot] iter_dialogs fail (attempt {attempt+1}): {e}")
                 await asyncio.sleep(5)
         if cryptovizor_id is None:
-            logger.error(f"[userbot] Cryptovizor handler НЕ зарегистрирован — CV signals будут потеряны до следующего reconnect")
+            logger.error(f"[userbot] Cryptovizor handler НЕ зарегистрирован — задайте CRYPTOVIZOR_CHANNEL_ID=5703939817 в env")
 
     # ── Handler Tradium (текст/фото) — только топик "Trade Setup Screener" ──
     @client.on(events.NewMessage(chats=SOURCE_GROUP_ID))
