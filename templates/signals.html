@@ -6818,6 +6818,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
         <button class="tf-btn" onclick="_setModalTF('1d')">1D</button>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
+        <button id="vpvrToggleBtn" onclick="toggleVPVR()" title="Volume Profile Visible Range — гистограмма объёма по ценовым уровням" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📊 VPVR</button>
         <button onclick="if(_currentJournalIdx>0)openJournalChart(_currentJournalIdx-1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">◀</button>
         <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
         <button onclick="if(_currentJournalIdx<_journalFiltered.length-1)openJournalChart(_currentJournalIdx+1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">▶</button>
@@ -7745,6 +7746,19 @@ async function openJournalChart(idx, forceTF) {
     if (window._addRSI) window._addRSI(chart, d.candles, { anchor: container });
     if (window._addTSI) window._addTSI(chart, d.candles, { anchor: container });
     if (window._prefetchOtherTFs && sym) window._prefetchOtherTFs(sym, _modalTF, 200);
+    // VPVR — отрисовываем после chart создан и series установлены.
+    // setTimeout 100ms чтобы priceScale инициализировался (priceToCoordinate
+    // возвращает null до первого рендера).
+    if (window.renderVPVR) {
+      setTimeout(function(){ window.renderVPVR(chart, container, d.candles); }, 150);
+    }
+    // Update button state to reflect _vpvrEnabled
+    const _vpvrBtn = document.getElementById('vpvrToggleBtn');
+    if (_vpvrBtn) {
+      _vpvrBtn.textContent = window._vpvrEnabled ? '📊 VPVR' : '📊 OFF';
+      _vpvrBtn.style.color = window._vpvrEnabled ? '#FFD700' : 'var(--muted)';
+      _vpvrBtn.style.borderColor = window._vpvrEnabled ? '#FFD700' : 'var(--border)';
+    }
 
     // Маркеры: все сигналы по монете из _journalData (уже включают cluster/paper/все)
     // + дополнительно из /api/pair-signals для покрытия старых, что могли не попасть в журнал

@@ -1607,6 +1607,178 @@
         return out;
       };
 
+      // ─── VPVR (Volume Profile Visible Range) ─────────────────────
+      // Canvas-based overlay для journal графиков. Компактный histogram
+      // справа от свечей, как в TradingView. Toggle в title bar модалки.
+      // Включён/выключен через localStorage 'tradium_vpvr' (default ON).
+      window._vpvrEnabled = localStorage.getItem('tradium_vpvr') !== '0';
+
+      window.computeVPVR = function(candles, bins) {
+        bins = bins || 50;
+        if (!candles || candles.length < 5) return null;
+        let pMin = Infinity, pMax = -Infinity;
+        for (const c of candles) {
+          if (c.low < pMin) pMin = c.low;
+          if (c.high > pMax) pMax = c.high;
+        }
+        if (pMin === pMax) return null;
+        const step = (pMax - pMin) / bins;
+        const total = new Array(bins).fill(0);
+        const bull = new Array(bins).fill(0);
+        const bear = new Array(bins).fill(0);
+        for (const c of candles) {
+          const v = c.volume || 0;
+          if (v <= 0) continue;
+          const lo = Math.max(0, Math.floor((c.low - pMin) / step));
+          const hi = Math.min(bins - 1, Math.floor((c.high - pMin) / step));
+          const per = v / Math.max(1, hi - lo + 1);
+          const isBull = c.close > c.open;
+          for (let i = lo; i <= hi; i++) {
+            total[i] += per;
+            if (isBull) bull[i] += per;
+            else bear[i] += per;
+          }
+        }
+        const maxV = Math.max.apply(null, total);
+        if (maxV <= 0) return null;
+        // POC = bin с max объёмом
+        let pocIdx = 0;
+        for (let i = 0; i < bins; i++) if (total[i] > total[pocIdx]) pocIdx = i;
+        // VA 70% от total — расширяемся от POC к большему соседу
+        const sumAll = total.reduce(function(a,b){return a+b;}, 0);
+        let valIdx = pocIdx, vahIdx = pocIdx, acc = total[pocIdx];
+        const target = 0.70 * sumAll;
+        while (acc < target && (valIdx > 0 || vahIdx < bins - 1)) {
+          const below = valIdx > 0 ? total[valIdx - 1] : -1;
+          const above = vahIdx < bins - 1 ? total[vahIdx + 1] : -1;
+          if (below >= above && valIdx > 0) { valIdx--; acc += total[valIdx]; }
+          else if (vahIdx < bins - 1) { vahIdx++; acc += total[vahIdx]; }
+          else break;
+        }
+        const out = [];
+        for (let i = 0; i < bins; i++) {
+          out.push({
+            priceLow: pMin + i * step,
+            priceHigh: pMin + (i + 1) * step,
+            volume: total[i],
+            bullVol: bull[i],
+            bearVol: bear[i],
+            isPOC: i === pocIdx,
+            inVA: i >= valIdx && i <= vahIdx,
+          });
+        }
+        return {
+          bins: out, maxVol: maxV,
+          poc: pMin + (pocIdx + 0.5) * step,
+          vah: pMin + (vahIdx + 1) * step,
+          val: pMin + valIdx * step,
+        };
+      };
+
+      window.renderVPVR = function(chart, container, candles, opts) {
+        opts = opts || {};
+        // cleanup previous
+        const old = container.querySelector('.vpvr-canvas');
+        if (old) { if (old._cleanup) old._cleanup(); old.remove(); }
+        if (!window._vpvrEnabled) return null;
+        const vp = window.computeVPVR(candles, opts.bins || 50);
+        if (!vp) return null;
+        const cv = document.createElement('canvas');
+        cv.className = 'vpvr-canvas';
+        // 25% ширины контейнера, справа от свечей (но левее priceScale)
+        cv.style.cssText = 'position:absolute;top:0;right:60px;width:25%;max-width:200px;height:100%;pointer-events:none;z-index:3;opacity:0.85;';
+        container.appendChild(cv);
+
+        const draw = function() {
+          const rect = cv.getBoundingClientRect();
+          const w = Math.max(40, rect.width || 120);
+          const h = Math.max(50, rect.height || container.clientHeight);
+          cv.width = w;
+          cv.height = h;
+          const ctx = cv.getContext('2d');
+          ctx.clearRect(0, 0, w, h);
+          let priceScale;
+          try { priceScale = chart.priceScale ? chart.priceScale('right') : null; } catch(e) { return; }
+          if (!priceScale || !priceScale.priceToCoordinate) return;
+          for (let i = 0; i < vp.bins.length; i++) {
+            const b = vp.bins[i];
+            if (b.volume <= 0) continue;
+            const yLow = priceScale.priceToCoordinate(b.priceLow);
+            const yHigh = priceScale.priceToCoordinate(b.priceHigh);
+            if (yLow == null || yHigh == null) continue;
+            const top = Math.min(yLow, yHigh);
+            const height = Math.max(1, Math.abs(yHigh - yLow));
+            const barW = (b.volume / vp.maxVol) * w;
+            const bullPct = b.volume > 0 ? b.bullVol / b.volume : 0.5;
+            const barLeft = w - barW;
+            const splitX = barLeft + barW * (1 - bullPct);
+            // BEAR (left side of bar) — orange
+            const bearAlpha = b.isPOC ? 0.95 : (b.inVA ? 0.65 : 0.35);
+            ctx.fillStyle = b.isPOC ? 'rgba(255,140,0,' + bearAlpha + ')' :
+                            'rgba(232,158,0,' + bearAlpha + ')';
+            ctx.fillRect(barLeft, top, barW * (1 - bullPct), height);
+            // BULL (right side) — blue
+            const bullAlpha = b.isPOC ? 0.95 : (b.inVA ? 0.65 : 0.35);
+            ctx.fillStyle = b.isPOC ? 'rgba(255,215,0,' + bullAlpha + ')' :
+                            'rgba(21,101,192,' + bullAlpha + ')';
+            ctx.fillRect(splitX, top, barW * bullPct, height);
+          }
+          // POC line marker
+          const pocY = priceScale.priceToCoordinate(vp.poc);
+          if (pocY != null) {
+            ctx.strokeStyle = 'rgba(255,215,0,0.7)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(0, pocY); ctx.lineTo(w, pocY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        };
+
+        draw();
+
+        // Throttled redraw
+        let raf = null;
+        const sched = function() {
+          if (raf) return;
+          raf = requestAnimationFrame(function() { raf = null; draw(); });
+        };
+        try {
+          const ts = chart.timeScale ? chart.timeScale() : null;
+          if (ts && ts.subscribeVisibleLogicalRangeChange) {
+            ts.subscribeVisibleLogicalRangeChange(sched);
+          }
+        } catch(e){}
+        let resizeObs = null;
+        try {
+          resizeObs = new ResizeObserver(sched);
+          resizeObs.observe(container);
+        } catch(e){}
+        cv._cleanup = function() {
+          if (resizeObs) resizeObs.disconnect();
+        };
+        return cv;
+      };
+
+      // Toggle button helper — переключает state и перерисовывает текущий journal chart
+      window.toggleVPVR = function() {
+        window._vpvrEnabled = !window._vpvrEnabled;
+        try { localStorage.setItem('tradium_vpvr', window._vpvrEnabled ? '1' : '0'); } catch(e){}
+        const btn = document.getElementById('vpvrToggleBtn');
+        if (btn) {
+          btn.textContent = window._vpvrEnabled ? '📊 VPVR' : '📊 OFF';
+          btn.style.color = window._vpvrEnabled ? '#FFD700' : 'var(--muted)';
+          btn.style.borderColor = window._vpvrEnabled ? '#FFD700' : 'var(--border)';
+        }
+        // Reload current journal chart if open
+        const modal = document.getElementById('journalChartModal');
+        if (modal && modal.classList.contains('open') && typeof openJournalChart === 'function'
+            && typeof _currentJournalIdx !== 'undefined' && _currentJournalIdx >= 0) {
+          openJournalChart(_currentJournalIdx);
+        }
+      };
+
       // ─── New Strategies (🌊 Volume Surge / 🐉 Triple Confluence / 🔋 Vol Accum) ───
       // Маркеры на графиках по факту срабатывания на этой паре.
       window._newStrategyCache = window._newStrategyCache || {};
