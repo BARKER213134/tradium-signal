@@ -1641,11 +1641,22 @@
         };
         const stratEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋'};
         const stratColor = {volume_surge:'#00d4ff', triple_confluence:'#7b5cff', vol_accum:'#ffb84d'};
-        const out = [];
+        // Дедупликация: один маркер на (strategy, direction, hour_bucket).
+        // Иначе при срабатывании на VIP+MTF+Daily tiers получаем 3-9 одинаковых
+        // эмодзи в одной точке (стакаются вертикально).
+        const seen = new Map();
         for (const s of items) {
-          const isLong = s.direction === 'LONG';
           const ts = s.created_at ? Math.floor(new Date(s.created_at).getTime() / 1000) : null;
-          if (!ts || ts < firstTs - 3600 || ts > lastTs + 3600 * 2) continue;
+          if (!ts) continue;
+          const bucket = Math.floor(ts / 3600);  // 1-hour bucket
+          const key = `${s.strategy}|${s.direction}|${bucket}`;
+          if (!seen.has(key)) seen.set(key, s);
+        }
+        const out = [];
+        for (const s of seen.values()) {
+          const isLong = s.direction === 'LONG';
+          const ts = Math.floor(new Date(s.created_at).getTime() / 1000);
+          if (ts < firstTs - 3600 || ts > lastTs + 3600 * 2) continue;
           const mc = nearest(ts);
           if (!mc) continue;
           const em = stratEmoji[s.strategy] || '✨';

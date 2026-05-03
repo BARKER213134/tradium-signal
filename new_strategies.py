@@ -352,12 +352,31 @@ async def _auto_paper_for_strategies(triggered: list[dict], pair: str,
 
 async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,
                                  signal_id: Optional[int], tier: Optional[str]) -> None:
-    """Save strategy signals to new_strategy_signals collection (via to_thread)."""
+    """Save strategy signals to new_strategy_signals collection (via to_thread).
+    Дедупликация: для каждой (pair, direction, strategy) разрешён только 1
+    сигнал в окне 60 мин. Это защищает от стакания эмодзи когда ST flip
+    срабатывает на VIP/MTF/Daily tiers одновременно."""
     def _sync():
         try:
             from database import _get_db, utcnow
+            from datetime import timedelta
             col = _get_db().new_strategy_signals
+            dedup_window = timedelta(minutes=60)
+            cutoff = utcnow() - dedup_window
             for sig in triggered:
+                # Проверяем нет ли дубля same pair+direction+strategy в окне
+                existing = col.find_one({
+                    'pair': sig['pair'],
+                    'direction': sig['direction'],
+                    'strategy': sig['strategy'],
+                    'created_at': {'$gte': cutoff},
+                })
+                if existing:
+                    logger.debug(
+                        f"[new-strategies] dedup skip {sig['strategy']}/{sig['pair']} "
+                        f"— existing within 60min"
+                    )
+                    continue
                 doc = {
                     **sig,
                     'state': 'WAITING',
