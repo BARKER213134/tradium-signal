@@ -1,4 +1,4 @@
-telethon==1.36.0
+telethon==1.43.2
 aiogram==3.13.1
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
