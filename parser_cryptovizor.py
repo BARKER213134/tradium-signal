@@ -16,7 +16,9 @@ from typing import List, Optional
 
 
 _LINE_RE = re.compile(
-    r"\$([A-Z0-9]+)\.P\s+([🟢🔴]{3,7})\s+(\d{1,2}:\d{2})",
+    # `\s+` → `[\s`*_]+` чтобы матчить новый формат CV бота с backticks
+    # (03.05.2026): `$ALLO.P 🔴🟢🟢🟢🟢 `15:31 (markdown wrapping)
+    r"\$([A-Z0-9]+)\.P[\s`*_]+([🟢🔴]{3,7})[\s`*_]+(\d{1,2}:\d{2})",
 )
 
 
