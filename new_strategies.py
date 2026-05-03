@@ -297,8 +297,57 @@ async def run_detectors_on_flip(pair: str, direction: str, entry: float,
         # Send Telegram alerts (BOT13)
         for sig in triggered:
             asyncio.create_task(_send_strategy_alert(sig))
+        # Auto-paper trade — для каждой сработавшей стратегии открываем
+        # позицию через paper_trader (если на этой паре ещё нет открытой,
+        # paper сам делает duplicate detection). Backtest validated edge.
+        asyncio.create_task(_auto_paper_for_strategies(triggered, pair, direction, entry, sl))
 
     return triggered
+
+
+async def _auto_paper_for_strategies(triggered: list[dict], pair: str,
+                                     direction: str, entry: float, sl: float) -> None:
+    """Авто-открытие paper позиции по сильнейшей сработавшей стратегии.
+    Использует strategy-specific TP target из детектора. Если на паре уже
+    открыта позиция (от ST signal-а параллельно или раньше) — paper_trader
+    сам отклонит как DUPLICATE (это корректно)."""
+    if not triggered:
+        return
+    # Берём стратегию с самым большим TP_R (сильнейший edge):
+    # 🌊 Volume Surge (TP=2.5R) > 🐉 Triple Confluence (TP=2R) > 🔋 Vol Accum (TP=1.5R)
+    best = max(triggered, key=lambda t: t.get('tp_R', 0))
+    sym = pair.replace('/', '').upper()
+    if not sym.endswith('USDT'):
+        sym = sym + 'USDT'
+    score = best.get('source_count') or best.get('vol_ratio') or best.get('bars_rising') or 0
+    extra_label = STRATEGY_LABEL.get(best['strategy'], best['strategy'])
+    emoji = STRATEGY_EMOJI.get(best['strategy'], '✨')
+    signal_data = {
+        'symbol': sym,
+        'pair': pair,
+        'direction': direction,
+        'entry': entry,
+        'sl': sl,
+        'tp1': best.get('tp'),
+        'source': best['strategy'],  # 'volume_surge' / 'triple_confluence' / 'vol_accum'
+        'score': score,
+        'pattern': f'{emoji} {extra_label} (after ST flip)',
+        'is_top_pick': False,
+        # Метаданные для UI / journal
+        'ns_strategy': best['strategy'],
+        'ns_tp_R': best.get('tp_R'),
+        'ns_vol_ratio': best.get('vol_ratio'),
+        'ns_sources': best.get('sources'),
+    }
+    try:
+        import paper_trader as pt
+        # Timeout 30s — paper_trader.on_signal делает много проверок (RSI, anti-cluster,
+        # entry checker via to_thread). Если не успело за 30с — skip.
+        await asyncio.wait_for(pt.on_signal(signal_data), timeout=30.0)
+    except asyncio.TimeoutError:
+        logger.warning(f'[new-strategies] auto-paper TIMEOUT {best["strategy"]}/{pair}')
+    except Exception as e:
+        logger.warning(f'[new-strategies] auto-paper fail {best["strategy"]}/{pair}: {e}')
 
 
 async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,
