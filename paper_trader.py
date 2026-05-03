@@ -6,6 +6,7 @@ AI анализирует каждый сигнал, решает входить
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -1497,6 +1498,18 @@ async def on_signal(signal_data: dict):
     source = (signal_data.get("source") or "").lower()
 
     if not pair or direction not in ("LONG", "SHORT"):
+        return None
+
+    # ── 0. ONLY-NEW-STRATEGIES MODE ──────────────────────────────
+    # Paused: принимаем ТОЛЬКО 3 backtested стратегии, всё остальное reject.
+    # Включается через env PAPER_ONLY_NEW_STRATEGIES=1 (default ON for safety).
+    # Когда юзер захочет вернуть полную автоторговлю — установить =0 в Railway env.
+    NEW_STRATEGIES = ("volume_surge", "triple_confluence", "vol_accum")
+    only_new = os.getenv("PAPER_ONLY_NEW_STRATEGIES", "1") == "1"
+    if only_new and source not in NEW_STRATEGIES:
+        _log_rejection(signal_data,
+            f"[ONLY-NEW-STRATEGIES] paused — source='{source}' rejected, "
+            f"только volume_surge/triple_confluence/vol_accum пропускаются")
         return None
 
     # ── 0a. Supertrend filters: RSI + VOLUME + HOUR ──────────────
