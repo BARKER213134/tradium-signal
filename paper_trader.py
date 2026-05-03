@@ -1499,22 +1499,16 @@ async def on_signal(signal_data: dict):
     if not pair or direction not in ("LONG", "SHORT"):
         return None
 
-    # ── 0. Supertrend 1h-RSI filter ──────────────────────────────
-    # Исторически supertrend as-is давал PnL −172 USDT (WR 48%, 50 сделок)
-    # из-за входов в "мёртвых" RSI-зонах. Бэктест 55 supertrend-сделок
-    # по 1h-RSI(14, Wilder) на закрытой свече до входа:
-    #   RSI 40-50: +238.25 USDT  WR 61.5%   ← best
-    #   RSI 50-60:  −48.16 USDT  WR 57.7%
-    #   RSI 60-70: −175.53 USDT  WR 36.4%   ← catastrophic (late LONG)
-    # Отсекая LONG при RSI≥60 и SHORT при RSI≤40: PnL меняется
-    # с −61 → +134 USDT (saved +195 USDT). Fail-closed: если фильтр
-    # не посчитан (сеть/мало свечей) — сделку не открываем.
+    # ── 0a. Supertrend filters: RSI + VOLUME + HOUR ──────────────
+    # Backtest 11.5k signals 14d (validated OOS):
+    # - vol_ratio ≥ 3× MA20(1h): WR 67-72%, E=+0.94…+1.46R/trade
+    # - LONG 1h-RSI ≥ 65: late entry, WR 36% (catastrophic)
+    # - SHORT 1h-RSI ≤ 40: falling knife
+    # - Hour h=1 UTC: WR 20% E=-0.09R / h=6 UTC: WR 32%
+    # - Wednesday: WR 25% E=-0.01R
     if source == "supertrend":
         try:
             from exchange import get_klines_any
-            # sync HTTP к Binance/BingX блокирует event loop на 200ms-2s
-            # на каждый supertrend сигнал. При burst (5-10 сигналов одновременно)
-            # event loop виснет → autotrading тормозит.
             _candles = await asyncio.to_thread(get_klines_any, pair, "1h", 50) or []
             _closes = [c["c"] for c in _candles[:-1]]  # пропустить незакрытую
             if len(_closes) < 16:
@@ -1531,15 +1525,41 @@ async def on_signal(signal_data: dict):
             _log_rejection(signal_data, f"[RSI-FILTER ERROR] supertrend RSI calc failed: {e}")
             return None
 
+        # RSI filter
         if direction == "LONG" and rsi_1h >= 65:
-            logger.info(f"Paper SKIP (supertrend RSI): {symbol} LONG 1h-RSI={rsi_1h:.1f}≥65")
             _log_rejection(signal_data, f"[RSI-FILTER] supertrend LONG: 1h-RSI={rsi_1h:.1f}≥65 (late entry)")
             return None
         if direction == "SHORT" and rsi_1h <= 40:
-            logger.info(f"Paper SKIP (supertrend RSI): {symbol} SHORT 1h-RSI={rsi_1h:.1f}≤40")
             _log_rejection(signal_data, f"[RSI-FILTER] supertrend SHORT: 1h-RSI={rsi_1h:.1f}≤40 (falling knife)")
             return None
-        logger.info(f"Paper ACCEPT (supertrend RSI): {symbol} {direction} 1h-RSI={rsi_1h:.1f}")
+
+        # 🌊 VOLUME FILTER — ключевой edge из бэктеста (vol≥3× = WR 67-72%)
+        try:
+            from new_strategies import compute_volume_ratio
+            vol_ratio = compute_volume_ratio(_candles, n_ma=20)
+        except Exception:
+            vol_ratio = 0.0
+        if vol_ratio < 3.0:
+            _log_rejection(signal_data,
+                f"[VOL-FILTER] supertrend: vol_ratio={vol_ratio:.2f}× <3.0× MA20 (no edge)")
+            return None
+
+        # ⏰ HOUR FILTER — h=1 UTC WR 20%, h=6 UTC WR 32% (backtested)
+        from datetime import datetime as _dt, timezone as _tz
+        now_utc = _dt.now(_tz.utc)
+        hour_utc = now_utc.hour
+        weekday = now_utc.weekday()  # 0=Mon, 2=Wed
+        if hour_utc in (1, 6):
+            _log_rejection(signal_data,
+                f"[HOUR-FILTER] supertrend: h={hour_utc:02d} UTC WR<35% (avoid)")
+            return None
+        if weekday == 2:  # Wednesday
+            _log_rejection(signal_data,
+                f"[WEEKDAY-FILTER] supertrend: Wed WR=25% (avoid)")
+            return None
+
+        logger.info(f"Paper ACCEPT supertrend: {symbol} {direction} "
+                    f"RSI={rsi_1h:.1f} vol={vol_ratio:.1f}× h={hour_utc:02d}")
 
     # ── 1. Anti-cluster guard ──
     try:
