@@ -4564,7 +4564,7 @@ async function _drawPaperHistChart(idx) {
     });
     markers.sort((a, b) => a.time - b.time);
     // Накопительные маркеры: KC и KL не затирают друг друга, ST flip-стрелки сразу, + ST-signals
-    let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [];
+    let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [], _nsM = [];
     const _stFlipsHist = (_stResHist && _stResHist.flipMarkers) ? _stResHist.flipMarkers : [];
     // Debounce re-render: 5 независимых fetch'ей резолвятся в течение ~1с,
     // каждый вызывает _applyAll — раньше было 5 setMarkers подряд, теперь 1.
@@ -4573,7 +4573,7 @@ async function _drawPaperHistChart(idx) {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
-        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsHist, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsHist, ..._stSigM, ..._verM, ..._cvFlipM, ..._nsM].sort((a,b) => a.time - b.time));
       }, 300);
     };
     _applyAll();
@@ -4602,6 +4602,12 @@ async function _drawPaperHistChart(idx) {
       }).catch(() => {});
     }
     // CV+ST Flip markers (⏳/💥)
+    if (window._fetchNewStrategies && window._addNewStrategyMarkers && h.symbol && d.candles.length) {
+      window._fetchNewStrategies(h.symbol, 168).then(nsf => {
+        _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
+        _applyAll();
+      }).catch(()=>{});
+    }
     if (window._fetchCvFlips && window._addCvFlipMarkers && h.symbol && d.candles.length) {
       window._fetchCvFlips(h.symbol, 72).then(cvf => {
         if (!cvf || !cvf.length) return;
@@ -4836,14 +4842,14 @@ async function _renderPaperChart(idx, tf) {
     }
     markers.sort((a,b) => a.time - b.time);
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу + ST-signals
-    let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [];
+    let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [], _nsM = [];
     const _stFlipsLive = (_stResLive && _stResLive.flipMarkers) ? _stResLive.flipMarkers : [];
     let _applyTimer = null;
     const _applyAll = () => {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
-        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsLive, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsLive, ..._stSigM, ..._verM, ..._cvFlipM, ..._nsM].sort((a,b) => a.time - b.time));
       }, 300);
     };
     _applyAll();
@@ -4870,6 +4876,12 @@ async function _renderPaperChart(idx, tf) {
         _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
         _applyAll();
       }).catch(() => {});
+    }
+    if (window._fetchNewStrategies && window._addNewStrategyMarkers && p.symbol && d.candles.length) {
+      window._fetchNewStrategies(p.symbol, 168).then(nsf => {
+        _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
+        _applyAll();
+      }).catch(()=>{});
     }
     if (window._fetchCvFlips && window._addCvFlipMarkers && p.symbol && d.candles.length) {
       window._fetchCvFlips(p.symbol, 72).then(cvf => {
@@ -7098,14 +7110,14 @@ async function loadCoinChart(coin) {
     }
     unique.sort((a, b) => a.time - b.time);
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу, + ST-signals
-    let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [];
+    let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [], _nsM = [];
     const _stFlipsCoin = (_stResCoin && _stResCoin.flipMarkers) ? _stResCoin.flipMarkers : [];
     let _applyTimer = null;
     const _applyAll = () => {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
-        series.setMarkers([...unique, ..._msM, ..._klM, ..._stFlipsCoin, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+        series.setMarkers([...unique, ..._msM, ..._klM, ..._stFlipsCoin, ..._stSigM, ..._verM, ..._cvFlipM, ..._nsM].sort((a,b) => a.time - b.time));
       }, 300);
     };
     _applyAll();
@@ -7116,6 +7128,12 @@ async function loadCoinChart(coin) {
         _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
         _applyAll();
       }).catch(() => {});
+    }
+    if (window._fetchNewStrategies && window._addNewStrategyMarkers && sym && d.candles.length) {
+      window._fetchNewStrategies(sym, 168).then(nsf => {
+        _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
+        _applyAll();
+      }).catch(()=>{});
     }
     if (window._fetchCvFlips && window._addCvFlipMarkers && sym && d.candles.length) {
       window._fetchCvFlips(sym, 72).then(cvf => {
@@ -7802,14 +7820,14 @@ async function openJournalChart(idx, forceTF) {
     }
     markers.sort((a,b) => a.time - b.time);
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу + ST-signals
-    let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [];
+    let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [], _nsM = [];
     const _stFlipsJ = (_stResJ && _stResJ.flipMarkers) ? _stResJ.flipMarkers : [];
     let _applyTimer = null;
     const _applyAll = () => {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
-        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsJ, ..._stSigM, ..._verM, ..._cvFlipM].sort((a,b) => a.time - b.time));
+        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsJ, ..._stSigM, ..._verM, ..._cvFlipM, ..._nsM].sort((a,b) => a.time - b.time));
       }, 300);
     };
     _applyAll();
@@ -7836,6 +7854,12 @@ async function openJournalChart(idx, forceTF) {
         _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
         _applyAll();
       }).catch(() => {});
+    }
+    if (window._fetchNewStrategies && window._addNewStrategyMarkers && sym && d.candles.length) {
+      window._fetchNewStrategies(sym, 168).then(nsf => {
+        _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
+        _applyAll();
+      }).catch(()=>{});
     }
     if (window._fetchCvFlips && window._addCvFlipMarkers && sym && d.candles.length) {
       window._fetchCvFlips(sym, 72).then(cvf => {

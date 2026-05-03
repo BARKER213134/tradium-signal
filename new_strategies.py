@@ -330,6 +330,114 @@ async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,
         pass
 
 
+async def update_waiting_outcomes() -> dict:
+    """Background updater: проверяет WAITING сигналы — попала ли цена в TP/SL.
+    Вызывается периодически из watcher loop. Lookback 24h max — старее = TIMEOUT.
+    """
+    from database import _get_db, utcnow
+    from datetime import timedelta
+    from exchange import get_klines_any
+
+    def _load_waiting():
+        col = _get_db().new_strategy_signals
+        cutoff = utcnow() - timedelta(hours=24)
+        return list(col.find({
+            'state': 'WAITING',
+            'created_at': {'$gte': cutoff},
+        }).limit(100))
+
+    waiting = await asyncio.to_thread(_load_waiting)
+    if not waiting:
+        return {'checked': 0, 'updated': 0}
+
+    # Group by pair to share klines fetch
+    by_pair: dict[str, list] = {}
+    for w in waiting:
+        by_pair.setdefault(w['pair'], []).append(w)
+
+    updated = 0
+    timeouts = 0
+    for pair, sigs in by_pair.items():
+        try:
+            candles = await asyncio.to_thread(get_klines_any, pair, '1h', 30)
+        except Exception:
+            continue
+        if not candles or len(candles) < 5:
+            continue
+        for sig in sigs:
+            entry = sig.get('entry')
+            sl = sig.get('sl')
+            tp = sig.get('tp')
+            direction = sig.get('direction')
+            created_at = sig.get('created_at')
+            if not (entry and sl and tp and direction and created_at):
+                continue
+            # Time of signal in ms
+            sig_ts = int(created_at.replace(tzinfo=timezone.utc).timestamp() * 1000) \
+                if created_at.tzinfo is None else int(created_at.timestamp() * 1000)
+            # Find first candle at or after sig_ts and walk forward
+            outcome = None
+            outcome_price = None
+            outcome_at = None
+            for c in candles:
+                if c['t'] < sig_ts:
+                    continue
+                if direction == 'LONG':
+                    if c['l'] <= sl:
+                        outcome = 'SL'; outcome_price = sl
+                        outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
+                    if c['h'] >= tp:
+                        outcome = 'TP'; outcome_price = tp
+                        outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
+                else:
+                    if c['h'] >= sl:
+                        outcome = 'SL'; outcome_price = sl
+                        outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
+                    if c['l'] <= tp:
+                        outcome = 'TP'; outcome_price = tp
+                        outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
+            # Timeout: 24h passed without outcome
+            age_h = (utcnow() - (created_at if created_at.tzinfo else
+                                 created_at.replace(tzinfo=timezone.utc))).total_seconds() / 3600
+            if outcome is None and age_h >= 24:
+                outcome = 'TIMEOUT'
+                outcome_price = candles[-1]['c'] if candles else None
+                outcome_at = utcnow()
+            if outcome is None:
+                continue
+            # Compute pnl_pct
+            pnl_pct = 0
+            if outcome_price and entry:
+                if direction == 'LONG':
+                    pnl_pct = (outcome_price - entry) / entry * 100
+                else:
+                    pnl_pct = (entry - outcome_price) / entry * 100
+            def _save(sig_id=sig['_id'], outcome=outcome, outcome_price=outcome_price,
+                     outcome_at=outcome_at, pnl_pct=pnl_pct):
+                _get_db().new_strategy_signals.update_one(
+                    {'_id': sig_id},
+                    {'$set': {
+                        'state': outcome,
+                        'exit_price': outcome_price,
+                        'exit_at': (outcome_at.replace(tzinfo=None) if outcome_at and outcome_at.tzinfo
+                                    else outcome_at),
+                        'pnl_pct': round(pnl_pct, 3),
+                        'updated_at': utcnow(),
+                    }}
+                )
+            try:
+                await asyncio.wait_for(asyncio.to_thread(_save), timeout=3.0)
+                updated += 1
+                if outcome == 'TIMEOUT':
+                    timeouts += 1
+            except (asyncio.TimeoutError, Exception):
+                pass
+
+    if updated:
+        logger.info(f'[new-strategies] updated {updated} outcomes ({timeouts} timeouts)')
+    return {'checked': len(waiting), 'updated': updated, 'timeouts': timeouts}
+
+
 async def _send_strategy_alert(sig: dict) -> None:
     """Send Telegram alert via BOT13. Strategy emoji + pair + dir + entry/sl/tp."""
     try:

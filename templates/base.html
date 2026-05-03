@@ -1600,6 +1600,61 @@
         return out;
       };
 
+      // ─── New Strategies (🌊 Volume Surge / 🐉 Triple Confluence / 🔋 Vol Accum) ───
+      // Маркеры на графиках по факту срабатывания на этой паре.
+      window._newStrategyCache = window._newStrategyCache || {};
+      window._fetchNewStrategies = async function(pair, hours = 168) {
+        if (!pair) return [];
+        const key = `${pair}_${hours}`;
+        const c = window._newStrategyCache[key];
+        if (c && (Date.now() - c.at) < 120000) return c.items;
+        try {
+          const r = await fetch(`/api/new-strategies/by-pair?pair=${encodeURIComponent(pair)}&hours=${hours}`);
+          const d = await r.json();
+          const items = (d && d.items) ? d.items : [];
+          window._newStrategyCache[key] = { at: Date.now(), items };
+          return items;
+        } catch (e) {
+          console.warn('[new-strat] fetch fail', e);
+          return [];
+        }
+      };
+
+      window._addNewStrategyMarkers = function(candles, items) {
+        if (!candles || !candles.length || !items || !items.length) return [];
+        const firstTs = candles[0].time;
+        const lastTs = candles[candles.length - 1].time;
+        const nearest = (ts) => {
+          let mc = null, minD = Infinity;
+          for (const c of candles) {
+            const diff = Math.abs(c.time - ts);
+            if (diff < minD) { minD = diff; mc = c; }
+          }
+          return mc;
+        };
+        const stratEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋'};
+        const stratColor = {volume_surge:'#00d4ff', triple_confluence:'#7b5cff', vol_accum:'#ffb84d'};
+        const out = [];
+        for (const s of items) {
+          const isLong = s.direction === 'LONG';
+          const ts = s.created_at ? Math.floor(new Date(s.created_at).getTime() / 1000) : null;
+          if (!ts || ts < firstTs - 3600 || ts > lastTs + 3600 * 2) continue;
+          const mc = nearest(ts);
+          if (!mc) continue;
+          const em = stratEmoji[s.strategy] || '✨';
+          const clr = stratColor[s.strategy] || '#00d4ff';
+          out.push({
+            time: mc.time,
+            position: isLong ? 'belowBar' : 'aboveBar',
+            color: clr,
+            shape: isLong ? 'arrowUp' : 'arrowDown',
+            text: em,
+            size: 2,
+          });
+        }
+        return out;
+      };
+
       // ─── Verified Entries (Entry Checker авто-проверка) ─────────────
       // ✨ маркеры на графиках, подтягиваются из /api/verified-signals
       window._verifiedCache = window._verifiedCache || {};

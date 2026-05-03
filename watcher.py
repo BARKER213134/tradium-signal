@@ -3417,6 +3417,24 @@ async def _ui_prewarm_loop():
         await _asyncio.sleep(120)  # 2 минуты на Pro (было 5 на Hobby)
 
 
+async def _new_strategies_updater_loop():
+    """Каждые 5 минут проверяет WAITING сигналы из new_strategy_signals
+    и закрывает их при достижении TP/SL/TIMEOUT (lookback 24h)."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(180)  # стартовая задержка после prewarm
+    while True:
+        try:
+            import new_strategies as ns
+            res = await _asyncio.wait_for(ns.update_waiting_outcomes(), timeout=60.0)
+            if res.get("updated", 0) > 0:
+                logger.info(f"[new-strategies] updater synced {res['updated']} outcomes")
+        except _asyncio.TimeoutError:
+            logger.warning("[new-strategies] updater TIMEOUT 60s")
+        except Exception:
+            logger.debug("[new-strategies] updater error", exc_info=True)
+        await _asyncio.sleep(300)  # каждые 5 минут
+
+
 async def _live_balance_refresh_loop():
     """Каждые 5 минут подтягивает реальный exchange balance в account.balance.
     Это гарантирует что UI показывает актуальный free на бирже, не paper-balance."""
@@ -3636,6 +3654,12 @@ async def start_watcher():
         logger.info("[live-sync] background loop started")
     except Exception:
         logger.exception("[live-sync] failed to start loop")
+    # New Strategies status updater — каждые 5 мин закрывает WAITING → TP/SL/TIMEOUT
+    try:
+        asyncio.create_task(_new_strategies_updater_loop())
+        logger.info("[new-strategies] updater loop started")
+    except Exception:
+        logger.exception("[new-strategies] updater loop failed")
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())
