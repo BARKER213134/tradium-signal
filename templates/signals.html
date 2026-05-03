@@ -6771,7 +6771,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jTopPickBtn" onclick="_toggleTopPicks()" title="Только Top Picks — сигналы подтверждённые STRONG Confluence" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">👑 Top · OFF</button>
   <button id="jStVipBtn" onclick="_toggleStTier('vip')" title="Только 🏆 VIP SuperTrend: ST flip + сигнал другого бота ±2ч (WR 60%, PF 3.6)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;">🏆 VIP · OFF</button>
   <button id="jStMtfBtn" onclick="_toggleStTier('mtf')" title="Только 🔱 Triple MTF: ST 1h flip + 4h + 1d aligned (EV +0.68R, PF 2.15)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;">🔱 MTF · OFF</button>
-  <button id="jAllSpecialBtn" onclick="_toggleAllSpecial()" title="ВСЁ особое: ⭐ Strong + 👑 Top Pick + 🏆 VIP + 🔱 MTF + 💠 Cluster + 🤖 Paper + ⚠️ Anomaly + ✨ Verified" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">🔥 Все · OFF</button>
+  <button id="jAllSpecialBtn" onclick="_toggleAllSpecial()" title="ВСЁ особое: ⭐ Strong + 👑 Top Pick + 🏆 VIP + 🔱 MTF + 💠 Cluster + 🤖 Paper + ⚠️ Anomaly + ✨ Verified + 🌊 Volume Surge + 🐉 Triple Confluence + 🔋 Vol Accum" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">🔥 Все · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
 </div>
 
@@ -7340,6 +7340,7 @@ function filterJournal() {
       if (s.st_tier !== window._journalStTier) return false;
     }
     // "Все особое" — Strong + Top + VIP + MTF + Cluster + Paper + Anomaly + Verified
+    // + 🌊🐉🔋 New Strategies (Volume Surge / Triple Confluence / Vol Accum)
     if (window._journalAllSpecial) {
       const isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
       const isTopPick = !!s.is_top_pick;
@@ -7348,7 +7349,8 @@ function filterJournal() {
       const isPaper = s.source === 'paper';
       const isAnomaly = s.source === 'anomaly';
       const isVerified = s.source === 'verified';
-      if (!(isStrong || isTopPick || isVipMtf || isCluster || isPaper || isAnomaly || isVerified)) return false;
+      const isNewStrategy = s.source === 'volume_surge' || s.source === 'triple_confluence' || s.source === 'vol_accum';
+      if (!(isStrong || isTopPick || isVipMtf || isCluster || isPaper || isAnomaly || isVerified || isNewStrategy)) return false;
     }
     return true;
   });

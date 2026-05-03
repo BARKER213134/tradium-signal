@@ -706,10 +706,14 @@
           if (isStrong && !isTopPick && s >= 5) return (isTopPick ? '👑' : '') + base;
           return prefix + base;
         }
-        const base = ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
+        const base = ({
+          tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠',
+          // New Strategies (post ST flip detectors)
+          volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋',
+        })[src] || '•';
         return prefix + base;
       };
-      window.sigIcon._version = 'v4-strong';
+      window.sigIcon._version = 'v5-newstrats';
       console.log('[sigIcon] loaded', window.sigIcon._version);
 
       // sigIconCompact — для маркеров НА ГРАФИКЕ (без 👑/⭐ префиксов,
@@ -719,6 +723,9 @@
           const s = +score || 0;
           return s >= 6 ? '🔥' : s >= 5 ? '⭐' : '🎯';
         }
+        if (src === 'volume_surge') return '🌊';
+        if (src === 'triple_confluence') return '🐉';
+        if (src === 'vol_accum') return '🔋';
         return ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
       };
 

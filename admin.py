@@ -10395,6 +10395,56 @@ def _compute_journal_sync():
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] verified fetch fail: {e}")
 
+    # 🌊🐉🔋 New Strategies — последние сигналы 3 backtest-validated стратегий
+    try:
+        from database import _get_db, utcnow as _ns_utcnow
+        from datetime import timedelta as _td
+        nss_col = _get_db().new_strategy_signals
+        nss_since = _ns_utcnow() - _td(hours=168)  # last 7d
+        STRAT_EMOJI = {"volume_surge": "🌊", "triple_confluence": "🐉", "vol_accum": "🔋"}
+        STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
+                       "vol_accum": "Vol Accum"}
+        for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(300):
+            at_dt = n.get("created_at")
+            strat = n.get("strategy", "?")
+            em = STRAT_EMOJI.get(strat, "✨")
+            label = STRAT_LABEL.get(strat, strat)
+            pair_raw = n.get("pair") or ""
+            pair_norm = pair_raw.replace("/", "").upper()
+            extra = ""
+            if strat == "volume_surge" and n.get("vol_ratio"):
+                extra = f" · vol {n['vol_ratio']}×"
+            elif strat == "triple_confluence" and n.get("source_count"):
+                extra = f" · {n['source_count']}src"
+            elif strat == "vol_accum":
+                extra = " · 3 bars rising"
+            pattern_txt = f"{em} {label}{extra}"
+            items.append({
+                "source": strat,  # 'volume_surge' / 'triple_confluence' / 'vol_accum'
+                "symbol": pair_norm,
+                "pair": pair_raw,
+                "direction": n.get("direction", ""),
+                "entry": n.get("entry"),
+                "tp1": n.get("tp"),
+                "sl": n.get("sl"),
+                "pattern": pattern_txt,
+                "score": n.get("source_count") or n.get("vol_ratio") or 0,
+                "st_passed": None,
+                "pump_score": 0,
+                "is_top_pick": False,
+                "top_pick_confirmations_count": 0,
+                "ns_strategy": strat,
+                "ns_state": n.get("state", "WAITING"),
+                "ns_vol_ratio": n.get("vol_ratio"),
+                "ns_sources": n.get("sources"),
+                "tp_R": n.get("tp_R"),
+                "rr": n.get("tp_R"),
+                "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
+                "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+            })
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] new_strategies fetch fail: {e}")
+
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
     return {"items": items}
