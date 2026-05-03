@@ -87,6 +87,14 @@ _cv_flip_chat = os.getenv("CV_FLIP_CHAT_ID", "").strip()
 CV_FLIP_CHAT_ID = (int(_cv_flip_chat) if _cv_flip_chat.lstrip("-").isdigit()
                    else ADMIN_CHAT_ID)
 
+# BOT13 — New Strategy alerts (🌊 Volume Surge / 🐉 Triple Confluence /
+# 🔋 Volume Accumulation). Triggered after each ST flip.
+# Backtest validated 14d, 11.5k signals, OOS holdout: WR 67-72%.
+BOT13_BOT_TOKEN = os.getenv("BOT13_BOT_TOKEN", "")
+_new_strat_chat = os.getenv("NEW_STRATEGY_CHAT_ID", "").strip()
+NEW_STRATEGY_CHAT_ID = (int(_new_strat_chat) if _new_strat_chat.lstrip("-").isdigit()
+                       else ADMIN_CHAT_ID)
+
 # ═════ Binance Futures API для реальной торговли ═════
 # API keys — создавать с минимальными правами (только futures trade, без withdraw)
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
@@ -120,6 +128,7 @@ BOTS = [
     {"id": "top_picks", "label": "👑 Top Picks", "category": "crypto"},
     {"id": "supertrend", "label": "🌀 SuperTrend", "category": "crypto"},
     {"id": "cv_flip", "label": "⏳ Flip ST", "category": "crypto"},
+    {"id": "new_strategies", "label": "🌊 New Strategy", "category": "crypto"},
     # {"id": "conflicts", "label": "⚠ Conflicts", "category": "crypto"},  # кнопка скрыта
     # — функционал остаётся: endpoint /api/conflicts, вкладка по прямому URL
     # /signals?bot=conflicts работает, данные детектируются в фоне через

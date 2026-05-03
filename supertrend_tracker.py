@@ -259,6 +259,19 @@ async def _save_signal(pair_norm: str, flip_bar: dict, tier: str, extras: dict,
             journal_cache.invalidate("journal_all")
         except Exception:
             pass
+        # ── NEW STRATEGIES: запускаем 3 детектора (Volume Surge / Triple
+        # Confluence / Volume Accumulation) после успешного сохранения ST flip.
+        # Каждый детектор сам решает попадает ли flip под их критерии.
+        # Backtest validated 14d, 11.5k signals: WR 67-72%, E +0.94...+1.46R.
+        try:
+            import new_strategies as ns
+            asyncio.create_task(ns.run_detectors_on_flip(
+                pair=doc["pair"], direction=direction,
+                entry=entry, sl=sl, flip_ts=flip_at,
+                signal_id=doc.get("id"), tier=tier,
+            ))
+        except Exception:
+            logger.exception("[st-tracker] new_strategies detect fail")
         return doc
     except asyncio.TimeoutError:
         logger.warning(f"[st-tracker] save TIMEOUT {pair_norm}/{tier}")

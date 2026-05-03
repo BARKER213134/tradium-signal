@@ -2725,6 +2725,161 @@ setTimeout(_cvfResultsLoad, 800);
 </script>
 
 
+{% elif bot == 'new_strategies' %}
+<!-- ════════════ 🌊🐉🔋 New Strategies — backtest-validated ════════════ -->
+<div class="strategy-box">
+  <div class="strat-icon">🌊</div>
+  <div class="strat-body">
+    <div class="strat-title">New Strategies · после ST flip · backtest WR 67-72%</div>
+    Триггерится КАЖДЫЙ ST flip. 3 детектора независимы, могут срабатывать одновременно:
+    <b>🌊 Volume Surge</b> (объём ≥3× MA20) ·
+    <b>🐉 Triple Confluence</b> (2+ источника same dir same pair в 4ч) ·
+    <b>🔋 Volume Accumulation</b> (3 бара возрастающего объёма).
+    SL=ST line · TP per strategy (2.5R / 2R / 1.5R). Алерты в <b>BOT13</b>.
+  </div>
+</div>
+
+<!-- Strategy filter bar -->
+<div style="display:flex;gap:8px;margin:14px 0;padding:4px;background:var(--dark);border:1px solid var(--border);border-radius:10px;">
+  <button id="ns-sub-all" class="ns-sub-btn active" onclick="_nsSwitchStrategy('all')"
+          style="flex:1;background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(0,229,160,0.10));color:#00d4ff;border:1px solid rgba(0,212,255,0.55);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">
+    Все стратегии
+  </button>
+  <button id="ns-sub-volume_surge" class="ns-sub-btn" onclick="_nsSwitchStrategy('volume_surge')"
+          style="flex:1;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">
+    🌊 Volume Surge
+  </button>
+  <button id="ns-sub-triple_confluence" class="ns-sub-btn" onclick="_nsSwitchStrategy('triple_confluence')"
+          style="flex:1;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">
+    🐉 Triple Confluence
+  </button>
+  <button id="ns-sub-vol_accum" class="ns-sub-btn" onclick="_nsSwitchStrategy('vol_accum')"
+          style="flex:1;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">
+    🔋 Vol Accumulation
+  </button>
+</div>
+
+<!-- State filter + stats -->
+<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:12px 0;">
+  <select id="ns-state" onchange="_nsLoad()"
+          style="background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="all">Все states</option>
+    <option value="WAITING">⏳ Waiting</option>
+    <option value="TP">✅ TP hit</option>
+    <option value="SL">⛔ SL hit</option>
+    <option value="MANUAL">📍 Manual</option>
+    <option value="TIMEOUT">⏱ Timeout</option>
+  </select>
+  <select id="ns-hours" onchange="_nsLoad()"
+          style="background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="24">24ч</option>
+    <option value="72">3 дня</option>
+    <option value="168" selected>7 дней</option>
+    <option value="336">14 дней</option>
+  </select>
+  <div id="ns-stats" style="font-size:11px;color:var(--muted);font-family:var(--font-mono);"></div>
+</div>
+
+<!-- Results table -->
+<div style="overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--card);">
+  <table id="ns-table" style="width:100%;border-collapse:collapse;font-size:12px;font-family:var(--font-mono);">
+    <thead style="background:var(--dark);position:sticky;top:0;">
+      <tr>
+        <th style="padding:8px;text-align:center;color:var(--muted);font-weight:600;width:50px;"></th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Стратегия</th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Pair</th>
+        <th style="padding:8px;text-align:center;color:var(--muted);font-weight:600;">Dir</th>
+        <th style="padding:8px;text-align:right;color:var(--muted);font-weight:600;">Entry</th>
+        <th style="padding:8px;text-align:right;color:var(--muted);font-weight:600;">SL</th>
+        <th style="padding:8px;text-align:right;color:var(--muted);font-weight:600;">TP</th>
+        <th style="padding:8px;text-align:center;color:var(--muted);font-weight:600;">Detail</th>
+        <th style="padding:8px;text-align:center;color:var(--muted);font-weight:600;">State</th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Created</th>
+      </tr>
+    </thead>
+    <tbody id="ns-tbody">
+      <tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted);">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+let _nsCurStrategy = 'all';
+async function _nsLoad() {
+  const state = document.getElementById('ns-state').value;
+  const hours = document.getElementById('ns-hours').value;
+  const tbody = document.getElementById('ns-tbody');
+  const statsEl = document.getElementById('ns-stats');
+  tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted);">Загрузка…</td></tr>';
+  try {
+    const r = await fetch(`/api/new-strategies?strategy=${_nsCurStrategy}&state=${state}&hours=${hours}&limit=300`);
+    const d = await r.json();
+    if (!d.ok) {
+      tbody.innerHTML = `<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--sell);">Ошибка</td></tr>`;
+      return;
+    }
+    const items = d.items || [];
+    const stats = d.stats || {};
+    const bs = stats.by_strategy || {};
+    statsEl.innerHTML = `n=${items.length} · 🌊 ${bs.volume_surge||0} · 🐉 ${bs.triple_confluence||0} · 🔋 ${bs.vol_accum||0}`;
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted);">Нет сигналов в этом окне</td></tr>';
+      return;
+    }
+    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋'};
+    const sLabel = {volume_surge:'Volume Surge', triple_confluence:'Triple Confluence', vol_accum:'Vol Accum'};
+    const stEmoji = {WAITING:'⏳', TP:'✅', SL:'⛔', MANUAL:'📍', TIMEOUT:'⏱'};
+    let html = '';
+    for (const it of items) {
+      const em = sEmoji[it.strategy] || '✨';
+      const dirClr = it.direction === 'LONG' ? '#00e5a0' : '#ff5e9c';
+      const stClr = it.state === 'TP' ? '#00e5a0' : (it.state === 'SL' ? '#ff5e9c' : 'var(--muted)');
+      let detail = '';
+      if (it.strategy === 'volume_surge' && it.vol_ratio) detail = `vol ${it.vol_ratio}×`;
+      else if (it.strategy === 'triple_confluence' && it.source_count) detail = `${it.source_count} src: ${(it.sources||[]).join('+')}`;
+      else if (it.strategy === 'vol_accum') detail = `${it.bars_rising||3} bars`;
+      const created = it.created_at ? new Date(it.created_at).toLocaleString('ru-RU') : '—';
+      html += `<tr style="border-top:1px solid var(--border);">
+        <td style="padding:8px;text-align:center;font-size:18px;">${em}</td>
+        <td style="padding:8px;">${sLabel[it.strategy]||it.strategy}</td>
+        <td style="padding:8px;font-weight:600;">${it.pair}</td>
+        <td style="padding:8px;text-align:center;color:${dirClr};font-weight:700;">${it.direction}</td>
+        <td style="padding:8px;text-align:right;">${it.entry?Number(it.entry).toFixed(6):'—'}</td>
+        <td style="padding:8px;text-align:right;color:#ff5e9c;">${it.sl?Number(it.sl).toFixed(6):'—'}</td>
+        <td style="padding:8px;text-align:right;color:#00e5a0;">${it.tp?Number(it.tp).toFixed(6):'—'} <span style="color:var(--muted);font-size:10px;">(${it.tp_R||'?'}R)</span></td>
+        <td style="padding:8px;text-align:center;color:var(--muted);font-size:11px;">${detail}</td>
+        <td style="padding:8px;text-align:center;color:${stClr};">${stEmoji[it.state]||''} ${it.state||'WAITING'}</td>
+        <td style="padding:8px;color:var(--muted);font-size:10px;">${created}</td>
+      </tr>`;
+    }
+    tbody.innerHTML = html;
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--sell);">${e}</td></tr>`;
+  }
+}
+function _nsSwitchStrategy(s) {
+  _nsCurStrategy = s;
+  document.querySelectorAll('.ns-sub-btn').forEach(b => {
+    b.classList.remove('active');
+    b.style.background = 'transparent';
+    b.style.color = 'var(--muted)';
+    b.style.border = '1px solid var(--border)';
+    b.style.fontWeight = '400';
+  });
+  const ab = document.getElementById('ns-sub-' + s);
+  if (ab) {
+    ab.classList.add('active');
+    ab.style.background = 'linear-gradient(135deg,rgba(0,212,255,0.18),rgba(0,229,160,0.10))';
+    ab.style.color = '#00d4ff';
+    ab.style.border = '1px solid rgba(0,212,255,0.55)';
+    ab.style.fontWeight = '700';
+  }
+  _nsLoad();
+}
+setTimeout(_nsLoad, 500);
+</script>
+
+
 {% elif bot == 'entry_checker' %}
 <!-- ── Entry Checker: чек-лист перед открытием сделки вручную ─── -->
 <style>

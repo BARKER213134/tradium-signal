@@ -323,6 +323,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
         if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
+            "/api/new-strategies", "/api/new-strategies/by-pair",
             "/api/supertrend/backfill", "/api/supertrend/backfill-status", "/api/bots-status",
             "/api/backtest-st-signals", "/api/backtest-st-signals/status", "/api/paper/started",
             "/api/paper/close", "/api/paper/mode", "/api/paper/learnings", "/api/paper/refresh-ai-memory",
@@ -1677,6 +1678,80 @@ async def api_cv_flips(state: str = "all", pair: str = "",
 
     cache_key = f"flips|{state}|{pair}|{hours}|{limit}"
     return await cv_flips_cache.get_or_compute(cache_key, _compute)
+
+
+# ─── New Strategies (🌊 Volume Surge / 🐉 Triple Confluence / 🔋 Vol Accum) ───
+_new_strat_cache: dict = {"ts": 0.0, "data": None}
+_NEW_STRAT_TTL = 30.0
+
+
+@app.get("/api/new-strategies")
+async def api_new_strategies(strategy: str = "all", state: str = "all",
+                             pair: str = "", hours: int = 168, limit: int = 500):
+    """3 backtest-validated стратегии после ST flip.
+
+    strategy ∈ {all, volume_surge, triple_confluence, vol_accum}
+    state ∈ {all, WAITING, TP, SL, MANUAL, TIMEOUT}
+    hours — окно от created_at (default 7d)
+    """
+    import time as _t
+    cache_key = f"ns|{strategy}|{state}|{pair}|{hours}|{limit}"
+    now = _t.time()
+    cached = _new_strat_cache.get(cache_key)
+    if cached and (now - cached[0]) < _NEW_STRAT_TTL:
+        return cached[1]
+
+    def _sync():
+        from database import _get_db, utcnow
+        from datetime import timedelta
+        col = _get_db().new_strategy_signals
+        since = utcnow() - timedelta(hours=hours)
+        query: dict = {"created_at": {"$gte": since}}
+        if strategy and strategy != "all":
+            query["strategy"] = strategy
+        if state and state.upper() != "ALL":
+            query["state"] = state.upper()
+        if pair:
+            p = pair.replace("/", "").upper()
+            if p.endswith("USDT") and "/" not in pair:
+                base = p[:-4]
+                query["$or"] = [{"pair": pair}, {"pair": f"{base}/USDT"}]
+            else:
+                query["pair"] = pair
+        items = []
+        for doc in col.find(query).sort("created_at", -1).limit(limit):
+            doc["_id"] = str(doc.get("_id"))
+            for k in ("created_at", "updated_at", "st_flip_at"):
+                v = doc.get(k)
+                if hasattr(v, "isoformat"):
+                    doc[k] = v.isoformat()
+            items.append(doc)
+        # Stats per strategy
+        from collections import Counter
+        by_strat = Counter()
+        by_state = Counter()
+        for it in items:
+            by_strat[it.get("strategy")] += 1
+            by_state[it.get("state", "WAITING")] += 1
+        return {
+            "ok": True, "count": len(items), "items": items,
+            "strategy": strategy, "state": state, "pair": pair, "hours": hours,
+            "stats": {
+                "by_strategy": dict(by_strat),
+                "by_state": dict(by_state),
+            },
+        }
+
+    data = await asyncio.to_thread(_sync)
+    _new_strat_cache[cache_key] = (now, data)
+    return data
+
+
+@app.get("/api/new-strategies/by-pair")
+async def api_new_strategies_by_pair(pair: str, hours: int = 336):
+    """Per-pair endpoint для маркеров на графиках. Cache 60с."""
+    return await api_new_strategies(strategy="all", state="all",
+                                    pair=pair, hours=hours, limit=200)
 
 
 # Серверный кеш для /api/supertrend-signals/by-pair (TTL 60с)

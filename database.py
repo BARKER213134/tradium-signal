@@ -789,6 +789,15 @@ def init_db():
         lpc.create_index("created_at", expireAfterSeconds=15*60, name="ttl_15min")
         lpc.create_index([("status", ASCENDING), ("created_at", DESCENDING)])
         lpc.create_index("confirmation_token", unique=True, sparse=True)
+
+        # New strategy signals (🌊 Volume Surge / 🐉 Triple Confluence /
+        # 🔋 Volume Accumulation) — backtested 14d, OOS validated.
+        nss = _get_db().new_strategy_signals
+        nss.create_index("created_at", expireAfterSeconds=30*86400, name="ttl_30d")
+        nss.create_index([("strategy", ASCENDING), ("created_at", DESCENDING)])
+        nss.create_index([("pair", ASCENDING), ("created_at", DESCENDING)])
+        nss.create_index([("state", ASCENDING), ("created_at", DESCENDING)])
+        nss.create_index([("st_signal_id", ASCENDING)], sparse=True)
     except Exception:
         pass  # idempotent — если TTL индексы уже есть, ok
 
