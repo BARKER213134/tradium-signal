@@ -1500,16 +1500,14 @@ async def on_signal(signal_data: dict):
     if not pair or direction not in ("LONG", "SHORT"):
         return None
 
-    # ── 0. ONLY-NEW-STRATEGIES MODE ──────────────────────────────
-    # Paused: принимаем ТОЛЬКО 3 backtested стратегии, всё остальное reject.
-    # Включается через env PAPER_ONLY_NEW_STRATEGIES=1 (default ON for safety).
-    # Когда юзер захочет вернуть полную автоторговлю — установить =0 в Railway env.
+    # ── 0. ONLY-NEW-STRATEGIES MODE (опционально, default OFF) ────
+    # Если хочешь временно ставить на паузу всё кроме 3 новых стратегий —
+    # set Railway env PAPER_ONLY_NEW_STRATEGIES=1. Default = "0" (все работают).
     NEW_STRATEGIES = ("volume_surge", "triple_confluence", "vol_accum")
-    only_new = os.getenv("PAPER_ONLY_NEW_STRATEGIES", "1") == "1"
+    only_new = os.getenv("PAPER_ONLY_NEW_STRATEGIES", "0") == "1"
     if only_new and source not in NEW_STRATEGIES:
         _log_rejection(signal_data,
-            f"[ONLY-NEW-STRATEGIES] paused — source='{source}' rejected, "
-            f"только volume_surge/triple_confluence/vol_accum пропускаются")
+            f"[ONLY-NEW-STRATEGIES] paused — source='{source}' rejected")
         return None
 
     # ── 0a. Supertrend filters: RSI + VOLUME + HOUR ──────────────
