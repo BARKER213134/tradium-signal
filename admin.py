@@ -10003,8 +10003,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
         }).sort("flip_at", -1):
             at_dt = s.get("flip_at")
             tier = s.get("tier", "mtf")
-            tier_emoji = {"vip": "🏆", "mtf": "🔱"}.get(tier, "🌀")
-            tier_label = {"vip": "VIP", "mtf": "Triple MTF"}.get(tier, tier.upper())
+            tier_emoji = {"vip": "🏆", "mtf": "🔱", "daily": "🧭"}.get(tier, "🌀")
+            tier_label = {"vip": "VIP", "mtf": "Triple MTF", "daily": "Daily Filter"}.get(tier, tier.upper())
             aligned_bots = s.get("aligned_bots", [])
             aligned_tfs = s.get("aligned_tfs", [])
             if tier == "vip" and aligned_bots:
@@ -10225,19 +10225,19 @@ def _compute_journal_sync():
         })
 
     # SuperTrend signals (14 дней) — источник 'supertrend' с tier в pattern
-    # ИСКЛЮЧАЕМ daily — их оставляем только на графиках (emoji 🧭) без журнала и бота
+    # Включаем все 3 tier (vip, mtf, daily) — юзер хочет видеть Daily 🧭 в журнале.
     #
     # Дедупликация: в окне 30 мин на одной паре+direction оставляем только
-    # один сигнал с высшим tier (vip > mtf). Раньше в журнале появлялись
-    # дубли когда VIP и MTF срабатывали почти одновременно.
+    # один сигнал с высшим tier (vip > mtf > daily). При совпадении VIP и
+    # Daily на одной паре в журнале остаётся VIP.
     import calendar as _cal
     try:
         from database import _supertrend_signals as _sts
-        # Собираем все raw записи
+        # Собираем все raw записи (увеличили limit под 3 tier)
         raw_st = list(_sts().find({
             "flip_at": {"$gte": since_14d},
-            "tier": {"$in": ["vip", "mtf"]},
-        }).sort("flip_at", -1).limit(400))
+            "tier": {"$in": ["vip", "mtf", "daily"]},
+        }).sort("flip_at", -1).limit(800))
         # Dedupe: (pair_norm, direction, bucket_30min) → высший tier
         tier_prio = {"vip": 3, "mtf": 2, "daily": 1}
         best_st: dict = {}
@@ -10258,8 +10258,8 @@ def _compute_journal_sync():
             flip_dt = s.get("flip_at")
             created_dt = s.get("created_at")
             tier = s.get("tier", "mtf")
-            tier_emoji = {"vip": "🏆", "mtf": "🔱"}.get(tier, "🌀")
-            tier_label = {"vip": "VIP", "mtf": "Triple MTF"}.get(tier, tier.upper())
+            tier_emoji = {"vip": "🏆", "mtf": "🔱", "daily": "🧭"}.get(tier, "🌀")
+            tier_label = {"vip": "VIP", "mtf": "Triple MTF", "daily": "Daily Filter"}.get(tier, tier.upper())
             aligned_bots = s.get("aligned_bots", [])
             aligned_tfs = s.get("aligned_tfs", [])
             if tier == "vip" and aligned_bots:
