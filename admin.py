@@ -9566,13 +9566,15 @@ async def api_paper_set_balance(payload: dict):
 
 
 @app.get("/api/journal")
-async def api_journal(limit: int = 500):
+async def api_journal(limit: int = 500, refresh: int = 0, debug: int = 0):
     """Все сигналы из 4 источников — для вкладки Журнал.
     Server-side limit 14 days + per-source cap. Cache 45s (async-lock safe).
     _compute_journal делает 7 sync Mongo-запросов → выносим в thread,
     иначе блокируется event loop и тормозят параллельные /api/* (candles и т.п.).
 
     limit (default 500): отдаём только последние N items (по at_ts desc).
+    refresh=1: сбросить кеш и пересчитать с нуля (для диагностики).
+    debug=1: вернуть breakdown по source/tier для проверки.
     Раньше возвращалось ~4270 за 14 дней (весь fetch занимал 15.7с,
     блокировал графики). 500 — разумный default для UI (юзер не видит
     дальше первых страниц), Mongo query всё равно собирает всё за 14д,
@@ -9580,16 +9582,42 @@ async def api_journal(limit: int = 500):
     """
     from cache_utils import journal_cache
 
+    if refresh:
+        journal_cache.invalidate("journal_all")
+
     async def _compute_in_thread():
         return await asyncio.to_thread(_compute_journal_sync)
 
     full = await journal_cache.get_or_compute("journal_all", _compute_in_thread)
-    # Slice после cache (cache хранит full result, slice — почти free)
     items = full.get("items", []) if isinstance(full, dict) else []
-    if limit and limit > 0 and len(items) > limit:
+    total = len(items)
+
+    # Debug breakdown по source/tier — для проверки что Daily ST в потоке
+    if debug:
+        by_source: dict = {}
+        st_by_tier: dict = {"vip": 0, "mtf": 0, "daily": 0, "?": 0}
+        for it in items:
+            src = it.get("source", "?")
+            by_source[src] = by_source.get(src, 0) + 1
+            if src == "supertrend":
+                t = it.get("st_tier", "?")
+                st_by_tier[t] = st_by_tier.get(t, 0) + 1
+        return {
+            "total": total,
+            "by_source": by_source,
+            "supertrend_by_tier": st_by_tier,
+            "first_3_daily": [
+                {"at": it.get("at"), "symbol": it.get("symbol"),
+                 "direction": it.get("direction"), "pattern": it.get("pattern")}
+                for it in items
+                if it.get("source") == "supertrend" and it.get("st_tier") == "daily"
+            ][:3],
+        }
+
+    # Slice после cache (cache хранит full result, slice — почти free)
+    if limit and limit > 0 and total > limit:
         items = items[:limit]
-    return {"items": items, "total": len(full.get("items", [])) if isinstance(full, dict) else 0,
-            "returned": len(items)}
+    return {"items": items, "total": total, "returned": len(items)}
 
 
 @app.get("/api/backtest/today")
