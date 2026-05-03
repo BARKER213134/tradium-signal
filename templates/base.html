@@ -864,8 +864,10 @@
           let emoji = '', color = '#888', pos = 'aboveBar';
           if (ev === 'entered_resistance') { emoji = '🔴'; color = '#ff4d6d'; pos = 'aboveBar'; }
           else if (ev === 'entered_support') { emoji = '🟢'; color = '#00e5a0'; pos = 'belowBar'; }
-          else if (ev === 'new_resistance') { emoji = '⚓'; color = '#ff9f43'; pos = 'aboveBar'; }
-          else if (ev === 'new_support') { emoji = '⚓'; color = '#ff9f43'; pos = 'belowBar'; }
+          // ⚓ new_resistance/new_support — отключены по запросу юзера
+          // (засоряют график). Зоны S/R через _drawKeyLevelZones остаются.
+          else if (ev === 'new_resistance') { continue; }
+          else if (ev === 'new_support') { continue; }
           else if (ev.startsWith('range_')) { emoji = '〰️'; color = '#888'; pos = 'aboveBar'; }
           else continue;
           out.push({
