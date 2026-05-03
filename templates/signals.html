@@ -6740,6 +6740,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="supertrend">🌀 SuperTrend</option>
     <option value="verified">✨ Verified</option>
     <option value="cv_flip">⏳ Flip Supertrend</option>
+    <option value="new_strategies">🌊🐉🔋 New Strategies</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все</option>
@@ -6863,14 +6864,17 @@ function _setModalTF(tf) {
 }
 
 function _srcLabel(src) {
-  if (src === 'tradium')    return '📡 Tradium';
-  if (src === 'anomaly')    return '⚠️ Аномалия';
-  if (src === 'confluence') return '🎯 Confluence';
-  if (src === 'paper')      return '🤖 Paper Trade';
-  if (src === 'cluster')    return '💠 Cluster';
-  if (src === 'supertrend') return '🌀 SuperTrend';
-  if (src === 'verified')   return '✨ Verified';
-  if (src === 'cv_flip')    return '⏳ Flip Supertrend';
+  if (src === 'tradium')           return '📡 Tradium';
+  if (src === 'anomaly')           return '⚠️ Аномалия';
+  if (src === 'confluence')        return '🎯 Confluence';
+  if (src === 'paper')             return '🤖 Paper Trade';
+  if (src === 'cluster')           return '💠 Cluster';
+  if (src === 'supertrend')        return '🌀 SuperTrend';
+  if (src === 'verified')          return '✨ Verified';
+  if (src === 'cv_flip')           return '⏳ Flip Supertrend';
+  if (src === 'volume_surge')      return '🌊 Volume Surge';
+  if (src === 'triple_confluence') return '🐉 Triple Confluence';
+  if (src === 'vol_accum')         return '🔋 Vol Accumulation';
   return '🚀 Cryptovizor';
 }
 function _cvFlipStateIcon(state) {
@@ -7314,7 +7318,10 @@ function filterJournal() {
     // Tradium и Cluster сигналы показываем всегда независимо от временного окна
     // (их мало, они ценные — не прячем за фильтром "24ч")
     if (minTs && !['tradium','cluster'].includes(s.source) && (s.at_ts || 0) < minTs) return false;
-    if (src && s.source !== src) return false;
+    // 'new_strategies' = meta-value: matches volume_surge / triple_confluence / vol_accum
+    if (src === 'new_strategies') {
+      if (!['volume_surge','triple_confluence','vol_accum'].includes(s.source)) return false;
+    } else if (src && s.source !== src) return false;
     if (dir && s.direction !== dir) return false;
     if (kc === 'pass' && s.st_passed !== true) return false;
     if (kc === 'fail' && s.st_passed !== false) return false;
