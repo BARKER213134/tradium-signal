@@ -6820,6 +6820,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button id="vpvrToggleBtn" onclick="toggleVPVR()" title="Volume Profile Visible Range — гистограмма объёма по ценовым уровням" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📊 VPVR</button>
+        <button id="zigzagToggleBtn" onclick="toggleZigZagFib()" title="ZigZag swings (3% threshold) + Fibonacci retracements (38.2/50/61.8/78.6) и extensions (127.2/161.8) от последнего leg" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📐 ZigZag</button>
         <button onclick="if(_currentJournalIdx>0)openJournalChart(_currentJournalIdx-1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">◀</button>
         <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
         <button onclick="if(_currentJournalIdx<_journalFiltered.length-1)openJournalChart(_currentJournalIdx+1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">▶</button>
@@ -7765,6 +7766,20 @@ async function openJournalChart(idx, forceTF) {
       _vpvrBtn.textContent = window._vpvrEnabled ? '📊 VPVR' : '📊 OFF';
       _vpvrBtn.style.color = window._vpvrEnabled ? '#FFD700' : 'var(--muted)';
       _vpvrBtn.style.borderColor = window._vpvrEnabled ? '#FFD700' : 'var(--border)';
+    }
+
+    // ZigZag + Fib — render после chart создан, отдельно от VPVR.
+    // series — main candle series, нужен для createPriceLine().
+    if (window.renderZigZagFib) {
+      setTimeout(function(){
+        window.renderZigZagFib(chart, container, series, d.candles, { minPct: 3.0 });
+      }, 200);
+    }
+    const _zzBtn = document.getElementById('zigzagToggleBtn');
+    if (_zzBtn) {
+      _zzBtn.textContent = window._zigzagEnabled ? '📐 ZigZag' : '📐 OFF';
+      _zzBtn.style.color = window._zigzagEnabled ? '#FFA500' : 'var(--muted)';
+      _zzBtn.style.borderColor = window._zigzagEnabled ? '#FFA500' : 'var(--border)';
     }
 
     // Маркеры: все сигналы по монете из _journalData (уже включают cluster/paper/все)
