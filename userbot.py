@@ -580,48 +580,68 @@ async def _setup_telethon_client():
     # уже использует raw ID (SOURCE_GROUP_ID), CV теперь так же.
     global _cryptovizor_id_resolved, _cryptovizor_resolve_method
     cryptovizor_id = None
+
+    # ── Шаг 1: всегда проходим iter_dialogs для прогрева entity cache ─────
+    # Telethon хранит access_hash в session. Если канал никогда не был
+    # explicitly доступен (через iter_dialogs / get_entity / прошлые messages),
+    # то client.get_messages(channel_id) или events.NewMessage(chats=channel_id)
+    # падают с "Could not find the input entity". Cold cache problem.
+    # iter_dialogs форсит populate cache для всех диалогов аккаунта.
     cv_id_env = os.getenv("CRYPTOVIZOR_CHANNEL_ID", "").strip()
+    cv_id_from_env = None
     if cv_id_env:
         try:
             raw_id = int(cv_id_env)
-            # Telethon entity routing: положительный ID → PeerUser,
-            # отрицательный с префиксом -100 → PeerChannel.
-            # CV поставлен как 5703939817 (positive) — Telethon ищет PeerUser
-            # и падает 'Could not find the input entity for PeerUser'.
-            # Авто-нормализуем: если положительное число с типичной длиной
-            # channel ID (≥9 digits), добавляем -100 префикс.
             if raw_id > 0 and len(str(raw_id)) >= 9:
-                # String concat надёжнее arithmetic: -100 + raw_id_string
-                cryptovizor_id = int(f"-100{raw_id}")
-                logger.info(
-                    f"✅ Cryptovizor channel из env (auto-fixed): "
-                    f"raw={raw_id} → channel_id={cryptovizor_id}"
-                )
+                cv_id_from_env = int(f"-100{raw_id}")
+                logger.info(f"[userbot] CV из env auto-fixed: raw={raw_id} → {cv_id_from_env}")
             else:
-                cryptovizor_id = raw_id
-                logger.info(f"✅ Cryptovizor channel из env: id={cryptovizor_id}")
-            _cryptovizor_resolve_method = "env"
+                cv_id_from_env = raw_id
         except ValueError:
             logger.warning(f"[userbot] CRYPTOVIZOR_CHANNEL_ID '{cv_id_env}' не int — игнор")
 
-    if cryptovizor_id is None and BOT2_SOURCE_GROUP:
-        for attempt in range(3):
-            try:
-                async for d in client.iter_dialogs():
-                    if BOT2_SOURCE_GROUP.lower() in (d.name or "").lower():
-                        cryptovizor_id = d.id
-                        _cryptovizor_resolve_method = "iter_dialogs"
-                        logger.info(f"✅ Cryptovizor найден по имени (attempt {attempt+1}): id={d.id} name='{d.name}'")
-                        break
-                if cryptovizor_id is not None:
-                    break
-                logger.warning(f"[userbot] Cryptovizor '{BOT2_SOURCE_GROUP}' не найден (attempt {attempt+1}/3) — retry через 5с")
-                await asyncio.sleep(5)
-            except Exception as e:
-                logger.error(f"[userbot] iter_dialogs fail (attempt {attempt+1}): {e}")
-                await asyncio.sleep(5)
-        if cryptovizor_id is None:
-            logger.error(f"[userbot] Cryptovizor handler НЕ зарегистрирован — задайте CRYPTOVIZOR_CHANNEL_ID=5703939817 в env")
+    # Прогрев: iter_dialogs всегда (max 3 попытки). Параллельно ищем CV
+    # по имени — если env не задан или содержит wrong id, найдём через name.
+    cv_from_dialogs = None
+    cv_dialog_name = (BOT2_SOURCE_GROUP or "TRENDS Cryptovizor").lower()
+    for attempt in range(3):
+        try:
+            dialog_count = 0
+            async for d in client.iter_dialogs():
+                dialog_count += 1
+                if cv_dialog_name in (d.name or "").lower():
+                    cv_from_dialogs = d.id
+                    logger.info(
+                        f"✅ CV найден через iter_dialogs (attempt {attempt+1}): "
+                        f"id={d.id} name='{d.name}'"
+                    )
+            logger.info(f"[userbot] iter_dialogs прогрел {dialog_count} диалогов")
+            break
+        except Exception as e:
+            logger.error(f"[userbot] iter_dialogs fail (attempt {attempt+1}): {e}")
+            await asyncio.sleep(5)
+
+    # Шаг 2: выбор финального ID. Приоритет — iter_dialogs (свежий + cached),
+    # env как fallback (но cache уже прогрет).
+    if cv_from_dialogs is not None:
+        cryptovizor_id = cv_from_dialogs
+        _cryptovizor_resolve_method = "iter_dialogs"
+        # Если env задан, проверим совпадение для диагностики
+        if cv_id_from_env is not None and cv_id_from_env != cv_from_dialogs:
+            logger.warning(
+                f"[userbot] env id {cv_id_from_env} != iter_dialogs id "
+                f"{cv_from_dialogs} — используем iter_dialogs"
+            )
+    elif cv_id_from_env is not None:
+        cryptovizor_id = cv_id_from_env
+        _cryptovizor_resolve_method = "env"
+        logger.info(f"✅ CV из env (iter_dialogs не нашёл): id={cryptovizor_id}")
+    else:
+        logger.error(
+            "[userbot] CV channel НЕ найден ни в iter_dialogs ни в env — "
+            "handler НЕ зарегистрирован. Задайте CRYPTOVIZOR_CHANNEL_ID или "
+            "проверьте что аккаунт есть в канале."
+        )
 
     # ── Handler Tradium (текст/фото) — только топик "Trade Setup Screener" ──
     @client.on(events.NewMessage(chats=SOURCE_GROUP_ID))
