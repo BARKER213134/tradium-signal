@@ -681,6 +681,84 @@ async def _setup_telethon_client():
     return client
 
 
+async def _channel_pulse_check(client):
+    """Раз в 10 минут читает историю CV канала через get_messages и сравнивает
+    с last_cv_received в БД. Если в истории есть сообщения новее БД — это
+    значит handler не получает push'и (проблема Telethon/event delivery).
+    Логирует userbot_pulse_mismatch если рассинхрон."""
+    from database import _signals, _events
+    from pymongo import DESCENDING
+    PULSE_EVERY = 10 * 60
+    cv_id_env = os.getenv("CRYPTOVIZOR_CHANNEL_ID", "5703939817").strip()
+    try:
+        cv_id = int(cv_id_env)
+    except Exception:
+        return
+    while True:
+        try:
+            await asyncio.sleep(PULSE_EVERY)
+            if not client.is_connected():
+                return
+            try:
+                msgs = await asyncio.wait_for(
+                    client.get_messages(cv_id, limit=3), timeout=15.0,
+                )
+            except Exception as e:
+                logger.debug(f"[pulse] get_messages fail: {e}")
+                continue
+            if not msgs:
+                continue
+            latest_msg = msgs[0]
+            latest_msg_dt = latest_msg.date.replace(tzinfo=None) if latest_msg.date else None
+            # Сравним с БД
+            last_cv = await asyncio.to_thread(
+                _signals().find_one,
+                {"source": "cryptovizor"},
+                sort=[("received_at", DESCENDING)],
+            )
+            db_latest = last_cv.get("received_at") if last_cv else None
+            if db_latest and hasattr(db_latest, "tzinfo") and db_latest.tzinfo:
+                db_latest = db_latest.replace(tzinfo=None)
+            # mismatch: есть сообщение в канале новее чем в БД
+            if latest_msg_dt and (not db_latest or latest_msg_dt > db_latest):
+                gap_min = ((latest_msg_dt - db_latest).total_seconds() / 60
+                           if db_latest else 9999)
+                logger.warning(
+                    f"[pulse] CV mismatch — channel msg {latest_msg_dt} "
+                    f"newer than DB {db_latest} (gap {gap_min:.0f}min)"
+                )
+                try:
+                    await asyncio.to_thread(_events().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_pulse_mismatch",
+                        "data": {
+                            "channel_msg_at": latest_msg_dt.isoformat(),
+                            "db_latest_at": db_latest.isoformat() if db_latest else None,
+                            "gap_min": int(gap_min),
+                            "msg_preview": (latest_msg.raw_text or "")[:120],
+                        },
+                    })
+                except Exception:
+                    pass
+            else:
+                # OK — канал молчит или handler нормально доставляет
+                try:
+                    await asyncio.to_thread(_events().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_pulse_ok",
+                        "data": {
+                            "channel_msg_at": latest_msg_dt.isoformat() if latest_msg_dt else None,
+                            "db_latest_at": db_latest.isoformat() if db_latest else None,
+                        },
+                    })
+                except Exception:
+                    pass
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("[pulse] error")
+
+
 async def _watchdog(client):
     """Мониторит активность каналов; форсирует disconnect если оба канала
     замолчали ДОЛЬШЕ чем типовая пауза рынка. Пишет heartbeat каждые 5 мин.
@@ -776,6 +854,7 @@ async def start_userbot():
                 "cv_method": _cryptovizor_resolve_method,
             })
             watchdog_task = asyncio.create_task(_watchdog(client))
+            pulse_task = asyncio.create_task(_channel_pulse_check(client))
             await client.run_until_disconnected()
             _last_disconnect_at = utcnow()
             logger.warning("[userbot] disconnected, reconnecting in 30s")
@@ -787,6 +866,11 @@ async def start_userbot():
         finally:
             if watchdog_task and not watchdog_task.done():
                 watchdog_task.cancel()
+            try:
+                if 'pulse_task' in locals() and pulse_task and not pulse_task.done():
+                    pulse_task.cancel()
+            except Exception:
+                pass
             if client:
                 try:
                     await client.disconnect()
