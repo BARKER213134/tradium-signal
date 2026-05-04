@@ -601,7 +601,11 @@ async def _setup_telethon_client():
             logger.warning(f"[userbot] CRYPTOVIZOR_CHANNEL_ID '{cv_id_env}' не int — игнор")
 
     # Прогрев: iter_dialogs всегда (max 3 попытки). Параллельно ищем CV
-    # по имени — если env не задан или содержит wrong id, найдём через name.
+    # по имени — но ТОЛЬКО channels/megagroups (исключаем users/bots с
+    # именем как у канала). Pulse mismatch 10:10 показал что без фильтра
+    # iter_dialogs возвращал id=5703939817 (positive) — это user/bot,
+    # не канал. Handler регистрировался на user → push'и от канала
+    # (PeerChannel) не матчили фильтр.
     cv_from_dialogs = None
     cv_dialog_name = (BOT2_SOURCE_GROUP or "TRENDS Cryptovizor").lower()
     for attempt in range(3):
@@ -609,33 +613,40 @@ async def _setup_telethon_client():
             dialog_count = 0
             async for d in client.iter_dialogs():
                 dialog_count += 1
+                # ФИЛЬТР: только channel или megagroup. is_user/is_bot — исключаем
                 if cv_dialog_name in (d.name or "").lower():
-                    cv_from_dialogs = d.id
+                    is_chan = bool(getattr(d, "is_channel", False))
+                    is_user = bool(getattr(d, "is_user", False))
                     logger.info(
-                        f"✅ CV найден через iter_dialogs (attempt {attempt+1}): "
-                        f"id={d.id} name='{d.name}'"
+                        f"[userbot] dialog match '{d.name}': id={d.id} "
+                        f"is_channel={is_chan} is_user={is_user}"
                     )
+                    if is_chan and not is_user:
+                        cv_from_dialogs = d.id
+                        logger.info(f"✅ CV channel найден: id={d.id}")
+                        break  # Берём первый channel-match, не перезаписываем
             logger.info(f"[userbot] iter_dialogs прогрел {dialog_count} диалогов")
-            break
+            if cv_from_dialogs is not None:
+                break
         except Exception as e:
             logger.error(f"[userbot] iter_dialogs fail (attempt {attempt+1}): {e}")
             await asyncio.sleep(5)
 
-    # Шаг 2: выбор финального ID. Приоритет — iter_dialogs (свежий + cached),
-    # env как fallback (но cache уже прогрет).
+    # Шаг 2: выбор финального ID. Приоритет — iter_dialogs (channel-фильтр),
+    # затем env (auto-fixed). iter_dialogs возвращает channel в формате
+    # -100<raw>, env auto-fix даёт то же самое — должны совпасть.
     if cv_from_dialogs is not None:
         cryptovizor_id = cv_from_dialogs
         _cryptovizor_resolve_method = "iter_dialogs"
-        # Если env задан, проверим совпадение для диагностики
         if cv_id_from_env is not None and cv_id_from_env != cv_from_dialogs:
             logger.warning(
-                f"[userbot] env id {cv_id_from_env} != iter_dialogs id "
-                f"{cv_from_dialogs} — используем iter_dialogs"
+                f"[userbot] env id {cv_id_from_env} != dialogs id "
+                f"{cv_from_dialogs} — используем dialogs"
             )
     elif cv_id_from_env is not None:
         cryptovizor_id = cv_id_from_env
         _cryptovizor_resolve_method = "env"
-        logger.info(f"✅ CV из env (iter_dialogs не нашёл): id={cryptovizor_id}")
+        logger.info(f"✅ CV из env (iter_dialogs channel не нашёл): id={cryptovizor_id}")
     else:
         logger.error(
             "[userbot] CV channel НЕ найден ни в iter_dialogs ни в env — "
