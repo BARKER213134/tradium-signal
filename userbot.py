@@ -1324,23 +1324,30 @@ def get_status_details() -> dict:
 
 
 async def handle_cryptovizor_message(text: str, message_id: int):
-    """Парсит сообщение Cryptovizor и сохраняет сигналы (по одному на тикер)."""
+    """Парсит сообщение Cryptovizor и сохраняет сигналы (по одному на тикер).
+
+    FIX 2026-05-04: раньше использовался get_futures_prices_only — пары не
+    торгующиеся на Binance Futures (AR/SAHARA/WOO/ACX) пропускались БЕЗ ЛОГА.
+    Теперь fallback spot→futures (get_prices_any), а при полном отсутствии
+    цены сохраняем сигнал с entry=None и пишем event userbot_cv_skipped_price.
+    """
     try:
         signals_data = parse_cryptovizor_message(text)
         if not signals_data:
             return
 
-        # Cryptovizor = перпетуалы → сразу futures API
+        # Fallback chain: futures (Cryptovizor = перпетуалы) → spot.
+        # AR/SAHARA/WOO/ACX/etc. могут быть на Binance Spot но не на Futures.
         pairs = [s["pair"] for s in signals_data]
         try:
-            prices_raw = await asyncio.to_thread(get_futures_prices_only, pairs)
+            prices_raw = await asyncio.to_thread(get_prices_any, pairs)
         except Exception as e:
-            logger.exception(f"[CV] futures prices fetch failed: {e}")
+            logger.exception(f"[CV] prices_any fetch failed: {e}")
             prices_raw = {}
 
-        # Sync DB section вынесен в to_thread — раньше блокировал event loop
-        # на каждое CV сообщение (handle_text_message → handle_cryptovizor → query+commit).
+        # Sync DB section вынесен в to_thread — раньше блокировал event loop.
         def _persist_cv_signals():
+            from database import _events
             db = SessionLocal()
             results = []
             try:
@@ -1348,15 +1355,28 @@ async def handle_cryptovizor_message(text: str, message_id: int):
                 for sd in signals_data:
                     pair = sd["pair"]
                     norm = pair.replace("/", "").upper()
-                    current_price = prices_raw.get(norm)
-                    if current_price is None:
-                        continue
+                    current_price = prices_raw.get(norm)  # может быть None
                     unique_msg_id = message_id * 100 + created_local
                     existing = db.query(Signal).filter(
                         Signal.source == BOT2_NAME
                     ).filter(Signal.message_id == unique_msg_id).first()
                     if existing:
                         continue
+                    # Логируем когда нет цены — для видимости проблемных пар
+                    if current_price is None:
+                        try:
+                            _events().insert_one({
+                                "at": utcnow(),
+                                "type": "userbot_cv_skipped_price",
+                                "data": {"pair": pair, "norm": norm,
+                                         "msg_id": message_id,
+                                         "direction": sd["direction"]},
+                            })
+                        except Exception:
+                            pass
+                        # НЕ пропускаем — сохраняем с entry=None.
+                        # Watcher при detect pattern подтянет цену сам через свой
+                        # get_klines_any (который пробует другие биржи).
                     signal = Signal(
                         source=BOT2_NAME, message_id=unique_msg_id, raw_text=text,
                         pair=pair, direction=sd["direction"], trend=sd["trend"],
@@ -1369,7 +1389,8 @@ async def handle_cryptovizor_message(text: str, message_id: int):
                     created_local += 1
                     results.append({
                         "id": signal.id, "pair": pair,
-                        "direction": sd["direction"], "price": current_price,
+                        "direction": sd["direction"],
+                        "price": current_price,  # может быть None
                     })
             finally:
                 db.close()
