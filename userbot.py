@@ -31,6 +31,9 @@ _last_setup_at = None          # datetime успешного setup
 _last_setup_error = None       # str последней ошибки из _setup_telethon_client
 _last_disconnect_at = None     # datetime последнего run_until_disconnected exit
 _reconnect_count = 0           # сколько раз перезапускал setup
+_cryptovizor_id_resolved = None  # int если CV handler зарегистрирован, иначе None
+_cryptovizor_resolve_method = None  # 'env' | 'iter_dialogs' | None
+_handlers_registered = {"tradium": False, "cryptovizor": False, "kl": False}
 
 # ── Login flow state (для UI re-login через браузер) ─────────────────
 # Когда session expired/blocked, админ может через UI:
@@ -575,11 +578,13 @@ async def _setup_telethon_client():
     # возвращает короткий список). CRYPTOVIZOR_CHANNEL_ID=5703939817 для
     # 'TRENDS Cryptovizor' (нашли через прямой Telethon login). Tradium
     # уже использует raw ID (SOURCE_GROUP_ID), CV теперь так же.
+    global _cryptovizor_id_resolved, _cryptovizor_resolve_method
     cryptovizor_id = None
     cv_id_env = os.getenv("CRYPTOVIZOR_CHANNEL_ID", "").strip()
     if cv_id_env:
         try:
             cryptovizor_id = int(cv_id_env)
+            _cryptovizor_resolve_method = "env"
             logger.info(f"✅ Cryptovizor channel из env: id={cryptovizor_id}")
         except ValueError:
             logger.warning(f"[userbot] CRYPTOVIZOR_CHANNEL_ID '{cv_id_env}' не int — игнор")
@@ -590,6 +595,7 @@ async def _setup_telethon_client():
                 async for d in client.iter_dialogs():
                     if BOT2_SOURCE_GROUP.lower() in (d.name or "").lower():
                         cryptovizor_id = d.id
+                        _cryptovizor_resolve_method = "iter_dialogs"
                         logger.info(f"✅ Cryptovizor найден по имени (attempt {attempt+1}): id={d.id} name='{d.name}'")
                         break
                 if cryptovizor_id is not None:
@@ -666,7 +672,11 @@ async def _setup_telethon_client():
                 await handle_cryptovizor_message(event.raw_text, event.message.id)
             except Exception:
                 logger.exception("[userbot] Cryptovizor handler crashed")
+        _cryptovizor_id_resolved = cryptovizor_id
+        _handlers_registered["cryptovizor"] = True
         logger.info(f"👂 Слушаем Cryptovizor: {cryptovizor_id}")
+    _handlers_registered["tradium"] = True
+    _handlers_registered["kl"] = True
 
     return client
 
@@ -764,13 +774,20 @@ async def start_userbot():
 
 def get_status_details() -> dict:
     """Диагностика для /api/userbot/status и admin lifespan watchdog.
-    Возвращает "is_connected" + timestamps + reconnect stats + last error."""
+    Возвращает "is_connected" + timestamps + reconnect stats + last error.
+
+    cryptovizor_handler_registered=False ⇒ задайте CRYPTOVIZOR_CHANNEL_ID
+    в Railway env (5703939817 для TRENDS Cryptovizor)."""
     return {
         "is_connected": bool(_tg_client and _tg_client.is_connected()),
         "last_setup_at": _last_setup_at.isoformat() + "Z" if _last_setup_at else None,
         "last_disconnect_at": _last_disconnect_at.isoformat() + "Z" if _last_disconnect_at else None,
         "last_setup_error": _last_setup_error,
         "reconnect_count": _reconnect_count,
+        "cryptovizor_id_resolved": _cryptovizor_id_resolved,
+        "cryptovizor_resolve_method": _cryptovizor_resolve_method,
+        "cryptovizor_env_set": bool(os.getenv("CRYPTOVIZOR_CHANNEL_ID", "").strip()),
+        "handlers_registered": dict(_handlers_registered),
     }
 
 
