@@ -7618,10 +7618,13 @@ function renderJournal(items, startIdx) {
     }
 
     const globalIdx = startIdx + i;
+    // Пара — кликабельна для копирования "<PAIR>USDT" (event.stopPropagation
+    // в _copyPair предотвращает открытие графика).
+    const pairCell = `<span class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.4);">${pair}</span>`;
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
       <td class="mono text-muted" style="font-size:11px;">${time}</td>
       <td style="font-size:11px;">${srcBadge} ${srcName}</td>
-      <td class="mono text-accent fw-700">${pair}</td>
+      <td class="mono text-accent fw-700">${pairCell}</td>
       <td>${dir}</td>
       <td class="mono">${s.entry || '—'}</td>
       <td class="mono" style="font-size:11px;">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}${window._klBadge ? window._klBadge(s._kl) : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
@@ -7705,7 +7708,9 @@ async function openJournalChart(idx, forceTF) {
   const srcName = s.source === 'anomaly' ? 'Аномалия' : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐ STRONG' : 'Confluence') : 'CV';
   const patternInfo = s.pattern ? ` · ${s.pattern}` : '';
   const scoreInfo = s.score ? ` · ${s.score}` : '';
-  title.innerHTML = `${srcBadge} ${srcName} · <b>${pair}</b> · ${dirE} ${s.direction} · <code>${s.entry}</code>${scoreInfo}`;
+  // Pair кликабельна — копирует "<PAIR>USDT" в clipboard.
+  const pairClick = `<b class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.45);">${pair}</b>`;
+  title.innerHTML = `${srcBadge} ${srcName} · ${pairClick} · ${dirE} ${s.direction} · <code>${s.entry}</code>${scoreInfo}`;
   const counter = document.getElementById('jChartCounter');
   if (counter) counter.textContent = `${idx + 1}/${_journalFiltered.length}`;
   container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Загрузка графика…</div>';

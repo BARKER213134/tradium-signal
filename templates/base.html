@@ -1609,6 +1609,84 @@
         return out;
       };
 
+      // ─── Copy pair to clipboard helper ─────────────────────────────
+      // Используется в журнале (таблица + модалка графика). При клике
+      // копирует "<PAIR>USDT" формат (готовый к вставке на бирже).
+      // Показывает короткий toast "Скопировано: HUSDT" в правом верхнем углу.
+      window._copyPair = function(pair, evt) {
+        if (evt) {
+          // В таблице на клике строки открывается график — нужно остановить.
+          evt.stopPropagation();
+          evt.preventDefault();
+        }
+        if (!pair) return;
+        // Нормализуем: убираем /USDT если есть, потом добавляем USDT
+        const clean = pair.replace('/USDT', '').replace('/', '').toUpperCase();
+        const text = clean.endsWith('USDT') ? clean : clean + 'USDT';
+
+        const showToast = function(msg, ok) {
+          let toast = document.getElementById('_copyPairToast');
+          if (!toast) {
+            toast = document.createElement('div');
+            toast.id = '_copyPairToast';
+            toast.style.cssText =
+              'position:fixed;top:20px;right:20px;z-index:9999;' +
+              'padding:10px 16px;border-radius:8px;' +
+              'font-family:var(--font-mono,monospace);font-size:12px;font-weight:700;' +
+              'box-shadow:0 4px 16px rgba(0,0,0,0.4);' +
+              'transition:opacity 0.2s,transform 0.2s;pointer-events:none;';
+            document.body.appendChild(toast);
+          }
+          toast.style.background = ok ? 'rgba(0,229,160,0.95)' : 'rgba(255,77,109,0.95)';
+          toast.style.color = '#0a0e14';
+          toast.textContent = msg;
+          toast.style.opacity = '1';
+          toast.style.transform = 'translateY(0)';
+          clearTimeout(toast._hideTimer);
+          toast._hideTimer = setTimeout(function() {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(-6px)';
+          }, 1300);
+        };
+
+        // Modern API
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text)
+            .then(function() { showToast('Скопировано: ' + text, true); })
+            .catch(function() {
+              // Fallback на legacy
+              try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                showToast('Скопировано: ' + text, true);
+              } catch (e) {
+                showToast('Ошибка копирования', false);
+              }
+            });
+        } else {
+          // Legacy fallback
+          try {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            showToast('Скопировано: ' + text, true);
+          } catch (e) {
+            showToast('Ошибка копирования', false);
+          }
+        }
+      };
+
       // ─── VPVR (Volume Profile Visible Range) ─────────────────────
       // Canvas-based overlay для journal графиков. Компактный histogram
       // справа от свечей, как в TradingView. Toggle в title bar модалки.
