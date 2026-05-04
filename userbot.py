@@ -724,9 +724,69 @@ async def _setup_telethon_client():
             cv_entity = await asyncio.wait_for(
                 client.get_entity(cryptovizor_id), timeout=15.0,
             )
-            logger.info(f"[userbot] CV entity resolved: {type(cv_entity).__name__} title='{getattr(cv_entity,'title','?')}'")
+            logger.info(
+                f"[userbot] CV entity resolved: {type(cv_entity).__name__} "
+                f"title='{getattr(cv_entity,'title','?')}' "
+                f"id={getattr(cv_entity,'id','?')}"
+            )
+            # Логируем результат get_entity в _events для диагностики
+            try:
+                from database import _events as _ev
+                await asyncio.to_thread(_ev().insert_one, {
+                    "at": utcnow(),
+                    "type": "userbot_cv_entity_resolved",
+                    "data": {
+                        "type": type(cv_entity).__name__,
+                        "title": getattr(cv_entity, "title", None),
+                        "id": getattr(cv_entity, "id", None),
+                        "username": getattr(cv_entity, "username", None),
+                    },
+                })
+            except Exception:
+                pass
+
+            # JOIN канала если ещё не joined. Pulse_mismatch показал что
+            # account может читать историю (public channel), но push events
+            # не доставляются если account не subscriber. JoinChannelRequest
+            # на already-joined канал = no-op.
+            try:
+                from telethon.tl.functions.channels import JoinChannelRequest
+                await asyncio.wait_for(
+                    client(JoinChannelRequest(cv_entity)), timeout=15.0,
+                )
+                logger.info(f"[userbot] JoinChannelRequest OK for CV")
+                try:
+                    from database import _events as _ev
+                    await asyncio.to_thread(_ev().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_cv_join_ok",
+                        "data": {"channel_id": getattr(cv_entity, "id", None)},
+                    })
+                except Exception:
+                    pass
+            except Exception as e:
+                err = f"{type(e).__name__}: {str(e)[:200]}"
+                logger.warning(f"[userbot] JoinChannelRequest fail: {err}")
+                try:
+                    from database import _events as _ev
+                    await asyncio.to_thread(_ev().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_cv_join_fail",
+                        "data": {"error": err},
+                    })
+                except Exception:
+                    pass
         except Exception as e:
-            logger.error(f"[userbot] get_entity({cryptovizor_id}) fail: {e} — handler через raw id (может не работать)")
+            logger.error(f"[userbot] get_entity({cryptovizor_id}) fail: {e}")
+            try:
+                from database import _events as _ev
+                await asyncio.to_thread(_ev().insert_one, {
+                    "at": utcnow(),
+                    "type": "userbot_cv_entity_fail",
+                    "data": {"error": str(e)[:300], "tried_id": cryptovizor_id},
+                })
+            except Exception:
+                pass
 
         @client.on(events.NewMessage(chats=(cv_entity or cryptovizor_id)))
         async def cryptovizor_handler(event):
@@ -739,6 +799,33 @@ async def _setup_telethon_client():
         _cryptovizor_id_resolved = cryptovizor_id
         _handlers_registered["cryptovizor"] = True
         logger.info(f"👂 Слушаем Cryptovizor: chat_id={cryptovizor_id} entity={cv_entity is not None}")
+
+    # ── DIAG: wildcard event tap (5 минут после startup) ────────────────
+    # Логирует chat_id ВСЕХ входящих NewMessage events. Цель: выяснить
+    # доходят ли вообще push events до клиента (когда CV+Tradium handlers
+    # молчат). Если 0 wildcard events за 5 мин — клиент в "no-push" режиме.
+    _diag_started = utcnow()
+
+    @client.on(events.NewMessage())
+    async def _diag_wildcard(event):
+        try:
+            if (utcnow() - _diag_started).total_seconds() > 300:
+                return  # 5 мин окно
+            chat_id = event.chat_id
+            text_preview = (event.raw_text or "")[:80]
+            try:
+                from database import _events as _ev
+                await asyncio.to_thread(_ev().insert_one, {
+                    "at": utcnow(),
+                    "type": "userbot_diag_event",
+                    "data": {"chat_id": chat_id, "preview": text_preview},
+                })
+            except Exception:
+                pass
+        except Exception:
+            pass
+    logger.info("[userbot] DIAG: wildcard event tap активен 5 мин")
+
     _handlers_registered["tradium"] = True
     _handlers_registered["kl"] = True
 
