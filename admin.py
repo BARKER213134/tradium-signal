@@ -5168,6 +5168,39 @@ async def api_userbot_reload_session():
     return {"ok": True, "session_bytes": len(doc["data"]), "forced_reconnect": forced}
 
 
+@app.post("/api/userbot/force-restart")
+async def api_userbot_force_restart():
+    """Принудительно дисконнектит Telethon чтобы supervisor пересоздал клиент.
+    Используется когда userbot залип (channel handler dead, session weird state).
+    После disconnect supervisor через ~30с поднимет новую сессию."""
+    try:
+        from userbot import force_restart
+        return await force_restart()
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
+@app.get("/api/userbot/recent-events")
+async def api_userbot_recent_events(limit: int = 20):
+    """Последние userbot_* события из _events — диагностика supervisor'а.
+    Показывает setup_ok / disconnect / crash / force_restart по времени."""
+    def _sync_load():
+        from database import _events
+        return list(_events().find(
+            {"type": {"$regex": "^userbot_"}},
+            sort=[("at", -1)],
+        ).limit(max(1, min(limit, 100))))
+    rows = await asyncio.to_thread(_sync_load)
+    out = []
+    for r in rows:
+        out.append({
+            "at": r.get("at").isoformat() + "Z" if hasattr(r.get("at"), "isoformat") else None,
+            "type": r.get("type"),
+            "data": r.get("data") or {},
+        })
+    return {"count": len(out), "events": out}
+
+
 @app.get("/api/userbot-status")
 async def api_userbot_status():
     """Диагностика userbot: подключён ли Telethon, когда был последний сигнал из каждого канала."""

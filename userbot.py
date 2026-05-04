@@ -739,8 +739,23 @@ async def _watchdog(client):
             logger.exception("[userbot] watchdog error")
 
 
+def _persist_supervisor_event(kind: str, data: dict | None = None):
+    """Пишет событие supervisor'а в _events для пост-фактум диагностики
+    (когда логи Railway эфемерны и недоступны)."""
+    try:
+        from database import _events
+        _events().insert_one({
+            "at": utcnow(),
+            "type": f"userbot_{kind}",
+            "data": data or {},
+        })
+    except Exception:
+        pass
+
+
 async def start_userbot():
-    """Supervisor: поднимает Telethon клиент в бесконечном цикле с reconnect."""
+    """Supervisor: поднимает Telethon клиент в бесконечном цикле с reconnect.
+    Каждый setup/disconnect/crash логируется в _events для диагностики."""
     global _reconnect_count, _last_disconnect_at
     ensure_charts_dir()
     while True:
@@ -750,17 +765,25 @@ async def start_userbot():
             client = await _setup_telethon_client()
             if client is None:
                 logger.warning("[userbot] setup returned None, retrying in 60s")
+                _persist_supervisor_event("setup_none", {"error": _last_setup_error})
                 await asyncio.sleep(60)
                 continue
             _reconnect_count += 1
             logger.info(f"✅ Userbot запущен (с auto-reconnect, #{_reconnect_count})")
+            _persist_supervisor_event("setup_ok", {
+                "reconnect_count": _reconnect_count,
+                "cv_id": _cryptovizor_id_resolved,
+                "cv_method": _cryptovizor_resolve_method,
+            })
             watchdog_task = asyncio.create_task(_watchdog(client))
             await client.run_until_disconnected()
             _last_disconnect_at = utcnow()
             logger.warning("[userbot] disconnected, reconnecting in 30s")
+            _persist_supervisor_event("disconnect", {"reconnect_count": _reconnect_count})
         except Exception as e:
             logger.exception("[userbot] supervisor crash")
             _last_disconnect_at = utcnow()
+            _persist_supervisor_event("crash", {"error": str(e)[:300]})
         finally:
             if watchdog_task and not watchdog_task.done():
                 watchdog_task.cancel()
@@ -770,6 +793,25 @@ async def start_userbot():
                 except Exception:
                     pass
         await asyncio.sleep(30)
+
+
+async def force_restart() -> dict:
+    """Force-disconnect текущий Telethon клиент чтобы supervisor пересоздал
+    его. Возвращает status. Используется для admin recovery когда userbot
+    залип в плохом состоянии (например session expired или handler dead)."""
+    global _tg_client
+    result = {"action": "force_restart", "was_connected": False}
+    if _tg_client:
+        try:
+            result["was_connected"] = bool(_tg_client.is_connected())
+            await _tg_client.disconnect()
+            result["disconnected"] = True
+        except Exception as e:
+            result["error"] = str(e)[:200]
+    else:
+        result["error"] = "no client to restart"
+    _persist_supervisor_event("force_restart", result)
+    return result
 
 
 def get_status_details() -> dict:
