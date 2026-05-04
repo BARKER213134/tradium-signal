@@ -5188,7 +5188,9 @@ async def api_userbot_peek_cv(limit: int = 5):
     import os as _os
     cv_id_env = _os.getenv("CRYPTOVIZOR_CHANNEL_ID", "5703939817").strip()
     try:
-        cv_id = int(cv_id_env)
+        raw = int(cv_id_env)
+        # Auto-fix: положительный raw channel id → -100<raw> (Telethon format)
+        cv_id = int(f"-100{raw}") if raw > 0 and len(str(raw)) >= 9 else raw
     except Exception:
         return {"ok": False, "error": f"bad CRYPTOVIZOR_CHANNEL_ID: {cv_id_env}"}
     try:

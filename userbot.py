@@ -583,9 +583,24 @@ async def _setup_telethon_client():
     cv_id_env = os.getenv("CRYPTOVIZOR_CHANNEL_ID", "").strip()
     if cv_id_env:
         try:
-            cryptovizor_id = int(cv_id_env)
+            raw_id = int(cv_id_env)
+            # Telethon entity routing: положительный ID → PeerUser,
+            # отрицательный с префиксом -100 → PeerChannel.
+            # CV поставлен как 5703939817 (positive) — Telethon ищет PeerUser
+            # и падает 'Could not find the input entity for PeerUser'.
+            # Авто-нормализуем: если положительное число с типичной длиной
+            # channel ID (≥9 digits), добавляем -100 префикс.
+            if raw_id > 0 and len(str(raw_id)) >= 9:
+                # String concat надёжнее arithmetic: -100 + raw_id_string
+                cryptovizor_id = int(f"-100{raw_id}")
+                logger.info(
+                    f"✅ Cryptovizor channel из env (auto-fixed): "
+                    f"raw={raw_id} → channel_id={cryptovizor_id}"
+                )
+            else:
+                cryptovizor_id = raw_id
+                logger.info(f"✅ Cryptovizor channel из env: id={cryptovizor_id}")
             _cryptovizor_resolve_method = "env"
-            logger.info(f"✅ Cryptovizor channel из env: id={cryptovizor_id}")
         except ValueError:
             logger.warning(f"[userbot] CRYPTOVIZOR_CHANNEL_ID '{cv_id_env}' не int — игнор")
 
@@ -691,7 +706,9 @@ async def _channel_pulse_check(client):
     PULSE_EVERY = 10 * 60
     cv_id_env = os.getenv("CRYPTOVIZOR_CHANNEL_ID", "5703939817").strip()
     try:
-        cv_id = int(cv_id_env)
+        raw = int(cv_id_env)
+        # Auto-fix: положительный raw channel id → -100<raw> (Telethon format)
+        cv_id = int(f"-100{raw}") if raw > 0 and len(str(raw)) >= 9 else raw
     except Exception:
         return
     while True:
