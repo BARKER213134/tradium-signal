@@ -681,6 +681,88 @@ async def _setup_telethon_client():
 
     logger.info(f"👂 Слушаем Tradium группу: {SOURCE_GROUP_ID} (topic {TRADIUM_SETUP_TOPIC_ID})")
 
+    # ── BACKFILL Tradium: подтягиваем пропущенные Trade Setup сообщения ──
+    # User: 'тредиум проврь теперь' — Tradium последний 28h назад. Может
+    # были пропущены сигналы во время watchdog-loop'а. Читаем 100 последних
+    # сообщений из группы, фильтруем по топику Trade Setup Screener,
+    # вызываем handle_text_message для текстов (уже дедуплицирует по msg_id).
+    # Photos пропускаем — AI analysis затратный, лучше лайв.
+    try:
+        from database import _events as _ev_tr
+        tr_imported = 0
+        tr_skipped_topic = 0
+        tr_skipped_dup = 0
+        tr_photos = 0
+
+        msgs = await asyncio.wait_for(
+            client.get_messages(SOURCE_GROUP_ID, limit=100), timeout=30.0,
+        )
+        for m in reversed(msgs):
+            # Фильтр по топику
+            if not m.reply_to:
+                tr_skipped_topic += 1
+                continue
+            top_id = (getattr(m.reply_to, "reply_to_top_id", None)
+                      or m.reply_to.reply_to_msg_id)
+            if top_id != TRADIUM_SETUP_TOPIC_ID:
+                tr_skipped_topic += 1
+                continue
+
+            # Photos — пропускаем (требуют AI)
+            is_photo = isinstance(m.media, MessageMediaPhoto)
+            is_doc_image = (
+                isinstance(m.media, MessageMediaDocument) and
+                m.media.document.mime_type.startswith("image/")
+            ) if m.media else False
+            if is_photo or is_doc_image:
+                tr_photos += 1
+                continue
+
+            # Текстовые: handle_text_message сам проверит дубликат по message_id
+            if not m.raw_text or len(m.raw_text.strip()) <= 5:
+                continue
+
+            # Эмулируем event-like объект для handle_text_message.
+            # У него используется только event.raw_text и event.message.id.
+            class _FakeEvent:
+                raw_text = m.raw_text
+                message = m
+            try:
+                await handle_text_message(_FakeEvent(), client)
+                tr_imported += 1
+            except Exception as e:
+                logger.debug(f"[tr-backfill] handle fail msg_id={m.id}: {e}")
+
+        logger.info(
+            f"[tr-backfill] imported={tr_imported} photos_skipped={tr_photos} "
+            f"non_topic={tr_skipped_topic}"
+        )
+        try:
+            await asyncio.to_thread(_ev_tr().insert_one, {
+                "at": utcnow(),
+                "type": "userbot_tradium_backfill_done",
+                "data": {
+                    "imported": tr_imported,
+                    "photos_skipped": tr_photos,
+                    "non_topic_skipped": tr_skipped_topic,
+                    "msgs_seen": len(msgs),
+                    "topic_id": TRADIUM_SETUP_TOPIC_ID,
+                },
+            })
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning(f"[tr-backfill] fail: {e}")
+        try:
+            from database import _events as _ev_tr
+            await asyncio.to_thread(_ev_tr().insert_one, {
+                "at": utcnow(),
+                "type": "userbot_tradium_backfill_fail",
+                "data": {"error": f"{type(e).__name__}: {str(e)[:200]}"},
+            })
+        except Exception:
+            pass
+
     # ── Handler Key Levels (топики 3086 SUPPORT / 3088 RANGES / 3091 RESISTANCE) ──
     KL_TOPICS = {3086, 3088, 3091}
 
