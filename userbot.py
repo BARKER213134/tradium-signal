@@ -724,19 +724,20 @@ async def _setup_telethon_client():
             cv_entity = await asyncio.wait_for(
                 client.get_entity(cryptovizor_id), timeout=15.0,
             )
+            entity_type = type(cv_entity).__name__
             logger.info(
-                f"[userbot] CV entity resolved: {type(cv_entity).__name__} "
+                f"[userbot] CV entity resolved: {entity_type} "
                 f"title='{getattr(cv_entity,'title','?')}' "
-                f"id={getattr(cv_entity,'id','?')}"
+                f"id={getattr(cv_entity,'id','?')} "
+                f"username={getattr(cv_entity,'username','?')}"
             )
-            # Логируем результат get_entity в _events для диагностики
             try:
                 from database import _events as _ev
                 await asyncio.to_thread(_ev().insert_one, {
                     "at": utcnow(),
                     "type": "userbot_cv_entity_resolved",
                     "data": {
-                        "type": type(cv_entity).__name__,
+                        "type": entity_type,
                         "title": getattr(cv_entity, "title", None),
                         "id": getattr(cv_entity, "id", None),
                         "username": getattr(cv_entity, "username", None),
@@ -745,37 +746,67 @@ async def _setup_telethon_client():
             except Exception:
                 pass
 
-            # JOIN канала если ещё не joined. Pulse_mismatch показал что
-            # account может читать историю (public channel), но push events
-            # не доставляются если account не subscriber. JoinChannelRequest
-            # на already-joined канал = no-op.
+            # CV — это BOT (@cvizorbot), не канал! Сигналы приходят как DM
+            # от бота. Если юзер заблокировал бота или Telegram прекратил
+            # push (например после долгого disconnect), бот не шлёт. Fix:
+            # отправить /start чтобы сбросить block/inactive state.
+            # Это no-op если бот уже работает.
+            if entity_type == "User":
+                try:
+                    await asyncio.wait_for(
+                        client.send_message(cv_entity, "/start"),
+                        timeout=10.0,
+                    )
+                    logger.info("[userbot] sent /start to CV bot — реактивация push'ей")
+                    try:
+                        from database import _events as _ev
+                        await asyncio.to_thread(_ev().insert_one, {
+                            "at": utcnow(),
+                            "type": "userbot_cv_bot_restart_ok",
+                            "data": {"username": getattr(cv_entity, "username", None)},
+                        })
+                    except Exception:
+                        pass
+                except Exception as e:
+                    err = f"{type(e).__name__}: {str(e)[:200]}"
+                    logger.warning(f"[userbot] /start to CV bot fail: {err}")
+                    try:
+                        from database import _events as _ev
+                        await asyncio.to_thread(_ev().insert_one, {
+                            "at": utcnow(),
+                            "type": "userbot_cv_bot_restart_fail",
+                            "data": {"error": err},
+                        })
+                    except Exception:
+                        pass
+            else:
+                # Если бы CV был Channel — попробуем join (на всякий случай)
+                try:
+                    from telethon.tl.functions.channels import JoinChannelRequest
+                    await asyncio.wait_for(
+                        client(JoinChannelRequest(cv_entity)), timeout=15.0,
+                    )
+                    logger.info(f"[userbot] JoinChannelRequest OK for CV")
+                except Exception as e:
+                    logger.debug(f"[userbot] JoinChannelRequest skip: {e}")
+
+            # catch_up() форсит подтянуть пропущенные updates после долгого
+            # disconnect. Если CV bot шлёт push'и но userbot их пропустил —
+            # catch_up их догонит (Telegram держит ~3 дня pending updates).
             try:
-                from telethon.tl.functions.channels import JoinChannelRequest
-                await asyncio.wait_for(
-                    client(JoinChannelRequest(cv_entity)), timeout=15.0,
-                )
-                logger.info(f"[userbot] JoinChannelRequest OK for CV")
+                await asyncio.wait_for(client.catch_up(), timeout=30.0)
+                logger.info("[userbot] catch_up() OK — pending updates подтянуты")
                 try:
                     from database import _events as _ev
                     await asyncio.to_thread(_ev().insert_one, {
                         "at": utcnow(),
-                        "type": "userbot_cv_join_ok",
-                        "data": {"channel_id": getattr(cv_entity, "id", None)},
+                        "type": "userbot_catchup_ok",
+                        "data": {},
                     })
                 except Exception:
                     pass
             except Exception as e:
-                err = f"{type(e).__name__}: {str(e)[:200]}"
-                logger.warning(f"[userbot] JoinChannelRequest fail: {err}")
-                try:
-                    from database import _events as _ev
-                    await asyncio.to_thread(_ev().insert_one, {
-                        "at": utcnow(),
-                        "type": "userbot_cv_join_fail",
-                        "data": {"error": err},
-                    })
-                except Exception:
-                    pass
+                logger.warning(f"[userbot] catch_up fail: {e}")
         except Exception as e:
             logger.error(f"[userbot] get_entity({cryptovizor_id}) fail: {e}")
             try:
