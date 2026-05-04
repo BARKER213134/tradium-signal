@@ -698,8 +698,26 @@ async def _setup_telethon_client():
     logger.info(f"👂 Слушаем Key Levels топики: {KL_TOPICS}")
 
     # ── Handler Cryptovizor ───────────────────────────────────────
+    # КРИТИЧНО: events.NewMessage(chats=int) трактует int как PeerUser
+    # если положительный (Telethon entity routing). Когда от канала
+    # приходит push, peer у события — PeerChannel(channel_id=raw),
+    # и фильтр chats=positive_id не матчит → handler не вызывается.
+    #
+    # Pulse mismatch 2026-05-04 09:54 показал: канал постит активно
+    # (CTK/VVV/KSM в 09:30), но events.NewMessage handler не срабатывал.
+    # Решение: передаём entity объект (cached в session через iter_dialogs),
+    # Telethon резолвит правильный Peer для фильтра.
     if cryptovizor_id is not None:
-        @client.on(events.NewMessage(chats=cryptovizor_id))
+        cv_entity = None
+        try:
+            cv_entity = await asyncio.wait_for(
+                client.get_entity(cryptovizor_id), timeout=15.0,
+            )
+            logger.info(f"[userbot] CV entity resolved: {type(cv_entity).__name__} title='{getattr(cv_entity,'title','?')}'")
+        except Exception as e:
+            logger.error(f"[userbot] get_entity({cryptovizor_id}) fail: {e} — handler через raw id (может не работать)")
+
+        @client.on(events.NewMessage(chats=(cv_entity or cryptovizor_id)))
         async def cryptovizor_handler(event):
             try:
                 if not event.raw_text:
@@ -709,7 +727,7 @@ async def _setup_telethon_client():
                 logger.exception("[userbot] Cryptovizor handler crashed")
         _cryptovizor_id_resolved = cryptovizor_id
         _handlers_registered["cryptovizor"] = True
-        logger.info(f"👂 Слушаем Cryptovizor: {cryptovizor_id}")
+        logger.info(f"👂 Слушаем Cryptovizor: chat_id={cryptovizor_id} entity={cv_entity is not None}")
     _handlers_registered["tradium"] = True
     _handlers_registered["kl"] = True
 
