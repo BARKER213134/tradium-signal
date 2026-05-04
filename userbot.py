@@ -698,15 +698,41 @@ async def _channel_pulse_check(client):
         try:
             await asyncio.sleep(PULSE_EVERY)
             if not client.is_connected():
+                logger.warning("[pulse] client disconnected — exit pulse")
+                try:
+                    await asyncio.to_thread(_events().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_pulse_exit",
+                        "data": {"reason": "client_disconnected"},
+                    })
+                except Exception:
+                    pass
                 return
             try:
                 msgs = await asyncio.wait_for(
                     client.get_messages(cv_id, limit=3), timeout=15.0,
                 )
             except Exception as e:
-                logger.debug(f"[pulse] get_messages fail: {e}")
+                err = f"{type(e).__name__}: {str(e)[:200]}"
+                logger.warning(f"[pulse] get_messages fail: {err}")
+                try:
+                    await asyncio.to_thread(_events().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_pulse_error",
+                        "data": {"phase": "get_messages", "error": err, "cv_id": cv_id},
+                    })
+                except Exception:
+                    pass
                 continue
             if not msgs:
+                try:
+                    await asyncio.to_thread(_events().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_pulse_empty",
+                        "data": {"cv_id": cv_id, "note": "get_messages returned empty list"},
+                    })
+                except Exception:
+                    pass
                 continue
             latest_msg = msgs[0]
             latest_msg_dt = latest_msg.date.replace(tzinfo=None) if latest_msg.date else None
