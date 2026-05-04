@@ -807,6 +807,67 @@ async def _setup_telethon_client():
                     pass
             except Exception as e:
                 logger.warning(f"[userbot] catch_up fail: {e}")
+
+            # BACKFILL: на старте подтягиваем последние 100 сообщений из CV
+            # и импортируем все Perfectly fit, которых нет в БД. Это покрывает
+            # случай когда push events пропускались из-за watchdog-loop.
+            try:
+                from database import _signals as _sig, _events as _ev
+                from pymongo import DESCENDING
+                last_cv = await asyncio.to_thread(
+                    _sig().find_one, {"source": "cryptovizor"},
+                    sort=[("received_at", DESCENDING)],
+                )
+                db_latest = last_cv.get("received_at") if last_cv else None
+                if db_latest and hasattr(db_latest, "tzinfo") and db_latest.tzinfo:
+                    db_latest = db_latest.replace(tzinfo=None)
+
+                logger.info(f"[backfill] reading 100 messages from CV bot (db_latest={db_latest})")
+                msgs = await asyncio.wait_for(
+                    client.get_messages(cv_entity, limit=100), timeout=30.0,
+                )
+                imported = 0
+                skipped = 0
+                for m in reversed(msgs):
+                    m_dt = m.date.replace(tzinfo=None) if m.date else None
+                    if not m_dt:
+                        continue
+                    if db_latest and m_dt <= db_latest:
+                        skipped += 1
+                        continue
+                    txt = m.raw_text or ""
+                    if "Perfectly fit" not in txt:
+                        continue
+                    try:
+                        await handle_cryptovizor_message(txt, m.id)
+                        imported += 1
+                    except Exception as e:
+                        logger.debug(f"[backfill] handle fail msg_id={m.id}: {e}")
+                logger.info(f"[backfill] imported={imported} skipped={skipped} total_msgs={len(msgs)}")
+                try:
+                    await asyncio.to_thread(_ev().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_backfill_done",
+                        "data": {
+                            "imported": imported,
+                            "skipped_old": skipped,
+                            "msgs_seen": len(msgs),
+                            "db_latest_before": db_latest.isoformat() if db_latest else None,
+                        },
+                    })
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(f"[backfill] fail: {e}")
+                try:
+                    from database import _events as _ev
+                    await asyncio.to_thread(_ev().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_backfill_fail",
+                        "data": {"error": f"{type(e).__name__}: {str(e)[:200]}"},
+                    })
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"[userbot] get_entity({cryptovizor_id}) fail: {e}")
             try:
@@ -905,13 +966,16 @@ async def _setup_telethon_client():
 
 
 async def _channel_pulse_check(client):
-    """Раз в 10 минут читает историю CV канала через get_messages и сравнивает
-    с last_cv_received в БД. Если в истории есть сообщения новее БД — это
-    значит handler не получает push'и (проблема Telethon/event delivery).
-    Логирует userbot_pulse_mismatch если рассинхрон."""
+    """Каждые 5 мин читает историю CV (limit=10), сравнивает с БД и
+    ИМПОРТИРУЕТ свежие сообщения через handle_cryptovizor_message —
+    polling fallback если push events не доставляются.
+
+    User сообщил что push events иногда не приходят даже при правильно
+    зарегистрированном handler. Решение: pull mechanism через get_messages.
+    Это надёжнее push'ей и работает всегда пока есть авторизация."""
     from database import _signals, _events
     from pymongo import DESCENDING
-    PULSE_EVERY = 10 * 60
+    PULSE_EVERY = 5 * 60  # 5 мин — частый polling для CV сигналов
     cv_id_env = os.getenv("CRYPTOVIZOR_CHANNEL_ID", "5703939817").strip()
     try:
         raw = int(cv_id_env)
@@ -934,8 +998,9 @@ async def _channel_pulse_check(client):
                     pass
                 return
             try:
+                # limit=50 чтобы захватить все пропущенные за last 5min + buffer
                 msgs = await asyncio.wait_for(
-                    client.get_messages(cv_id, limit=3), timeout=15.0,
+                    client.get_messages(cv_id, limit=50), timeout=20.0,
                 )
             except Exception as e:
                 err = f"{type(e).__name__}: {str(e)[:200]}"
@@ -950,18 +1015,9 @@ async def _channel_pulse_check(client):
                     pass
                 continue
             if not msgs:
-                try:
-                    await asyncio.to_thread(_events().insert_one, {
-                        "at": utcnow(),
-                        "type": "userbot_pulse_empty",
-                        "data": {"cv_id": cv_id, "note": "get_messages returned empty list"},
-                    })
-                except Exception:
-                    pass
                 continue
-            latest_msg = msgs[0]
-            latest_msg_dt = latest_msg.date.replace(tzinfo=None) if latest_msg.date else None
-            # Сравним с БД
+
+            # Получаем последнее received_at в БД
             last_cv = await asyncio.to_thread(
                 _signals().find_one,
                 {"source": "cryptovizor"},
@@ -970,40 +1026,50 @@ async def _channel_pulse_check(client):
             db_latest = last_cv.get("received_at") if last_cv else None
             if db_latest and hasattr(db_latest, "tzinfo") and db_latest.tzinfo:
                 db_latest = db_latest.replace(tzinfo=None)
-            # mismatch: есть сообщение в канале новее чем в БД
-            if latest_msg_dt and (not db_latest or latest_msg_dt > db_latest):
-                gap_min = ((latest_msg_dt - db_latest).total_seconds() / 60
-                           if db_latest else 9999)
-                logger.warning(
-                    f"[pulse] CV mismatch — channel msg {latest_msg_dt} "
-                    f"newer than DB {db_latest} (gap {gap_min:.0f}min)"
+
+            # POLLING FALLBACK: импортируем все сообщения новее db_latest.
+            # msgs приходят DESC (newest first), переворачиваем чтоб сохранять
+            # в хронологическом порядке.
+            imported = 0
+            skipped_old = 0
+            for m in reversed(msgs):
+                m_dt = m.date.replace(tzinfo=None) if m.date else None
+                if not m_dt:
+                    continue
+                if db_latest and m_dt <= db_latest:
+                    skipped_old += 1
+                    continue
+                txt = m.raw_text or ""
+                if not txt or "Perfectly fit" not in txt:
+                    continue
+                try:
+                    await handle_cryptovizor_message(txt, m.id)
+                    imported += 1
+                    logger.info(f"[pulse] imported CV msg id={m.id} at={m_dt}")
+                except Exception as e:
+                    logger.warning(f"[pulse] handle_cryptovizor_message fail: {e}")
+
+            latest_msg = msgs[0]
+            latest_msg_dt = latest_msg.date.replace(tzinfo=None) if latest_msg.date else None
+            try:
+                ev_type = "userbot_pulse_imported" if imported > 0 else (
+                    "userbot_pulse_mismatch"
+                    if (latest_msg_dt and (not db_latest or latest_msg_dt > db_latest))
+                    else "userbot_pulse_ok"
                 )
-                try:
-                    await asyncio.to_thread(_events().insert_one, {
-                        "at": utcnow(),
-                        "type": "userbot_pulse_mismatch",
-                        "data": {
-                            "channel_msg_at": latest_msg_dt.isoformat(),
-                            "db_latest_at": db_latest.isoformat() if db_latest else None,
-                            "gap_min": int(gap_min),
-                            "msg_preview": (latest_msg.raw_text or "")[:120],
-                        },
-                    })
-                except Exception:
-                    pass
-            else:
-                # OK — канал молчит или handler нормально доставляет
-                try:
-                    await asyncio.to_thread(_events().insert_one, {
-                        "at": utcnow(),
-                        "type": "userbot_pulse_ok",
-                        "data": {
-                            "channel_msg_at": latest_msg_dt.isoformat() if latest_msg_dt else None,
-                            "db_latest_at": db_latest.isoformat() if db_latest else None,
-                        },
-                    })
-                except Exception:
-                    pass
+                await asyncio.to_thread(_events().insert_one, {
+                    "at": utcnow(),
+                    "type": ev_type,
+                    "data": {
+                        "channel_msg_at": latest_msg_dt.isoformat() if latest_msg_dt else None,
+                        "db_latest_at": db_latest.isoformat() if db_latest else None,
+                        "imported": imported,
+                        "skipped_old": skipped_old,
+                        "msgs_seen": len(msgs),
+                    },
+                })
+            except Exception:
+                pass
         except asyncio.CancelledError:
             return
         except Exception:
