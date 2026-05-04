@@ -5180,6 +5180,24 @@ async def api_userbot_force_restart():
         return {"ok": False, "error": str(e)[:300]}
 
 
+@app.get("/api/userbot/peek-cv")
+async def api_userbot_peek_cv(limit: int = 5):
+    """Читает последние N сообщений Cryptovizor канала через работающий
+    Telethon клиент. Если канал реально молчит — увидим это здесь.
+    Если канал постит, но БД не обновляется — handler/parser сломан."""
+    import os as _os
+    cv_id_env = _os.getenv("CRYPTOVIZOR_CHANNEL_ID", "5703939817").strip()
+    try:
+        cv_id = int(cv_id_env)
+    except Exception:
+        return {"ok": False, "error": f"bad CRYPTOVIZOR_CHANNEL_ID: {cv_id_env}"}
+    try:
+        from userbot import peek_channel_history
+        return await peek_channel_history(cv_id, limit=max(1, min(limit, 20)))
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 @app.get("/api/userbot/recent-events")
 async def api_userbot_recent_events(limit: int = 20):
     """Последние userbot_* события из _events — диагностика supervisor'а.

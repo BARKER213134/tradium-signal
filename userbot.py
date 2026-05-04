@@ -795,6 +795,33 @@ async def start_userbot():
         await asyncio.sleep(30)
 
 
+async def peek_channel_history(channel_id: int, limit: int = 5) -> dict:
+    """Читает последние сообщения канала через действующий Telethon клиент.
+    Используется чтобы отличить «канал молчит» от «handler сломан»."""
+    global _tg_client
+    if not _tg_client:
+        return {"ok": False, "error": "no client"}
+    if not _tg_client.is_connected():
+        return {"ok": False, "error": "client disconnected"}
+    try:
+        entity = await asyncio.wait_for(_tg_client.get_entity(channel_id), timeout=15.0)
+        msgs = await asyncio.wait_for(_tg_client.get_messages(entity, limit=limit), timeout=15.0)
+        out = []
+        for m in msgs:
+            out.append({
+                "msg_id": m.id,
+                "date": m.date.isoformat() if m.date else None,
+                "preview": (m.raw_text or "")[:200],
+            })
+        title = getattr(entity, "title", str(entity))
+        return {"ok": True, "channel_title": title, "channel_id": channel_id,
+                "count": len(out), "messages": out}
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": "timeout"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}
+
+
 async def force_restart() -> dict:
     """Force-disconnect текущий Telethon клиент чтобы supervisor пересоздал
     его. Возвращает status. Используется для admin recovery когда userbot
