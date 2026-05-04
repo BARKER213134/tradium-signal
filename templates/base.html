@@ -1843,13 +1843,14 @@
         const swings = window.computeZigZag(candles, opts.minPct || 3.0);
         if (swings.length < 2) return null;
 
-        // 1) ZigZag line: создаём LineSeries и соединяем swing points
+        // ZigZag line: ярче и толще (по запросу юзера — Fib убрали).
+        // Solid line, 2px, контрастный жёлто-оранжевый чтобы видеть структуру.
         let zzSeries = null;
         try {
           zzSeries = chart.addLineSeries({
-            color: 'rgba(180, 180, 180, 0.55)',
-            lineWidth: 1,
-            lineStyle: 2,  // dashed
+            color: 'rgba(255, 165, 0, 0.95)',  // bright orange, почти непрозрачный
+            lineWidth: 2,                       // толще (было 1)
+            lineStyle: 0,                       // solid (было dashed)
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
@@ -1860,121 +1861,11 @@
           zzSeries.setData(linePoints);
         } catch(e) { console.warn('[zigzag] line series fail', e); }
 
-        // 2) Markers (▲ для high, ▼ для low) поверх свечей
-        const markers = swings.map(function(s){
-          return {
-            time: s.time,
-            position: s.dir === 'H' ? 'aboveBar' : 'belowBar',
-            color: s.dir === 'H' ? 'rgba(255,140,80,0.85)' : 'rgba(120,200,255,0.85)',
-            shape: s.dir === 'H' ? 'arrowDown' : 'arrowUp',
-            size: 1,
-            text: s.dir === 'H' ? 'H' : 'L',
-          };
-        });
-        // Combine с существующими markers (markers устанавливаются на candleSeries)
-        // Кладём в общий бак zzMarkers — журнал-функция объединит при setMarkers.
-        if (candleSeries && candleSeries._zzMarkersList === undefined) {
-          candleSeries._zzMarkersList = [];
-        }
-        if (candleSeries) {
-          candleSeries._zzMarkersList = markers;
-        }
-
-        // 3) Fib levels от ПОСЛЕДНЕГО завершённого leg (последние 2 swings)
-        const fibLines = [];
-        if (swings.length >= 2) {
-          const a = swings[swings.length - 2];
-          const b = swings[swings.length - 1];
-          const aP = a.price;
-          const bP = b.price;
-          const range = Math.abs(bP - aP);
-          const isUpLeg = b.dir === 'H';  // last leg ended at high → UP leg
-          // Retracement levels (между a и b)
-          const fibPcts = [
-            { p: 0.382, color: 'rgba(255,200,0,0.55)', label: '38.2%' },
-            { p: 0.500, color: 'rgba(255,180,0,0.65)', label: '50%' },
-            { p: 0.618, color: 'rgba(255,140,0,0.75)', label: '61.8%' },
-            { p: 0.786, color: 'rgba(255,100,0,0.55)', label: '78.6%' },
-          ];
-          // Extensions (за пределы b в направлении leg)
-          const extPcts = [
-            { p: 1.272, color: 'rgba(0,200,150,0.55)', label: '127.2%' },
-            { p: 1.618, color: 'rgba(0,180,200,0.55)', label: '161.8%' },
-          ];
-
-          if (candleSeries && candleSeries.createPriceLine) {
-            // Retracements: aP + (bP-aP) * (1 - p) for UP leg (откат вниз от b)
-            // Для DOWN leg: aP - (aP-bP) * (1 - p) = bP + (aP-bP) * p
-            for (const f of fibPcts) {
-              let price;
-              if (isUpLeg) {
-                price = bP - range * f.p;  // от high откатываем вниз
-              } else {
-                price = bP + range * f.p;  // от low подскакиваем вверх
-              }
-              try {
-                const line = candleSeries.createPriceLine({
-                  price: price,
-                  color: f.color,
-                  lineWidth: 1,
-                  lineStyle: 2,  // dashed
-                  axisLabelVisible: true,
-                  title: 'Fib ' + f.label,
-                });
-                fibLines.push(line);
-              } catch(e){}
-            }
-            // Extensions: дальше за b
-            for (const f of extPcts) {
-              let price;
-              if (isUpLeg) {
-                price = aP + range * f.p;  // выше b
-              } else {
-                price = aP - range * f.p;  // ниже b
-              }
-              try {
-                const line = candleSeries.createPriceLine({
-                  price: price,
-                  color: f.color,
-                  lineWidth: 1,
-                  lineStyle: 1,  // dotted
-                  axisLabelVisible: true,
-                  title: 'Ext ' + f.label,
-                });
-                fibLines.push(line);
-              } catch(e){}
-            }
-            // Swing high и low (опорные)
-            try {
-              fibLines.push(candleSeries.createPriceLine({
-                price: bP,
-                color: isUpLeg ? 'rgba(255,140,80,0.5)' : 'rgba(120,200,255,0.5)',
-                lineWidth: 1,
-                lineStyle: 0,  // solid
-                axisLabelVisible: true,
-                title: isUpLeg ? 'Swing H' : 'Swing L',
-              }));
-              fibLines.push(candleSeries.createPriceLine({
-                price: aP,
-                color: isUpLeg ? 'rgba(120,200,255,0.4)' : 'rgba(255,140,80,0.4)',
-                lineWidth: 1,
-                lineStyle: 0,
-                axisLabelVisible: true,
-                title: isUpLeg ? 'Swing L' : 'Swing H',
-              }));
-            } catch(e){}
-          }
-        }
-
-        // Cleanup helper
+        // Cleanup helper — Fib линии убраны, чистим только ZigZag
         container._zzCleanup = function() {
           if (zzSeries) { try { chart.removeSeries(zzSeries); } catch(e){} }
-          for (const line of fibLines) {
-            try { candleSeries.removePriceLine(line); } catch(e){}
-          }
-          if (candleSeries) candleSeries._zzMarkersList = [];
         };
-        return { swings: swings, fibLines: fibLines };
+        return { swings: swings };
       };
 
       window.toggleZigZagFib = function() {
