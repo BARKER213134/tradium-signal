@@ -760,23 +760,27 @@ async def _channel_pulse_check(client):
 
 
 async def _watchdog(client):
-    """Мониторит активность каналов; форсирует disconnect если оба канала
-    замолчали ДОЛЬШЕ чем типовая пауза рынка. Пишет heartbeat каждые 5 мин.
+    """Мониторит активность каналов; пишет heartbeat каждые 5 мин.
 
-    SILENCE_LIMIT был 30 мин — это создавало false-positive: CV часто
-    молчит 1-2ч в спокойный рынок, Tradium может молчать полдня (выходные).
-    Watchdog дисконнектил рабочее соединение, supervisor reconnect'ился,
-    и цикл 60с uptime → disconnect повторялся бесконечно.
-    3ч выбран как достаточно консервативный лимит.
+    ВАЖНО (04.05.2026): убран auto-disconnect on silence. Старая логика
+    «оба канала молчат >3ч → force reconnect» создавала бесконечный цикл:
+
+      setup_ok → 10 min grace → watchdog detect silence → disconnect →
+      supervisor reconnect → 10 min grace → watchdog detect silence → ...
+
+    Reconnect НЕ лечит тишину канала: если CV не постит сообщения, он не
+    начнёт постить после реконнекта. А каждый disconnect ломает свежие
+    subscriptions и может ронять успевшие прийти push'и.
+
+    Reconnect нужен только при РЕАЛЬНОМ disconnect'е от Telegram (event
+    обрабатывается через client.run_until_disconnected → return → supervisor
+    reconnect). Тишину каналов не лечим — это сигнал юзеру через
+    system_health, не повод для авто-восстановления.
+
+    Для recovery в плохом состоянии есть POST /api/userbot/force-restart.
     """
-    from database import _signals
-    from pymongo import DESCENDING
-    SILENCE_LIMIT = 3 * 3600  # 3 часа — разумный верх для тишины любого канала
     HEARTBEAT_EVERY = 5 * 60
     last_heartbeat = 0
-    # Не форсим disconnect в первые 10 мин после старта — даём системе стабилизироваться
-    watchdog_started_at = utcnow()
-    GRACE_PERIOD = 600
     while True:
         try:
             await asyncio.sleep(60)
@@ -787,30 +791,6 @@ async def _watchdog(client):
             if now_ts - last_heartbeat >= HEARTBEAT_EVERY:
                 logger.info("[userbot] alive (watchdog heartbeat)")
                 last_heartbeat = now_ts
-            # Grace period: не убиваем свежий клиент
-            if (utcnow() - watchdog_started_at).total_seconds() < GRACE_PERIOD:
-                continue
-            # Проверяем тишину обоих каналов
-            try:
-                last_cv = await asyncio.to_thread(
-                    _signals().find_one, {"source": "cryptovizor"}, sort=[("received_at", DESCENDING)]
-                )
-                last_tr = await asyncio.to_thread(
-                    _signals().find_one, {"source": "tradium"}, sort=[("received_at", DESCENDING)]
-                )
-                cv_age = (utcnow() - last_cv["received_at"]).total_seconds() if last_cv and last_cv.get("received_at") else 9e9
-                tr_age = (utcnow() - last_tr["received_at"]).total_seconds() if last_tr and last_tr.get("received_at") else 9e9
-                # Оба молчат >3ч — подозреваем что подписки умерли (редкий кейс),
-                # форсируем reconnect чтобы supervisor пересоздал client
-                if cv_age > SILENCE_LIMIT and tr_age > SILENCE_LIMIT:
-                    logger.warning(f"[userbot] watchdog: both channels silent (CV {cv_age/60:.0f}m, Tradium {tr_age/60:.0f}m) → force reconnect")
-                    try:
-                        await client.disconnect()
-                    except Exception:
-                        pass
-                    return
-            except Exception as e:
-                logger.debug(f"[userbot] watchdog db check: {e}")
         except asyncio.CancelledError:
             return
         except Exception:
