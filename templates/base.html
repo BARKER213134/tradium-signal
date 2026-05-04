@@ -1789,11 +1789,35 @@
       // Toggle через localStorage 'tradium_zigzag' (default ON).
       window._zigzagEnabled = localStorage.getItem('tradium_zigzag') !== '0';
 
-      window.computeZigZag = function(candles, minPct) {
-        // ZigZag streaming: alternating high/low pivots с min swing threshold.
+      window.computeZigZag = function(candles, minPct, opts) {
+        // ZigZag streaming с min swing threshold + min bar separation.
+        // Также адаптивный threshold по ATR (последние 14 баров) — на
+        // волатильных парах поднимаем планку, чтоб не было пилы.
         // Returns [{idx, time, price, dir: 'H'|'L'}, ...]
-        if (!candles || candles.length < 5) return [];
-        minPct = minPct || 3.0;
+        if (!candles || candles.length < 14) return [];
+        opts = opts || {};
+        minPct = minPct || 5.0;             // 5% default (было 3% — пила)
+        const minBars = opts.minBars || 5;  // мин 5 баров между swings
+
+        // ATR-based bonus: если ATR/price > 2%, поднимаем threshold
+        let atr = 0;
+        for (let i = 1; i < 14 && i < candles.length; i++) {
+          const c = candles[i];
+          const prev = candles[i - 1];
+          const tr = Math.max(
+            c.high - c.low,
+            Math.abs(c.high - prev.close),
+            Math.abs(c.low - prev.close),
+          );
+          atr += tr;
+        }
+        atr /= 13;
+        const atrPct = atr / candles[0].close * 100;
+        // Если ATR > 1.5%, добавляем к минимальному пct половину излишка
+        const adjustedMinPct = atrPct > 1.5
+          ? minPct + (atrPct - 1.5) * 0.7
+          : minPct;
+
         const swings = [];
         let curDir = candles[1].close > candles[0].close ? 'UP' : 'DOWN';
         let curIdx = 0;
@@ -1805,7 +1829,8 @@
             if (c.high > curPrice) { curPrice = c.high; curIdx = i; }
             else {
               const dropPct = (curPrice - c.low) / curPrice * 100;
-              if (dropPct >= minPct) {
+              if (dropPct >= adjustedMinPct &&
+                  (i - curIdx) >= minBars) {
                 swings.push({ idx: curIdx, time: candles[curIdx].time,
                               price: curPrice, dir: 'H' });
                 curDir = 'DOWN';
@@ -1817,7 +1842,8 @@
             if (c.low < curPrice) { curPrice = c.low; curIdx = i; }
             else {
               const risePct = (c.high - curPrice) / curPrice * 100;
-              if (risePct >= minPct) {
+              if (risePct >= adjustedMinPct &&
+                  (i - curIdx) >= minBars) {
                 swings.push({ idx: curIdx, time: candles[curIdx].time,
                               price: curPrice, dir: 'L' });
                 curDir = 'UP';
@@ -1825,6 +1851,21 @@
                 curPrice = c.high;
               }
             }
+          }
+        }
+        // Финальный текущий swing — добавим в самом конце как provisional
+        // (последняя завершённая+open extension чтоб линия доходила до текущей)
+        if (swings.length > 0) {
+          const last = swings[swings.length - 1];
+          if (last.idx < candles.length - 1) {
+            const final = candles[candles.length - 1];
+            swings.push({
+              idx: candles.length - 1,
+              time: final.time,
+              price: curPrice,
+              dir: curDir === 'UP' ? 'H' : 'L',
+              provisional: true,
+            });
           }
         }
         return swings;

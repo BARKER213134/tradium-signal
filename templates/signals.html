@@ -7768,11 +7768,11 @@ async function openJournalChart(idx, forceTF) {
       _vpvrBtn.style.borderColor = window._vpvrEnabled ? '#FFD700' : 'var(--border)';
     }
 
-    // ZigZag + Fib — render после chart создан, отдельно от VPVR.
-    // series — main candle series, нужен для createPriceLine().
+    // ZigZag — render после chart создан. 5% threshold + min 5 bars между
+    // pivots + ATR-adjustment чтобы не было пилы на волатильных парах.
     if (window.renderZigZagFib) {
       setTimeout(function(){
-        window.renderZigZagFib(chart, container, series, d.candles, { minPct: 3.0 });
+        window.renderZigZagFib(chart, container, series, d.candles, { minPct: 5.0 });
       }, 200);
     }
     const _zzBtn = document.getElementById('zigzagToggleBtn');
