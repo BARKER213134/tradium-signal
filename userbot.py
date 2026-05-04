@@ -819,31 +819,72 @@ async def _setup_telethon_client():
             except Exception:
                 pass
 
-        @client.on(events.NewMessage(chats=(cv_entity or cryptovizor_id)))
+        # ⚠ Telethon фильтры:
+        #   chats=     — для групп/каналов
+        #   from_users= — для приватных сообщений от User (вкл. боты)
+        #
+        # CV — это бот @cvizorbot (User type). При chats=cv_entity handler
+        # НЕ срабатывает на DM от бота (Telethon ожидает group/channel).
+        # Pulse_mismatch 13:35 показал: бот шлёт "Perfectly fit $TRX...",
+        # но handler молчит. Wildcard diag после 5-мин окна тоже не ловил.
+        #
+        # Fix: регистрируем БЕЗ filter и проверяем chat_id внутри.
+        # Это надёжнее любых filter combinations и работает для User/Channel/Chat.
+        cv_target_id = getattr(cv_entity, "id", cryptovizor_id) if cv_entity else cryptovizor_id
+
+        @client.on(events.NewMessage())
         async def cryptovizor_handler(event):
             try:
+                # Match по chat_id в любом формате (Telethon dialog id или raw)
+                ev_chat_id = event.chat_id
+                if ev_chat_id != cv_target_id and ev_chat_id != cryptovizor_id:
+                    # Также пробуем -100<raw> и raw без -100
+                    abs_id = abs(ev_chat_id) if ev_chat_id else 0
+                    if abs_id < 1000000000000:
+                        return
+                    # стрипуем -100 префикс
+                    raw_from_neg = abs_id - 1000000000000 if str(abs_id).startswith("100") else 0
+                    if raw_from_neg != cryptovizor_id and raw_from_neg != cv_target_id:
+                        return
                 if not event.raw_text:
                     return
+                # Логируем что handler сработал — для диагностики
+                try:
+                    from database import _events as _ev
+                    await asyncio.to_thread(_ev().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_cv_handler_fired",
+                        "data": {"chat_id": ev_chat_id, "preview": event.raw_text[:80]},
+                    })
+                except Exception:
+                    pass
                 await handle_cryptovizor_message(event.raw_text, event.message.id)
             except Exception:
                 logger.exception("[userbot] Cryptovizor handler crashed")
         _cryptovizor_id_resolved = cryptovizor_id
         _handlers_registered["cryptovizor"] = True
-        logger.info(f"👂 Слушаем Cryptovizor: chat_id={cryptovizor_id} entity={cv_entity is not None}")
+        logger.info(f"👂 Слушаем Cryptovizor: chat_id={cryptovizor_id} cv_target_id={cv_target_id} entity={cv_entity is not None}")
 
-    # ── DIAG: wildcard event tap (5 минут после startup) ────────────────
-    # Логирует chat_id ВСЕХ входящих NewMessage events. Цель: выяснить
-    # доходят ли вообще push events до клиента (когда CV+Tradium handlers
-    # молчат). Если 0 wildcard events за 5 мин — клиент в "no-push" режиме.
-    _diag_started = utcnow()
+    # ── DIAG: ПОСТОЯННЫЙ wildcard для незнакомых chat_id ─────────────────
+    # Логирует events от любых chat_id КРОМЕ наших собственных ботов
+    # (BOT13/BOT10/BOT5/BOT6/Verified). Цель: видеть приходят ли push'и
+    # от CV-бота (5703939817), Tradium (-1002423680272) или каких-то
+    # других неожиданных источников.
+    KNOWN_OWN_BOTS = {
+        8733222668,   # BOT13 New Strategies
+        8727995143,   # BOT10 SuperTrend
+        8761488135,   # BOT5 Confluence
+        8507466695,   # BOT6 Paper
+        8760128791,   # Verified Entry
+    }
 
     @client.on(events.NewMessage())
     async def _diag_wildcard(event):
         try:
-            if (utcnow() - _diag_started).total_seconds() > 300:
-                return  # 5 мин окно
             chat_id = event.chat_id
-            text_preview = (event.raw_text or "")[:80]
+            if chat_id in KNOWN_OWN_BOTS:
+                return  # пропускаем наших ботов
+            text_preview = (event.raw_text or "")[:100]
             try:
                 from database import _events as _ev
                 await asyncio.to_thread(_ev().insert_one, {
@@ -855,7 +896,7 @@ async def _setup_telethon_client():
                 pass
         except Exception:
             pass
-    logger.info("[userbot] DIAG: wildcard event tap активен 5 мин")
+    logger.info("[userbot] DIAG: wildcard event tap для unknown chat_id (постоянный)")
 
     _handlers_registered["tradium"] = True
     _handlers_registered["kl"] = True
