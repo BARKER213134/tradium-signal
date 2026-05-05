@@ -1859,6 +1859,266 @@
         }
       };
 
+      // ─── 🧊 Accumulation Zones helper (visual only, journal charts) ──
+      // Подсвечивает периоды накопления (BB squeeze + low vol + tight range)
+      // серой полупрозрачной заливкой с пунктирной рамкой. На breakout candle
+      // ставит маркер 🧊 (vol >= 8x accum_avg + body >= 1ATR + close beyond range).
+      // Это ВИЗУАЛЬНЫЙ helper, НЕ сигнал — backtest показал E +0.14R LONG only,
+      // слабо для auto-trade но полезно для глаза.
+      // Toggle через localStorage 'tradium_accum' (default ON).
+      window._accumEnabled = localStorage.getItem('tradium_accum') !== '0';
+
+      window.computeAccumZones = function(candles, opts) {
+        opts = opts || {};
+        const lookback   = opts.lookback   || 12;
+        const maxBBPct   = opts.maxBBPct   || 4.0;
+        const maxRangePct= opts.maxRangePct|| 5.0;
+        const volMult    = opts.volMult    || 8.0;
+        const bodyAtr    = opts.bodyAtr    || 1.0;
+        if (!candles || candles.length < lookback + 30) return [];
+
+        // ATR(14) Wilder
+        const atrs = [];
+        let acc = 0;
+        for (let i = 0; i < candles.length; i++) {
+          let tr;
+          if (i === 0) tr = candles[0].high - candles[0].low;
+          else {
+            const p = candles[i - 1].close;
+            tr = Math.max(
+              candles[i].high - candles[i].low,
+              Math.abs(candles[i].high - p),
+              Math.abs(candles[i].low - p)
+            );
+          }
+          if (i < 14) { acc += tr; atrs.push(acc / (i + 1)); }
+          else atrs.push((atrs[i - 1] * 13 + tr) / 14);
+        }
+
+        const zones = [];
+        let lastEnd = -1;
+        for (let i = 30; i < candles.length - 1; i++) {
+          if (i - lookback + 1 < 0) continue;
+          // не пересекаемся с предыдущей зоной
+          if (i - lookback + 1 < lastEnd) continue;
+
+          const win = candles.slice(i - lookback + 1, i + 1);
+          let hi = -Infinity, lo = Infinity, sumC = 0, sumV = 0;
+          for (const c of win) {
+            if (c.high > hi) hi = c.high;
+            if (c.low < lo) lo = c.low;
+            sumC += c.close;
+            sumV += c.volume || 0;
+          }
+          if (lo <= 0) continue;
+          const rangePct = (hi - lo) / lo * 100;
+          if (rangePct > maxRangePct) continue;
+
+          const meanC = sumC / lookback;
+          let varSum = 0;
+          for (const c of win) varSum += (c.close - meanC) ** 2;
+          const std = Math.sqrt(varSum / lookback);
+          const bbPct = std / meanC * 100 * 4;
+          if (bbPct > maxBBPct) continue;
+
+          // Volume must be SUPPRESSED relative to preceding 20 bars
+          if (i < 20) continue;
+          const prev20 = candles.slice(Math.max(0, i - 20 - lookback + 1),
+                                       i - lookback + 1);
+          if (prev20.length < 5) continue;
+          let prevVol = 0;
+          for (const c of prev20) prevVol += c.volume || 0;
+          const avgPrev = prevVol / prev20.length;
+          const avgWin = sumV / lookback;
+          if (avgWin > avgPrev * 1.0) continue;
+
+          // Check breakout at i+1
+          let breakout = null;
+          if (i + 1 < candles.length) {
+            const bc = candles[i + 1];
+            const atr = atrs[i + 1];
+            if (atr > 0 && avgWin > 0 && bc.volume) {
+              const volRatio = bc.volume / avgWin;
+              const body = Math.abs(bc.close - bc.open);
+              if (volRatio >= volMult && body >= bodyAtr * atr) {
+                let dir = null;
+                if (bc.close > hi) dir = 'UP';
+                else if (bc.close < lo) dir = 'DOWN';
+                if (dir) {
+                  breakout = {
+                    idx: i + 1, time: bc.time,
+                    price: bc.close, direction: dir,
+                    volRatio: volRatio,
+                  };
+                }
+              }
+            }
+          }
+
+          zones.push({
+            startIdx: i - lookback + 1,
+            endIdx: i,
+            startTime: candles[i - lookback + 1].time,
+            endTime: candles[i].time,
+            high: hi,
+            low: lo,
+            rangePct: rangePct,
+            breakout: breakout,
+          });
+          lastEnd = i + 1;
+        }
+        return zones;
+      };
+
+      window.renderAccumZones = function(chart, container, candleSeries, candles, opts) {
+        opts = opts || {};
+        // Cleanup previous render
+        if (container._accumCleanup) {
+          try { container._accumCleanup(); } catch(e){}
+          container._accumCleanup = null;
+        }
+        if (!window._accumEnabled) return null;
+        if (!candles || candles.length < 30) return null;
+
+        const zones = window.computeAccumZones(candles, opts);
+        if (!zones.length) return null;
+
+        // Canvas overlay (как у VPVR)
+        const cv = document.createElement('canvas');
+        cv.className = 'accum-canvas';
+        cv.style.cssText =
+          'position:absolute;top:0;left:0;right:0;bottom:0;' +
+          'width:100%;height:100%;pointer-events:none;z-index:2;';
+        container.appendChild(cv);
+
+        const draw = function() {
+          const rect = cv.getBoundingClientRect();
+          const w = Math.max(50, rect.width || container.clientWidth);
+          const h = Math.max(50, rect.height || container.clientHeight);
+          // DPR-aware sharp render
+          const dpr = window.devicePixelRatio || 1;
+          cv.width = w * dpr;
+          cv.height = h * dpr;
+          cv.style.width = w + 'px';
+          cv.style.height = h + 'px';
+          const ctx = cv.getContext('2d');
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+
+          let timeScale, priceScale;
+          try {
+            timeScale = chart.timeScale();
+            priceScale = candleSeries.priceScale ? candleSeries.priceScale() :
+                         (chart.priceScale ? chart.priceScale('right') : null);
+          } catch(e) { return; }
+          if (!timeScale || !priceScale) return;
+          if (!timeScale.timeToCoordinate || !priceScale.priceToCoordinate) return;
+
+          for (const z of zones) {
+            const x1 = timeScale.timeToCoordinate(z.startTime);
+            const x2 = timeScale.timeToCoordinate(z.endTime);
+            const yHi = priceScale.priceToCoordinate(z.high);
+            const yLo = priceScale.priceToCoordinate(z.low);
+            if (x1 == null || x2 == null || yHi == null || yLo == null) continue;
+            const left = Math.min(x1, x2);
+            const right = Math.max(x1, x2);
+            const top = Math.min(yHi, yLo);
+            const bot = Math.max(yHi, yLo);
+            const rectW = right - left;
+            const rectH = bot - top;
+            if (rectW < 2 || rectH < 1) continue;
+
+            // Gray semi-transparent fill
+            ctx.fillStyle = 'rgba(180, 195, 215, 0.16)';
+            ctx.fillRect(left, top, rectW, rectH);
+            // Border (top + bottom solid, sides dashed)
+            ctx.strokeStyle = 'rgba(180, 195, 215, 0.55)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(left, top);    ctx.lineTo(right, top);
+            ctx.moveTo(left, bot);    ctx.lineTo(right, bot);
+            ctx.stroke();
+            ctx.setLineDash([3, 3]);
+            ctx.strokeStyle = 'rgba(180, 195, 215, 0.35)';
+            ctx.beginPath();
+            ctx.moveTo(left, top);  ctx.lineTo(left, bot);
+            ctx.moveTo(right, top); ctx.lineTo(right, bot);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 🧊 marker on breakout candle
+            if (z.breakout) {
+              const bx = timeScale.timeToCoordinate(z.breakout.time);
+              if (bx != null) {
+                const isUp = z.breakout.direction === 'UP';
+                const refY = priceScale.priceToCoordinate(z.breakout.price);
+                if (refY != null) {
+                  // Position outside range so не закрывает свечу
+                  const my = isUp ? Math.max(8, refY - 24) : Math.min(h - 8, refY + 24);
+                  ctx.font = 'bold 18px sans-serif';
+                  ctx.textAlign = 'center';
+                  ctx.textBaseline = 'middle';
+                  // Glow
+                  ctx.shadowColor = isUp ? 'rgba(0,229,160,0.85)' : 'rgba(255,77,109,0.85)';
+                  ctx.shadowBlur = 8;
+                  ctx.fillStyle = '#ffffff';
+                  ctx.fillText('🧊', bx, my);
+                  ctx.shadowBlur = 0;
+                  // Volume ratio caption
+                  ctx.font = '10px var(--font-mono, monospace)';
+                  ctx.fillStyle = isUp ? 'rgba(0,229,160,0.95)' : 'rgba(255,77,109,0.95)';
+                  ctx.fillText(z.breakout.volRatio.toFixed(0) + 'x',
+                                bx, my + (isUp ? 14 : -14));
+                }
+              }
+            }
+          }
+        };
+
+        draw();
+
+        // Throttled redraw on scale/resize changes
+        let raf = null;
+        const sched = function() {
+          if (raf) return;
+          raf = requestAnimationFrame(function() { raf = null; draw(); });
+        };
+        try {
+          const ts = chart.timeScale();
+          if (ts && ts.subscribeVisibleLogicalRangeChange) {
+            ts.subscribeVisibleLogicalRangeChange(sched);
+          }
+        } catch(e){}
+        let resizeObs = null;
+        try {
+          resizeObs = new ResizeObserver(sched);
+          resizeObs.observe(container);
+        } catch(e){}
+
+        container._accumCleanup = function() {
+          if (resizeObs) resizeObs.disconnect();
+          if (cv.parentNode) cv.parentNode.removeChild(cv);
+        };
+        return { zones: zones };
+      };
+
+      window.toggleAccumZones = function() {
+        window._accumEnabled = !window._accumEnabled;
+        try { localStorage.setItem('tradium_accum', window._accumEnabled ? '1' : '0'); } catch(e){}
+        const btn = document.getElementById('accumToggleBtn');
+        if (btn) {
+          btn.textContent = window._accumEnabled ? '🧊 Accum' : '🧊 OFF';
+          btn.style.color = window._accumEnabled ? '#88CCFF' : 'var(--muted)';
+          btn.style.borderColor = window._accumEnabled ? '#88CCFF' : 'var(--border)';
+        }
+        // Reload current journal chart if open
+        const modal = document.getElementById('journalChartModal');
+        if (modal && modal.classList.contains('open') && typeof openJournalChart === 'function'
+            && typeof _currentJournalIdx !== 'undefined' && _currentJournalIdx >= 0) {
+          openJournalChart(_currentJournalIdx);
+        }
+      };
+
       // ─── ZigZag + Fibonacci helper (visual only, journal charts) ─────
       // Рисует major swings (3% threshold) + Fib retracements (38.2/50/61.8/78.6)
       // и extensions (127.2/161.8) от последнего swing на графиках в журнале.

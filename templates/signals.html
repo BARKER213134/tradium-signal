@@ -6821,6 +6821,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
       <div style="display:flex;align-items:center;gap:8px;">
         <button id="vpvrToggleBtn" onclick="toggleVPVR()" title="Volume Profile Visible Range — гистограмма объёма по ценовым уровням" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📊 VPVR</button>
         <button id="zigzagToggleBtn" onclick="toggleZigZagFib()" title="ZigZag swings (3% threshold) — major price pivots соединённые контрастной линией для чтения структуры тренда" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📐 ZigZag</button>
+        <button id="accumToggleBtn" onclick="toggleAccumZones()" title="Accumulation zones — серая заливка периодов накопления (BB squeeze + low vol + tight range), 🧊 маркер на breakout candle (vol≥8x + body≥1ATR + close beyond range)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">🧊 Accum</button>
         <button onclick="if(_currentJournalIdx>0)openJournalChart(_currentJournalIdx-1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">◀</button>
         <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
         <button onclick="if(_currentJournalIdx<_journalFiltered.length-1)openJournalChart(_currentJournalIdx+1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">▶</button>
@@ -7785,6 +7786,22 @@ async function openJournalChart(idx, forceTF) {
       _zzBtn.textContent = window._zigzagEnabled ? '📐 ZigZag' : '📐 OFF';
       _zzBtn.style.color = window._zigzagEnabled ? '#FFA500' : 'var(--muted)';
       _zzBtn.style.borderColor = window._zigzagEnabled ? '#FFA500' : 'var(--border)';
+    }
+
+    // 🧊 Accumulation zones — серые зоны накопления + 🧊 маркеры breakout.
+    if (window.renderAccumZones) {
+      setTimeout(function(){
+        window.renderAccumZones(chart, container, series, d.candles, {
+          lookback: 12, maxBBPct: 4.0, maxRangePct: 5.0,
+          volMult: 8.0, bodyAtr: 1.0,
+        });
+      }, 250);
+    }
+    const _accumBtn = document.getElementById('accumToggleBtn');
+    if (_accumBtn) {
+      _accumBtn.textContent = window._accumEnabled ? '🧊 Accum' : '🧊 OFF';
+      _accumBtn.style.color = window._accumEnabled ? '#88CCFF' : 'var(--muted)';
+      _accumBtn.style.borderColor = window._accumEnabled ? '#88CCFF' : 'var(--border)';
     }
 
     // Маркеры: все сигналы по монете из _journalData (уже включают cluster/paper/все)
