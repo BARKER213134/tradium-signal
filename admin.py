@@ -1688,9 +1688,9 @@ _NEW_STRAT_TTL = 30.0
 @app.get("/api/new-strategies")
 async def api_new_strategies(strategy: str = "all", state: str = "all",
                              pair: str = "", hours: int = 168, limit: int = 500):
-    """3 backtest-validated стратегии после ST flip.
+    """4 backtest-validated стратегии после ST flip.
 
-    strategy ∈ {all, volume_surge, triple_confluence, vol_accum}
+    strategy ∈ {all, volume_surge, triple_confluence, vol_accum, volcano}
     state ∈ {all, WAITING, TP, SL, MANUAL, TIMEOUT}
     hours — окно от created_at (default 7d)
     """
@@ -10482,9 +10482,10 @@ def _compute_journal_sync():
         from datetime import timedelta as _td
         nss_col = _get_db().new_strategy_signals
         nss_since = _ns_utcnow() - _td(hours=168)  # last 7d
-        STRAT_EMOJI = {"volume_surge": "🌊", "triple_confluence": "🐉", "vol_accum": "🔋"}
+        STRAT_EMOJI = {"volume_surge": "🌊", "triple_confluence": "🐉",
+                        "vol_accum": "🔋", "volcano": "🌋"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
-                       "vol_accum": "Vol Accum"}
+                       "vol_accum": "Vol Accum", "volcano": "Volcano Breakout"}
         for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(300):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -10499,6 +10500,13 @@ def _compute_journal_sync():
                 extra = f" · {n['source_count']}src"
             elif strat == "vol_accum":
                 extra = " · 3 bars rising"
+            elif strat == "volcano":
+                # Highest-edge strategy: WR 38%, AvgRet +2.15% (winners bt)
+                parts = []
+                if n.get("vol_ratio"): parts.append(f"vol {n['vol_ratio']}×")
+                if n.get("body_atr"): parts.append(f"body {n['body_atr']}×ATR")
+                if n.get("rsi") is not None: parts.append(f"RSI {n['rsi']}")
+                extra = " · " + " · ".join(parts) if parts else ""
             pattern_txt = f"{em} {label}{extra}"
             items.append({
                 "source": strat,  # 'volume_surge' / 'triple_confluence' / 'vol_accum'

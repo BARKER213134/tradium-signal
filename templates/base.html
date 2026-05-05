@@ -710,10 +710,11 @@
           tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠',
           // New Strategies (post ST flip detectors)
           volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋',
+          volcano:'🌋',  // 🌋 Volcano Breakout (highest-edge strategy, WR 38%)
         })[src] || '•';
         return prefix + base;
       };
-      window.sigIcon._version = 'v5-newstrats';
+      window.sigIcon._version = 'v6-volcano';
       console.log('[sigIcon] loaded', window.sigIcon._version);
 
       // sigIconCompact — для маркеров НА ГРАФИКЕ (без 👑/⭐ префиксов,
@@ -726,6 +727,7 @@
         if (src === 'volume_surge') return '🌊';
         if (src === 'triple_confluence') return '🐉';
         if (src === 'vol_accum') return '🔋';
+        if (src === 'volcano') return '🌋';
         return ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
       };
 
@@ -2298,8 +2300,8 @@
           }
           return mc;
         };
-        const stratEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋'};
-        const stratColor = {volume_surge:'#00d4ff', triple_confluence:'#7b5cff', vol_accum:'#ffb84d'};
+        const stratEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋'};
+        const stratColor = {volume_surge:'#00d4ff', triple_confluence:'#7b5cff', vol_accum:'#ffb84d', volcano:'#ff6432'};
         // Дедупликация: один маркер на (strategy, direction, hour_bucket).
         // Иначе при срабатывании на VIP+MTF+Daily tiers получаем 3-9 одинаковых
         // эмодзи в одной точке (стакаются вертикально).

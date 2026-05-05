@@ -32,19 +32,32 @@ STRATEGY_TP_R = {
     'volume_surge': 2.5,
     'triple_confluence': 2.0,
     'vol_accum': 1.5,
+    'volcano': 2.0,            # NEW: TP=+10% / SL=-5% → 2R
 }
 
 STRATEGY_EMOJI = {
     'volume_surge': '🌊',
     'triple_confluence': '🐉',
     'vol_accum': '🔋',
+    'volcano': '🌋',           # NEW: accumulation→breakout (Wyckoff markup)
 }
 
 STRATEGY_LABEL = {
     'volume_surge': 'Volume Surge',
     'triple_confluence': 'Triple Confluence',
     'vol_accum': 'Volume Accumulation',
+    'volcano': 'Volcano Breakout',  # NEW
 }
+
+# 🌋 Volcano filter constants (winners analysis _bt_winners_analysis.py)
+VOLCANO_LONG_ONLY = True
+VOLCANO_TIERS = ('mtf', 'daily')   # skip VIP (мало данных, edge unstable)
+VOLCANO_VOL_MIN = 3.0              # base VS condition
+VOLCANO_BODY_ATR_MIN = 1.0         # сильное тело
+VOLCANO_RSI_MAX = 70               # not overbought
+VOLCANO_BAD_HOURS = {0, 1, 5, 6, 9, 21, 23}  # WR<15% per hour
+VOLCANO_ACCUM_LOOKBACK = 12        # 12 баров перед current
+VOLCANO_ACCUM_MULT = 0.7           # avg vol < MA20 × 0.7
 
 
 def compute_volume_ratio(candles: list[dict], n_ma: int = 20) -> float:
@@ -129,6 +142,138 @@ def detect_volume_accum(pair: str, direction: str, entry: float, sl: float,
         'tp_R': tp_R,
         'bars_rising': VOL_ACCUM_BARS,
         'vol_ratio': round(vr, 2),
+        'risk_pct': round(r_pct * 100, 3),
+    }
+
+
+def _compute_atr_last(candles: list[dict], period: int = 14) -> float:
+    """Computes ATR(period) for last bar using Wilder smoothing."""
+    if len(candles) < period + 1:
+        return 0.0
+    trs = [candles[0]['h'] - candles[0]['l']]
+    for i in range(1, len(candles)):
+        prev_c = candles[i-1]['c']
+        h, l = candles[i]['h'], candles[i]['l']
+        trs.append(max(h - l, abs(h - prev_c), abs(l - prev_c)))
+    cur = sum(trs[:period]) / period
+    for i in range(period, len(candles)):
+        cur = (cur * (period - 1) + trs[i]) / period
+    return cur
+
+
+def _compute_rsi_last(candles: list[dict], period: int = 14) -> float:
+    """Computes RSI(period) for last bar."""
+    if len(candles) < period + 1:
+        return 50.0  # neutral default
+    closes = [c['c'] for c in candles]
+    g, l = [], []
+    for i in range(1, len(closes)):
+        d = closes[i] - closes[i-1]
+        g.append(max(d, 0))
+        l.append(max(-d, 0))
+    if len(g) < period:
+        return 50.0
+    ag = sum(g[:period]) / period
+    al = sum(l[:period]) / period
+    for i in range(period, len(g)):
+        ag = (ag * (period - 1) + g[i]) / period
+        al = (al * (period - 1) + l[i]) / period
+    if al == 0:
+        return 100.0
+    rs = ag / al
+    return 100 - 100 / (1 + rs)
+
+
+def detect_volcano_breakout(pair: str, direction: str, entry: float, sl: float,
+                             candles_1h: list[dict],
+                             tier: Optional[str],
+                             flip_hour_utc: int) -> Optional[dict]:
+    """🌋 Volcano Breakout: Wyckoff markup pattern.
+
+    Backtest validated (winners analysis 2026-05-05): WR 38.3%, AvgRet +2.15%.
+
+    Filters:
+      ✓ tier ∈ (mtf, daily) — skip VIP (small N + unstable)
+      ✓ direction = LONG only — SHORT side has -0.12R edge
+      ✓ vol_ratio ≥ 3× MA20 (base VS condition)
+      ✓ was_accum: avg vol bars [-15:-3] < MA20[-23:-3] × 0.7
+      ✓ body ≥ 1× ATR(14) on flip candle
+      ✓ RSI(14) < 70 (not overbought)
+      ✓ flip_hour ∉ (0,1,5,6,9,21,23) UTC (high-loss hours)
+    """
+    if VOLCANO_LONG_ONLY and direction != 'LONG':
+        return None
+    if tier not in VOLCANO_TIERS:
+        return None
+    if flip_hour_utc in VOLCANO_BAD_HOURS:
+        return None
+
+    # Need enough candles for accum check + ATR + RSI
+    # 12 bar accum window + 20 bar MA20 before that + 3 bar gap + 1 current
+    # = 36 bars minimum. We pass 25 from caller — bumping requirement.
+    if len(candles_1h) < 25:
+        return None
+
+    # Volume surge condition (vol_ratio computed from previous 20 MA)
+    vr = compute_volume_ratio(candles_1h, n_ma=20)
+    if vr < VOLCANO_VOL_MIN:
+        return None
+
+    # Was_accum: was there 12-bar low-volume range before signal?
+    # Signal is at candles_1h[-1] (current bar). Accumulation candidates:
+    # candles[-15:-3] (12 bars 3 ago to 15 ago)
+    # MA20 reference: candles[-23:-3] (20 bars before accum window)
+    if len(candles_1h) >= 23:
+        accum_window = candles_1h[-15:-3]
+        ma20_window = candles_1h[-23:-3]
+        if len(accum_window) == 12 and len(ma20_window) == 20:
+            avg_accum = sum(c.get('v', 0) for c in accum_window) / 12
+            avg_ma20 = sum(c.get('v', 0) for c in ma20_window) / 20
+            was_accum = avg_ma20 > 0 and avg_accum < avg_ma20 * VOLCANO_ACCUM_MULT
+        else:
+            was_accum = False
+    else:
+        was_accum = False
+    if not was_accum:
+        return None
+
+    # Body / ATR check on current bar (flip candle)
+    atr = _compute_atr_last(candles_1h, period=14)
+    if atr <= 0:
+        return None
+    last = candles_1h[-1]
+    body = abs(last['c'] - last['o'])
+    body_atr = body / atr if atr > 0 else 0
+    if body_atr < VOLCANO_BODY_ATR_MIN:
+        return None
+
+    # RSI < 70
+    rsi = _compute_rsi_last(candles_1h, period=14)
+    if rsi >= VOLCANO_RSI_MAX:
+        return None
+
+    # All filters passed — compute TP
+    r_pct = abs((entry - sl) / entry) if entry and sl else 0
+    if r_pct == 0:
+        return None
+    tp_R = STRATEGY_TP_R['volcano']
+    if direction == 'LONG':
+        tp = entry * (1 + tp_R * r_pct)
+    else:
+        tp = entry * (1 - tp_R * r_pct)
+
+    return {
+        'strategy': 'volcano',
+        'pair': pair,
+        'direction': direction,
+        'entry': entry,
+        'sl': sl,
+        'tp': tp,
+        'tp_R': tp_R,
+        'vol_ratio': round(vr, 2),
+        'body_atr': round(body_atr, 2),
+        'rsi': round(rsi, 1),
+        'tier': tier,
         'risk_pct': round(r_pct * 100, 3),
     }
 
@@ -252,9 +397,10 @@ async def run_detectors_on_flip(pair: str, direction: str, entry: float,
     """
     from exchange import get_klines_any
 
-    # Fetch 1h klines for vol_ratio + accum checks
+    # Fetch 1h klines: 50 bars enough для всех детекторов (Volcano нужен
+    # 23+ баров для accum check, ATR/RSI period=14 = ещё нужно)
     try:
-        candles_1h = await asyncio.to_thread(get_klines_any, pair, '1h', 25)
+        candles_1h = await asyncio.to_thread(get_klines_any, pair, '1h', 50)
     except Exception as e:
         logger.warning(f'[new-strategies] klines fetch fail {pair}: {e}')
         candles_1h = []
@@ -280,6 +426,18 @@ async def run_detectors_on_flip(pair: str, direction: str, entry: float,
             triggered.append(va)
     except Exception:
         logger.exception('[new-strategies] vol_accum fail')
+
+    # 🌋 Volcano Breakout (highest-edge: WR 38%, +2.15% AvgRet — winners bt)
+    try:
+        flip_hour_utc = flip_ts.hour if hasattr(flip_ts, 'hour') else 0
+        vc = detect_volcano_breakout(
+            pair, direction, entry, sl, candles_1h,
+            tier=tier, flip_hour_utc=flip_hour_utc,
+        )
+        if vc:
+            triggered.append(vc)
+    except Exception:
+        logger.exception('[new-strategies] volcano fail')
 
     # 🐉 Triple Confluence (DB queries via to_thread)
     try:
@@ -313,9 +471,14 @@ async def _auto_paper_for_strategies(triggered: list[dict], pair: str,
     сам отклонит как DUPLICATE (это корректно)."""
     if not triggered:
         return
-    # Берём стратегию с самым большим TP_R (сильнейший edge):
-    # 🌊 Volume Surge (TP=2.5R) > 🐉 Triple Confluence (TP=2R) > 🔋 Vol Accum (TP=1.5R)
-    best = max(triggered, key=lambda t: t.get('tp_R', 0))
+    # Приоритет (по backtest edge per-trade):
+    # 🌋 Volcano Breakout — WR 38%, AvgRet +2.15% (winners analysis)
+    # 🌊 Volume Surge — base, WR ~24%
+    # 🐉 Triple Confluence — multi-source confluence
+    # 🔋 Vol Accum — момент. Берём volcano первым если он есть.
+    PRIORITY = {'volcano': 4, 'volume_surge': 3, 'triple_confluence': 2, 'vol_accum': 1}
+    best = max(triggered,
+                key=lambda t: (PRIORITY.get(t.get('strategy'), 0), t.get('tp_R', 0)))
     sym = pair.replace('/', '').upper()
     if not sym.endswith('USDT'):
         sym = sym + 'USDT'
@@ -533,6 +696,14 @@ async def _send_strategy_alert(sig: dict) -> None:
         extra = f"\n🔀 Sources: <b>{sig.get('source_count',0)}</b> — {srcs}"
     elif sig['strategy'] == 'vol_accum':
         extra = f"\n📈 Rising vol bars: <b>{sig.get('bars_rising',3)}</b>"
+    elif sig['strategy'] == 'volcano':
+        extra = (
+            f"\n📊 Vol ratio: <b>{sig.get('vol_ratio',0):.1f}×</b> MA20"
+            f"\n💪 Body/ATR: <b>{sig.get('body_atr',0):.1f}×</b>"
+            f"\n📉 RSI: <b>{sig.get('rsi',0):.1f}</b>"
+            f"\n🧊 Was accumulation phase before flip"
+            f"\n⭐ Highest-edge strategy (WR 38% bt)"
+        )
 
     text = (
         f"{emoji} <b>{label}</b>\n\n"

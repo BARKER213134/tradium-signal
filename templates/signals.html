@@ -2757,6 +2757,11 @@ setTimeout(_cvfResultsLoad, 800);
           style="flex:1;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">
     🔋 Vol Accumulation
   </button>
+  <button id="ns-sub-volcano" class="ns-sub-btn" onclick="_nsSwitchStrategy('volcano')"
+          style="flex:1;background:transparent;color:var(--muted);border:1px solid rgba(255,100,50,0.45);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;"
+          title="Volcano Breakout — Wyckoff markup pattern (accumulation → breakout). WR 38%, AvgRet +2.15% backtest validated.">
+    🌋 Volcano <small style="color:#ff8c50">★ best edge</small>
+  </button>
 </div>
 
 <!-- State filter + stats -->
@@ -2821,13 +2826,13 @@ async function _nsLoad() {
     const items = d.items || [];
     const stats = d.stats || {};
     const bs = stats.by_strategy || {};
-    statsEl.innerHTML = `n=${items.length} · 🌊 ${bs.volume_surge||0} · 🐉 ${bs.triple_confluence||0} · 🔋 ${bs.vol_accum||0}`;
+    statsEl.innerHTML = `n=${items.length} · 🌊 ${bs.volume_surge||0} · 🐉 ${bs.triple_confluence||0} · 🔋 ${bs.vol_accum||0} · 🌋 ${bs.volcano||0}`;
     if (!items.length) {
       tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted);">Нет сигналов в этом окне</td></tr>';
       return;
     }
-    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋'};
-    const sLabel = {volume_surge:'Volume Surge', triple_confluence:'Triple Confluence', vol_accum:'Vol Accum'};
+    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋'};
+    const sLabel = {volume_surge:'Volume Surge', triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano Breakout'};
     const stEmoji = {WAITING:'⏳', TP:'✅', SL:'⛔', MANUAL:'📍', TIMEOUT:'⏱'};
     let html = '';
     for (const it of items) {
@@ -2838,6 +2843,13 @@ async function _nsLoad() {
       if (it.strategy === 'volume_surge' && it.vol_ratio) detail = `vol ${it.vol_ratio}×`;
       else if (it.strategy === 'triple_confluence' && it.source_count) detail = `${it.source_count} src: ${(it.sources||[]).join('+')}`;
       else if (it.strategy === 'vol_accum') detail = `${it.bars_rising||3} bars`;
+      else if (it.strategy === 'volcano') {
+        const parts = [];
+        if (it.vol_ratio) parts.push(`vol ${it.vol_ratio}×`);
+        if (it.body_atr) parts.push(`body ${it.body_atr}×ATR`);
+        if (it.rsi !== undefined) parts.push(`RSI ${it.rsi}`);
+        detail = parts.join(' · ');
+      }
       const created = it.created_at ? new Date(it.created_at).toLocaleString('ru-RU') : '—';
       html += `<tr style="border-top:1px solid var(--border);">
         <td style="padding:8px;text-align:center;font-size:18px;">${em}</td>
@@ -6879,6 +6891,7 @@ function _srcLabel(src) {
   if (src === 'volume_surge')      return '🌊 Volume Surge';
   if (src === 'triple_confluence') return '🐉 Triple Confluence';
   if (src === 'vol_accum')         return '🔋 Vol Accumulation';
+  if (src === 'volcano')           return '🌋 Volcano Breakout';
   return '🚀 Cryptovizor';
 }
 function _cvFlipStateIcon(state) {
@@ -7322,9 +7335,9 @@ function filterJournal() {
     // Tradium и Cluster сигналы показываем всегда независимо от временного окна
     // (их мало, они ценные — не прячем за фильтром "24ч")
     if (minTs && !['tradium','cluster'].includes(s.source) && (s.at_ts || 0) < minTs) return false;
-    // 'new_strategies' = meta-value: matches volume_surge / triple_confluence / vol_accum
+    // 'new_strategies' = meta-value: matches volume_surge/triple_confluence/vol_accum/volcano
     if (src === 'new_strategies') {
-      if (!['volume_surge','triple_confluence','vol_accum'].includes(s.source)) return false;
+      if (!['volume_surge','triple_confluence','vol_accum','volcano'].includes(s.source)) return false;
     } else if (src && s.source !== src) return false;
     if (dir && s.direction !== dir) return false;
     if (kc === 'pass' && s.st_passed !== true) return false;
@@ -7361,7 +7374,7 @@ function filterJournal() {
       const isPaper = s.source === 'paper';
       const isAnomaly = s.source === 'anomaly';
       const isVerified = s.source === 'verified';
-      const isNewStrategy = s.source === 'volume_surge' || s.source === 'triple_confluence' || s.source === 'vol_accum';
+      const isNewStrategy = ['volume_surge','triple_confluence','vol_accum','volcano'].includes(s.source);
       if (!(isStrong || isTopPick || isStAllTiers || isCluster || isPaper || isAnomaly || isVerified || isNewStrategy)) return false;
     }
     return true;
