@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}1 Milliard STA Screener{% endblock %}</title>
+    <link rel="icon" type="image/png" href="/static/logo.png">
+    <link rel="apple-touch-icon" href="/static/logo.png">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <!-- Preload LightweightCharts с того же сервера (HTTP/2, без TLS handshake к stranger).
          Раньше CDN unpkg.com давал 0.9с задержки при первом chart open.
@@ -2591,16 +2593,24 @@
 <main class="main" style="margin-left:0;">
     <header class="topbar" style="padding:22px 40px;">
         <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
-            <a href="/" style="text-decoration:none;display:flex;align-items:center;gap:12px;">
-                <!-- Logo icon — gradient square with 1B inside -->
-                <div class="sta-logo-icon" style="width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,#00e5a0 0%,#00d4ff 50%,#7b5cff 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--font-mono);font-weight:900;box-shadow:0 4px 16px rgba(0,229,160,0.3),inset 0 0 20px rgba(255,255,255,0.1);position:relative;overflow:hidden;">
-                    <div style="font-size:16px;line-height:1;color:#0b0d12;letter-spacing:0;">1B</div>
-                    <div style="font-size:7px;line-height:1;color:rgba(11,13,18,0.7);letter-spacing:0.15em;margin-top:2px;">STA</div>
-                    <div style="position:absolute;top:-10px;right:-10px;width:24px;height:24px;background:radial-gradient(circle,rgba(255,255,255,0.4) 0%,transparent 60%);"></div>
-                </div>
-                <div>
-                    <h1 class="sta-logo-text" style="font-size:20px;font-weight:800;line-height:1;margin:0;background:linear-gradient(135deg,#fff 0%,#00d4ff 50%,#7b5cff 100%);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:-0.01em;">1 MILLIARD<span style="margin-left:6px;color:var(--electric);-webkit-text-fill-color:var(--electric);font-weight:900;">STA</span></h1>
-                    <p style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.25em;text-transform:uppercase;margin:3px 0 0;">screener</p>
+            <a href="/" style="text-decoration:none;display:flex;align-items:center;gap:12px;" title="1 Milliard STA · Screener">
+                <!-- Custom logo image (replace static/logo.png with your file).
+                     Если файла нет — fallback на CSS-логотип через onerror. -->
+                <img src="/static/logo.png" alt="1 Milliard STA"
+                     class="sta-logo-img"
+                     style="height:60px;max-width:280px;object-fit:contain;filter:drop-shadow(0 4px 16px rgba(0,212,255,0.35));"
+                     onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+                <!-- Fallback (показывается если /static/logo.png отсутствует) -->
+                <div class="sta-logo-fallback" style="display:none;align-items:center;gap:12px;">
+                    <div class="sta-logo-icon" style="width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,#00e5a0 0%,#00d4ff 50%,#7b5cff 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--font-mono);font-weight:900;box-shadow:0 4px 16px rgba(0,229,160,0.3),inset 0 0 20px rgba(255,255,255,0.1);position:relative;overflow:hidden;">
+                        <div style="font-size:16px;line-height:1;color:#0b0d12;letter-spacing:0;">1B</div>
+                        <div style="font-size:7px;line-height:1;color:rgba(11,13,18,0.7);letter-spacing:0.15em;margin-top:2px;">STA</div>
+                        <div style="position:absolute;top:-10px;right:-10px;width:24px;height:24px;background:radial-gradient(circle,rgba(255,255,255,0.4) 0%,transparent 60%);"></div>
+                    </div>
+                    <div>
+                        <h1 class="sta-logo-text" style="font-size:20px;font-weight:800;line-height:1;margin:0;background:linear-gradient(135deg,#fff 0%,#00d4ff 50%,#7b5cff 100%);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:-0.01em;">1 MILLIARD<span style="margin-left:6px;color:var(--electric);-webkit-text-fill-color:var(--electric);font-weight:900;">STA</span></h1>
+                        <p style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.25em;text-transform:uppercase;margin:3px 0 0;">screener</p>
+                    </div>
                 </div>
             </a>
             {% if bots %}

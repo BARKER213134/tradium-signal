@@ -49,15 +49,22 @@ STRATEGY_LABEL = {
     'volcano': 'Volcano Breakout',  # NEW
 }
 
-# 🌋 Volcano filter constants (winners analysis _bt_winners_analysis.py)
+# 🌋 Volcano filter constants
+# v1: winners analysis (2026-05-05) — WR 38%, +2.15% но 14d window.
+# v2 (2026-05-05 evening): 5d backtest показал production filter слишком
+# строгий (88% ST flips отваливаются на was_accum, +0.99% AvgRet).
+# Релаксации:
+#   lookback 12→8 (60 setups, WR 28%, +2.13%)
+#   RSI 70→OFF (87 setups, WR 31%, +1.83%) — RSI filter не помогает
+#   accum_mult 0.7→0.8 (компромисс: больше signals, ещё edge)
 VOLCANO_LONG_ONLY = True
-VOLCANO_TIERS = ('mtf', 'daily')   # skip VIP (мало данных, edge unstable)
+VOLCANO_TIERS = ('mtf', 'daily')   # skip VIP (unstable)
 VOLCANO_VOL_MIN = 3.0              # base VS condition
 VOLCANO_BODY_ATR_MIN = 1.0         # сильное тело
-VOLCANO_RSI_MAX = 70               # not overbought
+VOLCANO_RSI_MAX = 999              # OFF (5d backtest: фильтр не работает)
 VOLCANO_BAD_HOURS = {0, 1, 5, 6, 9, 21, 23}  # WR<15% per hour
-VOLCANO_ACCUM_LOOKBACK = 12        # 12 баров перед current
-VOLCANO_ACCUM_MULT = 0.7           # avg vol < MA20 × 0.7
+VOLCANO_ACCUM_LOOKBACK = 8         # 12→8 (5d bt: больше setups + лучше edge)
+VOLCANO_ACCUM_MULT = 0.8           # 0.7→0.8 (мягче accum check)
 
 
 def compute_volume_ratio(candles: list[dict], n_ma: int = 20) -> float:
@@ -219,22 +226,21 @@ def detect_volcano_breakout(pair: str, direction: str, entry: float, sl: float,
     if vr < VOLCANO_VOL_MIN:
         return None
 
-    # Was_accum: was there 12-bar low-volume range before signal?
-    # Signal is at candles_1h[-1] (current bar). Accumulation candidates:
-    # candles[-15:-3] (12 bars 3 ago to 15 ago)
-    # MA20 reference: candles[-23:-3] (20 bars before accum window)
-    if len(candles_1h) >= 23:
-        accum_window = candles_1h[-15:-3]
-        ma20_window = candles_1h[-23:-3]
-        if len(accum_window) == 12 and len(ma20_window) == 20:
-            avg_accum = sum(c.get('v', 0) for c in accum_window) / 12
-            avg_ma20 = sum(c.get('v', 0) for c in ma20_window) / 20
-            was_accum = avg_ma20 > 0 and avg_accum < avg_ma20 * VOLCANO_ACCUM_MULT
-        else:
-            was_accum = False
-    else:
-        was_accum = False
-    if not was_accum:
+    # Was_accum: was there low-volume range before signal?
+    # Dynamic window: VOLCANO_ACCUM_LOOKBACK bars [3+lookback ago to 3 ago]
+    # MA reference: 20 bars before that.
+    lookback = VOLCANO_ACCUM_LOOKBACK   # 8 (was 12)
+    accum_start = -3 - lookback         # e.g. -11
+    ma_start = accum_start - 20         # e.g. -31
+    if len(candles_1h) < abs(ma_start):
+        return None
+    accum_window = candles_1h[accum_start:-3]
+    ma_window = candles_1h[ma_start:accum_start]
+    if len(accum_window) != lookback or len(ma_window) != 20:
+        return None
+    avg_accum = sum(c.get('v', 0) for c in accum_window) / lookback
+    avg_ma = sum(c.get('v', 0) for c in ma_window) / 20
+    if avg_ma <= 0 or avg_accum >= avg_ma * VOLCANO_ACCUM_MULT:
         return None
 
     # Body / ATR check on current bar (flip candle)
