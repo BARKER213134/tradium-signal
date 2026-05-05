@@ -1870,12 +1870,15 @@
 
       window.computeAccumZones = function(candles, opts) {
         opts = opts || {};
-        const lookback   = opts.lookback   || 12;
-        const maxBBPct   = opts.maxBBPct   || 4.0;
-        const maxRangePct= opts.maxRangePct|| 5.0;
-        const volMult    = opts.volMult    || 8.0;
-        const bodyAtr    = opts.bodyAtr    || 1.0;
-        if (!candles || candles.length < lookback + 30) return [];
+        // VISUAL MODE: значительно мягче чем backtest — для глаза нужны
+        // ВСЕ tight-range periods, не только breakout setups. Юзер
+        // визуально лучше определит что покажется false.
+        const lookback   = opts.lookback   || 8;     // было 12 — короче
+        const maxBBPct   = opts.maxBBPct   || 6.0;   // было 4 — мягче
+        const maxRangePct= opts.maxRangePct|| 7.0;   // было 5 — мягче
+        const volMult    = opts.volMult    || 5.0;   // было 8 — для маркеров
+        const bodyAtr    = opts.bodyAtr    || 0.7;   // было 1.0
+        if (!candles || candles.length < lookback + 20) return [];
 
         // ATR(14) Wilder
         const atrs = [];
@@ -1977,107 +1980,112 @@
           try { container._accumCleanup(); } catch(e){}
           container._accumCleanup = null;
         }
-        if (!window._accumEnabled) return null;
-        if (!candles || candles.length < 30) return null;
+        if (!window._accumEnabled) {
+          console.log('[accum] disabled');
+          return null;
+        }
+        if (!candles || candles.length < 20) {
+          console.log('[accum] not enough candles:', candles && candles.length);
+          return null;
+        }
 
         const zones = window.computeAccumZones(candles, opts);
+        console.log('[accum] zones found:', zones.length);
         if (!zones.length) return null;
 
-        // Canvas overlay (как у VPVR)
+        // Canvas overlay (тот же паттерн что и VPVR)
         const cv = document.createElement('canvas');
         cv.className = 'accum-canvas';
         cv.style.cssText =
-          'position:absolute;top:0;left:0;right:0;bottom:0;' +
-          'width:100%;height:100%;pointer-events:none;z-index:2;';
+          'position:absolute;top:0;left:0;right:60px;bottom:0;' +
+          'pointer-events:none;z-index:5;';
         container.appendChild(cv);
 
         const draw = function() {
           const rect = cv.getBoundingClientRect();
           const w = Math.max(50, rect.width || container.clientWidth);
           const h = Math.max(50, rect.height || container.clientHeight);
-          // DPR-aware sharp render
-          const dpr = window.devicePixelRatio || 1;
-          cv.width = w * dpr;
-          cv.height = h * dpr;
-          cv.style.width = w + 'px';
-          cv.style.height = h + 'px';
+          cv.width = w;
+          cv.height = h;
           const ctx = cv.getContext('2d');
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
           ctx.clearRect(0, 0, w, h);
 
-          let timeScale, priceScale;
-          try {
-            timeScale = chart.timeScale();
-            priceScale = candleSeries.priceScale ? candleSeries.priceScale() :
-                         (chart.priceScale ? chart.priceScale('right') : null);
-          } catch(e) { return; }
-          if (!timeScale || !priceScale) return;
-          if (!timeScale.timeToCoordinate || !priceScale.priceToCoordinate) return;
+          let timeScale = null;
+          let priceScale = null;
+          try { timeScale = chart.timeScale ? chart.timeScale() : null; } catch(e) {}
+          try { priceScale = chart.priceScale ? chart.priceScale('right') : null; } catch(e) {}
+          if (!priceScale) {
+            try { priceScale = candleSeries.priceScale ? candleSeries.priceScale() : null; } catch(e) {}
+          }
+          if (!timeScale || !priceScale) {
+            console.log('[accum] no scales:', !!timeScale, !!priceScale);
+            return;
+          }
+          if (!timeScale.timeToCoordinate || !priceScale.priceToCoordinate) {
+            console.log('[accum] no coord methods');
+            return;
+          }
 
+          let drawn = 0;
+          let nullCoord = 0;
           for (const z of zones) {
             const x1 = timeScale.timeToCoordinate(z.startTime);
             const x2 = timeScale.timeToCoordinate(z.endTime);
             const yHi = priceScale.priceToCoordinate(z.high);
             const yLo = priceScale.priceToCoordinate(z.low);
-            if (x1 == null || x2 == null || yHi == null || yLo == null) continue;
+            if (x1 == null || x2 == null || yHi == null || yLo == null) {
+              nullCoord++;
+              continue;
+            }
             const left = Math.min(x1, x2);
             const right = Math.max(x1, x2);
             const top = Math.min(yHi, yLo);
             const bot = Math.max(yHi, yLo);
-            const rectW = right - left;
-            const rectH = bot - top;
-            if (rectW < 2 || rectH < 1) continue;
+            const rectW = Math.max(2, right - left);
+            const rectH = Math.max(2, bot - top);
 
-            // Gray semi-transparent fill
-            ctx.fillStyle = 'rgba(180, 195, 215, 0.16)';
+            // Заметная серо-голубая заливка, более яркая чем было
+            ctx.fillStyle = 'rgba(140, 170, 220, 0.22)';
             ctx.fillRect(left, top, rectW, rectH);
-            // Border (top + bottom solid, sides dashed)
-            ctx.strokeStyle = 'rgba(180, 195, 215, 0.55)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(left, top);    ctx.lineTo(right, top);
-            ctx.moveTo(left, bot);    ctx.lineTo(right, bot);
-            ctx.stroke();
-            ctx.setLineDash([3, 3]);
-            ctx.strokeStyle = 'rgba(180, 195, 215, 0.35)';
-            ctx.beginPath();
-            ctx.moveTo(left, top);  ctx.lineTo(left, bot);
-            ctx.moveTo(right, top); ctx.lineTo(right, bot);
-            ctx.stroke();
-            ctx.setLineDash([]);
 
-            // 🧊 marker on breakout candle
+            // Border — толстый видимый
+            ctx.strokeStyle = 'rgba(140, 170, 220, 0.85)';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(left, top, rectW, rectH);
+
+            // 🧊 marker на breakout candle если есть
             if (z.breakout) {
               const bx = timeScale.timeToCoordinate(z.breakout.time);
               if (bx != null) {
                 const isUp = z.breakout.direction === 'UP';
                 const refY = priceScale.priceToCoordinate(z.breakout.price);
                 if (refY != null) {
-                  // Position outside range so не закрывает свечу
-                  const my = isUp ? Math.max(8, refY - 24) : Math.min(h - 8, refY + 24);
-                  ctx.font = 'bold 18px sans-serif';
+                  const my = isUp ? Math.max(14, refY - 26) : Math.min(h - 14, refY + 26);
+                  ctx.font = 'bold 22px sans-serif';
                   ctx.textAlign = 'center';
                   ctx.textBaseline = 'middle';
-                  // Glow
-                  ctx.shadowColor = isUp ? 'rgba(0,229,160,0.85)' : 'rgba(255,77,109,0.85)';
-                  ctx.shadowBlur = 8;
+                  ctx.shadowColor = isUp ? 'rgba(0,229,160,0.95)' : 'rgba(255,77,109,0.95)';
+                  ctx.shadowBlur = 12;
                   ctx.fillStyle = '#ffffff';
                   ctx.fillText('🧊', bx, my);
                   ctx.shadowBlur = 0;
-                  // Volume ratio caption
-                  ctx.font = '10px var(--font-mono, monospace)';
-                  ctx.fillStyle = isUp ? 'rgba(0,229,160,0.95)' : 'rgba(255,77,109,0.95)';
+                  ctx.font = 'bold 11px monospace';
+                  ctx.fillStyle = isUp ? 'rgba(0,229,160,1)' : 'rgba(255,77,109,1)';
                   ctx.fillText(z.breakout.volRatio.toFixed(0) + 'x',
-                                bx, my + (isUp ? 14 : -14));
+                                bx, my + (isUp ? 16 : -16));
                 }
               }
             }
+            drawn++;
           }
+          console.log('[accum] drawn:', drawn, '/ nullCoord:', nullCoord, '/ canvas:', w, 'x', h);
         };
 
-        draw();
+        // Первый draw с задержкой чтобы priceScale успел инициализироваться
+        setTimeout(draw, 50);
+        setTimeout(draw, 250);  // повторно для надёжности
 
-        // Throttled redraw on scale/resize changes
+        // Throttled redraw on scale/resize
         let raf = null;
         const sched = function() {
           if (raf) return;
