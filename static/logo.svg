@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 220" width="800" height="220">
+  <defs>
+    <!-- Glow filter -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Main brand gradient: cyan → purple → magenta (futuristic neon) -->
+    <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7B5CFF"/>
+      <stop offset="35%" stop-color="#A78BFA"/>
+      <stop offset="55%" stop-color="#E5E7EB"/>
+      <stop offset="80%" stop-color="#22D3EE"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+
+    <!-- Subtle "1" badge gradient -->
+    <linearGradient id="oneGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#A78BFA"/>
+      <stop offset="100%" stop-color="#22D3EE"/>
+    </linearGradient>
+
+    <!-- Background ring gradient -->
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7B5CFF" stop-opacity="0.55"/>
+      <stop offset="50%" stop-color="#22D3EE" stop-opacity="0.0"/>
+      <stop offset="100%" stop-color="#06B6D4" stop-opacity="0.55"/>
+    </linearGradient>
+
+    <linearGradient id="underline" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7B5CFF" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#A78BFA"/>
+      <stop offset="50%" stop-color="#22D3EE"/>
+      <stop offset="80%" stop-color="#06B6D4"/>
+      <stop offset="100%" stop-color="#06B6D4" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Subtle infinity-style ring around (decorative) -->
+  <ellipse cx="400" cy="110" rx="380" ry="80"
+           fill="none" stroke="url(#ringGrad)" stroke-width="2" opacity="0.65"/>
+  <ellipse cx="400" cy="110" rx="350" ry="60"
+           fill="none" stroke="url(#ringGrad)" stroke-width="1" opacity="0.35"/>
+
+  <!-- Main brand text: 1milliardSTA -->
+  <g filter="url(#glow)">
+    <text x="400" y="115"
+          text-anchor="middle"
+          font-family="'Inter', 'Segoe UI', sans-serif"
+          font-weight="900"
+          font-size="78"
+          letter-spacing="-2"
+          fill="url(#brandGrad)">
+      <tspan fill="url(#oneGrad)">1</tspan><tspan>milliard</tspan><tspan font-size="86">STA</tspan>
+    </text>
+  </g>
+
+  <!-- Underline accent -->
+  <rect x="100" y="135" width="600" height="2" fill="url(#underline)"/>
+
+  <!-- Tagline -->
+  <text x="400" y="170"
+        text-anchor="middle"
+        font-family="'JetBrains Mono', 'Consolas', monospace"
+        font-weight="600"
+        font-size="16"
+        letter-spacing="6"
+        fill="#A78BFA"
+        opacity="0.9">
+    THINK AHEAD · BUILD FUTURE
+  </text>
+
+  <!-- Tiny corner accent dots (futuristic) -->
+  <circle cx="40" cy="40" r="2" fill="#22D3EE" opacity="0.7"/>
+  <circle cx="760" cy="40" r="2" fill="#7B5CFF" opacity="0.7"/>
+  <circle cx="40" cy="180" r="2" fill="#7B5CFF" opacity="0.7"/>
+  <circle cx="760" cy="180" r="2" fill="#22D3EE" opacity="0.7"/>
+</svg>
