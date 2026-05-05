@@ -1993,92 +1993,78 @@
         console.log('[accum] zones found:', zones.length);
         if (!zones.length) return null;
 
-        // Canvas overlay (тот же паттерн что и VPVR)
-        const cv = document.createElement('canvas');
-        cv.className = 'accum-canvas';
-        cv.style.cssText =
-          'position:absolute;top:0;left:0;right:60px;bottom:0;' +
-          'pointer-events:none;z-index:5;';
-        container.appendChild(cv);
+        // ── Native Lightweight Charts approach: line series + markers ──
+        // Canvas overlay не работал у юзера — переходим на native API
+        // (тот же что использует ZigZag, гарантированно отображается).
+        // Native Lightweight Charts API — гарантированно видим, не зависит
+        // от canvas overlay coordinate matching. Каждая зона = 2 line series
+        // (top + bottom price) в её time range.
+        const zoneSeriesArr = [];
+        const breakoutMarkers = [];
+        for (const z of zones) {
+          // Top line — рендерим только в пределах zone time range
+          try {
+            const topSeries = chart.addLineSeries({
+              color: 'rgba(140, 170, 220, 0.85)',
+              lineWidth: 2,
+              lineStyle: 0, // solid
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+            });
+            const botSeries = chart.addLineSeries({
+              color: 'rgba(140, 170, 220, 0.85)',
+              lineWidth: 2,
+              lineStyle: 0,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: false,
+            });
+            // Top: same price (z.high) at startTime AND endTime
+            topSeries.setData([
+              { time: z.startTime, value: z.high },
+              { time: z.endTime,   value: z.high },
+            ]);
+            botSeries.setData([
+              { time: z.startTime, value: z.low },
+              { time: z.endTime,   value: z.low },
+            ]);
+            zoneSeriesArr.push(topSeries, botSeries);
+
+            // Vertical lines (left/right) через addLineSeries не работают
+            // (нужны 2+ time points). Используем Area между top и bot —
+            // через ещё 2 LineSeries (start/end vertical) с малым thickness.
+            // Но это сложно. Минимум — top+bot линии видны как рамка.
+          } catch(e) { console.warn('[accum] line series fail', e); }
+
+          // Breakout marker через setMarkers (combine-friendly)
+          if (z.breakout) {
+            breakoutMarkers.push({
+              time: z.breakout.time,
+              position: z.breakout.direction === 'UP' ? 'belowBar' : 'aboveBar',
+              color: z.breakout.direction === 'UP' ? '#00e5a0' : '#ff4d6d',
+              shape: z.breakout.direction === 'UP' ? 'arrowUp' : 'arrowDown',
+              text: '🧊 ' + z.breakout.volRatio.toFixed(0) + 'x',
+              size: 2,
+            });
+          }
+        }
+        console.log('[accum] line series created:', zoneSeriesArr.length, 'breakouts:', breakoutMarkers.length);
+
+        // Объединить наши маркеры с существующими (если есть _zzMarkersList)
+        if (breakoutMarkers.length && candleSeries) {
+          // Сохраняем accum маркеры в bag — журнал-логика setMarkers соберёт
+          candleSeries._accumMarkersList = breakoutMarkers;
+          // Force apply now (will be merged later by journal markers logic)
+          try {
+            const existing = candleSeries._allMarkers || [];
+            candleSeries.setMarkers([...existing, ...breakoutMarkers]);
+          } catch(e) { console.warn('[accum] setMarkers fail', e); }
+        }
 
         const draw = function() {
-          const rect = cv.getBoundingClientRect();
-          const w = Math.max(50, rect.width || container.clientWidth);
-          const h = Math.max(50, rect.height || container.clientHeight);
-          cv.width = w;
-          cv.height = h;
-          const ctx = cv.getContext('2d');
-          ctx.clearRect(0, 0, w, h);
-
-          let timeScale = null;
-          let priceScale = null;
-          try { timeScale = chart.timeScale ? chart.timeScale() : null; } catch(e) {}
-          try { priceScale = chart.priceScale ? chart.priceScale('right') : null; } catch(e) {}
-          if (!priceScale) {
-            try { priceScale = candleSeries.priceScale ? candleSeries.priceScale() : null; } catch(e) {}
-          }
-          if (!timeScale || !priceScale) {
-            console.log('[accum] no scales:', !!timeScale, !!priceScale);
-            return;
-          }
-          if (!timeScale.timeToCoordinate || !priceScale.priceToCoordinate) {
-            console.log('[accum] no coord methods');
-            return;
-          }
-
-          let drawn = 0;
-          let nullCoord = 0;
-          for (const z of zones) {
-            const x1 = timeScale.timeToCoordinate(z.startTime);
-            const x2 = timeScale.timeToCoordinate(z.endTime);
-            const yHi = priceScale.priceToCoordinate(z.high);
-            const yLo = priceScale.priceToCoordinate(z.low);
-            if (x1 == null || x2 == null || yHi == null || yLo == null) {
-              nullCoord++;
-              continue;
-            }
-            const left = Math.min(x1, x2);
-            const right = Math.max(x1, x2);
-            const top = Math.min(yHi, yLo);
-            const bot = Math.max(yHi, yLo);
-            const rectW = Math.max(2, right - left);
-            const rectH = Math.max(2, bot - top);
-
-            // Заметная серо-голубая заливка, более яркая чем было
-            ctx.fillStyle = 'rgba(140, 170, 220, 0.22)';
-            ctx.fillRect(left, top, rectW, rectH);
-
-            // Border — толстый видимый
-            ctx.strokeStyle = 'rgba(140, 170, 220, 0.85)';
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(left, top, rectW, rectH);
-
-            // 🧊 marker на breakout candle если есть
-            if (z.breakout) {
-              const bx = timeScale.timeToCoordinate(z.breakout.time);
-              if (bx != null) {
-                const isUp = z.breakout.direction === 'UP';
-                const refY = priceScale.priceToCoordinate(z.breakout.price);
-                if (refY != null) {
-                  const my = isUp ? Math.max(14, refY - 26) : Math.min(h - 14, refY + 26);
-                  ctx.font = 'bold 22px sans-serif';
-                  ctx.textAlign = 'center';
-                  ctx.textBaseline = 'middle';
-                  ctx.shadowColor = isUp ? 'rgba(0,229,160,0.95)' : 'rgba(255,77,109,0.95)';
-                  ctx.shadowBlur = 12;
-                  ctx.fillStyle = '#ffffff';
-                  ctx.fillText('🧊', bx, my);
-                  ctx.shadowBlur = 0;
-                  ctx.font = 'bold 11px monospace';
-                  ctx.fillStyle = isUp ? 'rgba(0,229,160,1)' : 'rgba(255,77,109,1)';
-                  ctx.fillText(z.breakout.volRatio.toFixed(0) + 'x',
-                                bx, my + (isUp ? 16 : -16));
-                }
-              }
-            }
-            drawn++;
-          }
-          console.log('[accum] drawn:', drawn, '/ nullCoord:', nullCoord, '/ canvas:', w, 'x', h);
+          // Заглушка — line series отрисовываются нативно, doodle не нужен.
+          // Оставлено для совместимости с redraw/resize hooks.
         };
 
         // Первый draw с задержкой чтобы priceScale успел инициализироваться
@@ -2105,9 +2091,17 @@
 
         container._accumCleanup = function() {
           if (resizeObs) resizeObs.disconnect();
-          if (cv.parentNode) cv.parentNode.removeChild(cv);
+          // Remove all zone line series
+          for (const s of zoneSeriesArr) {
+            try { chart.removeSeries(s); } catch(e){}
+          }
+          // Clear breakout markers
+          if (candleSeries && candleSeries._accumMarkersList) {
+            candleSeries._accumMarkersList = [];
+            try { candleSeries.setMarkers([]); } catch(e){}
+          }
         };
-        return { zones: zones };
+        return { zones: zones, seriesCount: zoneSeriesArr.length };
       };
 
       window.toggleAccumZones = function() {
