@@ -314,27 +314,50 @@ def get_signal_emoji(pair: str, direction: str, at: datetime,
 
 def get_recent_levels(pair: str, hours: int = 48) -> list[dict]:
     """Для UI — возвращает все активные KL уровни по паре за окно.
-    Используется для отрисовки зон на графике."""
+    Используется для отрисовки зон на графике.
+
+    PERF (07.05.2026): adaptive window. Tradium фокусируется на альтах —
+    BTC/ETH/SOL/BNB могут иметь 0-1 уровней за 48h. Если нашли <2 уровня
+    в исходном окне, расширяем до 168h (7d) и потом до 720h (30d).
+    Нужен хотя бы 1 support и 1 resistance для нормального отображения зон.
+    """
     if not pair:
         return []
     pair_norm = pair.replace("/", "").upper()
     if not pair_norm.endswith("USDT"):
         pair_norm = pair_norm + "USDT"
-    since = utcnow() - timedelta(hours=hours)
-    out = []
-    for kl in _key_levels().find({
-        "pair_norm": pair_norm,
-        "detected_at": {"$gte": since},
-        "zone_low": {"$ne": None},
-        "zone_high": {"$ne": None},
-    }).sort("detected_at", -1).limit(20):
-        kl.pop("_id", None)
-        for k in ("detected_at", "created_at"):
-            v = kl.get(k)
-            if hasattr(v, "isoformat"):
-                kl[k] = v.isoformat()
-        out.append(kl)
-    return out
+
+    def _query(window_h: int) -> list[dict]:
+        since = utcnow() - timedelta(hours=window_h)
+        out = []
+        for kl in _key_levels().find({
+            "pair_norm": pair_norm,
+            "detected_at": {"$gte": since},
+            "zone_low": {"$ne": None},
+            "zone_high": {"$ne": None},
+        }).sort("detected_at", -1).limit(30):
+            kl.pop("_id", None)
+            for k in ("detected_at", "created_at"):
+                v = kl.get(k)
+                if hasattr(v, "isoformat"):
+                    kl[k] = v.isoformat()
+            out.append(kl)
+        return out
+
+    items = _query(hours)
+    # Проверяем: есть ли хотя бы 1 support и 1 resistance?
+    has_support = any('support' in (kl.get('event') or '') for kl in items)
+    has_resistance = any('resistance' in (kl.get('event') or '') for kl in items)
+
+    # Если чего-то не хватает — расширяем окно
+    if (not has_support or not has_resistance) and hours < 168:
+        items = _query(168)
+        has_support = any('support' in (kl.get('event') or '') for kl in items)
+        has_resistance = any('resistance' in (kl.get('event') or '') for kl in items)
+    if (not has_support or not has_resistance) and hours < 720:
+        items = _query(720)
+
+    return items
 
 
 def format_tg_block(enrich: dict) -> str:

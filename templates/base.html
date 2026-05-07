@@ -744,8 +744,28 @@
       // Usage:
       //   const kl = await fetch(`/api/key-levels/recent?pair=BNBUSDT&hours=48`).then(r=>r.json());
       //   window._drawKeyLevelZones(chart, series, candles, kl.items);
+      // Fallback: вычислить swing-based S/R из свечей если KL data нет
+      window._computeSwingLevels = function(candles) {
+        if (!candles || candles.length < 30) return null;
+        // Берём последние 100 свечей (или сколько есть)
+        const recent = candles.slice(-100);
+        const highs = recent.map(c => c.high).sort((a,b) => b-a);
+        const lows = recent.map(c => c.low).sort((a,b) => a-b);
+        // Resistance = средняя из топ-3 highs (с буфером)
+        const resHigh = highs[0];
+        const resLow = highs[2] || highs[0];
+        // Support = средняя из топ-3 lows
+        const supLow = lows[0];
+        const supHigh = lows[2] || lows[0];
+        return {
+          support: { zone_low: supLow, zone_high: supHigh, tf: 'swing', _synthetic: true, event: 'new_support' },
+          resistance: { zone_low: resLow, zone_high: resHigh, tf: 'swing', _synthetic: true, event: 'new_resistance' },
+        };
+      };
+
       window._drawKeyLevelZones = function(chart, series, candles, klItems) {
-        if (!chart || !series || !candles || !candles.length || !klItems || !klItems.length) return [];
+        if (!chart || !series || !candles || !candles.length) return [];
+        klItems = klItems || [];
         const firstTs = candles[0].time;
         const lastTs = candles[candles.length-1].time;
         // Выбираем самые актуальные зоны: последний SUPPORT и последний RESISTANCE.
@@ -792,6 +812,16 @@
               };
             }
             if (lastSupport && lastResistance) break;
+          }
+        }
+        // FINAL FALLBACK: если уровни до сих пор не нашлись (Tradium не покрывает
+        // эту пару) — компьютим swing-based S/R из самих свечей. Лучше чем
+        // показывать ничего или один очень старый уровень.
+        if (!lastSupport || !lastResistance) {
+          const sw = window._computeSwingLevels && window._computeSwingLevels(candles);
+          if (sw) {
+            if (!lastSupport) lastSupport = sw.support;
+            if (!lastResistance) lastResistance = sw.resistance;
           }
         }
         const overlays = [];
