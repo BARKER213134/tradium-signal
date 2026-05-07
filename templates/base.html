@@ -713,11 +713,12 @@
           tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠',
           // New Strategies (post ST flip detectors)
           volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋',
-          volcano:'🌋',  // 🌋 Volcano Breakout (highest-edge strategy, WR 38%)
+          volcano:'🌋',     // 🌋 Volcano Breakout (highest-edge, WR 38%)
+          second_flip:'♻️',  // ♻️ Second Flip Confirmation (2nd LONG ≤12h)
         })[src] || '•';
         return prefix + base;
       };
-      window.sigIcon._version = 'v6-volcano';
+      window.sigIcon._version = 'v7-second_flip';
       console.log('[sigIcon] loaded', window.sigIcon._version);
 
       // sigIconCompact — для маркеров НА ГРАФИКЕ (без 👑/⭐ префиксов,
@@ -731,6 +732,7 @@
         if (src === 'triple_confluence') return '🐉';
         if (src === 'vol_accum') return '🔋';
         if (src === 'volcano') return '🌋';
+        if (src === 'second_flip') return '♻️';
         return ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
       };
 
@@ -2303,8 +2305,8 @@
           }
           return mc;
         };
-        const stratEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋'};
-        const stratColor = {volume_surge:'#00d4ff', triple_confluence:'#7b5cff', vol_accum:'#ffb84d', volcano:'#ff6432'};
+        const stratEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️'};
+        const stratColor = {volume_surge:'#00d4ff', triple_confluence:'#7b5cff', vol_accum:'#ffb84d', volcano:'#ff6432', second_flip:'#00bfa5'};
         // Дедупликация: один маркер на (strategy, direction, hour_bucket).
         // Иначе при срабатывании на VIP+MTF+Daily tiers получаем 3-9 одинаковых
         // эмодзи в одной точке (стакаются вертикально).

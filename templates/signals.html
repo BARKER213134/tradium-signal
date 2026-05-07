@@ -2762,6 +2762,11 @@ setTimeout(_cvfResultsLoad, 800);
           title="Volcano Breakout — Wyckoff markup pattern (accumulation → breakout). WR 38%, AvgRet +2.15% backtest validated.">
     🌋 Volcano <small style="color:#ff8c50">★ best edge</small>
   </button>
+  <button id="ns-sub-second_flip" class="ns-sub-btn" onclick="_nsSwitchStrategy('second_flip')"
+          style="flex:1;background:transparent;color:var(--muted);border:1px solid rgba(0,191,165,0.45);border-radius:8px;padding:9px 16px;font-size:12px;font-family:var(--font-mono);cursor:pointer;"
+          title="Second Flip Confirmation — 2nd ST LONG flip ≤12h after first (confirms trend continuation). WR 28% (45% strict L→S→L), AvgRet +0.83%.">
+    ♻️ Second Flip
+  </button>
 </div>
 
 <!-- State filter + stats -->
@@ -2826,13 +2831,13 @@ async function _nsLoad() {
     const items = d.items || [];
     const stats = d.stats || {};
     const bs = stats.by_strategy || {};
-    statsEl.innerHTML = `n=${items.length} · 🌊 ${bs.volume_surge||0} · 🐉 ${bs.triple_confluence||0} · 🔋 ${bs.vol_accum||0} · 🌋 ${bs.volcano||0}`;
+    statsEl.innerHTML = `n=${items.length} · 🌊 ${bs.volume_surge||0} · 🐉 ${bs.triple_confluence||0} · 🔋 ${bs.vol_accum||0} · 🌋 ${bs.volcano||0} · ♻️ ${bs.second_flip||0}`;
     if (!items.length) {
       tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted);">Нет сигналов в этом окне</td></tr>';
       return;
     }
-    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋'};
-    const sLabel = {volume_surge:'Volume Surge', triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano Breakout'};
+    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️'};
+    const sLabel = {volume_surge:'Volume Surge', triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano Breakout', second_flip:'Second Flip'};
     const stEmoji = {WAITING:'⏳', TP:'✅', SL:'⛔', MANUAL:'📍', TIMEOUT:'⏱'};
     let html = '';
     for (const it of items) {
@@ -2848,6 +2853,12 @@ async function _nsLoad() {
         if (it.vol_ratio) parts.push(`vol ${it.vol_ratio}×`);
         if (it.body_atr) parts.push(`body ${it.body_atr}×ATR`);
         if (it.rsi !== undefined) parts.push(`RSI ${it.rsi}`);
+        detail = parts.join(' · ');
+      }
+      else if (it.strategy === 'second_flip') {
+        const parts = [];
+        if (it.gap_h) parts.push(`gap ${it.gap_h}h`);
+        parts.push(it.strict_pattern ? 'strict L→S→L' : 'consecutive');
         detail = parts.join(' · ');
       }
       const created = it.created_at ? new Date(it.created_at).toLocaleString('ru-RU') : '—';
@@ -6752,11 +6763,12 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="supertrend">🌀 SuperTrend</option>
     <option value="verified">✨ Verified</option>
     <option value="cv_flip">⏳ Flip Supertrend</option>
-    <option value="new_strategies">🌊🐉🔋🌋 New Strategies (все)</option>
+    <option value="new_strategies">🌊🐉🔋🌋♻️ New Strategies (все)</option>
     <option value="volume_surge">🌊 Volume Surge</option>
     <option value="triple_confluence">🐉 Triple Confluence</option>
     <option value="vol_accum">🔋 Vol Accumulation</option>
     <option value="volcano">🌋 Volcano Breakout ★</option>
+    <option value="second_flip">♻️ Second Flip Confirmation</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все</option>
@@ -6896,6 +6908,7 @@ function _srcLabel(src) {
   if (src === 'triple_confluence') return '🐉 Triple Confluence';
   if (src === 'vol_accum')         return '🔋 Vol Accumulation';
   if (src === 'volcano')           return '🌋 Volcano Breakout';
+  if (src === 'second_flip')       return '♻️ Second Flip';
   return '🚀 Cryptovizor';
 }
 function _cvFlipStateIcon(state) {
@@ -7339,9 +7352,9 @@ function filterJournal() {
     // Tradium и Cluster сигналы показываем всегда независимо от временного окна
     // (их мало, они ценные — не прячем за фильтром "24ч")
     if (minTs && !['tradium','cluster'].includes(s.source) && (s.at_ts || 0) < minTs) return false;
-    // 'new_strategies' = meta-value: matches volume_surge/triple_confluence/vol_accum/volcano
+    // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
-      if (!['volume_surge','triple_confluence','vol_accum','volcano'].includes(s.source)) return false;
+      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip'].includes(s.source)) return false;
     } else if (src && s.source !== src) return false;
     if (dir && s.direction !== dir) return false;
     if (kc === 'pass' && s.st_passed !== true) return false;
@@ -7378,7 +7391,7 @@ function filterJournal() {
       const isPaper = s.source === 'paper';
       const isAnomaly = s.source === 'anomaly';
       const isVerified = s.source === 'verified';
-      const isNewStrategy = ['volume_surge','triple_confluence','vol_accum','volcano'].includes(s.source);
+      const isNewStrategy = ['volume_surge','triple_confluence','vol_accum','volcano','second_flip'].includes(s.source);
       if (!(isStrong || isTopPick || isStAllTiers || isCluster || isPaper || isAnomaly || isVerified || isNewStrategy)) return false;
     }
     return true;

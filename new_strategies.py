@@ -32,22 +32,31 @@ STRATEGY_TP_R = {
     'volume_surge': 2.5,
     'triple_confluence': 2.0,
     'vol_accum': 1.5,
-    'volcano': 2.0,            # NEW: TP=+10% / SL=-5% → 2R
+    'volcano': 2.0,            # TP=+10% / SL=-5% → 2R
+    'second_flip': 1.4,        # NEW: TP=+7% / SL=-5% → 1.4R (per backtest)
 }
 
 STRATEGY_EMOJI = {
     'volume_surge': '🌊',
     'triple_confluence': '🐉',
     'vol_accum': '🔋',
-    'volcano': '🌋',           # NEW: accumulation→breakout (Wyckoff markup)
+    'volcano': '🌋',           # accumulation→breakout (Wyckoff markup)
+    'second_flip': '♻️',       # NEW: confirmation flip (2nd LONG ≤12h after 1st)
 }
 
 STRATEGY_LABEL = {
     'volume_surge': 'Volume Surge',
     'triple_confluence': 'Triple Confluence',
     'vol_accum': 'Volume Accumulation',
-    'volcano': 'Volcano Breakout',  # NEW
+    'volcano': 'Volcano Breakout',
+    'second_flip': 'Second Flip Confirmation',  # NEW
 }
+
+# ♻️ Second Flip Confirmation constants (backtest _bt_st_second_flip_v2.py)
+# Pattern: на той же паре в окне ≤12h уже был ST flip того же direction.
+# Если был ещё и SHORT между ними (L→S→L) — strict pattern, edge ещё лучше.
+SECOND_FLIP_WINDOW_HOURS = 12      # 6-12h sweet spot per backtest
+SECOND_FLIP_TIERS = ('mtf', 'daily')  # MTF самый стабильный (WR 34%)
 
 # 🌋 Volcano filter constants
 # v1: winners analysis (2026-05-05) — WR 38%, +2.15% но 14d window.
@@ -189,6 +198,74 @@ def _compute_rsi_last(candles: list[dict], period: int = 14) -> float:
         return 100.0
     rs = ag / al
     return 100 - 100 / (1 + rs)
+
+
+def detect_second_flip(pair: str, direction: str, entry: float, sl: float,
+                        flip_ts: datetime, tier: Optional[str]) -> Optional[dict]:
+    """♻️ Second Flip Confirmation: на той же паре уже был ST flip того же
+    direction в окне ≤ SECOND_FLIP_WINDOW_HOURS до текущего flip_ts.
+
+    Backtest validated (_bt_st_second_flip_v2.py 14d):
+    - 2nd LONG ≤12h: WR 28%, AvgRet +0.83% per trade (vs 1st baseline 26%/+0.18%)
+    - 2nd LONG strict L→S→L: WR 45.5%, AvgRet +1.83% (rare but huge edge)
+    - tier=mtf лучше всего (WR 34.2%)
+
+    Filters:
+      ✓ tier ∈ (mtf, daily)
+      ✓ DB query: prior flip того же direction за ≤12h
+      ✓ Bonus marker `strict_pattern=True` если был SHORT между
+    """
+    if tier not in SECOND_FLIP_TIERS:
+        return None
+    if not entry or not sl:
+        return None
+
+    from database import _supertrend_signals
+    pair_norm = pair.replace('/', '').upper()
+    window_start = flip_ts - timedelta(hours=SECOND_FLIP_WINDOW_HOURS)
+
+    # Найти предыдущий flip того же direction в окне
+    prior = _supertrend_signals().find_one({
+        'pair_norm': pair_norm,
+        'direction': direction,
+        'flip_at': {'$gte': window_start, '$lt': flip_ts},
+    }, sort=[('flip_at', -1)])
+    if not prior:
+        return None
+
+    gap_h = (flip_ts - prior['flip_at']).total_seconds() / 3600
+
+    # Проверить был ли SHORT (или LONG если ищем SHORT) между prior и текущим
+    opposite = 'SHORT' if direction == 'LONG' else 'LONG'
+    has_opposite_between = bool(_supertrend_signals().find_one({
+        'pair_norm': pair_norm,
+        'direction': opposite,
+        'flip_at': {'$gt': prior['flip_at'], '$lt': flip_ts},
+    }))
+
+    r_pct = abs((entry - sl) / entry) if entry and sl else 0
+    if r_pct == 0:
+        return None
+    tp_R = STRATEGY_TP_R['second_flip']
+    if direction == 'LONG':
+        tp = entry * (1 + tp_R * r_pct)
+    else:
+        tp = entry * (1 - tp_R * r_pct)
+
+    return {
+        'strategy': 'second_flip',
+        'pair': pair,
+        'direction': direction,
+        'entry': entry,
+        'sl': sl,
+        'tp': tp,
+        'tp_R': tp_R,
+        'gap_h': round(gap_h, 1),
+        'strict_pattern': has_opposite_between,  # L→S→L = strict (best edge)
+        'prior_flip_at': prior['flip_at'].isoformat() if hasattr(prior['flip_at'], 'isoformat') else str(prior['flip_at']),
+        'tier': tier,
+        'risk_pct': round(r_pct * 100, 3),
+    }
 
 
 def detect_volcano_breakout(pair: str, direction: str, entry: float, sl: float,
@@ -445,6 +522,16 @@ async def run_detectors_on_flip(pair: str, direction: str, entry: float,
     except Exception:
         logger.exception('[new-strategies] volcano fail')
 
+    # ♻️ Second Flip Confirmation (DB query — to_thread)
+    try:
+        sf = await asyncio.to_thread(
+            detect_second_flip, pair, direction, entry, sl, flip_ts, tier,
+        )
+        if sf:
+            triggered.append(sf)
+    except Exception:
+        logger.exception('[new-strategies] second_flip fail')
+
     # 🐉 Triple Confluence (DB queries via to_thread)
     try:
         tc = await asyncio.to_thread(
@@ -482,7 +569,13 @@ async def _auto_paper_for_strategies(triggered: list[dict], pair: str,
     # 🌊 Volume Surge — base, WR ~24%
     # 🐉 Triple Confluence — multi-source confluence
     # 🔋 Vol Accum — момент. Берём volcano первым если он есть.
-    PRIORITY = {'volcano': 4, 'volume_surge': 3, 'triple_confluence': 2, 'vol_accum': 1}
+    PRIORITY = {
+        'volcano': 5,           # WR 38%, +2.15% (highest edge)
+        'volume_surge': 4,      # base, WR 24% but largest sample
+        'second_flip': 3,       # WR 28% (or 45% strict), +0.83%
+        'triple_confluence': 2, # multi-source confluence
+        'vol_accum': 1,         # momentum
+    }
     best = max(triggered,
                 key=lambda t: (PRIORITY.get(t.get('strategy'), 0), t.get('tp_R', 0)))
     sym = pair.replace('/', '').upper()
@@ -709,6 +802,15 @@ async def _send_strategy_alert(sig: dict) -> None:
             f"\n📉 RSI: <b>{sig.get('rsi',0):.1f}</b>"
             f"\n🧊 Was accumulation phase before flip"
             f"\n⭐ Highest-edge strategy (WR 38% bt)"
+        )
+    elif sig['strategy'] == 'second_flip':
+        gap_h = sig.get('gap_h', 0)
+        strict = sig.get('strict_pattern', False)
+        pattern_str = "L→S→L (strict, WR 45%)" if strict else "consecutive LONG"
+        extra = (
+            f"\n⏱ Gap to prior flip: <b>{gap_h}h</b>"
+            f"\n🔄 Pattern: <b>{pattern_str}</b>"
+            f"\n✓ Trend continuation confirmed"
         )
 
     text = (

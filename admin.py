@@ -1688,9 +1688,9 @@ _NEW_STRAT_TTL = 30.0
 @app.get("/api/new-strategies")
 async def api_new_strategies(strategy: str = "all", state: str = "all",
                              pair: str = "", hours: int = 168, limit: int = 500):
-    """4 backtest-validated стратегии после ST flip.
+    """5 backtest-validated стратегий после ST flip.
 
-    strategy ∈ {all, volume_surge, triple_confluence, vol_accum, volcano}
+    strategy ∈ {all, volume_surge, triple_confluence, vol_accum, volcano, second_flip}
     state ∈ {all, WAITING, TP, SL, MANUAL, TIMEOUT}
     hours — окно от created_at (default 7d)
     """
@@ -10483,9 +10483,11 @@ def _compute_journal_sync():
         nss_col = _get_db().new_strategy_signals
         nss_since = _ns_utcnow() - _td(hours=168)  # last 7d
         STRAT_EMOJI = {"volume_surge": "🌊", "triple_confluence": "🐉",
-                        "vol_accum": "🔋", "volcano": "🌋"}
+                        "vol_accum": "🔋", "volcano": "🌋",
+                        "second_flip": "♻️"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
-                       "vol_accum": "Vol Accum", "volcano": "Volcano Breakout"}
+                       "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
+                       "second_flip": "Second Flip"}
         for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(300):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -10506,6 +10508,15 @@ def _compute_journal_sync():
                 if n.get("vol_ratio"): parts.append(f"vol {n['vol_ratio']}×")
                 if n.get("body_atr"): parts.append(f"body {n['body_atr']}×ATR")
                 if n.get("rsi") is not None: parts.append(f"RSI {n['rsi']}")
+                extra = " · " + " · ".join(parts) if parts else ""
+            elif strat == "second_flip":
+                # Confirmation flip: WR 28%, AvgRet +0.83% (45%/+1.83% strict)
+                parts = []
+                if n.get("gap_h"): parts.append(f"gap {n['gap_h']}h")
+                if n.get("strict_pattern"):
+                    parts.append("strict L→S→L")
+                else:
+                    parts.append("consecutive")
                 extra = " · " + " · ".join(parts) if parts else ""
             pattern_txt = f"{em} {label}{extra}"
             items.append({
