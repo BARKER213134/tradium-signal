@@ -2276,13 +2276,16 @@
       // ─── New Strategies (🌊 Volume Surge / 🐉 Triple Confluence / 🔋 Vol Accum) ───
       // Маркеры на графиках по факту срабатывания на этой паре.
       window._newStrategyCache = window._newStrategyCache || {};
-      window._fetchNewStrategies = async function(pair, hours = 168) {
+      // PERF: 168h (7d) × 5 стратегий давало 100+ записей на график → лаги.
+      // Снизил до 72h (3d) + cache TTL 5 мин (было 2). На большинстве пар
+      // 30-50 записей max — рендерится плавно.
+      window._fetchNewStrategies = async function(pair, hours = 72) {
         if (!pair) return [];
         const key = `${pair}_${hours}`;
         const c = window._newStrategyCache[key];
-        if (c && (Date.now() - c.at) < 120000) return c.items;
+        if (c && (Date.now() - c.at) < 300000) return c.items;
         try {
-          const r = await fetch(`/api/new-strategies/by-pair?pair=${encodeURIComponent(pair)}&hours=${hours}`);
+          const r = await fetch(`/api/new-strategies/by-pair?pair=${encodeURIComponent(pair)}&hours=${hours}&limit=50`);
           const d = await r.json();
           const items = (d && d.items) ? d.items : [];
           window._newStrategyCache[key] = { at: Date.now(), items };

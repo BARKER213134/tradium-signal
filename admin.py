@@ -1748,10 +1748,14 @@ async def api_new_strategies(strategy: str = "all", state: str = "all",
 
 
 @app.get("/api/new-strategies/by-pair")
-async def api_new_strategies_by_pair(pair: str, hours: int = 336):
-    """Per-pair endpoint для маркеров на графиках. Cache 60с."""
+async def api_new_strategies_by_pair(pair: str, hours: int = 72, limit: int = 50):
+    """Per-pair endpoint для маркеров на графиках.
+
+    PERF (07.05.2026): hours 336→72, limit 200→50 default. После добавления
+    5-й стратегии (♻️ Second Flip) количество записей на пару выросло —
+    графики начали тормозить. Снижение лимитов вернуло плавность."""
     return await api_new_strategies(strategy="all", state="all",
-                                    pair=pair, hours=hours, limit=200)
+                                    pair=pair, hours=hours, limit=limit)
 
 
 # Серверный кеш для /api/supertrend-signals/by-pair (TTL 60с)

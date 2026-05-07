@@ -4626,7 +4626,7 @@ async function _drawPaperHistChart(idx) {
     }
     // CV+ST Flip markers (⏳/💥)
     if (window._fetchNewStrategies && window._addNewStrategyMarkers && h.symbol && d.candles.length) {
-      window._fetchNewStrategies(h.symbol, 168).then(nsf => {
+      window._fetchNewStrategies(h.symbol, 72).then(nsf => {
         _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
         _applyAll();
       }).catch(()=>{});
@@ -4901,7 +4901,7 @@ async function _renderPaperChart(idx, tf) {
       }).catch(() => {});
     }
     if (window._fetchNewStrategies && window._addNewStrategyMarkers && p.symbol && d.candles.length) {
-      window._fetchNewStrategies(p.symbol, 168).then(nsf => {
+      window._fetchNewStrategies(p.symbol, 72).then(nsf => {
         _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
         _applyAll();
       }).catch(()=>{});
@@ -7168,7 +7168,7 @@ async function loadCoinChart(coin) {
       }).catch(() => {});
     }
     if (window._fetchNewStrategies && window._addNewStrategyMarkers && sym && d.candles.length) {
-      window._fetchNewStrategies(sym, 168).then(nsf => {
+      window._fetchNewStrategies(sym, 72).then(nsf => {
         _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
         _applyAll();
       }).catch(()=>{});
@@ -7953,7 +7953,7 @@ async function openJournalChart(idx, forceTF) {
       }).catch(() => {});
     }
     if (window._fetchNewStrategies && window._addNewStrategyMarkers && sym && d.candles.length) {
-      window._fetchNewStrategies(sym, 168).then(nsf => {
+      window._fetchNewStrategies(sym, 72).then(nsf => {
         _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
         _applyAll();
       }).catch(()=>{});
