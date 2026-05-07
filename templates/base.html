@@ -2481,6 +2481,7 @@
       };
 
       // KL badge для UI таблиц (маленький emoji + tooltip)
+      // Если near_level=true (entry рядом с зоной по цене) — добавляем 🎯
       window._klBadge = function(enrich) {
         if (!enrich || !enrich.emoji) return '';
         const label = enrich.label || '';
@@ -2488,7 +2489,11 @@
         const strength = enrich.strength || '';
         const strCls = strength === 'strong' ? 'kl-strong' : strength === 'warning' ? 'kl-warning'
                       : strength === 'confirming' ? 'kl-confirming' : 'kl-neutral';
-        return `<span class="kl-badge ${strCls}" title="${label}">${enrich.emoji}</span>`;
+        // 🎯 — индикатор "вход в зоне" (price-proximity confirmed)
+        const near = enrich.near_level
+          ? `<span style="color:#00e5a0;margin-left:2px;" title="Entry near key level zone (visually)">🎯</span>`
+          : '';
+        return `<span class="kl-badge ${strCls}" title="${label}">${enrich.emoji}</span>${near}`;
       };
 
       // ─── Market state markers (KC + Reversal changes) ─────────────

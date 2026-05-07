@@ -934,7 +934,7 @@ async def api_key_levels_enrich(payload: dict):
             return _cached
     except Exception:
         _cache_key = None
-    # 1) Парсим входные сигналы в нормализованную форму
+    # 1) Парсим входные сигналы в нормализованную форму (теперь с entry_price)
     norm = []
     pair_times: dict[str, list[_dt]] = {}
     for s in signals:
@@ -942,6 +942,11 @@ async def api_key_levels_enrich(payload: dict):
         pair_raw = s.get("pair") or s.get("symbol") or ""
         direction = (s.get("direction") or "").upper()
         at_raw = s.get("at")
+        entry_price = s.get("entry") or s.get("entry_price")
+        try:
+            entry_price = float(entry_price) if entry_price is not None else None
+        except (TypeError, ValueError):
+            entry_price = None
         at = None
         if at_raw:
             try:
@@ -956,7 +961,7 @@ async def api_key_levels_enrich(payload: dict):
         pair_norm = pair_raw.replace("/", "").upper()
         if pair_norm and not pair_norm.endswith("USDT"):
             pair_norm = pair_norm + "USDT"
-        norm.append((sig_id, pair_norm, direction, at))
+        norm.append((sig_id, pair_norm, direction, at, entry_price))
         if pair_norm and at:
             pair_times.setdefault(pair_norm, []).append(at)
 
@@ -980,7 +985,11 @@ async def api_key_levels_enrich(payload: dict):
             pair_cache[pair_norm] = items
 
     # 3) Для каждого сигнала — выбираем лучший KL из pair_cache по ±2h окну
-    def _pick_best(pair_norm: str, direction: str, at: _dt):
+    # + price-proximity filter (entry_price близко к зоне).
+    MAX_DIST_PCT = 1.5  # entry within zone ИЛИ ≤1.5% от края
+
+    def _pick_best(pair_norm: str, direction: str, at: _dt,
+                    entry_price: float = None):
         cands = pair_cache.get(pair_norm, [])
         if not cands:
             return None
@@ -990,6 +999,34 @@ async def api_key_levels_enrich(payload: dict):
                     and lo <= k["detected_at"] <= hi]
         if not filtered:
             return None
+
+        # PRICE PROXIMITY: оставляем только KL зоны рядом с entry_price
+        if entry_price is not None and entry_price > 0:
+            proxim = []
+            for kl in filtered:
+                zl = kl.get("zone_low")
+                zh = kl.get("zone_high")
+                if zl is None or zh is None: continue
+                try:
+                    zl, zh = float(zl), float(zh)
+                except (TypeError, ValueError): continue
+                if zl <= entry_price <= zh:
+                    kl['_dist_pct'] = 0.0
+                    proxim.append(kl)
+                elif entry_price < zl:
+                    d = (zl - entry_price) / entry_price * 100
+                    if d <= MAX_DIST_PCT:
+                        kl['_dist_pct'] = -round(d, 2)
+                        proxim.append(kl)
+                else:
+                    d = (entry_price - zh) / entry_price * 100
+                    if d <= MAX_DIST_PCT:
+                        kl['_dist_pct'] = round(d, 2)
+                        proxim.append(kl)
+            if not proxim:
+                return None
+            filtered = proxim
+
         is_long = direction in ("LONG", "BUY", "BULLISH")
         strong, warning, confirming, range_ev = [], [], [], []
         for kl in filtered:
@@ -1032,9 +1069,18 @@ async def api_key_levels_enrich(payload: dict):
         age = kl.get("age_days")
         age_str = f", age {age}d" if age else ""
         kt = kl.get("detected_at")
+        # Distance info (если был price-proximity фильтр)
+        dist_pct = kl.get("_dist_pct")
+        if dist_pct is not None:
+            if abs(dist_pct) < 0.05:
+                dist_str = ", in zone"
+            else:
+                dist_str = f", {abs(dist_pct):.1f}% {'below' if dist_pct < 0 else 'above'}"
+        else:
+            dist_str = ""
         return {
             "emoji": emoji,
-            "label": f"{label_prefix} {tf}{age_str}",
+            "label": f"{label_prefix} {tf}{age_str}{dist_str}",
             "strength": strength,
             "event": kl.get("event"),
             "tf": tf,
@@ -1042,14 +1088,17 @@ async def api_key_levels_enrich(payload: dict):
             "zone_low": kl.get("zone_low"),
             "zone_high": kl.get("zone_high"),
             "kl_time": kt.isoformat() if hasattr(kt, "isoformat") else None,
+            "distance_pct": dist_pct,
+            "near_level": dist_pct is not None,
             "current_price_at_kl": kl.get("current_price"),
         }
 
     out = {}
-    for sig_id, pair_norm, direction, at in norm:
+    for sig_id, pair_norm, direction, at, entry_price in norm:
         if sig_id is None:
             continue
-        enrich = _pick_best(pair_norm, direction, at) if (pair_norm and at) else None
+        enrich = (_pick_best(pair_norm, direction, at, entry_price)
+                  if (pair_norm and at) else None)
         out[str(sig_id)] = enrich
     resp = {"enrich": out, "count": len(out), "pairs": len(pair_cache)}
     if _cache_key:

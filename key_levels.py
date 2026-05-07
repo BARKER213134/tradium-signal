@@ -204,8 +204,32 @@ def _tf_power(tf: str) -> float:
     return TF_POWER.get((tf or "").lower(), 1.0)
 
 
+def _price_near_zone(price: float, zone_low: float, zone_high: float,
+                      max_dist_pct: float = 1.5) -> tuple[bool, float]:
+    """Visually near = price находится В зоне ИЛИ в пределах max_dist_pct% от зоны.
+
+    Returns:
+        (is_near, distance_pct) — distance_pct отрицательный если price ниже зоны,
+        положительный если выше, 0 если внутри.
+    """
+    if price is None or zone_low is None or zone_high is None:
+        return False, 0.0
+    if price <= 0:
+        return False, 0.0
+    if zone_low <= price <= zone_high:
+        return True, 0.0  # внутри зоны
+    if price < zone_low:
+        dist_pct = (zone_low - price) / price * 100
+        return dist_pct <= max_dist_pct, -dist_pct
+    else:
+        dist_pct = (price - zone_high) / price * 100
+        return dist_pct <= max_dist_pct, dist_pct
+
+
 def get_signal_emoji(pair: str, direction: str, at: datetime,
-                      window_h: int = ENRICH_WINDOW_H) -> Optional[dict]:
+                      window_h: int = ENRICH_WINDOW_H,
+                      entry_price: float = None,
+                      max_dist_pct: float = 1.5) -> Optional[dict]:
     """Обогащает сигнал данными о Key Level событиях.
 
     Args:
@@ -213,20 +237,15 @@ def get_signal_emoji(pair: str, direction: str, at: datetime,
         direction: "LONG" / "SHORT" / "BULLISH" / "BEARISH"
         at: datetime сигнала (naive UTC)
         window_h: окно поиска KL (±часы)
+        entry_price: цена входа сигнала (для price-proximity фильтра).
+            Если задан — KL события фильтруются: только те где entry_price
+            визуально близка к зоне (within zone OR within max_dist_pct%).
+        max_dist_pct: max расстояние от края зоны в % (default 1.5%)
 
     Returns:
-        None если ничего не найдено, иначе:
-        {
-            "emoji": "🎢",
-            "label": "Breakout UP через RESISTANCE 12h",
-            "strength": "strong" | "confirming" | "warning" | "neutral",
-            "event": "entered_resistance",
-            "tf": "12h",
-            "age_days": 10,
-            "zone_low": 0.45,
-            "zone_high": 0.48,
-            "kl_time": datetime,
-        }
+        None если ничего не найдено, иначе dict с полями:
+            emoji, label, strength, event, tf, age_days,
+            zone_low, zone_high, kl_time, distance_pct (новое поле)
     """
     if not pair or not direction or not at:
         return None
@@ -246,6 +265,25 @@ def get_signal_emoji(pair: str, direction: str, at: datetime,
 
     if not candidates:
         return None
+
+    # PRICE-PROXIMITY FILTER: оставляем только KL чьи зоны визуально близки
+    # к entry_price. Если entry_price=None — пропускаем (back-compat).
+    if entry_price is not None and entry_price > 0:
+        filtered = []
+        for kl in candidates:
+            zl = kl.get("zone_low")
+            zh = kl.get("zone_high")
+            if zl is None or zh is None:
+                continue
+            is_near, dist_pct = _price_near_zone(
+                float(entry_price), float(zl), float(zh), max_dist_pct,
+            )
+            if is_near:
+                kl['_distance_pct'] = round(dist_pct, 2)
+                filtered.append(kl)
+        candidates = filtered
+        if not candidates:
+            return None
 
     # Приоритет: breakout > falling knife > confirming > range > neutral
     # По каждой категории берём самый свежий + самый высокий TF
@@ -296,7 +334,15 @@ def get_signal_emoji(pair: str, direction: str, at: datetime,
     tf = kl.get("tf", "?")
     age = kl.get("age_days")
     age_str = f", age {age}d" if age else ""
-    label = f"{label_prefix} {tf}{age_str}"
+    dist_pct = kl.get("_distance_pct")
+    if dist_pct is not None:
+        if abs(dist_pct) < 0.05:
+            dist_str = ", in zone"
+        else:
+            dist_str = f", {abs(dist_pct):.1f}% {'below' if dist_pct < 0 else 'above'}"
+    else:
+        dist_str = ""
+    label = f"{label_prefix} {tf}{age_str}{dist_str}"
 
     return {
         "emoji": emoji,
@@ -309,6 +355,8 @@ def get_signal_emoji(pair: str, direction: str, at: datetime,
         "zone_high": kl.get("zone_high"),
         "kl_time": kl.get("detected_at"),
         "current_price_at_kl": kl.get("current_price"),
+        "distance_pct": dist_pct,
+        "near_level": dist_pct is not None,
     }
 
 

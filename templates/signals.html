@@ -7314,6 +7314,7 @@ async function loadJournal() {
     // Раньше было 3 последовательных filterJournal() → 3× innerHTML tbody (до 3400 строк).
     const batch = items.slice(0, 300).map((s, i) => ({
       id: `j_${i}`, pair: s.pair || s.symbol, direction: s.direction, at: s.at,
+      entry: s.entry,  // для price-proximity check в KL enrich
     }));
     const payload = JSON.stringify({signals: batch});
     const jopt = { method: 'POST', headers: {'Content-Type': 'application/json'}, body: payload };
