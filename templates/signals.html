@@ -6891,7 +6891,20 @@ async function _pollDeltaBackfill() {
 </div>
 
 <div class="table-wrap">
-  <table>
+  <table style="table-layout:fixed;width:100%;">
+    <colgroup>
+      <col style="width:90px;">   <!-- Время -->
+      <col style="width:120px;">  <!-- Источник -->
+      <col style="width:110px;">  <!-- Пара -->
+      <col style="width:60px;">   <!-- Напр. -->
+      <col style="width:90px;">   <!-- Entry -->
+      <col>                       <!-- Паттерн (auto-fit оставшееся) -->
+      <col style="width:60px;">   <!-- Score -->
+      <col style="width:110px;">  <!-- Δ% (15m+1h двухстрочно) -->
+      <col style="width:110px;">  <!-- Резонанс (15m+1h) -->
+      <col style="width:50px;">   <!-- KC -->
+      <col style="width:50px;">   <!-- Pump -->
+    </colgroup>
     <thead>
       <tr>
         <th class="sortable" onclick="jSort('at_ts')" id="jSortTime">Время ▼</th>
@@ -6899,7 +6912,7 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('symbol')" id="jSortPair">Пара</th>
         <th class="sortable" onclick="jSort('direction')" id="jSortDir">Напр.</th>
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry">Entry</th>
-        <th class="sortable" onclick="jSort('score')" id="jSortScore">Паттерн/Score</th>
+        <th class="sortable" onclick="jSort('score')" id="jSortScore">Паттерн</th>
         <th class="sortable" onclick="jSort('q_score')" id="jSortQScore" title="Quality Score 0-100 (по 5 факторам с штрафами)">Score</th>
         <th class="sortable" onclick="jSort('delta_15m')" id="jSortDelta" title="Cluster Delta 15m / 1h (buy vs sell volume на свече сигнала, Binance Futures aggTrades)">Δ%</th>
         <th class="sortable" onclick="jSort('resonance_15m')" id="jSortResonance" title="Резонанс — N подряд свечей одного знака дельты (-5..+5). Положительное в LONG = попутный поток; отрицательное в LONG = поток против сделки">Резонанс</th>
@@ -7987,7 +8000,7 @@ function renderJournal(items, startIdx) {
       <td class="mono text-accent fw-700">${pairCell}</td>
       <td>${dir}</td>
       <td class="mono">${s.entry || '—'}</td>
-      <td class="mono" style="font-size:11px;">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}${window._klBadge ? window._klBadge(s._kl) : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
+      <td class="mono" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(s.pattern || '').replace(/"/g,'&quot;')}">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}${window._klBadge ? window._klBadge(s._kl) : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
       ${qsCell}
       ${deltaCell}
       ${resonanceCell}
