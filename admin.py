@@ -10172,6 +10172,34 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
         pass
 
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
+
+    # Inject q_score (HOT marker нужен на графиках по конкретной паре)
+    try:
+        from quality_score import compute_signal_score
+        from collections import defaultdict
+        ns_count: dict = defaultdict(int)
+        ns_sources = ('volume_surge', 'triple_confluence', 'vol_accum',
+                      'volcano', 'second_flip')
+        for it in items:
+            if it.get('source') in ns_sources:
+                bucket = (it.get('at_ts') or 0) // 1800
+                key = (it.get('symbol') or '', it.get('direction') or '', bucket)
+                ns_count[key] += 1
+        for it in items:
+            ctx = {}
+            if it.get('source') in ns_sources:
+                bucket = (it.get('at_ts') or 0) // 1800
+                key = (it.get('symbol') or '', it.get('direction') or '', bucket)
+                ctx['strategy_count'] = ns_count.get(key, 1)
+            if it.get('st_tier'):
+                ctx['tier'] = it['st_tier']
+            try:
+                it['q_score'] = compute_signal_score(it, ctx)
+            except Exception:
+                it['q_score'] = 0
+    except Exception:
+        pass
+
     return {"items": items, "symbol": sym_clean, "days": days, "count": len(items)}
 
 
