@@ -228,6 +228,25 @@
         }
         .bot-switcher::-webkit-scrollbar { height: 4px; }
         .bot-switcher::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.2); border-radius: 2px; }
+        .bot-counter {
+          display: inline-block;
+          margin-left: 6px;
+          padding: 1px 7px;
+          background: linear-gradient(135deg, #ff4d6d, #ff8c50);
+          color: #fff;
+          font-family: var(--font-mono);
+          font-size: 10px;
+          font-weight: 800;
+          border-radius: 10px;
+          line-height: 1.4;
+          vertical-align: middle;
+          box-shadow: 0 0 8px rgba(255, 77, 109, 0.5);
+          animation: bot-counter-pulse 2.5s infinite ease-in-out;
+        }
+        @keyframes bot-counter-pulse {
+          0%, 100% { box-shadow: 0 0 8px rgba(255, 77, 109, 0.5); }
+          50% { box-shadow: 0 0 14px rgba(255, 77, 109, 0.85); }
+        }
         .bot-switch {
             padding: 7px 12px;         /* было 14 */
             font-family: var(--font-mono);
@@ -2744,6 +2763,33 @@
 </script>
 <!-- ═══ END MARKET PHASE BANNER ═══ -->
 
+<!-- ═══ HOT NOW counter badge poller ═══ -->
+<script>
+  (async function pollHotCount() {
+    async function update() {
+      try {
+        const r = await fetch('/api/hot-signals/count?hours=3&min_score=60');
+        const d = await r.json();
+        const n = d.count || 0;
+        const badges = document.querySelectorAll('[data-bot-counter="hot_now"]');
+        for (const b of badges) {
+          if (n > 0) {
+            b.textContent = n;
+            b.style.display = 'inline-block';
+          } else {
+            b.style.display = 'none';
+          }
+        }
+      } catch(e) { /* ignore network errors */ }
+    }
+    // Initial + interval
+    await update();
+    if (window.safeInterval) window.safeInterval(update, 30000);
+    else setInterval(update, 30000);
+  })();
+</script>
+<!-- ═══ END HOT NOW counter ═══ -->
+
 <main class="main" style="margin-left:0;">
     <header class="topbar" style="padding:22px 40px;">
         <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
@@ -2776,7 +2822,7 @@
                 <span class="crypto-frame-lbl" style="position:absolute;top:-8px;left:14px;background:var(--dark);padding:0 8px;font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--buy);letter-spacing:0.25em;text-transform:uppercase;">⚡ CRYPTO</span>
                 <div class="bot-switcher" style="margin:0;">
                   {% for b in crypto_bots %}
-                  <a href="/signals?bot={{ b.id }}" class="bot-switch {% if bot == b.id %}active{% endif %}">{{ b.label }}</a>
+                  <a href="/signals?bot={{ b.id }}" data-bot="{{ b.id }}" class="bot-switch {% if bot == b.id %}active{% endif %}">{{ b.label }}<span class="bot-counter" data-bot-counter="{{ b.id }}" style="display:none;"></span></a>
                   {% endfor %}
                 </div>
               </div>

@@ -10662,6 +10662,37 @@ def _compute_journal_sync():
     return {"items": items}
 
 
+@app.get("/api/hot-signals/count")
+async def api_hot_signals_count(hours: int = 3, min_score: int = 60):
+    """Lightweight счётчик HOT signals для navigation badge.
+    Cache 30s через journal_cache (тот же что /api/hot-signals)."""
+    from cache_utils import journal_cache
+    full = await journal_cache.get_or_compute(
+        "journal_all",
+        lambda: asyncio.to_thread(_compute_journal_sync),
+    )
+    items = full.get("items", []) if isinstance(full, dict) else []
+    if not items:
+        return {"count": 0, "hours": hours, "min_score": min_score}
+    import time as _t
+    cutoff_ts = int(_t.time()) - hours * 3600
+    # Dedup by (pair, direction, 30min bucket)
+    seen = set()
+    count = 0
+    for s in items:
+        if (s.get('at_ts') or 0) < cutoff_ts:
+            continue
+        if (s.get('q_score') or 0) < min_score:
+            continue
+        key = (s.get('symbol') or '', s.get('direction') or '',
+               (s.get('at_ts') or 0) // 1800)
+        if key in seen:
+            continue
+        seen.add(key)
+        count += 1
+    return {"count": count, "hours": hours, "min_score": min_score}
+
+
 @app.get("/api/hot-signals")
 async def api_hot_signals(limit: int = 5, hours: int = 3):
     """🔥 HOT NOW — TOP signals by quality score за последние N часов.
