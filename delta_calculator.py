@@ -151,6 +151,124 @@ def _fetch_agg_trades(symbol: str, start_ms: int, end_ms: int) -> list[dict]:
     return out
 
 
+def _delta_from_klines_batch(symbol: str, tf: str,
+                             start_ms: int, end_ms: int) -> list[dict]:
+    """ПОЛНАЯ ИСТОРИЯ через /fapi/v1/klines (taker buy volume).
+
+    Binance kline возвращает per-candle:
+      [5] volume (base asset)
+      [9] taker buy base volume  ← это BUY (taker купил в ask)
+      sell_vol = volume - taker_buy
+
+    Это арифметически идентично _delta_from_trades(aggTrades), но:
+      - есть полная история (годы), не 24h как aggTrades
+      - 1 запрос → до 1500 свечей (vs 1000 aggTrades)
+      - в 100× быстрее для backfill
+
+    Возвращает список свечей: [{open_ms, delta_pct, buy_vol, sell_vol, n_trades}]
+    """
+    out: list[dict] = []
+    cursor = start_ms
+    max_pages = 30  # 30 × 1500 = 45000 свечей max — для 14d на 15m с запасом
+    for _ in range(max_pages):
+        try:
+            r = _http_client.get(
+                f"{BINANCE_FAPI}/fapi/v1/klines",
+                params={
+                    'symbol': symbol, 'interval': tf,
+                    'startTime': cursor, 'endTime': end_ms,
+                    'limit': 1500,
+                },
+            )
+            if r.status_code != 200:
+                logger.debug(f'[delta] klines {symbol} {tf} {r.status_code}: {r.text[:100]}')
+                break
+            batch = r.json()
+        except Exception as e:
+            logger.debug(f'[delta] klines fetch fail {symbol}/{tf}: {e}')
+            break
+        if not batch:
+            break
+        for k in batch:
+            try:
+                open_ms = int(k[0])
+                volume = float(k[5])
+                taker_buy = float(k[9])
+                n_trades = int(k[8]) if len(k) > 8 else 0
+                buy_vol = taker_buy
+                sell_vol = max(0.0, volume - taker_buy)
+                total = volume
+                delta_pct = ((buy_vol - sell_vol) / total * 100.0) if total > 0 else 0.0
+                out.append({
+                    'open_ms': open_ms,
+                    'buy_vol': round(buy_vol, 4),
+                    'sell_vol': round(sell_vol, 4),
+                    'delta_pct': round(delta_pct, 2),
+                    'n_trades': n_trades,
+                })
+            except Exception:
+                continue
+        last_close = int(batch[-1][6]) if len(batch[-1]) > 6 else 0
+        if last_close <= cursor or len(batch) < 1500:
+            break
+        cursor = last_close + 1
+        if cursor >= end_ms:
+            break
+    return out
+
+
+def bulk_fill_pair_history(pair: str, start_ms: int, end_ms: int,
+                           timeframes: tuple = ('15m', '1h')) -> dict:
+    """Массовый backfill: фетчит klines диапазона и пишет cluster_delta cache
+    для всех свечей. Используется для backfill всех signals из БД (год+ назад).
+
+    Возвращает {tf: count} — сколько свечей записано в cache.
+    """
+    sym = _normalize_symbol(pair)
+    if not sym:
+        return {}
+    _ensure_cache_indexes_once()
+    try:
+        from database import _get_db
+        col = _get_db().cluster_delta
+    except Exception:
+        return {}
+    result = {}
+    for tf in timeframes:
+        candles = _delta_from_klines_batch(sym, tf, start_ms, end_ms)
+        if not candles:
+            result[tf] = 0
+            continue
+        # bulk upsert
+        try:
+            from pymongo import UpdateOne
+            now = datetime.now(timezone.utc)
+            ops = [
+                UpdateOne(
+                    {'pair': pair, 'tf': tf, 'open_ms': c['open_ms']},
+                    {'$set': {
+                        'pair': pair, 'tf': tf, 'open_ms': c['open_ms'],
+                        'delta_pct': c['delta_pct'],
+                        'buy_vol': c['buy_vol'],
+                        'sell_vol': c['sell_vol'],
+                        'n_trades': c['n_trades'],
+                        'cached_at': now,
+                    }},
+                    upsert=True,
+                )
+                for c in candles
+            ]
+            if ops:
+                col.bulk_write(ops, ordered=False)
+                result[tf] = len(ops)
+            else:
+                result[tf] = 0
+        except Exception as e:
+            logger.debug(f'[delta] bulk write fail {pair}/{tf}: {e}')
+            result[tf] = 0
+    return result
+
+
 def _delta_from_trades(trades: list[dict]) -> dict:
     """Считает (buy_vol, sell_vol, delta_pct) по списку aggTrades.
     delta_pct = (buy - sell) / total * 100  → -100..+100

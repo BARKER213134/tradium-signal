@@ -6818,7 +6818,68 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jNearLevelBtn" onclick="_toggleNearLevel()" title="Только сигналы с entry визуально у уровня (🎯 in zone или ≤1.5%)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:120px;text-align:center;box-sizing:border-box;">🎯 У уровня · OFF</button>
   <button id="jHotOnlyBtn" onclick="_toggleHotOnly()" title="Только HOT setups (Quality Score ≥ 60)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">🔥 HOT ≥60 · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
+  <button id="jDeltaBackfillBtn" onclick="_startDeltaBackfill()" title="Запустить массовый backfill cluster_delta для всех сигналов в БД (через klines, полная история)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:140px;text-align:center;">📊 Δ Backfill</button>
 </div>
+
+<script>
+async function _startDeltaBackfill() {
+  const btn = document.getElementById('jDeltaBackfillBtn');
+  if (!btn) return;
+  if (btn.dataset.running === '1') {
+    alert('Backfill уже идёт');
+    return;
+  }
+  if (!confirm('Запустить массовый backfill дельты по всем сигналам за last 14 дней? Займёт ~5-15 мин в фоне.')) return;
+  btn.dataset.running = '1';
+  btn.textContent = '⏳ Запуск...';
+  try {
+    const r = await fetch('/api/cluster-delta/backfill-all?days=14', {method:'POST'});
+    const d = await r.json();
+    if (d.error) {
+      alert('Ошибка: ' + d.error);
+      btn.textContent = '📊 Δ Backfill';
+      btn.dataset.running = '';
+      return;
+    }
+    btn.textContent = `⏳ 0/${d.pairs_total}`;
+    _pollDeltaBackfill();
+  } catch(e) {
+    alert('Network error: ' + e.message);
+    btn.textContent = '📊 Δ Backfill';
+    btn.dataset.running = '';
+  }
+}
+
+async function _pollDeltaBackfill() {
+  const btn = document.getElementById('jDeltaBackfillBtn');
+  if (!btn) return;
+  try {
+    const r = await fetch('/api/cluster-delta/backfill-status');
+    const s = await r.json();
+    if (s.running) {
+      const eta = s.eta_sec != null ? `· ETA ${Math.ceil(s.eta_sec/60)}min` : '';
+      btn.textContent = `⏳ ${s.pairs_done}/${s.pairs_total} ${eta}`;
+      btn.style.color = '#ffd23e';
+      setTimeout(_pollDeltaBackfill, 3000);
+    } else {
+      btn.textContent = `✅ ${s.pairs_done}/${s.pairs_total} · ${s.candles_written} candles`;
+      btn.style.color = '#00e5a0';
+      btn.dataset.running = '';
+      // Force refresh journal через 2с
+      setTimeout(() => {
+        if (typeof loadJournal === 'function') loadJournal();
+      }, 2000);
+      setTimeout(() => {
+        btn.textContent = '📊 Δ Backfill';
+        btn.style.color = '';
+      }, 30000);
+    }
+  } catch(e) {
+    btn.textContent = '❌ Ошибка polling';
+    btn.dataset.running = '';
+  }
+}
+</script>
 
 <!-- Строка 3: Статистика + Пагинация -->
 <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 18px;border-bottom:1px solid var(--border);">

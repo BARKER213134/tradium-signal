@@ -10875,6 +10875,191 @@ async def api_cluster_delta(pair: str, at_ts: int = 0, tf: str = "15m,1h"):
     }
 
 
+# Глобальный статус массового backfill — для прогресса в UI
+_delta_backfill_status: dict = {
+    'running': False,
+    'started_at': None,
+    'pairs_total': 0,
+    'pairs_done': 0,
+    'candles_written': 0,
+    'errors': 0,
+    'last_pair': '',
+    'finished_at': None,
+}
+
+
+@app.post("/api/cluster-delta/backfill-all")
+async def api_cluster_delta_backfill_all(days: int = 14):
+    """МАССОВЫЙ backfill через klines (полная история, не 24h limit).
+
+    Сканирует ВСЕ signals в журнале за last N дней (max 60), группирует
+    по уникальным парам, фетчит klines (15m + 1h) и пишет в cluster_delta
+    cache. Запускается в background thread — endpoint возвращается мгновенно
+    с running=true. Прогресс через GET /api/cluster-delta/backfill-status.
+
+    Полностью НЕ влияет на сигналы — пишет в кэш дельт. Журнал автоматически
+    подхватит данные при следующем рендере (TTL 60с).
+    """
+    global _delta_backfill_status
+    if _delta_backfill_status.get('running'):
+        return {'error': 'already running', 'status': _delta_backfill_status}
+    days = max(1, min(60, int(days)))
+
+    # Собираем уникальные пары + временной диапазон по всем коллекциям журнала
+    def _collect_pairs():
+        from database import (_get_db, _signals, _anomalies, _confluence,
+                              utcnow as _u)
+        from datetime import timedelta as _td
+        since = _u() - _td(days=days)
+        # Pair → (min_ts, max_ts)
+        ranges: dict = {}
+        def _add(pair, ts):
+            if not pair or not ts:
+                return
+            if hasattr(ts, 'timestamp'):
+                ts_s = int(ts.timestamp())
+            else:
+                ts_s = int(ts)
+            if not ts_s:
+                return
+            cur = ranges.get(pair)
+            if cur is None:
+                ranges[pair] = (ts_s, ts_s)
+            else:
+                ranges[pair] = (min(cur[0], ts_s), max(cur[1], ts_s))
+        # Tradium
+        try:
+            for s in _signals().find({'source': 'tradium'},
+                                     {'pair': 1, 'received_at': 1,
+                                      'pattern_triggered_at': 1}).limit(1000):
+                _add(s.get('pair'), s.get('pattern_triggered_at') or s.get('received_at'))
+        except Exception:
+            pass
+        # Anomalies
+        try:
+            for s in _anomalies().find({'detected_at': {'$gte': since}},
+                                       {'symbol': 1, 'detected_at': 1}).limit(2000):
+                pair = s.get('symbol', '')
+                if pair and not pair.endswith('/USDT'):
+                    pair = pair.replace('USDT', '/USDT') if pair.endswith('USDT') else pair
+                _add(pair, s.get('detected_at'))
+        except Exception:
+            pass
+        # Confluence
+        try:
+            for s in _confluence().find({'detected_at': {'$gte': since}},
+                                        {'symbol': 1, 'detected_at': 1}).limit(2000):
+                pair = s.get('symbol', '')
+                if pair and not pair.endswith('/USDT'):
+                    pair = pair.replace('USDT', '/USDT') if pair.endswith('USDT') else pair
+                _add(pair, s.get('detected_at'))
+        except Exception:
+            pass
+        # CV signals (signals collection с source!=tradium)
+        try:
+            for s in _signals().find(
+                    {'source': {'$in': ['cryptovizor', 'cluster', 'paper',
+                                        'verified', 'supertrend']},
+                     'received_at': {'$gte': since}},
+                    {'pair': 1, 'received_at': 1}).limit(3000):
+                _add(s.get('pair'), s.get('received_at'))
+        except Exception:
+            pass
+        # New strategy signals
+        try:
+            nss = _get_db().new_strategy_signals
+            for s in nss.find({'created_at': {'$gte': since}},
+                              {'pair': 1, 'created_at': 1, 'st_flip_at': 1}).limit(5000):
+                _add(s.get('pair'), s.get('st_flip_at') or s.get('created_at'))
+        except Exception:
+            pass
+        # Supertrend signals (если есть отдельная коллекция)
+        try:
+            from database import _supertrend_signals
+            for s in _supertrend_signals().find({'created_at': {'$gte': since}},
+                                                 {'pair': 1, 'created_at': 1}).limit(3000):
+                _add(s.get('pair'), s.get('created_at'))
+        except Exception:
+            pass
+        return ranges
+
+    pair_ranges = await asyncio.to_thread(_collect_pairs)
+    if not pair_ranges:
+        return {'error': 'no signals found', 'days': days}
+
+    # Reset status & launch background thread
+    import time as _t
+    _delta_backfill_status.update({
+        'running': True,
+        'started_at': int(_t.time()),
+        'pairs_total': len(pair_ranges),
+        'pairs_done': 0,
+        'candles_written': 0,
+        'errors': 0,
+        'last_pair': '',
+        'finished_at': None,
+    })
+
+    def _worker():
+        global _delta_backfill_status
+        try:
+            from delta_calculator import bulk_fill_pair_history
+            for pair, (min_ts, max_ts) in pair_ranges.items():
+                try:
+                    # Запас по времени для резонанса (5 свечей до min_ts)
+                    # 1h × 5 = 5h в мс
+                    pad_ms = 5 * 3600 * 1000
+                    start_ms = (min_ts * 1000) - pad_ms
+                    end_ms = (max_ts * 1000) + 60 * 60 * 1000  # +1h после
+                    res = bulk_fill_pair_history(pair, start_ms, end_ms,
+                                                 timeframes=('15m', '1h'))
+                    written = sum(res.values()) if res else 0
+                    _delta_backfill_status['candles_written'] += written
+                    _delta_backfill_status['last_pair'] = pair
+                except Exception as e:
+                    _delta_backfill_status['errors'] += 1
+                    logging.getLogger(__name__).debug(f'[delta-backfill-all] {pair}: {e}')
+                _delta_backfill_status['pairs_done'] += 1
+                # Throttle между парами — Binance weight limit ~2400/min, klines weight=2,
+                # 30 пар × 4 calls = 120 weight = ОК; sleep 0.2с safety
+                _t.sleep(0.2)
+            # Инвалидируем journal cache чтобы UI сразу увидел данные
+            try:
+                from cache_utils import journal_cache
+                journal_cache.invalidate("journal_all")
+            except Exception:
+                pass
+        except Exception:
+            logging.getLogger(__name__).exception('[delta-backfill-all] worker fail')
+        finally:
+            _delta_backfill_status['running'] = False
+            _delta_backfill_status['finished_at'] = int(_t.time())
+
+    import threading as _th
+    _th.Thread(target=_worker, daemon=True, name='delta-backfill-all').start()
+    return {
+        'started': True,
+        'pairs_total': len(pair_ranges),
+        'days': days,
+        'message': 'Background backfill started. Poll /api/cluster-delta/backfill-status for progress.',
+    }
+
+
+@app.get("/api/cluster-delta/backfill-status")
+async def api_cluster_delta_backfill_status():
+    """Прогресс /api/cluster-delta/backfill-all."""
+    s = dict(_delta_backfill_status)
+    # ETA estimate
+    if s.get('running') and s.get('pairs_done', 0) > 0 and s.get('started_at'):
+        import time as _t
+        elapsed = max(1, int(_t.time()) - s['started_at'])
+        rate = s['pairs_done'] / elapsed
+        remaining = s.get('pairs_total', 0) - s['pairs_done']
+        s['eta_sec'] = int(remaining / rate) if rate > 0 else None
+        s['rate_pairs_per_min'] = round(rate * 60, 1)
+    return s
+
+
 @app.post("/api/cluster-delta/backfill")
 async def api_cluster_delta_backfill(hours: int = 24, limit: int = 100):
     """Дозаполняет cluster_delta для new_strategy_signals за last N часов
