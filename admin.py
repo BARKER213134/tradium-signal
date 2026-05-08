@@ -11093,6 +11093,42 @@ async def api_cluster_delta_backfill_all(days: int = 14):
     }
 
 
+@app.get("/api/cluster-delta/diag")
+async def api_cluster_delta_diag():
+    """Диагностика: deployed version + sample fast fetch."""
+    import time as _t, sys
+    out = {
+        'has_get_delta_snapshot_fast': False,
+        'has_inline_in_journal': False,
+        'sample_fetch': None,
+        'sample_fetch_time': None,
+    }
+    try:
+        from delta_calculator import get_delta_snapshot_fast
+        out['has_get_delta_snapshot_fast'] = True
+    except ImportError:
+        pass
+    # Check journal source code for inline fetch marker
+    import inspect
+    try:
+        src = inspect.getsource(_compute_journal_sync)
+        out['has_inline_in_journal'] = 'INLINE fast fill' in src or 'get_delta_snapshot_fast' in src
+        out['compute_journal_size_bytes'] = len(src)
+    except Exception as e:
+        out['inspect_err'] = str(e)
+    # Sample fetch
+    if out['has_get_delta_snapshot_fast']:
+        try:
+            t0 = _t.time()
+            from delta_calculator import get_delta_snapshot_fast
+            res = await asyncio.to_thread(get_delta_snapshot_fast, 'BIO/USDT', None)
+            out['sample_fetch_time'] = round(_t.time() - t0, 2)
+            out['sample_fetch'] = res
+        except Exception as e:
+            out['sample_err'] = repr(e)
+    return out
+
+
 @app.get("/api/cluster-delta/backfill-status")
 async def api_cluster_delta_backfill_status():
     """Прогресс /api/cluster-delta/backfill-all."""
