@@ -3740,6 +3740,16 @@ async def start_watcher():
     # [DISABLED] Cluster Delta auto-backfill — был источник 418 banов от
     # Binance fapi/klines. Теперь backfill только вручную через
     # POST /api/cluster-delta/backfill-cdn (статический CDN, без rate limit).
+
+    # Cluster Delta WebSocket — realtime klines stream от Binance Futures.
+    # WS подключение использует ОТДЕЛЬНЫЙ rate-bucket от REST → не банится.
+    # Покрывает today's signals что недоступны на CDN.
+    try:
+        import delta_websocket as dws
+        asyncio.create_task(dws.run_kline_stream())
+        logger.info("[delta-ws] kline stream task scheduled")
+    except Exception:
+        logger.exception("[delta-ws] failed to schedule")
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())
