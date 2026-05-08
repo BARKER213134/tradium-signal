@@ -11116,16 +11116,66 @@ async def api_cluster_delta_diag():
         out['compute_journal_size_bytes'] = len(src)
     except Exception as e:
         out['inspect_err'] = str(e)
-    # Sample fetch
+    # Sample fetch — multiple pairs + timestamps
     if out['has_get_delta_snapshot_fast']:
+        from delta_calculator import (get_delta_snapshot_fast,
+                                       _delta_from_klines_batch,
+                                       _normalize_symbol, _candle_open_ms,
+                                       BINANCE_FAPI, _http_client)
+        out['samples'] = {}
+        # Test direct HTTP first
         try:
             t0 = _t.time()
-            from delta_calculator import get_delta_snapshot_fast
-            res = await asyncio.to_thread(get_delta_snapshot_fast, 'BIO/USDT', None)
-            out['sample_fetch_time'] = round(_t.time() - t0, 2)
-            out['sample_fetch'] = res
+            r = _http_client.get(f"{BINANCE_FAPI}/fapi/v1/klines",
+                                 params={'symbol':'BIOUSDT','interval':'1h','limit':3})
+            out['raw_http'] = {
+                'status': r.status_code,
+                'time': round(_t.time()-t0, 3),
+                'first_candle_open': r.json()[0][0] if r.status_code==200 and r.json() else None,
+                'count': len(r.json()) if r.status_code==200 else 0,
+            }
         except Exception as e:
-            out['sample_err'] = repr(e)
+            out['raw_http_err'] = repr(e)
+        # Test _delta_from_klines_batch directly
+        try:
+            t0 = _t.time()
+            sym = _normalize_symbol('BIO/USDT')
+            now_ms = int(_t.time() * 1000)
+            sig_open = _candle_open_ms(now_ms, '1h')
+            start = sig_open - 5 * 60 * 60 * 1000
+            end = sig_open + 60 * 60 * 1000
+            candles = _delta_from_klines_batch(sym, '1h', start, end)
+            out['batch_test'] = {
+                'sym': sym,
+                'start': start,
+                'end': end,
+                'candles_count': len(candles),
+                'first': candles[0] if candles else None,
+                'time': round(_t.time()-t0, 3),
+            }
+        except Exception as e:
+            out['batch_err'] = repr(e)
+        # Test with explicit at_ts (1h ago — closed candle)
+        try:
+            t0 = _t.time()
+            ats_ms = int(_t.time() * 1000) - 3600 * 1000
+            res = await asyncio.to_thread(get_delta_snapshot_fast, 'BIO/USDT', ats_ms)
+            out['samples']['BIO_1h_ago'] = {
+                'time': round(_t.time()-t0, 3),
+                'res': res,
+            }
+        except Exception as e:
+            out['samples']['BIO_1h_ago_err'] = repr(e)
+        # Test BTC current
+        try:
+            t0 = _t.time()
+            res = await asyncio.to_thread(get_delta_snapshot_fast, 'BTC/USDT', None)
+            out['samples']['BTC_now'] = {
+                'time': round(_t.time()-t0, 3),
+                'res': res,
+            }
+        except Exception as e:
+            out['samples']['BTC_now_err'] = repr(e)
     return out
 
 
