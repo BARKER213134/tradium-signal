@@ -11191,6 +11191,126 @@ async def api_cluster_delta_diag():
     return out
 
 
+@app.post("/api/cluster-delta/backfill-cdn")
+async def api_cluster_delta_backfill_cdn(days: int = 14):
+    """МАССОВЫЙ backfill через Binance Vision CDN (БЕЗ rate limit, БЕЗ банов).
+
+    Скачивает daily klines ZIP'ы (https://data.binance.vision) для всех
+    уникальных пар × timeframes × дни. Текущий день недоступен на CDN —
+    для today используй /api/cluster-delta/backfill (REST aggTrades).
+
+    Запускается в background thread, прогресс через /backfill-status.
+    """
+    global _delta_backfill_status
+    if _delta_backfill_status.get('running'):
+        return {'error': 'already running', 'status': _delta_backfill_status}
+    days = max(1, min(60, int(days)))
+
+    def _collect():
+        from database import (_get_db, _signals, _anomalies, _confluence,
+                              utcnow as _u)
+        from datetime import timedelta as _td
+        since = _u() - _td(days=days)
+        pairs: set = set()
+        try:
+            for s in _signals().find(
+                {'$or': [{'source': 'tradium'},
+                         {'source': {'$in': ['cryptovizor', 'paper', 'cluster',
+                                              'verified', 'supertrend']},
+                          'received_at': {'$gte': since}}]},
+                {'pair': 1}).limit(10000):
+                if s.get('pair'):
+                    pairs.add(s['pair'])
+        except Exception:
+            pass
+        for col_name in ('anomalies', 'confluence'):
+            try:
+                for s in _get_db()[col_name].find({'detected_at': {'$gte': since}},
+                                                   {'symbol': 1}).limit(5000):
+                    sym = s.get('symbol', '')
+                    if sym and sym.endswith('USDT') and not sym.endswith('/USDT'):
+                        pairs.add(sym.replace('USDT', '/USDT'))
+            except Exception:
+                pass
+        for col_name in ('new_strategy_signals', 'supertrend_signals',
+                         'cv_flip_signals'):
+            try:
+                ts_field = ('flip_at' if col_name == 'supertrend_signals'
+                            else 'created_at')
+                for s in _get_db()[col_name].find({ts_field: {'$gte': since}},
+                                                   {'pair': 1}).limit(10000):
+                    if s.get('pair'):
+                        pairs.add(s['pair'])
+            except Exception:
+                pass
+        return sorted(pairs)
+
+    pairs = await asyncio.to_thread(_collect)
+    if not pairs:
+        return {'error': 'no pairs found', 'days': days}
+
+    import time as _t
+    _delta_backfill_status.update({
+        'running': True,
+        'started_at': int(_t.time()),
+        'pairs_total': len(pairs),
+        'pairs_done': 0,
+        'candles_written': 0,
+        'errors': 0,
+        'last_pair': '',
+        'finished_at': None,
+        'mode': 'cdn',
+    })
+
+    def _worker():
+        global _delta_backfill_status
+        try:
+            from delta_calculator import bulk_fill_pair_history_cdn
+            from datetime import datetime, timezone, timedelta as _td
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            end_dt = datetime.now(timezone.utc)
+            start_dt = end_dt - _td(days=days)
+
+            def _one(pair):
+                try:
+                    res = bulk_fill_pair_history_cdn(pair, start_dt, end_dt,
+                                                      timeframes=('15m', '1h'))
+                    return (pair, sum(res.values()) if res else 0, None)
+                except Exception as e:
+                    return (pair, 0, str(e))
+
+            # 20 workers — CDN это статика, тянет хорошо
+            with ThreadPoolExecutor(max_workers=20) as ex:
+                futs = {ex.submit(_one, p): p for p in pairs}
+                for f in as_completed(futs):
+                    pair, written, err = f.result()
+                    _delta_backfill_status['pairs_done'] += 1
+                    _delta_backfill_status['candles_written'] += written
+                    _delta_backfill_status['last_pair'] = pair
+                    if err:
+                        _delta_backfill_status['errors'] += 1
+            try:
+                from cache_utils import journal_cache
+                journal_cache.invalidate("journal_all")
+            except Exception:
+                pass
+        except Exception:
+            logging.getLogger(__name__).exception('[delta-cdn-backfill] fail')
+        finally:
+            _delta_backfill_status['running'] = False
+            _delta_backfill_status['finished_at'] = int(_t.time())
+
+    import threading as _th
+    _th.Thread(target=_worker, daemon=True, name='delta-cdn-backfill').start()
+    return {
+        'started': True,
+        'pairs_total': len(pairs),
+        'days': days,
+        'mode': 'cdn',
+        'message': 'CDN backfill started (no rate limits). Poll /api/cluster-delta/backfill-status.',
+    }
+
+
 @app.get("/api/cluster-delta/backfill-status")
 async def api_cluster_delta_backfill_status():
     """Прогресс /api/cluster-delta/backfill-all."""

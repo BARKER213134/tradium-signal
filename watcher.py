@@ -3737,14 +3737,9 @@ async def start_watcher():
         logger.info("[new-strategies] updater loop started")
     except Exception:
         logger.exception("[new-strategies] updater loop failed")
-    # Cluster Delta backfill — однократно при старте дозалить delta для
-    # сигналов последних 24h (aggTrades живут только 24h на Binance).
-    # Информативно: записывается в Mongo, на сигналы не влияет.
-    try:
-        asyncio.create_task(_cluster_delta_backfill_once())
-        logger.info("[cluster-delta] backfill task scheduled")
-    except Exception:
-        logger.exception("[cluster-delta] backfill failed to schedule")
+    # [DISABLED] Cluster Delta auto-backfill — был источник 418 banов от
+    # Binance fapi/klines. Теперь backfill только вручную через
+    # POST /api/cluster-delta/backfill-cdn (статический CDN, без rate limit).
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())

@@ -6829,11 +6829,11 @@ async function _startDeltaBackfill() {
     alert('Backfill уже идёт');
     return;
   }
-  if (!confirm('Запустить массовый backfill дельты по всем сигналам за last 14 дней? Займёт ~5-15 мин в фоне.')) return;
+  if (!confirm('Запустить массовый backfill дельты через Binance Vision CDN (без rate limit, без банов) за last 14 дней? ~5-10 мин.')) return;
   btn.dataset.running = '1';
   btn.textContent = '⏳ Запуск...';
   try {
-    const r = await fetch('/api/cluster-delta/backfill-all?days=14', {method:'POST'});
+    const r = await fetch('/api/cluster-delta/backfill-cdn?days=14', {method:'POST'});
     const d = await r.json();
     if (d.error) {
       alert('Ошибка: ' + d.error);

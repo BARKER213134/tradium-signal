@@ -151,6 +151,132 @@ def _fetch_agg_trades(symbol: str, start_ms: int, end_ms: int) -> list[dict]:
     return out
 
 
+# ─── Binance Vision CDN — статический хост, без rate limit ──────────
+# https://data.binance.vision/data/futures/um/daily/klines/SYMBOL/INTERVAL/SYMBOL-INTERVAL-DATE.zip
+# Содержит CSV: open_time,open,high,low,close,volume,close_time,quote_volume,
+#               count,taker_buy_volume,taker_buy_quote_volume,ignore
+# Обновляется ~24h после конца дня. Сегодняшний день недоступен — используй
+# REST для today, CDN для вчера и старше. Не банится Binance'ом никогда.
+BINANCE_VISION = "https://data.binance.vision"
+
+
+def _fetch_klines_cdn(symbol: str, tf: str, date_str: str) -> list[dict]:
+    """Скачивает daily klines ZIP с Binance Vision CDN.
+    date_str: 'YYYY-MM-DD'. Возвращает список свечей (формат _delta_from_klines_batch).
+    """
+    import io, zipfile, csv
+    url = (f"{BINANCE_VISION}/data/futures/um/daily/klines/"
+           f"{symbol}/{tf}/{symbol}-{tf}-{date_str}.zip")
+    out = []
+    try:
+        r = _http_client.get(url, timeout=20)
+        if r.status_code != 200:
+            return []
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        names = z.namelist()
+        if not names:
+            return []
+        with z.open(names[0]) as f:
+            rdr = csv.reader(io.TextIOWrapper(f, encoding='utf-8'))
+            for row in rdr:
+                # Skip header (если есть)
+                if not row or not row[0].isdigit():
+                    continue
+                try:
+                    open_ms = int(row[0])
+                    volume = float(row[5])
+                    n_trades = int(row[8]) if len(row) > 8 else 0
+                    taker_buy = float(row[9]) if len(row) > 9 else 0.0
+                    sell_vol = max(0.0, volume - taker_buy)
+                    delta_pct = ((taker_buy - sell_vol) / volume * 100.0) if volume > 0 else 0.0
+                    out.append({
+                        'open_ms': open_ms,
+                        'buy_vol': round(taker_buy, 4),
+                        'sell_vol': round(sell_vol, 4),
+                        'delta_pct': round(delta_pct, 2),
+                        'n_trades': n_trades,
+                    })
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.debug(f'[delta-cdn] {symbol}/{tf}/{date_str}: {e}')
+        return []
+    return out
+
+
+def bulk_fill_pair_history_cdn(pair: str, start_dt, end_dt,
+                               timeframes: tuple = ('15m', '1h')) -> dict:
+    """ПОЛНЫЙ backfill через CDN — без rate limit, без банов.
+
+    start_dt, end_dt: datetime UTC объекты (или таймстемпы в секундах).
+    Скачивает ZIP'ы по дням для каждой пары × timeframe, парсит и пишет
+    в cluster_delta cache. Текущий день пропускается (CDN ещё не имеет).
+
+    Возвращает {tf: count_candles_written}.
+    """
+    from datetime import datetime, timezone, timedelta as _td
+    import time as _t
+    sym = _normalize_symbol(pair)
+    if not sym:
+        return {}
+    # Normalize dates
+    if isinstance(start_dt, (int, float)):
+        start_dt = datetime.fromtimestamp(start_dt, tz=timezone.utc)
+    if isinstance(end_dt, (int, float)):
+        end_dt = datetime.fromtimestamp(end_dt, tz=timezone.utc)
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=timezone.utc)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    # Don't try today — CDN не имеет
+    today = datetime.now(timezone.utc).date()
+    end_date = min(end_dt.date(), today - _td(days=1))
+    if start_dt.date() > end_date:
+        return {}
+
+    try:
+        from database import _get_db
+        col = _get_db().cluster_delta
+        _ensure_cache_indexes_once()
+        from pymongo import UpdateOne
+    except Exception:
+        return {}
+    result = {}
+    for tf in timeframes:
+        ops = []
+        cur_date = start_dt.date()
+        while cur_date <= end_date:
+            date_str = cur_date.strftime('%Y-%m-%d')
+            candles = _fetch_klines_cdn(sym, tf, date_str)
+            now_dt = datetime.now(timezone.utc)
+            for c in candles:
+                ops.append(UpdateOne(
+                    {'pair': pair, 'tf': tf, 'open_ms': c['open_ms']},
+                    {'$set': {
+                        'pair': pair, 'tf': tf, 'open_ms': c['open_ms'],
+                        'delta_pct': c['delta_pct'],
+                        'buy_vol': c['buy_vol'],
+                        'sell_vol': c['sell_vol'],
+                        'n_trades': c['n_trades'],
+                        'cached_at': now_dt,
+                    }},
+                    upsert=True,
+                ))
+            cur_date += _td(days=1)
+        try:
+            if ops:
+                # Bulk write batches по 500 ops
+                for i in range(0, len(ops), 500):
+                    col.bulk_write(ops[i:i+500], ordered=False)
+                result[tf] = len(ops)
+            else:
+                result[tf] = 0
+        except Exception as e:
+            logger.debug(f'[delta-cdn] bulk write {pair}/{tf}: {e}')
+            result[tf] = 0
+    return result
+
+
 def _delta_from_klines_batch(symbol: str, tf: str,
                              start_ms: int, end_ms: int) -> list[dict]:
     """ПОЛНАЯ ИСТОРИЯ через /fapi/v1/klines (taker buy volume).
