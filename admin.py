@@ -10634,6 +10634,105 @@ def _compute_journal_sync():
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
 
+    # ─── Cluster Delta + Resonance enrichment (для ВСЕХ источников) ───
+    # Bulk-lookup cluster_delta cache по (pair, tf, candle_open_ms). Если
+    # кэш пустой — fire-and-forget background fetch (заполнится ко 2-му load).
+    try:
+        from delta_calculator import _candle_open_ms, get_delta_snapshot
+        from database import _get_db
+        cd_col = _get_db().cluster_delta
+        # Собираем уникальные (pair, tf, open_ms) для items с at_ts
+        wanted: dict = {}  # (pair, tf, open_ms) → list of items
+        for it in items:
+            ats = it.get('at_ts') or 0
+            pair = it.get('pair') or ''
+            if not (ats and pair):
+                continue
+            for tf in ('15m', '1h'):
+                open_ms = _candle_open_ms(ats * 1000, tf)
+                wanted.setdefault((pair, tf, open_ms), []).append((it, tf))
+        if wanted:
+            # Bulk find через $or — Mongo поддерживает up to 1000 conditions
+            # без проблем. Чанкуем чтобы не упереться в BSON 16MB.
+            keys = list(wanted.keys())
+            CHUNK = 200
+            cached_map: dict = {}
+            for i in range(0, len(keys), CHUNK):
+                conds = [
+                    {'pair': p, 'tf': t, 'open_ms': om}
+                    for (p, t, om) in keys[i:i+CHUNK]
+                ]
+                try:
+                    for doc in cd_col.find({'$or': conds},
+                                           {'pair':1,'tf':1,'open_ms':1,
+                                            'delta_pct':1,'buy_vol':1,
+                                            'sell_vol':1,'_id':0}):
+                        k = (doc.get('pair'), doc.get('tf'), doc.get('open_ms'))
+                        cached_map[k] = doc
+                except Exception:
+                    pass
+            # Распихиваем cached delta по items + считаем резонанс на лету
+            # (резонанс = N подряд свечей до сигнальной включительно)
+            from delta_calculator import RESONANCE_BARS, TF_MINUTES, _resonance_from_deltas
+            for it in items:
+                ats = it.get('at_ts') or 0
+                pair = it.get('pair') or ''
+                if not (ats and pair):
+                    continue
+                for tf in ('15m', '1h'):
+                    minutes = TF_MINUTES.get(tf, 15)
+                    sig_open = _candle_open_ms(ats * 1000, tf)
+                    sig_doc = cached_map.get((pair, tf, sig_open))
+                    if not sig_doc:
+                        continue
+                    # Уже было set из new_strategy_signals doc — не перезаписываем
+                    if it.get(f'delta_{tf}') is not None:
+                        continue
+                    it[f'delta_{tf}'] = sig_doc.get('delta_pct')
+                    # Резонанс: соберём N свечей до signal candle
+                    deltas: list[float] = []
+                    for j in range(RESONANCE_BARS - 1, -1, -1):
+                        bk = sig_open - j * minutes * 60 * 1000
+                        d = cached_map.get((pair, tf, bk))
+                        if d:
+                            deltas.append(d.get('delta_pct') or 0.0)
+                    if deltas:
+                        it[f'resonance_{tf}'] = _resonance_from_deltas(deltas)
+            # Background fill для miss'ов — берём только items за last 24h
+            # (старее aggTrades нет на Binance) и только pairs не залитые ещё.
+            import time as _t
+            now_s = int(_t.time())
+            cutoff_s = now_s - 24 * 3600
+            missing_keys: set = set()
+            for it in items:
+                ats = it.get('at_ts') or 0
+                pair = it.get('pair') or ''
+                if not (ats and pair) or ats < cutoff_s:
+                    continue
+                # У items с уже заполненной 15m или 1h не нужно
+                if it.get('delta_15m') is not None or it.get('delta_1h') is not None:
+                    continue
+                missing_keys.add((pair, ats))
+            if missing_keys:
+                # Background fill: thread с throttle. Не блокирует /api/journal.
+                # Огранчиваем 30 за раз — даём journal загрузиться быстро,
+                # остальные фетчатся при следующих рендерах (TTL journal_cache 60с).
+                import threading as _th
+                missing_list = list(missing_keys)[:30]
+                def _bg_fill():
+                    try:
+                        for (p, ts_s) in missing_list:
+                            try:
+                                get_delta_snapshot(p, ts_s * 1000)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                _th.Thread(target=_bg_fill, daemon=True,
+                          name='delta-bg-fill').start()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] delta enrich fail: {e}")
+
     # Quality Score 0-100 на каждый item (для HOT NOW + journal score column).
     # Считаем confluence count: сколько разных new_strategy сигналов на той
     # же паре + direction в окне 30 мин (для score bonus +3..+10).
