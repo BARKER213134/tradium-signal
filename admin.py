@@ -10714,28 +10714,29 @@ def _compute_journal_sync():
                 if it.get('delta_15m') is not None or it.get('delta_1h') is not None:
                     continue
                 inline_keys.add((pair, ats))
-            inline_list = list(inline_keys)[:15]  # хард-кап (aggTrades медленнее)
+            inline_list = list(inline_keys)[:30]  # больше пар т.к. signal-only fast
             inline_results: dict = {}
             if inline_list:
-                # Используем aggTrades-based fetcher (klines забанен Binance'ом
-                # из-за объёма backfill'ов — HTTP 418 на /fapi/v1/klines).
-                # aggTrades работает: отдельный rate-bucket, у нас weight 20×5 calls.
-                from delta_calculator import get_delta_snapshot_fast, get_delta_snapshot
+                # SIGNAL-ONLY (1 aggTrades call/TF): успевает в budget 5s.
+                # Klines забанен (HTTP 418) — fallback не работает быстро.
+                # Резонанс будет заполнен в bg fill для следующего рендера.
+                from delta_calculator import (get_signal_delta_only,
+                                                get_delta_snapshot_fast)
                 def _fetch_one(p, ts):
                     try:
-                        # Try fast (klines) first — если ban снят
+                        # Try klines fast first (если ban снят, всё успеет)
                         snap = get_delta_snapshot_fast(p, ts * 1000)
                         if snap and (snap.get('15m') or snap.get('1h')):
                             return (p, ts, snap)
-                        # Fallback на aggTrades
-                        snap = get_delta_snapshot(p, ts * 1000)
+                        # Fallback signal-only через aggTrades — быстрый
+                        snap = get_signal_delta_only(p, ts * 1000)
                         return (p, ts, snap)
                     except Exception:
                         return (p, ts, None)
                 try:
-                    with ThreadPoolExecutor(max_workers=8) as ex:
+                    with ThreadPoolExecutor(max_workers=12) as ex:
                         futs = [ex.submit(_fetch_one, p, ts) for (p, ts) in inline_list]
-                        for f in as_completed(futs, timeout=8.0):
+                        for f in as_completed(futs, timeout=5.0):
                             try:
                                 p, ts, snap = f.result()
                                 if snap:

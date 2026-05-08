@@ -474,6 +474,44 @@ def _resonance_from_deltas(deltas: list[float]) -> int:
     return count * sign
 
 
+def get_signal_delta_only(pair: str, at_ts_ms: Optional[int] = None,
+                          timeframes: tuple = ('15m', '1h')) -> dict:
+    """СУПЕР-БЫСТРАЯ версия: только delta_pct сигнальной свечи (без резонанса).
+
+    Делает 1 aggTrades call на TF (vs 5 в полной версии). Используется в
+    inline fetch journal API чтобы успеть в budget 8с для 15+ пар.
+
+    Резонанс заполняется потом фоном (background fill использует полную
+    версию + cache hits растут).
+    """
+    if at_ts_ms is None:
+        at_ts_ms = int(time.time() * 1000)
+    out = {}
+    for tf in timeframes:
+        try:
+            minutes = TF_MINUTES.get(tf)
+            if minutes is None:
+                out[tf] = None
+                continue
+            sig_open = _candle_open_ms(at_ts_ms, tf)
+            snap = _candle_delta(pair, tf, sig_open)
+            if not snap:
+                out[tf] = None
+                continue
+            out[tf] = {
+                'delta_pct': snap.get('delta_pct', 0),
+                'buy_vol': snap.get('buy_vol', 0),
+                'sell_vol': snap.get('sell_vol', 0),
+                'n_trades': snap.get('n_trades', 0),
+                'resonance': 0,  # заполнится в bg fill при следующем рендере
+                'resonance_window': 1,
+            }
+        except Exception as e:
+            logger.debug(f'[delta-signal-only] {pair}/{tf}: {e}')
+            out[tf] = None
+    return out
+
+
 def get_delta_snapshot_fast(pair: str, at_ts_ms: Optional[int] = None,
                             timeframes: tuple = ('15m', '1h')) -> dict:
     """БЫСТРАЯ версия через klines (1 запрос на TF → 5 свечей резонанса).
