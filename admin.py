@@ -10698,10 +10698,61 @@ def _compute_journal_sync():
                             deltas.append(d.get('delta_pct') or 0.0)
                     if deltas:
                         it[f'resonance_{tf}'] = _resonance_from_deltas(deltas)
-            # Background fill для miss'ов — берём только items за last 24h
-            # (старее aggTrades нет на Binance) и только pairs не залитые ещё.
+            # ─── INLINE fast fill для свежих сигналов (last 6h) ───
+            # Через klines (1 запрос/TF/пара = 5 свечей резонанса).
+            # Параллельно через ThreadPoolExecutor, бюджет 4с total.
             import time as _t
+            from concurrent.futures import ThreadPoolExecutor, as_completed
             now_s = int(_t.time())
+            recent_cutoff = now_s - 6 * 3600
+            inline_keys: set = set()
+            for it in items:
+                ats = it.get('at_ts') or 0
+                pair = it.get('pair') or ''
+                if not (ats and pair) or ats < recent_cutoff:
+                    continue
+                if it.get('delta_15m') is not None or it.get('delta_1h') is not None:
+                    continue
+                inline_keys.add((pair, ats))
+            inline_list = list(inline_keys)[:25]  # хард-кап
+            inline_results: dict = {}
+            if inline_list:
+                from delta_calculator import get_delta_snapshot_fast
+                def _fetch_one(p, ts):
+                    try:
+                        snap = get_delta_snapshot_fast(p, ts * 1000)
+                        return (p, ts, snap)
+                    except Exception:
+                        return (p, ts, None)
+                try:
+                    with ThreadPoolExecutor(max_workers=10) as ex:
+                        futs = [ex.submit(_fetch_one, p, ts) for (p, ts) in inline_list]
+                        for f in as_completed(futs, timeout=4.0):
+                            try:
+                                p, ts, snap = f.result()
+                                if snap:
+                                    inline_results[(p, ts)] = snap
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+                # Распихиваем результаты обратно в items
+                for it in items:
+                    ats = it.get('at_ts') or 0
+                    pair = it.get('pair') or ''
+                    snap = inline_results.get((pair, ats))
+                    if not snap:
+                        continue
+                    for tf in ('15m', '1h'):
+                        s = snap.get(tf)
+                        if not s:
+                            continue
+                        if it.get(f'delta_{tf}') is None:
+                            it[f'delta_{tf}'] = s.get('delta_pct')
+                        if it.get(f'resonance_{tf}') is None:
+                            it[f'resonance_{tf}'] = s.get('resonance')
+
+            # ─── Background fill для остальных miss'ов (last 24h) ───
             cutoff_s = now_s - 24 * 3600
             missing_keys: set = set()
             for it in items:
@@ -10709,21 +10760,18 @@ def _compute_journal_sync():
                 pair = it.get('pair') or ''
                 if not (ats and pair) or ats < cutoff_s:
                     continue
-                # У items с уже заполненной 15m или 1h не нужно
                 if it.get('delta_15m') is not None or it.get('delta_1h') is not None:
                     continue
                 missing_keys.add((pair, ats))
             if missing_keys:
-                # Background fill: thread с throttle. Не блокирует /api/journal.
-                # Огранчиваем 30 за раз — даём journal загрузиться быстро,
-                # остальные фетчатся при следующих рендерах (TTL journal_cache 60с).
                 import threading as _th
-                missing_list = list(missing_keys)[:30]
+                missing_list = list(missing_keys)[:50]
                 def _bg_fill():
                     try:
+                        from delta_calculator import get_delta_snapshot_fast
                         for (p, ts_s) in missing_list:
                             try:
-                                get_delta_snapshot(p, ts_s * 1000)
+                                get_delta_snapshot_fast(p, ts_s * 1000)
                             except Exception:
                                 pass
                     except Exception:

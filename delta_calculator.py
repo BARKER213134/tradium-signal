@@ -348,6 +348,92 @@ def _resonance_from_deltas(deltas: list[float]) -> int:
     return count * sign
 
 
+def get_delta_snapshot_fast(pair: str, at_ts_ms: Optional[int] = None,
+                            timeframes: tuple = ('15m', '1h')) -> dict:
+    """БЫСТРАЯ версия через klines (1 запрос на TF → 5 свечей резонанса).
+
+    В ~10× быстрее `get_delta_snapshot` (aggTrades) на одиночных вызовах.
+    Использовать для on-demand fill свежих сигналов в journal API.
+
+    Также пишет результат в cluster_delta cache.
+    """
+    if at_ts_ms is None:
+        at_ts_ms = int(time.time() * 1000)
+    sym = _normalize_symbol(pair)
+    if not sym:
+        return {tf: None for tf in timeframes}
+    out = {}
+    try:
+        from database import _get_db
+        cd_col = _get_db().cluster_delta
+        _ensure_cache_indexes_once()
+    except Exception:
+        cd_col = None
+    for tf in timeframes:
+        try:
+            minutes = TF_MINUTES.get(tf)
+            if minutes is None:
+                continue
+            sig_open = _candle_open_ms(at_ts_ms, tf)
+            # Берём (RESONANCE_BARS+1) свечей до signal candle включительно
+            start_ms = sig_open - RESONANCE_BARS * minutes * 60 * 1000
+            end_ms = sig_open + minutes * 60 * 1000
+            candles = _delta_from_klines_batch(sym, tf, start_ms, end_ms)
+            if not candles:
+                out[tf] = None
+                continue
+            by_open = {c['open_ms']: c for c in candles}
+            sig_doc = by_open.get(sig_open)
+            if not sig_doc:
+                out[tf] = None
+                continue
+            # Резонанс: соберём N свечей до signal candle
+            deltas: list[float] = []
+            for j in range(RESONANCE_BARS - 1, -1, -1):
+                bk = sig_open - j * minutes * 60 * 1000
+                if bk in by_open:
+                    deltas.append(by_open[bk].get('delta_pct') or 0.0)
+            out[tf] = {
+                'delta_pct': sig_doc.get('delta_pct', 0),
+                'buy_vol': sig_doc.get('buy_vol', 0),
+                'sell_vol': sig_doc.get('sell_vol', 0),
+                'n_trades': sig_doc.get('n_trades', 0),
+                'resonance': _resonance_from_deltas(deltas),
+                'resonance_window': len(deltas),
+            }
+            # Записываем в cache (только закрытые свечи)
+            if cd_col is not None:
+                now_ms = int(time.time() * 1000)
+                try:
+                    from pymongo import UpdateOne
+                    now_dt = datetime.now(timezone.utc)
+                    ops = []
+                    for c in candles:
+                        # Только закрытые свечи
+                        if c['open_ms'] + minutes * 60 * 1000 > now_ms:
+                            continue
+                        ops.append(UpdateOne(
+                            {'pair': pair, 'tf': tf, 'open_ms': c['open_ms']},
+                            {'$set': {
+                                'pair': pair, 'tf': tf, 'open_ms': c['open_ms'],
+                                'delta_pct': c['delta_pct'],
+                                'buy_vol': c['buy_vol'],
+                                'sell_vol': c['sell_vol'],
+                                'n_trades': c['n_trades'],
+                                'cached_at': now_dt,
+                            }},
+                            upsert=True,
+                        ))
+                    if ops:
+                        cd_col.bulk_write(ops, ordered=False)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f'[delta-fast] {pair}/{tf}: {e}')
+            out[tf] = None
+    return out
+
+
 def get_delta_snapshot(pair: str, at_ts_ms: Optional[int] = None,
                        timeframes: tuple = ('15m', '1h')) -> dict:
     """Главный entry-point: для пары на момент at_ts_ms возвращает
