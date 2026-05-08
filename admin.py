@@ -10714,20 +10714,28 @@ def _compute_journal_sync():
                 if it.get('delta_15m') is not None or it.get('delta_1h') is not None:
                     continue
                 inline_keys.add((pair, ats))
-            inline_list = list(inline_keys)[:25]  # хард-кап
+            inline_list = list(inline_keys)[:15]  # хард-кап (aggTrades медленнее)
             inline_results: dict = {}
             if inline_list:
-                from delta_calculator import get_delta_snapshot_fast
+                # Используем aggTrades-based fetcher (klines забанен Binance'ом
+                # из-за объёма backfill'ов — HTTP 418 на /fapi/v1/klines).
+                # aggTrades работает: отдельный rate-bucket, у нас weight 20×5 calls.
+                from delta_calculator import get_delta_snapshot_fast, get_delta_snapshot
                 def _fetch_one(p, ts):
                     try:
+                        # Try fast (klines) first — если ban снят
                         snap = get_delta_snapshot_fast(p, ts * 1000)
+                        if snap and (snap.get('15m') or snap.get('1h')):
+                            return (p, ts, snap)
+                        # Fallback на aggTrades
+                        snap = get_delta_snapshot(p, ts * 1000)
                         return (p, ts, snap)
                     except Exception:
                         return (p, ts, None)
                 try:
-                    with ThreadPoolExecutor(max_workers=10) as ex:
+                    with ThreadPoolExecutor(max_workers=8) as ex:
                         futs = [ex.submit(_fetch_one, p, ts) for (p, ts) in inline_list]
-                        for f in as_completed(futs, timeout=4.0):
+                        for f in as_completed(futs, timeout=8.0):
                             try:
                                 p, ts, snap = f.result()
                                 if snap:
@@ -10765,13 +10773,17 @@ def _compute_journal_sync():
                 missing_keys.add((pair, ats))
             if missing_keys:
                 import threading as _th
-                missing_list = list(missing_keys)[:50]
+                missing_list = list(missing_keys)[:30]
                 def _bg_fill():
                     try:
-                        from delta_calculator import get_delta_snapshot_fast
+                        from delta_calculator import (get_delta_snapshot_fast,
+                                                       get_delta_snapshot)
                         for (p, ts_s) in missing_list:
                             try:
-                                get_delta_snapshot_fast(p, ts_s * 1000)
+                                # Try klines first, fallback to aggTrades
+                                snap = get_delta_snapshot_fast(p, ts_s * 1000)
+                                if not (snap and (snap.get('15m') or snap.get('1h'))):
+                                    get_delta_snapshot(p, ts_s * 1000)
                             except Exception:
                                 pass
                     except Exception:
