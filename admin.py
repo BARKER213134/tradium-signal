@@ -10622,6 +10622,11 @@ def _compute_journal_sync():
                 "rr": n.get("tp_R"),
                 "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
                 "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+                # Cluster Delta + Resonance (информативно, не влияет на сигналы)
+                "delta_15m": n.get("delta_15m"),
+                "delta_1h":  n.get("delta_1h"),
+                "resonance_15m": n.get("resonance_15m"),
+                "resonance_1h":  n.get("resonance_1h"),
             })
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] new_strategies fetch fail: {e}")
@@ -10746,6 +10751,97 @@ async def api_hot_signals(limit: int = 5, hours: int = 3):
     items = await _compute()
     return {"items": items, "count": len(items),
             "hours": hours, "limit": limit, "now_ts": int(now)}
+
+
+@app.get("/api/cluster-delta")
+async def api_cluster_delta(pair: str, at_ts: int = 0, tf: str = "15m,1h"):
+    """Cluster Delta + Resonance snapshot (Binance Futures aggTrades).
+
+    pair: BTC/USDT or BTC (auto-normalized to BTCUSDT)
+    at_ts: signal timestamp в seconds UTC (0 = сейчас)
+    tf: comma-separated, default '15m,1h'
+
+    Returns: {pair, at_ts, snapshot: {15m: {...}, 1h: {...}}}
+    """
+    from delta_calculator import get_delta_snapshot_async
+    timeframes = tuple(t.strip() for t in (tf or "").split(",") if t.strip())
+    if not timeframes:
+        timeframes = ('15m', '1h')
+    at_ts_ms = int(at_ts) * 1000 if at_ts else None
+    snap = await get_delta_snapshot_async(pair, at_ts_ms, timeframes)
+    return {
+        "pair": pair,
+        "at_ts": at_ts,
+        "snapshot": snap,
+    }
+
+
+@app.post("/api/cluster-delta/backfill")
+async def api_cluster_delta_backfill(hours: int = 24, limit: int = 100):
+    """Дозаполняет cluster_delta для new_strategy_signals за last N часов
+    у которых ещё нет delta_15m. aggTrades живут только ~24h на Binance —
+    старее не получится.
+
+    hours: окно (max 24)
+    limit: max сигналов за вызов (default 100)
+    """
+    from database import _get_db, utcnow
+    from delta_calculator import get_delta_snapshot_async
+    from datetime import timedelta as _td
+    hours = max(1, min(24, int(hours)))
+    limit = max(1, min(500, int(limit)))
+    col = _get_db().new_strategy_signals
+    since = utcnow() - _td(hours=hours)
+    # Не было ещё delta — дозаполняем. Группируем по (pair, st_flip_at) чтобы 1
+    # HTTP вызов на пару+момент.
+    cursor = col.find({
+        'created_at': {'$gte': since},
+        'delta_15m': {'$exists': False},
+    }).limit(limit)
+    docs = list(cursor)
+    if not docs:
+        return {"processed": 0, "filled": 0, "hours": hours}
+    by_key: dict = {}
+    for d in docs:
+        flip_at = d.get('st_flip_at') or d.get('created_at')
+        if not flip_at:
+            continue
+        key = (d.get('pair', ''), int(flip_at.timestamp()) if hasattr(flip_at, 'timestamp') else 0)
+        by_key.setdefault(key, []).append(d)
+    filled = 0
+    for (pair, ts_s), grp in by_key.items():
+        if not pair or not ts_s:
+            continue
+        try:
+            snap = await get_delta_snapshot_async(pair, ts_s * 1000)
+            if not snap:
+                continue
+            d15 = (snap.get('15m') or {}).get('delta_pct')
+            d1h = (snap.get('1h')  or {}).get('delta_pct')
+            r15 = (snap.get('15m') or {}).get('resonance')
+            r1h = (snap.get('1h')  or {}).get('resonance')
+            ids = [doc['_id'] for doc in grp]
+            def _save():
+                col.update_many(
+                    {'_id': {'$in': ids}},
+                    {'$set': {
+                        'cluster_delta': snap,
+                        'delta_15m': d15, 'delta_1h': d1h,
+                        'resonance_15m': r15, 'resonance_1h': r1h,
+                    }},
+                )
+            await asyncio.to_thread(_save)
+            filled += len(grp)
+        except Exception as e:
+            logging.getLogger(__name__).debug(f'[delta-backfill] {pair}: {e}')
+            continue
+    # Инвалидируем journal cache чтобы UI сразу показал новые поля
+    try:
+        from cache_utils import journal_cache
+        journal_cache.invalidate("journal_all")
+    except Exception:
+        pass
+    return {"processed": len(docs), "filled": filled, "hours": hours}
 
 
 # Серверный кеш для /api/journal-candles (TTL per TF)

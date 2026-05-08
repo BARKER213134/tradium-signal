@@ -545,6 +545,10 @@ async def run_detectors_on_flip(pair: str, direction: str, entry: float,
     # Persist all triggered to Mongo
     if triggered:
         await _save_strategy_signals(triggered, flip_ts, signal_id, tier)
+        # Считаем cluster_delta + резонанс параллельно — для каждой
+        # уникальной пары (несколько стратегий на одной паре = 1 запрос).
+        # Информативно: записывается в Mongo, на генерацию сигналов не влияет.
+        asyncio.create_task(_attach_delta_for_triggered(triggered, flip_ts))
         # Send Telegram alerts (BOT13 для всех + BOT15 если HOT)
         for sig in triggered:
             asyncio.create_task(_send_strategy_alert(sig))
@@ -767,6 +771,64 @@ async def update_waiting_outcomes() -> dict:
     if updated:
         logger.info(f'[new-strategies] updated {updated} outcomes ({timeouts} timeouts)')
     return {'checked': len(waiting), 'updated': updated, 'timeouts': timeouts}
+
+
+async def _attach_delta_for_triggered(triggered: list[dict],
+                                      flip_ts: datetime) -> None:
+    """Считает cluster_delta для каждой уникальной пары и пишет в
+    new_strategy_signals doc. Информативно — не влияет на сигналы.
+
+    flip_ts используется как at_ts для свечи сигнала.
+    """
+    if not triggered:
+        return
+    try:
+        from delta_calculator import get_delta_snapshot_async
+        from database import _get_db
+    except Exception as e:
+        logger.debug(f'[delta] import fail: {e}')
+        return
+    # at_ts в ms
+    if flip_ts.tzinfo is None:
+        at_ts_ms = int(flip_ts.replace(tzinfo=timezone.utc).timestamp() * 1000)
+    else:
+        at_ts_ms = int(flip_ts.timestamp() * 1000)
+    # Группируем по pair (один HTTP вызов на пару, не на стратегию)
+    by_pair: dict[str, list[dict]] = {}
+    for sig in triggered:
+        by_pair.setdefault(sig['pair'], []).append(sig)
+
+    async def _one(pair: str, sigs: list[dict]):
+        try:
+            snap = await get_delta_snapshot_async(pair, at_ts_ms)
+            if not snap:
+                return
+            # Пишем во все docs этой пары через to_thread
+            def _save():
+                col = _get_db().new_strategy_signals
+                for s in sigs:
+                    try:
+                        col.update_one(
+                            {'pair': pair, 'direction': s['direction'],
+                             'strategy': s['strategy'],
+                             'st_flip_at': flip_ts.replace(tzinfo=None)
+                                if flip_ts.tzinfo else flip_ts},
+                            {'$set': {
+                                'cluster_delta': snap,
+                                'delta_15m': (snap.get('15m') or {}).get('delta_pct'),
+                                'delta_1h':  (snap.get('1h')  or {}).get('delta_pct'),
+                                'resonance_15m': (snap.get('15m') or {}).get('resonance'),
+                                'resonance_1h':  (snap.get('1h')  or {}).get('resonance'),
+                            }},
+                        )
+                    except Exception:
+                        pass
+            await asyncio.to_thread(_save)
+        except Exception as e:
+            logger.debug(f'[delta] attach fail {pair}: {e}')
+
+    await asyncio.gather(*[_one(p, sigs) for p, sigs in by_pair.items()],
+                         return_exceptions=True)
 
 
 async def _maybe_hot_alert(sig: dict) -> None:

@@ -6840,12 +6840,14 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry">Entry</th>
         <th class="sortable" onclick="jSort('score')" id="jSortScore">Паттерн/Score</th>
         <th class="sortable" onclick="jSort('q_score')" id="jSortQScore" title="Quality Score 0-100 (по 5 факторам с штрафами)">Score</th>
+        <th class="sortable" onclick="jSort('delta_15m')" id="jSortDelta" title="Cluster Delta 15m / 1h (buy vs sell volume на свече сигнала, Binance Futures aggTrades)">Δ%</th>
+        <th class="sortable" onclick="jSort('resonance_15m')" id="jSortResonance" title="Резонанс — N подряд свечей одного знака дельты (-5..+5). Положительное в LONG = попутный поток; отрицательное в LONG = поток против сделки">Резонанс</th>
         <th class="sortable" onclick="jSort('st_passed')" id="jSortKC">KC</th>
         <th class="sortable" onclick="jSort('pump_score')" id="jSortPump">Pump</th>
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="9" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="11" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -6949,6 +6951,30 @@ async function hotLoad() {
       const fmtP = (v) => v == null ? '—' : (v < 0.01 ? v.toFixed(8) : v < 1 ? v.toFixed(5) : v.toFixed(2));
       const slPct = (entry && sl) ? ((sl - entry) / entry * 100).toFixed(1) : null;
       const tpPct = (entry && tp) ? ((tp - entry) / entry * 100).toFixed(1) : null;
+      // Cluster Delta + Resonance мини-блок
+      const renderDeltaBlock = () => {
+        const d15 = s.delta_15m, d1h = s.delta_1h;
+        const r15 = s.resonance_15m, r1h = s.resonance_1h;
+        if (d15 == null && d1h == null && r15 == null && r1h == null) {
+          return '<div style="color:var(--muted);font-size:10px;">Δ: —</div>';
+        }
+        const matchClr = (r) => {
+          if (r == null || r === 0) return '#aaa';
+          if (s.direction === 'LONG' && r > 0)  return r >= 4 ? '#00e5a0' : '#88d8a3';
+          if (s.direction === 'SHORT' && r < 0) return r <= -4 ? '#00e5a0' : '#88d8a3';
+          if (s.direction === 'LONG' && r < 0)  return r <= -3 ? '#ff4d6d' : '#ff9d6e';
+          if (s.direction === 'SHORT' && r > 0) return r >= 3  ? '#ff4d6d' : '#ff9d6e';
+          return '#aaa';
+        };
+        const dClr = (v) => v == null ? '#555' :
+          v >= 5 ? '#00e5a0' : v >= 1 ? '#88d8a3' : v >= -1 ? '#aaa' : v >= -5 ? '#ff9d6e' : '#ff4d6d';
+        const fD = (v) => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+        const fR = (r) => r == null ? '—' : (r >= 0 ? '+' : '') + r;
+        return `<div style="font-size:10px;line-height:1.5;" title="Δ% buy vs sell + резонанс N подряд свечей одного знака. Зелёное = поток в сторону сделки">
+          <div>15m <span style="color:${dClr(d15)};">${fD(d15)}</span> · <span style="color:${matchClr(r15)};font-weight:700;">${fR(r15)}</span></div>
+          <div>1h <span style="color:${dClr(d1h)};">${fD(d1h)}</span> · <span style="color:${matchClr(r1h)};font-weight:700;">${fR(r1h)}</span></div>
+        </div>`;
+      };
       return `<div class="hot-card" onclick="hotOpenChart(${idx})">
         <div class="score-badge" style="background:${scColor}22;border:2px solid ${scColor};color:${scColor};">
           <div>${sc}</div>
@@ -6963,6 +6989,7 @@ async function hotLoad() {
           <div class="src-line">${(s.pattern || s.source || '')}${klBadge}</div>
         </div>
         <div class="strategy-stack">${stack}</div>
+        <div style="min-width:120px;">${renderDeltaBlock()}</div>
         <div class="price-info">
           <div>Entry: <b style="color:var(--text);">${fmtP(entry)}</b></div>
           ${sl != null ? `<div>SL: <span style="color:#ff5e9c;">${fmtP(sl)}</span> ${slPct ? `(${slPct}%)` : ''}</div>` : ''}
@@ -7838,7 +7865,7 @@ function renderJournal(items, startIdx) {
   startIdx = startIdx || 0;
   const tbody = document.getElementById('jBody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
     return;
   }
   tbody.innerHTML = items.map((s, i) => {
@@ -7888,6 +7915,11 @@ function renderJournal(items, startIdx) {
     const qsCell = qs > 0
       ? `<td class="mono" style="text-align:center;color:${qsClr};font-weight:700;font-size:12px;" title="Quality Score">${qs}</td>`
       : `<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>`;
+    // Cluster Delta + Resonance (информативно, не влияет на сигналы)
+    const deltaCell = window._renderDeltaCell ? window._renderDeltaCell(s) :
+      '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    const resonanceCell = window._renderResonanceCell ? window._renderResonanceCell(s) :
+      '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
       <td class="mono text-muted" style="font-size:11px;">${time}</td>
       <td style="font-size:11px;">${srcBadge} ${srcName}</td>
@@ -7896,11 +7928,63 @@ function renderJournal(items, startIdx) {
       <td class="mono">${s.entry || '—'}</td>
       <td class="mono" style="font-size:11px;">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}${window._klBadge ? window._klBadge(s._kl) : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
       ${qsCell}
+      ${deltaCell}
+      ${resonanceCell}
       <td style="${kcCellStyle}">${kcMark}</td>
       <td>${pumpMark}</td>
     </tr>`;
   }).join('');
 }
+
+// ─── Delta + Resonance UI helpers (информативные колонки) ───
+window._renderDeltaCell = function(s) {
+  const d15 = s.delta_15m;
+  const d1h = s.delta_1h;
+  if (d15 == null && d1h == null) {
+    // Lazy on-demand load (старый сигнал без cached данных)
+    return '<td class="mono text-muted" style="text-align:center;font-size:11px;cursor:help;" title="Нет данных дельты (старый сигнал или Binance Bybit-only)">—</td>';
+  }
+  const fmt = (v) => v == null ? '<span style="color:#555">—</span>' :
+    `<span style="color:${v >= 5 ? '#00e5a0' : v >= 1 ? '#88d8a3' : v >= -1 ? '#aaa' : v >= -5 ? '#ff9d6e' : '#ff4d6d'};">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+  return `<td class="mono" style="text-align:center;font-size:10px;line-height:1.4;" title="Δ% buy vs sell на свече сигнала. 15m / 1h (Binance Futures aggTrades)">
+    <div>15m: ${fmt(d15)}</div>
+    <div>1h: ${fmt(d1h)}</div>
+  </td>`;
+};
+
+window._renderResonanceCell = function(s) {
+  const r15 = s.resonance_15m;
+  const r1h = s.resonance_1h;
+  if (r15 == null && r1h == null) {
+    return '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+  }
+  const dir = (s.direction || '').toUpperCase();
+  // Если резонанс в направлении сделки — зелёное
+  const matchDir = (r) => {
+    if (r == null || r === 0) return '#aaa';
+    if (dir === 'LONG' && r > 0)  return r >= 4 ? '#00e5a0' : '#88d8a3';
+    if (dir === 'SHORT' && r < 0) return r <= -4 ? '#00e5a0' : '#88d8a3';
+    if (dir === 'LONG' && r < 0)  return r <= -3 ? '#ff4d6d' : '#ff9d6e';
+    if (dir === 'SHORT' && r > 0) return r >= 3  ? '#ff4d6d' : '#ff9d6e';
+    return '#aaa';
+  };
+  const emoji = (r) => {
+    if (r == null) return '—';
+    if (r >= 4) return '🔥';
+    if (r >= 2) return '🟢';
+    if (r >= 1) return '↑';
+    if (r === 0) return '⚪';
+    if (r >= -1) return '↓';
+    if (r >= -3) return '🔴';
+    return '❄️';
+  };
+  const fmt = (r) => r == null ? '<span style="color:#555">—</span>' :
+    `<span style="color:${matchDir(r)};font-weight:700;">${r >= 0 ? '+' : ''}${r}</span> <span style="font-size:10px;">${emoji(r)}</span>`;
+  return `<td class="mono" style="text-align:center;font-size:10px;line-height:1.4;" title="Резонанс: N подряд свечей одного знака дельты (-5..+5). Зелёное = поток в сторону сделки, красное = против">
+    <div>15m: ${fmt(r15)}</div>
+    <div>1h: ${fmt(r1h)}</div>
+  </td>`;
+};
 
 let _currentJournalIdx = -1;
 let _jSortField = 'at_ts';
@@ -7916,8 +8000,8 @@ function jSort(field) {
     _jSortAsc = field === 'symbol' || field === 'source' || field === 'direction'; // alpha = asc default
   }
   // Update header arrows
-  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',st_passed:'jSortKC',pump_score:'jSortPump'};
-  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн/Score',st_passed:'KC',pump_score:'Pump'};
+  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',delta_15m:'jSortDelta',resonance_15m:'jSortResonance',st_passed:'jSortKC',pump_score:'jSortPump'};
+  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн/Score',q_score:'Score',delta_15m:'Δ%',resonance_15m:'Резонанс',st_passed:'KC',pump_score:'Pump'};
   for (const [f, id] of Object.entries(cols)) {
     const el = document.getElementById(id);
     if (el) el.textContent = labels[f] + (f === _jSortField ? (_jSortAsc ? ' ▲' : ' ▼') : '');

@@ -3435,6 +3435,83 @@ async def _new_strategies_updater_loop():
         await _asyncio.sleep(300)  # каждые 5 минут
 
 
+async def _cluster_delta_backfill_once():
+    """Однократный backfill cluster_delta для сигналов последних 24 часов.
+    Запускается один раз при старте watcher с задержкой 90с (даём время
+    Mongo + HTTP клиентам прогреться).
+
+    aggTrades живут только ~24h на Binance, поэтому backfill > 24h не нужен.
+    Информативно — записывается в new_strategy_signals.delta_15m / delta_1h /
+    resonance_15m / resonance_1h. На генерацию сигналов не влияет.
+    """
+    import asyncio as _asyncio
+    await _asyncio.sleep(90)
+    try:
+        from database import _get_db, utcnow
+        from datetime import timedelta as _td
+        from delta_calculator import get_delta_snapshot_async
+        col = _get_db().new_strategy_signals
+        since = utcnow() - _td(hours=24)
+        cursor = col.find({
+            'created_at': {'$gte': since},
+            'delta_15m': {'$exists': False},
+        }).limit(200)
+        docs = list(cursor)
+        if not docs:
+            logger.info("[cluster-delta] backfill: нечего дозаливать")
+            return
+        # Группируем по (pair, st_flip_at) — 1 fetch на пару+момент
+        by_key: dict = {}
+        for d in docs:
+            flip_at = d.get('st_flip_at') or d.get('created_at')
+            if not flip_at:
+                continue
+            ts_s = int(flip_at.timestamp()) if hasattr(flip_at, 'timestamp') else 0
+            key = (d.get('pair', ''), ts_s)
+            by_key.setdefault(key, []).append(d)
+        filled = 0
+        for (pair, ts_s), grp in by_key.items():
+            if not pair or not ts_s:
+                continue
+            try:
+                snap = await get_delta_snapshot_async(pair, ts_s * 1000)
+                if not snap:
+                    continue
+                d15 = (snap.get('15m') or {}).get('delta_pct')
+                d1h = (snap.get('1h')  or {}).get('delta_pct')
+                r15 = (snap.get('15m') or {}).get('resonance')
+                r1h = (snap.get('1h')  or {}).get('resonance')
+                ids = [doc['_id'] for doc in grp]
+                def _save():
+                    col.update_many(
+                        {'_id': {'$in': ids}},
+                        {'$set': {
+                            'cluster_delta': snap,
+                            'delta_15m': d15, 'delta_1h': d1h,
+                            'resonance_15m': r15, 'resonance_1h': r1h,
+                        }},
+                    )
+                await _asyncio.to_thread(_save)
+                filled += len(grp)
+            except Exception as e:
+                logger.debug(f'[cluster-delta] backfill {pair}: {e}')
+                continue
+            # Throttle между парами чтобы не задавить Binance rate-limit
+            await _asyncio.sleep(0.3)
+        logger.info(
+            f"[cluster-delta] backfill done: {filled}/{len(docs)} filled "
+            f"({len(by_key)} unique pair+ts)"
+        )
+        # Инвалидируем journal cache чтобы UI сразу показал новые поля
+        try:
+            from cache_utils import journal_cache
+            journal_cache.invalidate("journal_all")
+        except Exception:
+            pass
+    except Exception:
+        logger.exception("[cluster-delta] backfill fail")
+
+
 async def _live_balance_refresh_loop():
     """Каждые 5 минут подтягивает реальный exchange balance в account.balance.
     Это гарантирует что UI показывает актуальный free на бирже, не paper-balance."""
@@ -3660,6 +3737,14 @@ async def start_watcher():
         logger.info("[new-strategies] updater loop started")
     except Exception:
         logger.exception("[new-strategies] updater loop failed")
+    # Cluster Delta backfill — однократно при старте дозалить delta для
+    # сигналов последних 24h (aggTrades живут только 24h на Binance).
+    # Информативно: записывается в Mongo, на сигналы не влияет.
+    try:
+        asyncio.create_task(_cluster_delta_backfill_once())
+        logger.info("[cluster-delta] backfill task scheduled")
+    except Exception:
+        logger.exception("[cluster-delta] backfill failed to schedule")
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())
