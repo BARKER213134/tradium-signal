@@ -10600,7 +10600,93 @@ def _compute_journal_sync():
 
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
+
+    # Quality Score 0-100 на каждый item (для HOT NOW + journal score column).
+    # Считаем confluence count: сколько разных new_strategy сигналов на той
+    # же паре + direction в окне 30 мин (для score bonus +3..+10).
+    try:
+        from quality_score import compute_signal_score
+        # Pre-compute confluence count: group new_strategy items
+        from collections import defaultdict
+        ns_count: dict = defaultdict(int)
+        ns_sources = ('volume_surge', 'triple_confluence', 'vol_accum',
+                      'volcano', 'second_flip')
+        for it in items:
+            if it.get('source') in ns_sources:
+                bucket = (it.get('at_ts') or 0) // 1800  # 30min
+                key = (it.get('symbol') or '', it.get('direction') or '', bucket)
+                ns_count[key] += 1
+        for it in items:
+            ctx = {}
+            if it.get('source') in ns_sources:
+                bucket = (it.get('at_ts') or 0) // 1800
+                key = (it.get('symbol') or '', it.get('direction') or '', bucket)
+                ctx['strategy_count'] = ns_count.get(key, 1)
+            if it.get('st_tier'):
+                ctx['tier'] = it['st_tier']
+            try:
+                it['q_score'] = compute_signal_score(it, ctx)
+            except Exception:
+                it['q_score'] = 0
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] q_score fail: {e}")
+
     return {"items": items}
+
+
+@app.get("/api/hot-signals")
+async def api_hot_signals(limit: int = 5, hours: int = 3):
+    """🔥 HOT NOW — TOP signals by quality score за последние N часов.
+
+    Pulls items from /api/journal cache, filters by recent time, dedupes
+    by (pair, direction, 30min bucket) keeping max-score, returns top N.
+    """
+    from cache_utils import journal_cache
+    import time as _t
+
+    cache_key = f"hot_{limit}_{hours}"
+    now = _t.time()
+
+    async def _compute():
+        full = await journal_cache.get_or_compute(
+            "journal_all",
+            lambda: asyncio.to_thread(_compute_journal_sync),
+        )
+        items = full.get("items", []) if isinstance(full, dict) else []
+        if not items:
+            return []
+        # Filter by recency
+        cutoff_ts = int(_t.time()) - hours * 3600
+        recent = [s for s in items if (s.get('at_ts') or 0) >= cutoff_ts]
+        # Dedupe (pair, direction, 30min bucket) — keep max score
+        from collections import defaultdict
+        best: dict = {}
+        groups: dict = defaultdict(list)
+        for s in recent:
+            sym = s.get('symbol') or ''
+            direction = s.get('direction') or ''
+            bucket = (s.get('at_ts') or 0) // 1800
+            key = (sym, direction, bucket)
+            groups[key].append(s)
+            if (key not in best
+                    or (s.get('q_score', 0) > best[key].get('q_score', 0))):
+                best[key] = s
+        # Add strategy stack info (for emoji display)
+        ns_sources = {'volume_surge', 'triple_confluence', 'vol_accum',
+                      'volcano', 'second_flip'}
+        for key, head in best.items():
+            stack = []
+            for s in groups[key]:
+                if s.get('source') in ns_sources and s['source'] not in stack:
+                    stack.append(s['source'])
+            head['_strategy_stack'] = stack
+        # Sort by score, return top N
+        result = sorted(best.values(), key=lambda x: -x.get('q_score', 0))
+        return result[:max(1, min(limit, 50))]
+
+    items = await _compute()
+    return {"items": items, "count": len(items),
+            "hours": hours, "limit": limit, "now_ts": int(now)}
 
 
 # Серверный кеш для /api/journal-candles (TTL per TF)

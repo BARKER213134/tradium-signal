@@ -95,6 +95,17 @@ _new_strat_chat = os.getenv("NEW_STRATEGY_CHAT_ID", "").strip()
 NEW_STRATEGY_CHAT_ID = (int(_new_strat_chat) if _new_strat_chat.lstrip("-").isdigit()
                        else ADMIN_CHAT_ID)
 
+# BOT15 — 🔥 HOT signals (только score >= 60).
+# Дедуп: 1 alert/час на (pair, direction). Глобальный rate-limit: 10/час.
+BOT15_BOT_TOKEN = os.getenv(
+    "BOT15_BOT_TOKEN",
+    "8559565442:AAG4WdjTE0T7XLNuuZMZe_77McsycLbEFj4",
+)
+_hot_chat = os.getenv("HOT_SIGNALS_CHAT_ID", "").strip()
+HOT_SIGNALS_CHAT_ID = (int(_hot_chat) if _hot_chat.lstrip("-").isdigit()
+                       else ADMIN_CHAT_ID)
+HOT_SIGNALS_MIN_SCORE = int(os.getenv("HOT_SIGNALS_MIN_SCORE", "60"))
+
 # ═════ Binance Futures API для реальной торговли ═════
 # API keys — создавать с минимальными правами (только futures trade, без withdraw)
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
@@ -135,6 +146,7 @@ BOTS = [
     # anti_cluster_detector. Включить обратно: раскомментировать строку.
     {"id": "entry_checker", "label": "🎯 Entry Checker", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
+    {"id": "hot_now", "label": "🔥 HOT NOW", "category": "crypto"},
     {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
     {"id": "forex_fvg", "label": "Forex FVG 1H", "category": "stocks"},
     {"id": "forex_journal", "label": "Forex Журнал", "category": "stocks"},

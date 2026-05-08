@@ -545,9 +545,10 @@ async def run_detectors_on_flip(pair: str, direction: str, entry: float,
     # Persist all triggered to Mongo
     if triggered:
         await _save_strategy_signals(triggered, flip_ts, signal_id, tier)
-        # Send Telegram alerts (BOT13)
+        # Send Telegram alerts (BOT13 для всех + BOT15 если HOT)
         for sig in triggered:
             asyncio.create_task(_send_strategy_alert(sig))
+            asyncio.create_task(_maybe_hot_alert(sig))
         # Auto-paper trade — для каждой сработавшей стратегии открываем
         # позицию через paper_trader (если на этой паре ещё нет открытой,
         # paper сам делает duplicate detection). Backtest validated edge.
@@ -766,6 +767,29 @@ async def update_waiting_outcomes() -> dict:
     if updated:
         logger.info(f'[new-strategies] updated {updated} outcomes ({timeouts} timeouts)')
     return {'checked': len(waiting), 'updated': updated, 'timeouts': timeouts}
+
+
+async def _maybe_hot_alert(sig: dict) -> None:
+    """Если сигнал тянет на HOT (score>=60) — шлём в BOT15.
+    Передаём дополнительный contextstrategy_count если есть в sig (post-aggregate)."""
+    try:
+        from hot_alerts import send_hot_alert
+        # Преобразуем new_strategy_signals dict → journal-like для score
+        sig_for_score = {
+            'source': sig.get('strategy', 'unknown'),
+            'pair': sig.get('pair'),
+            'symbol': (sig.get('pair') or '').replace('/', '').upper(),
+            'direction': sig.get('direction'),
+            'entry': sig.get('entry'),
+            'sl': sig.get('sl'),
+            'tp1': sig.get('tp'),
+            'st_tier': sig.get('tier'),
+            'at_ts': None,
+        }
+        ctx = {'tier': sig.get('tier'), 'rsi': sig.get('rsi')}
+        await send_hot_alert(sig_for_score, ctx)
+    except Exception as e:
+        logger.debug(f"[hot] _maybe_hot_alert fail: {e}")
 
 
 async def _send_strategy_alert(sig: dict) -> None:

@@ -6643,7 +6643,8 @@ loadForexJournal();
 safeInterval(loadForexJournal, 30000);
 </script>
 
-{% elif bot == 'journal' %}
+{% elif bot == 'journal' or bot == 'hot_now' %}
+{% if bot == 'journal' %}
 <div class="strategy-box">
   <div class="strat-icon">📓</div>
   <div class="strat-body">
@@ -6801,7 +6802,9 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jStVipBtn" onclick="_toggleStTier('vip')" title="Только 🏆 VIP SuperTrend: ST flip + сигнал другого бота ±2ч (WR 60%, PF 3.6)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;">🏆 VIP · OFF</button>
   <button id="jStMtfBtn" onclick="_toggleStTier('mtf')" title="Только 🔱 Triple MTF: ST 1h flip + 4h + 1d aligned (EV +0.68R, PF 2.15)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;">🔱 MTF · OFF</button>
   <button id="jStDailyBtn" onclick="_toggleStTier('daily')" title="Только 🧭 Daily Filter: ST 1h flip + 1d aligned" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;">🧭 Daily · OFF</button>
-  <button id="jAllSpecialBtn" onclick="_toggleAllSpecial()" title="ВСЁ особое: ⭐ Strong + 👑 Top Pick + 🏆 VIP + 🔱 MTF + 🧭 Daily + 💠 Cluster + 🤖 Paper + ⚠️ Anomaly + ✨ Verified + 🌊 Volume Surge + 🐉 Triple Confluence + 🔋 Vol Accum" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">🔥 Все · OFF</button>
+  <button id="jAllSpecialBtn" onclick="_toggleAllSpecial()" title="ВСЁ особое: ⭐ Strong + 👑 Top Pick + 🏆 VIP + 🔱 MTF + 🧭 Daily + 💠 Cluster + 🤖 Paper + ⚠️ Anomaly + ✨ Verified + 🌊🐉🔋🌋♻️ New Strategies" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">🔥 Все · OFF</button>
+  <button id="jNearLevelBtn" onclick="_toggleNearLevel()" title="Только сигналы с entry визуально у уровня (🎯 in zone или ≤1.5%)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:120px;text-align:center;box-sizing:border-box;">🎯 У уровня · OFF</button>
+  <button id="jHotOnlyBtn" onclick="_toggleHotOnly()" title="Только HOT setups (Quality Score ≥ 60)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">🔥 HOT ≥60 · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
 </div>
 
@@ -6824,17 +6827,170 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
         <th class="sortable" onclick="jSort('direction')" id="jSortDir">Напр.</th>
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry">Entry</th>
         <th class="sortable" onclick="jSort('score')" id="jSortScore">Паттерн/Score</th>
+        <th class="sortable" onclick="jSort('q_score')" id="jSortQScore" title="Quality Score 0-100 (по 5 факторам с штрафами)">Score</th>
         <th class="sortable" onclick="jSort('st_passed')" id="jSortKC">KC</th>
         <th class="sortable" onclick="jSort('pump_score')" id="jSortPump">Pump</th>
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="8" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="9" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
+{% endif %}{# /bot == 'journal' #}
 
-<!-- Chart Modal -->
+{% if bot == 'hot_now' %}
+<!-- ════════════ 🔥 HOT NOW UI — TOP signals by quality score ════════════ -->
+<div class="strategy-box" style="border:1px solid rgba(255,77,109,0.35);background:linear-gradient(135deg,rgba(255,77,109,0.06),rgba(255,140,80,0.04));">
+  <div class="strat-icon">🔥</div>
+  <div class="strat-body">
+    <div class="strat-title">🔥 HOT NOW · Лучшие setups прямо сейчас</div>
+    Quality Score 0-100 объединяет: source priority + 🎯 entry near level + ETH/BTC alignment +
+    ST tier + RSI + confluence count − штрафы (bad hours, Wed, SHORT).
+    Только setups <b>score ≥ 60</b>. Auto-refresh каждые 30с. Telegram alerts → BOT15.
+  </div>
+</div>
+
+<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0;">
+  <select id="hotHours" onchange="hotLoad()"
+          style="background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:var(--font-mono);">
+    <option value="1">1 час</option>
+    <option value="3" selected>3 часа</option>
+    <option value="6">6 часов</option>
+    <option value="12">12 часов</option>
+  </select>
+  <select id="hotLimit" onchange="hotLoad()"
+          style="background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:var(--font-mono);">
+    <option value="5" selected>TOP 5</option>
+    <option value="10">TOP 10</option>
+    <option value="20">TOP 20</option>
+  </select>
+  <select id="hotMinScore" onchange="hotLoad()"
+          style="background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:var(--font-mono);">
+    <option value="60" selected>Score ≥ 60</option>
+    <option value="50">Score ≥ 50</option>
+    <option value="70">Score ≥ 70</option>
+    <option value="0">Все</option>
+  </select>
+  <button onclick="hotLoad()" style="background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">🔄 Обновить</button>
+  <div id="hotStats" style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--muted);"></div>
+</div>
+
+<style>
+.hot-card {
+  display:flex; align-items:center; gap:14px;
+  background:var(--card); border:1px solid var(--border); border-radius:10px;
+  padding:12px 16px; cursor:pointer; transition:transform 0.1s, border-color 0.15s;
+}
+.hot-card:hover { transform:translateX(2px); border-color:rgba(255,140,80,0.55); }
+.hot-card .score-badge {
+  width:50px; height:50px; border-radius:10px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  font-family:var(--font-mono); font-weight:900; font-size:18px;
+  flex-shrink:0;
+}
+.hot-card .pair-info { flex:1; min-width:120px; }
+.hot-card .pair-info .pair-name { font-size:14px; font-weight:800; color:var(--text); }
+.hot-card .pair-info .src-line { font-size:11px; color:var(--muted); margin-top:2px; }
+.hot-card .price-info { font-family:var(--font-mono); font-size:11px; min-width:160px; }
+.hot-card .strategy-stack { font-size:18px; letter-spacing:2px; }
+</style>
+
+<div id="hotCards" style="display:flex;flex-direction:column;gap:10px;">
+  <div style="text-align:center;padding:30px;color:var(--muted);">Загрузка…</div>
+</div>
+
+<script>
+async function hotLoad() {
+  const hours = document.getElementById('hotHours').value;
+  const limit = document.getElementById('hotLimit').value;
+  const minScore = parseInt(document.getElementById('hotMinScore').value);
+  const cards = document.getElementById('hotCards');
+  const statsEl = document.getElementById('hotStats');
+  cards.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);">Загрузка…</div>';
+  try {
+    const r = await fetch(`/api/hot-signals?hours=${hours}&limit=${limit}`);
+    const d = await r.json();
+    let items = d.items || [];
+    items = items.filter(s => (s.q_score || 0) >= minScore);
+    if (!items.length) {
+      cards.innerHTML = `<div style="text-align:center;padding:30px;color:var(--muted);">Нет setups с score ≥ ${minScore} за ${hours}ч</div>`;
+      statsEl.textContent = `0 / ${d.count || 0} signals`;
+      return;
+    }
+    statsEl.textContent = `${items.length} HOT / ${d.count || 0} total`;
+    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️',
+                    cluster:'💠', confluence:'🎯', cryptovizor:'🚀', tradium:'📡',
+                    paper:'🤖', verified:'✨', supertrend:'🌀'};
+    const html = items.map((s, idx) => {
+      const sc = s.q_score || 0;
+      const scColor = sc >= 70 ? '#00e5a0' : sc >= 60 ? '#88d8a3' : sc >= 45 ? '#ffd23e' : '#ff8c50';
+      const scLabel = sc >= 70 ? 'STRONG' : sc >= 60 ? 'HOT' : 'MED';
+      const dirClr = s.direction === 'LONG' ? '#00e5a0' : '#ff5e9c';
+      const dirEm = s.direction === 'LONG' ? '🟢' : '🔴';
+      const stack = (s._strategy_stack || []).map(x => sEmoji[x]||'•').join('');
+      const pair = (s.pair || s.symbol || '').replace('/USDT', '');
+      const klBadge = (window._klBadge && s._kl) ? window._klBadge(s._kl) : '';
+      const entry = s.entry !== undefined && s.entry !== null ? Number(s.entry) : null;
+      const sl = s.sl !== undefined && s.sl !== null ? Number(s.sl) : null;
+      const tp = s.tp1 !== undefined && s.tp1 !== null ? Number(s.tp1) : null;
+      const fmtP = (v) => v == null ? '—' : (v < 0.01 ? v.toFixed(8) : v < 1 ? v.toFixed(5) : v.toFixed(2));
+      const slPct = (entry && sl) ? ((sl - entry) / entry * 100).toFixed(1) : null;
+      const tpPct = (entry && tp) ? ((tp - entry) / entry * 100).toFixed(1) : null;
+      return `<div class="hot-card" onclick="hotOpenChart(${idx})">
+        <div class="score-badge" style="background:${scColor}22;border:2px solid ${scColor};color:${scColor};">
+          <div>${sc}</div>
+          <div style="font-size:8px;opacity:0.85;">${scLabel}</div>
+        </div>
+        <div class="pair-info">
+          <div class="pair-name">
+            <span style="color:var(--muted);font-size:11px;font-weight:600;">#${idx+1}</span>
+            <b class="copyable-pair" onclick="event.stopPropagation();window._copyPair('${pair}', event)" title="Copy ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.4);">${pair}</b>
+            · <span style="color:${dirClr};">${dirEm} ${s.direction}</span>
+          </div>
+          <div class="src-line">${(s.pattern || s.source || '')}${klBadge}</div>
+        </div>
+        <div class="strategy-stack">${stack}</div>
+        <div class="price-info">
+          <div>Entry: <b style="color:var(--text);">${fmtP(entry)}</b></div>
+          ${sl != null ? `<div>SL: <span style="color:#ff5e9c;">${fmtP(sl)}</span> ${slPct ? `(${slPct}%)` : ''}</div>` : ''}
+          ${tp != null ? `<div>TP: <span style="color:#00e5a0;">${fmtP(tp)}</span> ${tpPct ? `(+${tpPct}%)` : ''}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    cards.innerHTML = html;
+    window._hotItems = items;
+    // Кладём в _journalFiltered чтобы openJournalChart работал из HOT cards
+    window._journalFiltered = items;
+  } catch(e) {
+    cards.innerHTML = `<div style="text-align:center;padding:20px;color:var(--sell);">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function hotOpenChart(idx) {
+  const items = window._hotItems || [];
+  if (!items[idx]) return;
+  window._journalFiltered = items;
+  if (typeof openJournalChart === 'function') {
+    openJournalChart(idx);
+  } else {
+    console.warn('openJournalChart not loaded');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  hotLoad();
+  if (typeof safeInterval === 'function') {
+    safeInterval(hotLoad, 30000);
+  } else {
+    setInterval(hotLoad, 30000);
+  }
+});
+if (document.readyState !== 'loading') hotLoad();
+</script>
+{% endif %}{# /bot == 'hot_now' #}
+
+<!-- Chart Modal — общий для journal и hot_now -->
 <div id="journalChartModal">
   <div style="width:85vw;max-width:1000px;height:75vh;background:var(--dark);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);" onclick="event.stopPropagation();">
     <div id="jChartHeader" style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-family:var(--font-mono);gap:8px;">
@@ -7294,10 +7450,17 @@ async function loadJournal() {
       const newSignals = items.filter(s => !_journalPrevIds.has(_signalKey(s)));
       // cv_flip — observation канал (+ Telegram-алерт), не звоним на него
       // и не учитываем в anti-spam лимите (50+ после backfill глушили beep)
-      const newForSound = newSignals.filter(s => s.source !== 'cv_flip');
-      if (newForSound.length > 0 && newForSound.length < 50) {
+      // Sound только на HOT signals (q_score >= 60). Меньше шума.
+      // Toast — все новые (информационно), но звук тревожит только при качественных.
+      const newForSound = newSignals.filter(s =>
+        s.source !== 'cv_flip' && (s.q_score || 0) >= 60
+      );
+      const newForToast = newSignals.filter(s => s.source !== 'cv_flip');
+      if (newForSound.length > 0) {
         _playSignalSound();
-        _showJournalToast(newForSound);
+      }
+      if (newForToast.length > 0 && newForToast.length < 50) {
+        _showJournalToast(newForToast);
         // Mark new signal keys for row highlighting (все новые, включая cv_flip)
         window._newSignalKeys = new Set(newSignals.map(_signalKey));
         setTimeout(() => { window._newSignalKeys = null; }, 4000);
@@ -7394,6 +7557,14 @@ function filterJournal() {
       const isVerified = s.source === 'verified';
       const isNewStrategy = ['volume_surge','triple_confluence','vol_accum','volcano','second_flip'].includes(s.source);
       if (!(isStrong || isTopPick || isStAllTiers || isCluster || isPaper || isAnomaly || isVerified || isNewStrategy)) return false;
+    }
+    // 🎯 Только у уровня — фильтр по price-proximity к KL зоне
+    if (window._journalNearLevelOnly) {
+      if (!s._kl || !s._kl.near_level) return false;
+    }
+    // 🔥 HOT only — Quality Score >= 60
+    if (window._journalHotOnly) {
+      if ((s.q_score || 0) < 60) return false;
     }
     return true;
   });
@@ -7533,6 +7704,48 @@ function _toggleStrongOnly() {
   requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
 }
 
+function _toggleNearLevel() {
+  window._journalNearLevelOnly = !window._journalNearLevelOnly;
+  const btn = document.getElementById('jNearLevelBtn');
+  if (btn) {
+    if (window._journalNearLevelOnly) {
+      btn.style.background = 'rgba(0,229,160,0.12)';
+      btn.style.borderColor = '#00e5a0';
+      btn.style.color = '#00e5a0';
+      btn.textContent = '🎯 У уровня · ON';
+    } else {
+      btn.style.background = 'none';
+      btn.style.borderColor = 'var(--border)';
+      btn.style.color = 'var(--muted)';
+      btn.textContent = '🎯 У уровня · OFF';
+    }
+  }
+  const scrollY = window.scrollY;
+  filterJournal();
+  requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
+}
+
+function _toggleHotOnly() {
+  window._journalHotOnly = !window._journalHotOnly;
+  const btn = document.getElementById('jHotOnlyBtn');
+  if (btn) {
+    if (window._journalHotOnly) {
+      btn.style.background = 'linear-gradient(135deg,rgba(255,77,109,0.18),rgba(255,140,80,0.10))';
+      btn.style.borderColor = '#ff4d6d';
+      btn.style.color = '#ff4d6d';
+      btn.textContent = '🔥 HOT ≥60 · ON';
+    } else {
+      btn.style.background = 'none';
+      btn.style.borderColor = 'var(--border)';
+      btn.style.color = 'var(--muted)';
+      btn.textContent = '🔥 HOT ≥60 · OFF';
+    }
+  }
+  const scrollY = window.scrollY;
+  filterJournal();
+  requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
+}
+
 function _toggleAllSpecial() {
   window._journalAllSpecial = !window._journalAllSpecial;
   const btn = document.getElementById('jAllSpecialBtn');
@@ -7607,7 +7820,7 @@ function renderJournal(items, startIdx) {
   startIdx = startIdx || 0;
   const tbody = document.getElementById('jBody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
     return;
   }
   tbody.innerHTML = items.map((s, i) => {
@@ -7650,9 +7863,13 @@ function renderJournal(items, startIdx) {
     }
 
     const globalIdx = startIdx + i;
-    // Пара — кликабельна для копирования "<PAIR>USDT" (event.stopPropagation
-    // в _copyPair предотвращает открытие графика).
     const pairCell = `<span class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.4);">${pair}</span>`;
+    // Quality Score 0-100 цветной badge
+    const qs = s.q_score || 0;
+    const qsClr = qs >= 70 ? '#00e5a0' : qs >= 60 ? '#88d8a3' : qs >= 45 ? '#ffd23e' : qs >= 30 ? '#ff8c50' : '#666';
+    const qsCell = qs > 0
+      ? `<td class="mono" style="text-align:center;color:${qsClr};font-weight:700;font-size:12px;" title="Quality Score">${qs}</td>`
+      : `<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>`;
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
       <td class="mono text-muted" style="font-size:11px;">${time}</td>
       <td style="font-size:11px;">${srcBadge} ${srcName}</td>
@@ -7660,6 +7877,7 @@ function renderJournal(items, startIdx) {
       <td>${dir}</td>
       <td class="mono">${s.entry || '—'}</td>
       <td class="mono" style="font-size:11px;">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}${window._klBadge ? window._klBadge(s._kl) : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
+      ${qsCell}
       <td style="${kcCellStyle}">${kcMark}</td>
       <td>${pumpMark}</td>
     </tr>`;
@@ -8016,13 +8234,15 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-loadJournal();
-// 20с polling: 15с убивал main thread при 5+ открытых графиках (×3 POST per poll
-// + 3400 строк tbody innerHTML). 30с был слишком медленно. 20с — компромисс.
-// При новом invalidate'нутом сигнале cache на бэке сразу свежий,
-// UI подтянет в течение ≤20с.
-safeInterval(loadJournal, 20000);
+// loadJournal только если jBody есть (на journal странице, не на hot_now).
+if (document.getElementById('jBody')) {
+  loadJournal();
+  // 20с polling: 15с убивал main thread при 5+ открытых графиках (×3 POST per poll
+  // + 3400 строк tbody innerHTML). 30с был слишком медленно. 20с — компромисс.
+  safeInterval(loadJournal, 20000);
+}
 </script>
+
 
 {% elif bot == 'cryptovizor' %}
 <div class="strategy-box">
