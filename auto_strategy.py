@@ -132,6 +132,91 @@ DRAWDOWN_LIMIT_PCT = 10.0
 
 
 # ─── Activation flag (Mongo-based, no env var needed) ──────────────
+def enrich_signal(signal: dict) -> dict:
+    """Дополняет сырой signal_data полями нужными для evaluate:
+    - align_tier (из cluster_delta cache по pair + at_ts)
+    - q_score (компонентами из quality_score)
+
+    Returns: обогащённый dict.
+    """
+    enriched = dict(signal)
+    pair = enriched.get('pair') or ''
+    ats = enriched.get('at_ts') or 0
+    if not (pair and ats):
+        return enriched
+
+    # ─── 1. Compute align_tier from cluster_delta cache ───
+    try:
+        from delta_calculator import (_candle_open_ms, RESONANCE_BARS,
+                                       TF_MINUTES, _resonance_from_deltas)
+        from database import _get_db
+        cd = _get_db().cluster_delta
+        ats_ms = int(ats) * 1000
+        # Bulk fetch needed candles
+        keys = []
+        for tf in ('15m', '1h'):
+            sig_open = _candle_open_ms(ats_ms, tf)
+            for j in range(RESONANCE_BARS):
+                bk = sig_open - j * TF_MINUTES[tf] * 60 * 1000
+                keys.append({'pair': pair, 'tf': tf, 'open_ms': bk})
+        cached = {}
+        if keys:
+            for doc in cd.find({'$or': keys},
+                               {'pair':1,'tf':1,'open_ms':1,'delta_pct':1,'_id':0}):
+                cached[(doc['pair'], doc['tf'], doc['open_ms'])] = doc.get('delta_pct')
+        # Compute delta + resonance per TF
+        for tf in ('15m', '1h'):
+            sig_open = _candle_open_ms(ats_ms, tf)
+            d = cached.get((pair, tf, sig_open))
+            if d is not None:
+                enriched[f'delta_{tf}'] = d
+            deltas = []
+            for j in range(RESONANCE_BARS - 1, -1, -1):
+                bk = sig_open - j * TF_MINUTES[tf] * 60 * 1000
+                d2 = cached.get((pair, tf, bk))
+                if d2 is not None:
+                    deltas.append(d2)
+            if deltas:
+                enriched[f'resonance_{tf}'] = _resonance_from_deltas(deltas)
+        # Compute alignment tier
+        d15 = enriched.get('delta_15m')
+        d1h = enriched.get('delta_1h')
+        r15 = enriched.get('resonance_15m')
+        r1h = enriched.get('resonance_1h')
+        if not all(v is None for v in (d15, d1h, r15, r1h)):
+            direction = (enriched.get('direction') or '').upper()
+            sgn = 1 if direction == 'LONG' else -1 if direction == 'SHORT' else 0
+            if sgn != 0:
+                aligned = against = total = 0
+                for v in (d15, d1h, r15, r1h):
+                    if v is None or v == 0:
+                        continue
+                    total += 1
+                    if (v > 0) == (sgn > 0):
+                        aligned += 1
+                    else:
+                        against += 1
+                if total >= 2:
+                    if aligned >= total - 1 and aligned >= 2:
+                        enriched['align_tier'] = 'match'
+                    elif against >= total - 1 and against >= 2:
+                        enriched['align_tier'] = 'against'
+                    else:
+                        enriched['align_tier'] = 'mixed'
+    except Exception as e:
+        logger.debug(f'[auto-strategy] enrich align_tier fail: {e}')
+
+    # ─── 2. Q-score (если ещё не задан) ───
+    if enriched.get('q_score') is None:
+        try:
+            from quality_score import compute_signal_score
+            enriched['q_score'] = compute_signal_score(enriched, ctx={'tier': enriched.get('st_tier')})
+        except Exception:
+            pass
+
+    return enriched
+
+
 def is_enabled() -> bool:
     """Check если ALPHA-CV strategy active. Сначала Mongo flag, потом env var."""
     import os

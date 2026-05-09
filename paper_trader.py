@@ -1514,6 +1514,10 @@ async def on_signal(signal_data: dict):
             if not sig_eval.get('at_ts'):
                 import time as _t
                 sig_eval['at_ts'] = int(_t.time())
+            # ВАЖНО: enrich align_tier + q_score из cluster_delta cache.
+            # Сырой signal_data из supertrend_tracker / cv_watchers не имеет
+            # этих полей — без enrichment стратегия отклоняет всё.
+            sig_eval = await asyncio.to_thread(alpha_st.enrich_signal, sig_eval)
             # Evaluate + log_decision (capital_state считается автоматически)
             decision = alpha_st.evaluate(sig_eval)
             try:
