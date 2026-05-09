@@ -11155,17 +11155,46 @@ async def api_auto_strategy_log(hours: int = 6, limit: int = 200):
     }
 
 
+@app.post("/api/auto-strategy/enable")
+async def api_auto_strategy_enable(enabled: bool = True, note: str = ""):
+    """Включить/выключить ALPHA-CV стратегию через Mongo flag.
+    Hot reload без перезапуска контейнера."""
+    from auto_strategy import set_enabled
+    result = await asyncio.to_thread(set_enabled, enabled, note)
+    return result
+
+
+@app.post("/api/auto-strategy/close-all-and-start")
+async def api_auto_strategy_close_all_and_start():
+    """Закрыть все open paper позиции по market price + включить ALPHA-CV.
+    Используется для clean transition к новой стратегии."""
+    import paper_trader as pt
+    from auto_strategy import set_enabled
+    # 1. Close all
+    close_result = await pt.close_all_manual()
+    # 2. Enable strategy
+    enable_result = await asyncio.to_thread(set_enabled, True,
+        "auto-enabled via /api/auto-strategy/close-all-and-start")
+    return {
+        "closed_positions": close_result.get("total_count", 0),
+        "total_pnl_usdt": close_result.get("total_pnl_usdt", 0),
+        "closed": close_result.get("closed", []),
+        "strategy_enabled": enable_result.get("enabled"),
+    }
+
+
 @app.get("/api/auto-strategy/status")
 async def api_auto_strategy_status():
     """Текущее состояние стратегии: открытые позиции, capital state, daily PnL."""
-    import os
-    enabled = os.getenv("AUTO_STRATEGY_ALPHA_CV", "0") == "1"
     try:
-        from auto_strategy import (get_capital_state, MAX_CONCURRENT_POSITIONS,
+        from auto_strategy import (is_enabled, get_capital_state,
+                                    MAX_CONCURRENT_POSITIONS,
                                     MAX_TOTAL_EXPOSURE_PCT,
                                     DAILY_LOSS_LIMIT_PCT, DRAWDOWN_LIMIT_PCT)
+        enabled = is_enabled()
         cap = await asyncio.to_thread(get_capital_state)
     except Exception as e:
+        enabled = False
         cap = {'error': str(e)}
     return {
         'enabled': enabled,

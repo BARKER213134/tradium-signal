@@ -131,6 +131,45 @@ DAILY_LOSS_LIMIT_PCT = 3.0
 DRAWDOWN_LIMIT_PCT = 10.0
 
 
+# ─── Activation flag (Mongo-based, no env var needed) ──────────────
+def is_enabled() -> bool:
+    """Check если ALPHA-CV strategy active. Сначала Mongo flag, потом env var."""
+    import os
+    # Env var override (быстрый kill switch)
+    env = os.getenv("AUTO_STRATEGY_ALPHA_CV", "")
+    if env == "1":
+        return True
+    if env == "0":
+        return False
+    # Mongo flag
+    try:
+        from database import _get_db
+        doc = _get_db().system.find_one({"_id": "auto_strategy_alpha_cv"})
+        return bool(doc and doc.get("enabled", False))
+    except Exception:
+        return False
+
+
+def set_enabled(enabled: bool, note: str = "") -> dict:
+    """Включить/выключить через Mongo flag."""
+    from datetime import datetime, timezone
+    try:
+        from database import _get_db
+        col = _get_db().system
+        col.update_one(
+            {"_id": "auto_strategy_alpha_cv"},
+            {"$set": {
+                "enabled": bool(enabled),
+                "updated_at": datetime.now(timezone.utc),
+                "note": note,
+            }},
+            upsert=True,
+        )
+        return {"ok": True, "enabled": bool(enabled), "note": note}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 # ─── Public API ────────────────────────────────────────────────────
 def should_enter(signal: dict) -> tuple[bool, str]:
     """Главное решение — входить или нет.

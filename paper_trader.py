@@ -1500,12 +1500,16 @@ async def on_signal(signal_data: dict):
     if not pair or direction not in ("LONG", "SHORT"):
         return None
 
-    # ── 0z. ALPHA-CV strategy gate (опциональный фильтр, default OFF) ──
-    # Включается через Railway env AUTO_STRATEGY_ALPHA_CV=1.
+    # ── 0z. ALPHA-CV strategy gate (Mongo flag или env var) ──
+    # Включается через POST /api/auto-strategy/enable или env AUTO_STRATEGY_ALPHA_CV=1.
     # Backtest 14d 5500 signals walk-forward: WR 66.4% / +1.05R OOS.
-    if os.getenv("AUTO_STRATEGY_ALPHA_CV", "0") == "1":
+    try:
+        import auto_strategy as alpha_st
+        _alpha_cv_active = alpha_st.is_enabled()
+    except Exception:
+        _alpha_cv_active = False
+    if _alpha_cv_active:
         try:
-            import auto_strategy as alpha_st
             sig_eval = dict(signal_data)
             if not sig_eval.get('at_ts'):
                 import time as _t
