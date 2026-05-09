@@ -9672,7 +9672,7 @@ async def api_paper_set_balance(payload: dict):
 
 
 @app.get("/api/journal")
-async def api_journal(limit: int = 500, refresh: int = 0, debug: int = 0):
+async def api_journal(limit: int = 3000, refresh: int = 0, debug: int = 0):
     """Все сигналы из 4 источников — для вкладки Журнал.
     Server-side limit 14 days + per-source cap. Cache 45s (async-lock safe).
     _compute_journal делает 7 sync Mongo-запросов → выносим в thread,
@@ -10220,7 +10220,7 @@ def _compute_journal_sync():
         "ai_score":1, "st_passed":1, "pump_score":1, "pattern_triggered":1,
         "is_top_pick":1, "top_pick_confirmations_count":1,
         "received_at":1, "pattern_triggered_at":1,
-    }).sort("received_at", -1).limit(150):
+    }).sort("received_at", -1).limit(500):
         pat_trig = bool(s.get("pattern_triggered"))
         at_dt = s.get("pattern_triggered_at") if pat_trig and s.get("pattern_triggered_at") else s.get("received_at")
         items.append({
@@ -10252,7 +10252,7 @@ def _compute_journal_sync():
         "pattern_name":1, "ai_score":1, "st_passed":1, "pump_score":1,
         "is_top_pick":1, "top_pick_confirmations_count":1,
         "received_at":1, "pattern_triggered_at":1,
-    }).sort("pattern_triggered_at", -1).limit(250):
+    }).sort("pattern_triggered_at", -1).limit(2500):
         # Время = когда паттерн сработал (не когда монета добавлена)
         at_dt = s.get("pattern_triggered_at") or s.get("received_at")
         items.append({
@@ -10278,7 +10278,7 @@ def _compute_journal_sync():
         "symbol":1, "pair":1, "direction":1, "price":1, "anomalies":1,
         "score":1, "st_passed":1, "pump_score":1, "detected_at":1,
         "is_top_pick":1, "top_pick_confirmations_count":1,
-    }).sort("detected_at", -1).limit(250):
+    }).sort("detected_at", -1).limit(1500):
         types = [x["type"] for x in a.get("anomalies", [])]
         items.append({
             "source": "anomaly",
@@ -10304,7 +10304,7 @@ def _compute_journal_sync():
         "pattern":1, "strength":1, "factors":1, "score":1,
         "st_passed":1, "pump_score":1, "is_top_pick":1,
         "top_pick_confirmations_count":1, "detected_at":1,
-    }).sort("detected_at", -1).limit(400):
+    }).sort("detected_at", -1).limit(3000):
         ftypes = [f["type"] for f in c.get("factors", [])]
         items.append({
             "source": "confluence",
@@ -10399,7 +10399,7 @@ def _compute_journal_sync():
         raw_st = list(_sts().find({
             "flip_at": {"$gte": since_14d},
             "tier": {"$in": ["vip", "mtf", "daily"]},
-        }).sort("flip_at", -1).limit(800))
+        }).sort("flip_at", -1).limit(6000))
         # Dedupe: (pair_norm, direction, bucket_30min) → высший tier
         tier_prio = {"vip": 3, "mtf": 2, "daily": 1}
         best_st: dict = {}
@@ -10472,7 +10472,7 @@ def _compute_journal_sync():
         from database import _cv_flip_signals
         for d in _cv_flip_signals().find(
             {"cv_triggered_at": {"$gte": since_14d}}
-        ).sort("cv_triggered_at", -1).limit(200):
+        ).sort("cv_triggered_at", -1).limit(4000):
             state = d.get("state", "WAITING")
             state_emoji = {"FLIPPED": "💥", "TIMEOUT": "❌",
                            "INVALIDATED": "🚫"}.get(state, "⏳")
@@ -10521,7 +10521,7 @@ def _compute_journal_sync():
     try:
         from database import _get_db
         vcol = _get_db().verified_signals
-        for v in vcol.find({"created_at": {"$gte": since_14d}}).sort("created_at", -1).limit(200):
+        for v in vcol.find({"created_at": {"$gte": since_14d}}).sort("created_at", -1).limit(1500):
             at_dt = v.get("created_at")
             verdict = v.get("verdict", "go")
             emoji = "⚠️✨" if verdict == "caution" else "✨"
@@ -10569,7 +10569,7 @@ def _compute_journal_sync():
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip"}
-        for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(300):
+        for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(2000):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
             em = STRAT_EMOJI.get(strat, "✨")
