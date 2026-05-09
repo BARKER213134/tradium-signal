@@ -1500,6 +1500,33 @@ async def on_signal(signal_data: dict):
     if not pair or direction not in ("LONG", "SHORT"):
         return None
 
+    # ── 0z. ALPHA-CV strategy gate (опциональный фильтр, default OFF) ──
+    # Включается через Railway env AUTO_STRATEGY_ALPHA_CV=1.
+    # Backtest 14d 5500 signals walk-forward: WR 66.4% / +1.05R OOS.
+    # Если ON — пропускает только cryptovizor match/mixed,
+    # second_flip LONG match, triple_confluence LONG mixed.
+    # Skip-источники: volume_surge, volcano, vol_accum SHORT, supertrend.
+    if os.getenv("AUTO_STRATEGY_ALPHA_CV", "0") == "1":
+        try:
+            import auto_strategy as alpha_st
+            # Enrich signal с current at_ts если нет
+            sig_eval = dict(signal_data)
+            if not sig_eval.get('at_ts'):
+                import time as _t
+                sig_eval['at_ts'] = int(_t.time())
+            decision = alpha_st.evaluate(sig_eval)
+            if not decision.get('accept'):
+                _log_rejection(signal_data,
+                    f"[ALPHA-CV-GATE] rejected: {decision.get('reason')}")
+                return None
+            # Стратегия размер мультиплицирует через позиционный sizing
+            signal_data['_alpha_cv_size_mult'] = decision.get('size_pct', 1.0)
+            signal_data['_alpha_cv_label'] = decision.get('size_label', '')
+            logger.info(f"[ALPHA-CV] accepted {pair} {direction} src={source} "
+                        f"reason={decision.get('reason')} size={decision.get('size_label')}")
+        except Exception as e:
+            logger.warning(f"[ALPHA-CV-GATE] error: {e}")
+
     # ── 0. ONLY-NEW-STRATEGIES MODE (опционально, default OFF) ────
     # Если хочешь временно ставить на паузу всё кроме 3 новых стратегий —
     # set Railway env PAPER_ONLY_NEW_STRATEGIES=1. Default = "0" (все работают).
