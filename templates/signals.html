@@ -7049,7 +7049,23 @@ async function hotLoad() {
           <div>1h <span style="color:${dClr(d1h)};">${fD(d1h)}</span> · <span style="color:${matchClr(r1h)};font-weight:700;">${fR(r1h)}</span></div>
         </div>`;
       };
-      return `<div class="hot-card" onclick="hotOpenChart(${idx})">
+      // Подсветка карточки на основе delta/resonance alignment
+      const cardAlign = window._deltaAlignment ? window._deltaAlignment(s) : null;
+      let cardBorder = 'border:1px solid var(--border);';
+      let cardTipBg = '';
+      if (cardAlign) {
+        if (cardAlign.tier === 'match' && cardAlign.direction === 'LONG') {
+          cardBorder = 'border:1px solid #00e5a0;';
+          cardTipBg = 'background:linear-gradient(90deg,rgba(0,229,160,0.10),transparent 40%);';
+        } else if (cardAlign.tier === 'match' && cardAlign.direction === 'SHORT') {
+          cardBorder = 'border:1px solid #ff4d6d;';
+          cardTipBg = 'background:linear-gradient(90deg,rgba(255,77,109,0.10),transparent 40%);';
+        } else {
+          cardBorder = 'border:1px solid #ffd23e;';
+          cardTipBg = 'background:linear-gradient(90deg,rgba(255,210,62,0.07),transparent 40%);';
+        }
+      }
+      return `<div class="hot-card" onclick="hotOpenChart(${idx})" style="${cardBorder}${cardTipBg}">
         <div class="score-badge" style="background:${scColor}22;border:2px solid ${scColor};color:${scColor};">
           <div>${sc}</div>
           <div style="font-size:8px;opacity:0.85;">${scLabel}</div>
@@ -8011,16 +8027,63 @@ function renderJournal(items, startIdx) {
 }
 
 // ─── Delta + Resonance UI helpers (информативные колонки) ───
+// Helper: считает alignment delta+resonance с направлением сделки
+// Returns: {tier: 'match'|'mixed'|'against', score: 0..4, direction}
+window._deltaAlignment = function(s) {
+  const d15 = s.delta_15m, d1h = s.delta_1h;
+  const r15 = s.resonance_15m, r1h = s.resonance_1h;
+  if (d15 == null && d1h == null && r15 == null && r1h == null) return null;
+  const dir = (s.direction || '').toUpperCase();
+  const sgn = dir === 'LONG' ? 1 : dir === 'SHORT' ? -1 : 0;
+  if (sgn === 0) return null;
+  let aligned = 0, against = 0, total = 0;
+  for (const v of [d15, d1h, r15, r1h]) {
+    if (v == null || v === 0) continue;
+    total++;
+    if (Math.sign(v) === sgn) aligned++;
+    else against++;
+  }
+  if (total < 2) return null;
+  // Алгоритм: ≥3/4 в направлении сделки = "match" (зелёный/красный)
+  // ≥3/4 против = "against" (yellow с warning)
+  // иначе mixed = yellow
+  let tier = 'mixed';
+  if (aligned >= total - 1 && aligned >= 2) tier = 'match';  // 3-4 of 4, или 2-3 of 3
+  else if (against >= total - 1 && against >= 2) tier = 'against';
+  return {tier, score: aligned, total, direction: dir};
+};
+
+// Helper: фоновый цвет ячейки на основе alignment.
+// LONG match → зелёный, SHORT match → красный, mismatch → жёлтый
+window._deltaCellBg = function(s) {
+  const a = window._deltaAlignment(s);
+  if (!a) return '';
+  if (a.tier === 'match') {
+    if (a.direction === 'LONG')  return 'background:rgba(0,229,160,0.18);border-left:2px solid #00e5a0;';
+    if (a.direction === 'SHORT') return 'background:rgba(255,77,109,0.18);border-left:2px solid #ff4d6d;';
+  }
+  if (a.tier === 'against' || a.tier === 'mixed') {
+    return 'background:rgba(255,210,62,0.13);border-left:2px solid #ffd23e;';
+  }
+  return '';
+};
+
 window._renderDeltaCell = function(s) {
   const d15 = s.delta_15m;
   const d1h = s.delta_1h;
   if (d15 == null && d1h == null) {
-    // Lazy on-demand load (старый сигнал без cached данных)
     return '<td class="mono text-muted" style="text-align:center;font-size:11px;cursor:help;" title="Нет данных дельты (старый сигнал или Binance Bybit-only)">—</td>';
   }
   const fmt = (v) => v == null ? '<span style="color:#555">—</span>' :
     `<span style="color:${v >= 5 ? '#00e5a0' : v >= 1 ? '#88d8a3' : v >= -1 ? '#aaa' : v >= -5 ? '#ff9d6e' : '#ff4d6d'};">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
-  return `<td class="mono" style="text-align:center;font-size:10px;line-height:1.4;" title="Δ% buy vs sell на свече сигнала. 15m / 1h (Binance Futures aggTrades)">
+  const bg = window._deltaCellBg(s);
+  const a = window._deltaAlignment(s);
+  const tip = a ? (
+    a.tier === 'match' ? `✅ Поток подтверждает ${a.direction} (${a.score}/${a.total} signals aligned)` :
+    a.tier === 'against' ? `⚠ Поток ПРОТИВ ${a.direction} — поздний вход (${a.score}/${a.total})` :
+    `⚠ Смешанные сигналы (${a.score}/${a.total} aligned)`
+  ) : 'Δ% buy vs sell на свече сигнала';
+  return `<td class="mono" style="text-align:center;font-size:10px;line-height:1.4;${bg}" title="${tip}">
     <div>15m: ${fmt(d15)}</div>
     <div>1h: ${fmt(d1h)}</div>
   </td>`;
@@ -8054,7 +8117,14 @@ window._renderResonanceCell = function(s) {
   };
   const fmt = (r) => r == null ? '<span style="color:#555">—</span>' :
     `<span style="color:${matchDir(r)};font-weight:700;">${r >= 0 ? '+' : ''}${r}</span> <span style="font-size:10px;">${emoji(r)}</span>`;
-  return `<td class="mono" style="text-align:center;font-size:10px;line-height:1.4;" title="Резонанс: N подряд свечей одного знака дельты (-5..+5). Зелёное = поток в сторону сделки, красное = против">
+  const bg = window._deltaCellBg ? window._deltaCellBg(s) : '';
+  const a = window._deltaAlignment ? window._deltaAlignment(s) : null;
+  const tip = a ? (
+    a.tier === 'match' ? `✅ Резонанс подтверждает ${a.direction} (${a.score}/${a.total})` :
+    a.tier === 'against' ? `⚠ Резонанс ПРОТИВ ${a.direction} (${a.score}/${a.total})` :
+    `⚠ Смешанные сигналы (${a.score}/${a.total})`
+  ) : 'Резонанс: N подряд свечей одного знака дельты (-5..+5)';
+  return `<td class="mono" style="text-align:center;font-size:10px;line-height:1.4;${bg}" title="${tip}">
     <div>15m: ${fmt(r15)}</div>
     <div>1h: ${fmt(r1h)}</div>
   </td>`;
