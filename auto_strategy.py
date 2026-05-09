@@ -105,12 +105,15 @@ TC_REQUIRED = {'direction': 'LONG', 'tier': 'mixed'}
 BAD_HOURS = set()       # было {1, 2, 10, 12, 13}
 BAD_WEEKDAYS = set()    # было {0, 5} = Mon, Sat
 
-# Q-score threshold (sanity check on top of source/tier rules)
-MIN_Q_SCORE = 40
+# Q-score threshold — DISABLED (был sanity-check, не из бектеста).
+# Реальные q_score: cluster=25, vol_accum=12, supertrend=12 — низкие base scores
+# без kl/market bonuses. Не отражают edge стратегии. Source/tier фильтр главный.
+MIN_Q_SCORE = 0
 
 # ─── Sizing multipliers ────────────────────────────────────────────
 def _tier_of(t: dict) -> str:
-    return t.get('align_tier') or t.get('_align') or t.get('tier') or ''
+    """Возвращает текущий tier. Если нет — 'mixed' default (для sizing)."""
+    return t.get('align_tier') or t.get('_align') or t.get('tier') or 'mixed'
 
 SIZING_RULES = [
     # (predicate_fn, multiplier, label)
@@ -285,13 +288,19 @@ def should_enter(signal: dict) -> tuple[bool, str]:
     if wd is not None and wd in BAD_WEEKDAYS:
         return False, f'bad_weekday={wd}'
 
-    # ── Q-score sanity ──
-    qs = signal.get('q_score')
-    if qs is not None and qs < MIN_Q_SCORE:
-        return False, f'q_score={qs}<{MIN_Q_SCORE}'
+    # ── Q-score sanity (DISABLED) ──
+    if MIN_Q_SCORE > 0:
+        qs = signal.get('q_score')
+        if qs is not None and qs < MIN_Q_SCORE:
+            return False, f'q_score={qs}<{MIN_Q_SCORE}'
 
     # ── Source-specific rules ──
     if src == 'cryptovizor':
+        # Если tier не вычислился (нет cluster_delta для свежей свечи) —
+        # default 'mixed' (60.8% WR, +0.75R AvgR — ещё edge). Безопаснее
+        # чем skipping: backtest показал даже CV-against = +0.16R.
+        if tier is None or tier == '':
+            return True, 'cv_no_tier_default_mixed'
         if tier in CV_TIER_ALLOWED:
             return True, f'cv_{tier}_{direction}'
         return False, f'cv_tier={tier}_skipped'
@@ -463,6 +472,8 @@ def reason_to_human(reason: str, signal: dict) -> str:
     if reason == 'cv_tier=against_skipped':
         return (f"❌ {pair} CV против потока — tier={tier} (CV-against AvgR=+0.16R "
                 f"мало edge, скипаем для concentration)")
+    if reason == 'cv_no_tier_default_mixed':
+        return f"✅ {pair} CV (tier=undef → default mixed)"
     if reason.startswith('sf_filter_failed'):
         return f"❌ second_flip требует LONG+match, у нас {direction}/{tier}"
     if reason.startswith('tc_filter_failed'):
