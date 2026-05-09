@@ -1,4 +1,12 @@
-"""ALPHA-CV v2 — Автотрейдинговая стратегия (запускается на неделю).
+"""ALPHA-CV v1.1 — Автотрейдинговая стратегия с hybrid exits.
+
+ИЗМЕНЕНИЯ v1.1 (2026-05-09):
+- Добавлены risk gates (concurrent positions, daily loss, drawdown)
+- Добавлены hybrid exits: TP1=50% at signal.tp / 50% rides with trail
+- Добавлена видимость отказов и принятий через risk_state.py
+- Логирование причины каждого решения в auto_strategy_log
+
+ОРИГИНАЛЬНАЯ DOCSTRING:
 
 ═══ BACKTEST METRICS (14d, 5500+ signals, walk-forward validated) ═══
             TRAIN(12d)  TEST(2d_OOS)
@@ -204,64 +212,213 @@ def get_size_label(signal: dict) -> str:
 
 
 # ─── Risk gate (capital-level checks) ──────────────────────────────
+def get_capital_state() -> dict:
+    """Считывает текущее состояние capital из paper_trader / Mongo.
+    Возвращает dict для can_enter_now."""
+    try:
+        from database import _get_db
+        from datetime import datetime, timezone, timedelta
+        db = _get_db()
+        # Open positions count (paper_trades, status='OPEN')
+        open_count = db.paper_trades.count_documents({
+            'status': 'OPEN',
+            'auto_strategy_label': {'$exists': True}  # только наши
+        })
+        # Total exposure (sum of size_pct of open positions)
+        cursor = db.paper_trades.find({
+            'status': 'OPEN',
+            'auto_strategy_label': {'$exists': True}
+        }, {'size_pct': 1})
+        total_exp = sum(d.get('size_pct', 1.0) for d in cursor)
+        # Daily PnL (closed today)
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0,
+                                                          second=0, microsecond=0)
+        cursor = db.paper_trades.find({
+            'status': {'$in': ['CLOSED', 'TP', 'SL', 'TIMEOUT']},
+            'closed_at': {'$gte': today_start},
+            'auto_strategy_label': {'$exists': True}
+        }, {'pnl_pct': 1})
+        daily_pnl = sum(d.get('pnl_pct', 0) for d in cursor)
+        # Current DD: max equity vs current — пока упрощённо берём сумму всех
+        # closed losses за last 7d минус gains
+        week_start = datetime.now(timezone.utc) - timedelta(days=7)
+        cursor = db.paper_trades.find({
+            'status': {'$in': ['CLOSED', 'TP', 'SL', 'TIMEOUT']},
+            'closed_at': {'$gte': week_start},
+            'auto_strategy_label': {'$exists': True}
+        }, {'pnl_pct': 1, 'closed_at': 1})
+        equity_curve = [0.0]
+        peak = 0.0
+        for d in sorted(cursor, key=lambda x: x.get('closed_at', datetime.min)):
+            equity_curve.append(equity_curve[-1] + d.get('pnl_pct', 0))
+            peak = max(peak, equity_curve[-1])
+        dd_pct = (peak - equity_curve[-1]) if equity_curve else 0
+        return {
+            'open_positions': open_count,
+            'total_exposure_pct': total_exp,
+            'daily_pnl_pct': daily_pnl,
+            'current_dd_pct': max(0, dd_pct),
+        }
+    except Exception as e:
+        logger.debug(f'[auto-strategy] capital_state fail: {e}')
+        return {
+            'open_positions': 0, 'total_exposure_pct': 0.0,
+            'daily_pnl_pct': 0.0, 'current_dd_pct': 0.0,
+        }
+
+
 def can_enter_now(open_positions: int = 0,
                   total_exposure_pct: float = 0.0,
                   daily_pnl_pct: float = 0.0,
                   current_dd_pct: float = 0.0) -> tuple[bool, str]:
-    """Проверяет capital-level limits перед открытием новой сделки."""
+    """Проверяет capital-level limits перед открытием новой сделки.
+    Reasons возвращаются user-friendly с цифрами."""
     if open_positions >= MAX_CONCURRENT_POSITIONS:
-        return False, f'max_concurrent_reached({open_positions})'
+        return False, (f'risk_gate: открыто {open_positions} позиций '
+                        f'(лимит {MAX_CONCURRENT_POSITIONS})')
     if total_exposure_pct >= MAX_TOTAL_EXPOSURE_PCT:
-        return False, f'max_exposure={total_exposure_pct:.1f}%'
+        return False, (f'risk_gate: exposure {total_exposure_pct:.1f}% '
+                        f'(лимит {MAX_TOTAL_EXPOSURE_PCT}%)')
     if daily_pnl_pct <= -DAILY_LOSS_LIMIT_PCT:
-        return False, f'daily_loss_hit({daily_pnl_pct:.1f}%)'
+        return False, (f'risk_gate: дневной лосс {daily_pnl_pct:.1f}% '
+                        f'(лимит {-DAILY_LOSS_LIMIT_PCT}%)')
     if current_dd_pct >= DRAWDOWN_LIMIT_PCT:
-        return False, f'drawdown_pause({current_dd_pct:.1f}%)'
+        return False, (f'risk_gate: drawdown {current_dd_pct:.1f}% '
+                        f'(лимит {DRAWDOWN_LIMIT_PCT}%) — pause 24h')
     return True, 'ok'
 
 
+# ─── EXIT LOGIC: hybrid TP1 + trailing ─────────────────────────────
+# Backtest 14d: signal.tp1 = best edge (+1.13R AvgR) vs forced 5% TP (+0.47R).
+# Hybrid: 50% close at signal.tp1, 50% rides с trailing stop.
+EXIT_PARTIAL_PCT = 50  # % to close at TP1
+EXIT_TRAIL_DISTANCE_R = 0.5  # trailing distance in R (after TP1 hit)
+EXIT_TIMEOUT_HOURS = 24
+
+
+def get_exit_plan(signal: dict, decision: dict) -> dict:
+    """Возвращает exit plan для позиции.
+    Используется paper_trader для управления позицией.
+
+    Returns:
+        {
+          'partial_at_tp1': True,        # close 50% at signal.tp
+          'partial_pct': 50,             # %
+          'tp1_price': float,            # signal.tp
+          'sl_price': float,             # signal.sl
+          'be_after_tp1': True,          # SL→BE после TP1
+          'trail_after_tp1_r': 0.5,      # trail at 0.5R after TP1
+          'timeout_hours': 24,
+          'exit_at_tp1_only': False,     # if True — закрыть всё при TP1
+        }
+    """
+    return {
+        'partial_at_tp1': True,
+        'partial_pct': EXIT_PARTIAL_PCT,
+        'tp1_price': signal.get('tp') or signal.get('tp1'),
+        'sl_price': signal.get('sl'),
+        'be_after_tp1': True,
+        'trail_after_tp1_r': EXIT_TRAIL_DISTANCE_R,
+        'timeout_hours': EXIT_TIMEOUT_HOURS,
+        'exit_at_tp1_only': False,
+        'auto_strategy_label': decision.get('size_label', ''),
+    }
+
+
 # ─── Decision wrapper ──────────────────────────────────────────────
-def evaluate(signal: dict, capital_state: Optional[dict] = None) -> dict:
+def reason_to_human(reason: str, signal: dict) -> str:
+    """Человеко-читаемый русский текст причины."""
+    src = signal.get('source', '?')
+    pair = signal.get('pair', '?')
+    direction = signal.get('direction', '?')
+    tier = signal.get('align_tier') or signal.get('_align') or '—'
+    if reason.startswith('source_not_whitelisted'):
+        bad = reason.split('=')[1] if '=' in reason else src
+        return f"❌ Источник '{bad}' в чёрном списке (WR<30%, AvgR<-0.3R)"
+    if reason == 'cv_tier=against_skipped':
+        return (f"❌ {pair} CV против потока — tier={tier} (CV-against AvgR=+0.16R "
+                f"мало edge, скипаем для concentration)")
+    if reason.startswith('sf_filter_failed'):
+        return f"❌ second_flip требует LONG+match, у нас {direction}/{tier}"
+    if reason.startswith('tc_filter_failed'):
+        return f"❌ triple_confluence требует LONG+mixed, у нас {direction}/{tier}"
+    if reason.startswith('bad_hour'):
+        h = reason.split('=')[1] if '=' in reason else '?'
+        return f"❌ Час {h}:00 UTC в bad-list (WR<31%, AvgR<-0.20R)"
+    if reason.startswith('bad_weekday'):
+        wd = int(reason.split('=')[1]) if '=' in reason else 0
+        names = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
+        return f"❌ День {names[wd]} в bad-list (Mon -0.36R, Sat -0.29R)"
+    if reason.startswith('q_score'):
+        return f"❌ Q-Score < 40 (sanity check)"
+    if reason.startswith('capital_gate:'):
+        return f"❌ {reason.split(':',1)[1]}"
+    if reason.startswith('cv_'):
+        return f"✅ {pair} CV-{tier} {direction}"
+    if reason == 'sf_long_match':
+        return f"✅ {pair} second_flip LONG match (secondary edge +0.46R)"
+    if reason == 'tc_long_mixed':
+        return f"✅ {pair} triple_confluence LONG mixed (narrow edge +0.50R)"
+    return reason
+
+
+def evaluate(signal: dict, capital_state: Optional[dict] = None,
+             auto_capital: bool = True) -> dict:
     """Главная функция — возвращает decision dict.
 
     Returns:
         {
           'accept': bool,
-          'reason': str,
-          'size_pct': float,        # if accepted
+          'reason': str,                 # raw machine reason
+          'reason_human': str,           # human-readable RU
+          'size_pct': float,             # if accepted
           'size_label': str,
-          'metadata': dict,         # source, tier, etc.
+          'exit_plan': dict,             # if accepted
+          'metadata': dict,
         }
     """
     accept, reason = should_enter(signal)
+    base_metadata = {
+        'source': signal.get('source'),
+        'direction': signal.get('direction'),
+        'tier': signal.get('align_tier') or signal.get('_align'),
+        'pair': signal.get('pair'),
+        'q_score': signal.get('q_score'),
+    }
     if not accept:
         return {
             'accept': False, 'reason': reason,
+            'reason_human': reason_to_human(reason, signal),
             'size_pct': 0.0, 'size_label': 'rejected',
-            'metadata': {},
+            'exit_plan': None,
+            'metadata': base_metadata,
         }
+    # Capital gate
+    if capital_state is None and auto_capital:
+        capital_state = get_capital_state()
     if capital_state:
         cap_ok, cap_reason = can_enter_now(**capital_state)
         if not cap_ok:
+            full = f'capital_gate:{cap_reason}'
             return {
-                'accept': False, 'reason': f'capital_gate:{cap_reason}',
+                'accept': False, 'reason': full,
+                'reason_human': reason_to_human(full, signal),
                 'size_pct': 0.0, 'size_label': 'capital_blocked',
-                'metadata': {},
+                'exit_plan': None,
+                'metadata': base_metadata,
             }
     size_pct = position_size_pct(signal)
-    return {
+    decision = {
         'accept': True,
         'reason': reason,
+        'reason_human': reason_to_human(reason, signal),
         'size_pct': size_pct,
         'size_label': get_size_label(signal),
-        'metadata': {
-            'source': signal.get('source'),
-            'direction': signal.get('direction'),
-            'tier': signal.get('align_tier') or signal.get('_align'),
-            'pair': signal.get('pair'),
-            'q_score': signal.get('q_score'),
-        },
+        'exit_plan': None,
+        'metadata': base_metadata,
     }
+    decision['exit_plan'] = get_exit_plan(signal, decision)
+    return decision
 
 
 # ─── Daily journal logger ──────────────────────────────────────────

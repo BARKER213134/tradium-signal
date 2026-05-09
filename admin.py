@@ -11106,6 +11106,79 @@ async def api_cluster_delta_backfill_all(days: int = 14):
     }
 
 
+@app.get("/api/auto-strategy/log")
+async def api_auto_strategy_log(hours: int = 6, limit: int = 200):
+    """Лог решений ALPHA-CV стратегии — кто принят, кто отклонён, и почему.
+
+    Returns: {accepted, rejected, by_reason, recent_decisions}
+    """
+    from database import _get_db, utcnow
+    from datetime import timedelta as _td
+    from collections import Counter
+    db = _get_db()
+    col = db.auto_strategy_log
+    since = utcnow() - _td(hours=int(hours))
+    cursor = col.find({'at': {'$gte': since}}).sort('at', -1).limit(int(limit))
+    items = []
+    accept_count = 0
+    reject_count = 0
+    reasons_accept = Counter()
+    reasons_reject = Counter()
+    for doc in cursor:
+        accepted = doc.get('accept', False)
+        reason = doc.get('reason', '?')
+        if accepted:
+            accept_count += 1
+            reasons_accept[reason] += 1
+        else:
+            reject_count += 1
+            reasons_reject[reason] += 1
+        items.append({
+            'at': doc.get('at').isoformat() if doc.get('at') else None,
+            'pair': doc.get('signal_pair'),
+            'source': doc.get('signal_source'),
+            'direction': doc.get('signal_direction'),
+            'tier': doc.get('signal_tier'),
+            'q_score': doc.get('signal_q_score'),
+            'accept': accepted,
+            'reason': reason,
+            'size_pct': doc.get('size_pct'),
+            'size_label': doc.get('size_label'),
+        })
+    return {
+        'hours': hours,
+        'accepted': accept_count,
+        'rejected': reject_count,
+        'top_accept_reasons': reasons_accept.most_common(10),
+        'top_reject_reasons': reasons_reject.most_common(10),
+        'recent': items,
+    }
+
+
+@app.get("/api/auto-strategy/status")
+async def api_auto_strategy_status():
+    """Текущее состояние стратегии: открытые позиции, capital state, daily PnL."""
+    import os
+    enabled = os.getenv("AUTO_STRATEGY_ALPHA_CV", "0") == "1"
+    try:
+        from auto_strategy import (get_capital_state, MAX_CONCURRENT_POSITIONS,
+                                    MAX_TOTAL_EXPOSURE_PCT,
+                                    DAILY_LOSS_LIMIT_PCT, DRAWDOWN_LIMIT_PCT)
+        cap = await asyncio.to_thread(get_capital_state)
+    except Exception as e:
+        cap = {'error': str(e)}
+    return {
+        'enabled': enabled,
+        'capital_state': cap,
+        'limits': {
+            'max_concurrent': MAX_CONCURRENT_POSITIONS,
+            'max_exposure_pct': MAX_TOTAL_EXPOSURE_PCT,
+            'daily_loss_pct': DAILY_LOSS_LIMIT_PCT,
+            'drawdown_pct': DRAWDOWN_LIMIT_PCT,
+        },
+    }
+
+
 @app.get("/api/cluster-delta/diag")
 async def api_cluster_delta_diag():
     """Диагностика: deployed version + sample fast fetch."""

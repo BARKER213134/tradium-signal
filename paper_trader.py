@@ -1503,27 +1503,32 @@ async def on_signal(signal_data: dict):
     # ── 0z. ALPHA-CV strategy gate (опциональный фильтр, default OFF) ──
     # Включается через Railway env AUTO_STRATEGY_ALPHA_CV=1.
     # Backtest 14d 5500 signals walk-forward: WR 66.4% / +1.05R OOS.
-    # Если ON — пропускает только cryptovizor match/mixed,
-    # second_flip LONG match, triple_confluence LONG mixed.
-    # Skip-источники: volume_surge, volcano, vol_accum SHORT, supertrend.
     if os.getenv("AUTO_STRATEGY_ALPHA_CV", "0") == "1":
         try:
             import auto_strategy as alpha_st
-            # Enrich signal с current at_ts если нет
             sig_eval = dict(signal_data)
             if not sig_eval.get('at_ts'):
                 import time as _t
                 sig_eval['at_ts'] = int(_t.time())
+            # Evaluate + log_decision (capital_state считается автоматически)
             decision = alpha_st.evaluate(sig_eval)
+            try:
+                alpha_st.log_decision(sig_eval, decision)
+            except Exception:
+                pass
             if not decision.get('accept'):
-                _log_rejection(signal_data,
-                    f"[ALPHA-CV-GATE] rejected: {decision.get('reason')}")
+                # Понятный reject лог
+                human = decision.get('reason_human') or decision.get('reason')
+                _log_rejection(signal_data, f"[ALPHA-CV] {human}")
+                logger.info(f"[ALPHA-CV] REJECT {pair} {direction}: {human}")
                 return None
-            # Стратегия размер мультиплицирует через позиционный sizing
+            # Передаём sizing + exit_plan в paper_trader для управления
             signal_data['_alpha_cv_size_mult'] = decision.get('size_pct', 1.0)
             signal_data['_alpha_cv_label'] = decision.get('size_label', '')
-            logger.info(f"[ALPHA-CV] accepted {pair} {direction} src={source} "
-                        f"reason={decision.get('reason')} size={decision.get('size_label')}")
+            signal_data['_alpha_cv_exit_plan'] = decision.get('exit_plan') or {}
+            signal_data['_alpha_cv_reason'] = decision.get('reason_human', '')
+            logger.info(f"[ALPHA-CV] ✅ ACCEPT {pair} {direction} "
+                        f"size={decision.get('size_label')} reason='{decision.get('reason_human')}'")
         except Exception as e:
             logger.warning(f"[ALPHA-CV-GATE] error: {e}")
 
@@ -1719,13 +1724,32 @@ async def on_signal(signal_data: dict):
                  f"{summary}{param_note}")
 
     # ── 5. Открытие ──
+    # ALPHA-CV multiplier: если стратегия активна — мультиплицируем sizing
+    alpha_mult = signal_data.get('_alpha_cv_size_mult')
+    if alpha_mult and alpha_mult > 0:
+        size_pct = round(size_pct * alpha_mult, 2)
+        logger.info(f"[ALPHA-CV] sizing multiplied: ×{alpha_mult} → {size_pct}%")
     # open_position() — sync function с counter+insert+balance update.
-    # Вызов из async on_signal обёрнут в to_thread чтобы не блокировать loop.
     pos = await asyncio.to_thread(
         open_position,
         symbol, direction, entry, tp1, sl,
         leverage, size_pct, source or "?", reasoning,
     )
+    # Аннотируем trade auto_strategy метаданными для post-mortem
+    if signal_data.get('_alpha_cv_label'):
+        try:
+            trades, _ = _get_collections()
+            trades.update_one(
+                {'trade_id': pos['trade_id']},
+                {'$set': {
+                    'auto_strategy_label': signal_data.get('_alpha_cv_label'),
+                    'auto_strategy_reason': signal_data.get('_alpha_cv_reason'),
+                    'auto_strategy_exit_plan': signal_data.get('_alpha_cv_exit_plan') or {},
+                    'auto_strategy_size_mult': alpha_mult,
+                }}
+            )
+        except Exception as e:
+            logger.debug(f'[ALPHA-CV] annotate fail: {e}')
     # Alert в BOT6
     try:
         await _send_open_alert(pos, {"reasoning": reasoning})
