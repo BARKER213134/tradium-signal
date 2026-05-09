@@ -98,11 +98,12 @@ CV_TIER_ALLOWED = {'match', 'mixed'}
 SF_REQUIRED = {'direction': 'LONG', 'tier': 'match'}
 TC_REQUIRED = {'direction': 'LONG', 'tier': 'mixed'}
 
-# Bad hours (UTC) per 14d backtest: WR<30% или AvgR<-0.20R
-BAD_HOURS = {1, 2, 10, 12, 13}
-
-# Bad weekdays
-BAD_WEEKDAYS = {0, 5}  # Mon, Sat
+# Time filters DISABLED по запросу пользователя — торгуем 24/7.
+# Backtest показывал: bad hours UTC {1,2,10,12,13} (WR<30%, AvgR<-0.20R),
+# bad weekdays {Mon, Sat} (-0.36R, -0.29R) — но user хочет максимум сигналов.
+# Source/tier filter остаётся — это главный edge стратегии.
+BAD_HOURS = set()       # было {1, 2, 10, 12, 13}
+BAD_WEEKDAYS = set()    # было {0, 5} = Mon, Sat
 
 # Q-score threshold (sanity check on top of source/tier rules)
 MIN_Q_SCORE = 40
