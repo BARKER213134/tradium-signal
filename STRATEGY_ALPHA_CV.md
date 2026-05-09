@@ -103,8 +103,8 @@ base_pct = 1% капитала. Final size = base × multiplier.
 
 | Limit | Value | Action |
 |-------|-------|--------|
-| Max concurrent positions | **5** | Block new entry |
-| Max total exposure | **12%** of capital | Block new entry |
+| Max concurrent positions | **10** | Block new entry |
+| Max total exposure | **20%** of capital | Block new entry |
 | Daily loss limit | **-3%** | Stop day, resume next |
 | Drawdown limit | **-10%** | Pause 24h, manual review |
 | Per-trade hard stop | At signal SL | No override |

@@ -125,8 +125,8 @@ SIZING_RULES = [
 ]
 
 # ─── Risk limits ───────────────────────────────────────────────────
-MAX_CONCURRENT_POSITIONS = 5
-MAX_TOTAL_EXPOSURE_PCT = 12.0
+MAX_CONCURRENT_POSITIONS = 10  # лимит 10 сделок (было 5)
+MAX_TOTAL_EXPOSURE_PCT = 20.0  # 10×base 1% × ~2× avg multiplier = до 20%
 DAILY_LOSS_LIMIT_PCT = 3.0
 DRAWDOWN_LIMIT_PCT = 10.0
 
