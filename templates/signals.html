@@ -890,7 +890,7 @@ async function openChartModal(symbol, pair, direction, pnl) {
       if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
       if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
       if (window._addSuperTrend) window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv });
-      if (window._addSMA14) window._addSMA14(chart, d.candles, { anchor: chartDiv });
+      if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
       chart.timeScale().fitContent();
       // Lock scale margins — отключаем autoscale при последующих setMarkers
@@ -4517,7 +4517,7 @@ async function _drawPaperHistChart(idx) {
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
     const _stResHist = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
-    if (window._addSMA14) window._addSMA14(chart, d.candles, { anchor: chartDiv });
+    if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
     if (window._addTSI) window._addTSI(chart, d.candles, { anchor: chartDiv });
 
@@ -4814,7 +4814,7 @@ async function _renderPaperChart(idx, tf) {
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
     const _stResLive = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: area }) : null;
-    if (window._addSMA14) window._addSMA14(chart, d.candles, { anchor: area });
+    if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: area });
     if (window._addRSI) window._addRSI(chart, d.candles, { anchor: area });
     if (window._addTSI) window._addTSI(chart, d.candles, { anchor: area });
 
@@ -7138,6 +7138,7 @@ if (document.readyState !== 'loading') hotLoad();
         <button id="vpvrToggleBtn" onclick="toggleVPVR()" title="Volume Profile Visible Range — гистограмма объёма по ценовым уровням" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📊 VPVR</button>
         <button id="zigzagToggleBtn" onclick="toggleZigZagFib()" title="ZigZag swings (3% threshold) — major price pivots соединённые контрастной линией для чтения структуры тренда" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📐 ZigZag</button>
         <button id="accumToggleBtn" onclick="toggleAccumZones()" title="Accumulation zones — серая заливка периодов накопления (BB squeeze + low vol + tight range), 🧊 маркер на breakout candle (vol≥8x + body≥1ATR + close beyond range)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">🧊 Accum</button>
+        <button id="rsiSmaToggleBtn" onclick="window._toggleRsiSma()" title="SMA(14) of RSI — золотистая сглаженная линия на RSI panel. Crossover с RSI = смена импульса" style="background:var(--dark-2);border:1px solid #ffd23e;border-radius:6px;color:#ffd23e;font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📈 SMA(RSI)</button>
         <button onclick="if(_currentJournalIdx>0)openJournalChart(_currentJournalIdx-1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">◀</button>
         <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
         <button onclick="if(_currentJournalIdx<_journalFiltered.length-1)openJournalChart(_currentJournalIdx+1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">▶</button>
@@ -7356,7 +7357,7 @@ async function loadCoinChart(coin) {
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _coinTF);
     const _stResCoin = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, _coinTF, { anchor: chartDiv }) : null;
-    if (window._addSMA14) window._addSMA14(chart, d.candles, { anchor: chartDiv });
+    if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
     if (window._addTSI) window._addTSI(chart, d.candles, { anchor: chartDiv });
     if (window._prefetchOtherTFs && sym) window._prefetchOtherTFs(sym, _coinTF, 200);
@@ -8256,9 +8257,16 @@ async function openJournalChart(idx, forceTF) {
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _modalTF);
     const _stResJ = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, _modalTF, { anchor: container }) : null;
-    if (window._addSMA14) window._addSMA14(chart, d.candles, { anchor: container });
+    if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: container });
     if (window._addRSI) window._addRSI(chart, d.candles, { anchor: container });
     if (window._addTSI) window._addTSI(chart, d.candles, { anchor: container });
+    // Sync RSI SMA toggle button state
+    const _rsiSmaBtn = document.getElementById('rsiSmaToggleBtn');
+    if (_rsiSmaBtn) {
+      _rsiSmaBtn.textContent = window._rsiSmaEnabled ? '📈 SMA(RSI)' : '📈 OFF';
+      _rsiSmaBtn.style.color = window._rsiSmaEnabled ? '#ffd23e' : 'var(--muted)';
+      _rsiSmaBtn.style.borderColor = window._rsiSmaEnabled ? '#ffd23e' : 'var(--border)';
+    }
     if (window._prefetchOtherTFs && sym) window._prefetchOtherTFs(sym, _modalTF, 200);
     // VPVR — отрисовываем после chart создан и series установлены.
     // setTimeout 100ms чтобы priceScale инициализировался (priceToCoordinate

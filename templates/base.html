@@ -1239,60 +1239,64 @@
         }
       };
 
-      // ─── SMA14 (Simple Moving Average) — линия на price chart ───
-      // Usage: window._addSMA14(chart, candles, { anchor: chartDiv })
-      window._calcSMA = function(candles, period) {
-        period = period || 14;
-        if (!candles || candles.length < period) return null;
-        const closes = candles.map(c => c.close);
+      // ─── SMA14 of RSI — сглаженная линия RSI на rsi panel ───
+      // Toggle через window._rsiSmaEnabled (localStorage tradium_rsi_sma_enabled).
+      // Backward-compat: window._addSMA14 → noop (старая sma на цене отключена).
+      window._rsiSmaEnabled = (function(){
+        try { return localStorage.getItem('tradium_rsi_sma_enabled') !== '0'; }
+        catch { return true; }
+      })();
+
+      window._addRsiSma14 = function(chart, candles, opts) {
+        opts = opts || {};
+        if (!chart || !candles || candles.length < 30) return null;
+        if (!window._rsiSmaEnabled) return null;
+        const period = opts.period || 14;
+        const rsi = window._calcRSI ? window._calcRSI(candles, 14) : null;
+        if (!rsi) return null;
+        // SMA of RSI values (rolling window of last `period` RSI points)
         const sma = new Array(candles.length).fill(null);
+        const buf = [];
         let sum = 0;
         for (let i = 0; i < candles.length; i++) {
-          sum += closes[i];
-          if (i >= period) sum -= closes[i - period];
-          if (i >= period - 1) sma[i] = sum / period;
+          if (rsi[i] == null) continue;
+          buf.push(rsi[i]);
+          sum += rsi[i];
+          if (buf.length > period) sum -= buf.shift();
+          if (buf.length === period) sma[i] = sum / period;
         }
-        return sma;
-      };
-
-      window._addSMA14 = function(chart, candles, opts) {
-        opts = opts || {};
-        if (!chart || !candles || candles.length < 15) return null;
-        const period = opts.period || 14;
-        const sma = window._calcSMA(candles, period);
-        if (!sma) return null;
         try {
           const series = chart.addLineSeries({
-            color: '#ffd23e',  // золотистый — отличается от ST/ZigZag
+            color: '#ffd23e',
             lineWidth: 2,
+            priceScaleId: 'rsi',
             priceLineVisible: false,
             lastValueVisible: true,
             crosshairMarkerVisible: false,
-            title: `SMA${period}`,
+            title: `SMA${period}(RSI)`,
           });
           const data = [];
           for (let i = 0; i < candles.length; i++) {
             if (sma[i] != null) data.push({ time: candles[i].time, value: sma[i] });
           }
           series.setData(data);
-          // Бадж (показывает текущую цену vs SMA)
+          // Бадж (RSI vs SMA(RSI))
           let badgeEl = null;
           const anchor = opts.anchor;
           const lastSma = sma[sma.length - 1];
-          const lastClose = candles[candles.length - 1].close;
-          if (anchor && anchor.nodeType === 1 && lastSma != null) {
-            const old = anchor.querySelector('.sma-badge');
+          const lastRsi = rsi[rsi.length - 1];
+          if (anchor && anchor.nodeType === 1 && lastSma != null && lastRsi != null) {
+            const old = anchor.querySelector('.rsi-sma-badge');
             if (old) old.remove();
             if (getComputedStyle(anchor).position === 'static') {
               anchor.style.position = 'relative';
             }
             badgeEl = document.createElement('div');
-            badgeEl.className = 'sma-badge';
-            const above = lastClose > lastSma;
-            const color = above ? '#00e5a0' : '#ff5e9c';
+            badgeEl.className = 'rsi-sma-badge';
+            const above = lastRsi > lastSma;
             const arrow = above ? '↑' : '↓';
-            const diff_pct = (lastClose - lastSma) / lastSma * 100;
-            badgeEl.innerHTML = `SMA${period} · <span style="color:#ffd23e">${lastSma.toFixed(lastSma < 1 ? 5 : 2)}</span> <span style="color:${color}">${arrow}${diff_pct.toFixed(2)}%</span>`;
+            const diff = (lastRsi - lastSma).toFixed(1);
+            badgeEl.innerHTML = `SMA14(RSI) · <span style="color:#ffd23e;font-weight:600">${lastSma.toFixed(1)}</span> <span style="color:${above ? '#00e5a0' : '#ff5e9c'}">${arrow}${diff}</span>`;
             badgeEl.style.cssText = [
               'position:absolute','top:42px','left:8px','z-index:5',
               'background:rgba(10,14,20,0.72)','color:#cfd3dc',
@@ -1304,8 +1308,31 @@
           }
           return { series, badge: badgeEl };
         } catch (e) {
-          console.error('addSMA14 error:', e);
+          console.error('addRsiSma14 error:', e);
           return null;
+        }
+      };
+
+      // Backward-compat: старые вызовы _addSMA14 → noop (SMA переехала с
+      // цены на RSI panel)
+      window._addSMA14 = function() { return null; };
+
+      // Toggle через кнопку в chart UI
+      window._toggleRsiSma = function() {
+        window._rsiSmaEnabled = !window._rsiSmaEnabled;
+        try {
+          localStorage.setItem('tradium_rsi_sma_enabled',
+                               window._rsiSmaEnabled ? '1' : '0');
+        } catch (_) {}
+        const btn = document.getElementById('rsiSmaToggleBtn');
+        if (btn) {
+          btn.textContent = window._rsiSmaEnabled ? '📈 SMA(RSI)' : '📈 OFF';
+          btn.style.color = window._rsiSmaEnabled ? '#ffd23e' : 'var(--muted)';
+          btn.style.borderColor = window._rsiSmaEnabled ? '#ffd23e' : 'var(--border)';
+        }
+        // Re-open chart to redraw
+        if (typeof openJournalChart === 'function' && window._currentJournalIdx >= 0) {
+          openJournalChart(window._currentJournalIdx);
         }
       };
 
@@ -3686,7 +3713,7 @@ async function _renderLwcSignalChart(containerId, opts) {
   if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
   // SuperTrend (клиентский расчёт, бадж в левом верхнем углу chartDiv)
   const _stResult = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
-  if (window._addSMA14) window._addSMA14(chart, d.candles, { anchor: chartDiv });
+  if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
   if (window._addTSI) window._addTSI(chart, d.candles, { anchor: chartDiv });
   if (window._prefetchOtherTFs && opts.symbol) window._prefetchOtherTFs(opts.symbol, tf, 150);
@@ -4108,7 +4135,7 @@ async function _renderFvgChart(area, sig, tf) {
   if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
   if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
   const _stResFvg = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
-  if (window._addSMA14) window._addSMA14(chart, d.candles, { anchor: chartDiv });
+  if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
   if (window._addTSI) window._addTSI(chart, d.candles, { anchor: chartDiv });
 
