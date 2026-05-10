@@ -1239,6 +1239,76 @@
         }
       };
 
+      // ─── SMA14 (Simple Moving Average) — линия на price chart ───
+      // Usage: window._addSMA14(chart, candles, { anchor: chartDiv })
+      window._calcSMA = function(candles, period) {
+        period = period || 14;
+        if (!candles || candles.length < period) return null;
+        const closes = candles.map(c => c.close);
+        const sma = new Array(candles.length).fill(null);
+        let sum = 0;
+        for (let i = 0; i < candles.length; i++) {
+          sum += closes[i];
+          if (i >= period) sum -= closes[i - period];
+          if (i >= period - 1) sma[i] = sum / period;
+        }
+        return sma;
+      };
+
+      window._addSMA14 = function(chart, candles, opts) {
+        opts = opts || {};
+        if (!chart || !candles || candles.length < 15) return null;
+        const period = opts.period || 14;
+        const sma = window._calcSMA(candles, period);
+        if (!sma) return null;
+        try {
+          const series = chart.addLineSeries({
+            color: '#ffd23e',  // золотистый — отличается от ST/ZigZag
+            lineWidth: 2,
+            priceLineVisible: false,
+            lastValueVisible: true,
+            crosshairMarkerVisible: false,
+            title: `SMA${period}`,
+          });
+          const data = [];
+          for (let i = 0; i < candles.length; i++) {
+            if (sma[i] != null) data.push({ time: candles[i].time, value: sma[i] });
+          }
+          series.setData(data);
+          // Бадж (показывает текущую цену vs SMA)
+          let badgeEl = null;
+          const anchor = opts.anchor;
+          const lastSma = sma[sma.length - 1];
+          const lastClose = candles[candles.length - 1].close;
+          if (anchor && anchor.nodeType === 1 && lastSma != null) {
+            const old = anchor.querySelector('.sma-badge');
+            if (old) old.remove();
+            if (getComputedStyle(anchor).position === 'static') {
+              anchor.style.position = 'relative';
+            }
+            badgeEl = document.createElement('div');
+            badgeEl.className = 'sma-badge';
+            const above = lastClose > lastSma;
+            const color = above ? '#00e5a0' : '#ff5e9c';
+            const arrow = above ? '↑' : '↓';
+            const diff_pct = (lastClose - lastSma) / lastSma * 100;
+            badgeEl.innerHTML = `SMA${period} · <span style="color:#ffd23e">${lastSma.toFixed(lastSma < 1 ? 5 : 2)}</span> <span style="color:${color}">${arrow}${diff_pct.toFixed(2)}%</span>`;
+            badgeEl.style.cssText = [
+              'position:absolute','top:42px','left:8px','z-index:5',
+              'background:rgba(10,14,20,0.72)','color:#cfd3dc',
+              'font-family:var(--font-mono, ui-monospace, monospace)',
+              'font-size:10px','padding:2px 7px','border-radius:4px',
+              'border:1px solid #1a1e2a','pointer-events:none','user-select:none',
+            ].join(';');
+            anchor.appendChild(badgeEl);
+          }
+          return { series, badge: badgeEl };
+        } catch (e) {
+          console.error('addSMA14 error:', e);
+          return null;
+        }
+      };
+
       // ─── RSI (14, Wilder) в нижней панели графика ────────────────
       // Оверлейная price-scale 'rsi' со scaleMargins top:0.82 — RSI
       // рисуется в нижних ~18% области графика, не мешая свечам.
@@ -3616,6 +3686,7 @@ async function _renderLwcSignalChart(containerId, opts) {
   if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
   // SuperTrend (клиентский расчёт, бадж в левом верхнем углу chartDiv)
   const _stResult = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
+  if (window._addSMA14) window._addSMA14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
   if (window._addTSI) window._addTSI(chart, d.candles, { anchor: chartDiv });
   if (window._prefetchOtherTFs && opts.symbol) window._prefetchOtherTFs(opts.symbol, tf, 150);
@@ -4037,6 +4108,7 @@ async function _renderFvgChart(area, sig, tf) {
   if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
   if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
   const _stResFvg = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
+  if (window._addSMA14) window._addSMA14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
   if (window._addTSI) window._addTSI(chart, d.candles, { anchor: chartDiv });
 
