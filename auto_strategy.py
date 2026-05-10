@@ -348,50 +348,59 @@ def get_size_label(signal: dict) -> str:
 # ─── Risk gate (capital-level checks) ──────────────────────────────
 def get_capital_state() -> dict:
     """Считывает текущее состояние capital из paper_trader / Mongo.
-    Возвращает dict для can_enter_now."""
+
+    ВАЖНО: pnl_pct в paper_trades это % от ПОЗИЦИИ (с leverage), не баланса!
+    Считаем daily_pnl_pct как (sum pnl_usdt) / balance * 100 — реальный % от баланса.
+    """
     try:
         from database import _get_db
         from datetime import datetime, timezone, timedelta
         db = _get_db()
-        # Open positions count (paper_trades, status='OPEN')
+        # Account balance
+        state = db.paper_trades.find_one({'_id': 'state'}) or {}
+        balance = float(state.get('balance', 1000.0))
+        if balance <= 0:
+            balance = 1000.0
+        # Open positions count (только наши с auto_strategy_label)
         open_count = db.paper_trades.count_documents({
             'status': 'OPEN',
-            'auto_strategy_label': {'$exists': True}  # только наши
+            'auto_strategy_label': {'$exists': True, '$nin': [None, '']}
         })
         # Total exposure (sum of size_pct of open positions)
         cursor = db.paper_trades.find({
             'status': 'OPEN',
-            'auto_strategy_label': {'$exists': True}
+            'auto_strategy_label': {'$exists': True, '$nin': [None, '']}
         }, {'size_pct': 1})
         total_exp = sum(d.get('size_pct', 1.0) for d in cursor)
-        # Daily PnL (closed today)
+        # Daily PnL (closed today) — считаем USD, делим на balance
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0,
                                                           second=0, microsecond=0)
         cursor = db.paper_trades.find({
             'status': {'$in': ['CLOSED', 'TP', 'SL', 'TIMEOUT']},
             'closed_at': {'$gte': today_start},
-            'auto_strategy_label': {'$exists': True}
-        }, {'pnl_pct': 1})
-        daily_pnl = sum(d.get('pnl_pct', 0) for d in cursor)
-        # Current DD: max equity vs current — пока упрощённо берём сумму всех
-        # closed losses за last 7d минус gains
+            'auto_strategy_label': {'$exists': True, '$nin': [None, '']}
+        }, {'pnl_usdt': 1})
+        daily_pnl_usdt = sum(d.get('pnl_usdt', 0) or 0 for d in cursor)
+        daily_pnl_pct = daily_pnl_usdt / balance * 100.0
+        # Current DD: equity curve в USD, peak-to-trough в % от balance
         week_start = datetime.now(timezone.utc) - timedelta(days=7)
         cursor = db.paper_trades.find({
             'status': {'$in': ['CLOSED', 'TP', 'SL', 'TIMEOUT']},
             'closed_at': {'$gte': week_start},
-            'auto_strategy_label': {'$exists': True}
-        }, {'pnl_pct': 1, 'closed_at': 1})
-        equity_curve = [0.0]
+            'auto_strategy_label': {'$exists': True, '$nin': [None, '']}
+        }, {'pnl_usdt': 1, 'closed_at': 1})
+        equity_usdt = [0.0]
         peak = 0.0
         for d in sorted(cursor, key=lambda x: x.get('closed_at', datetime.min)):
-            equity_curve.append(equity_curve[-1] + d.get('pnl_pct', 0))
-            peak = max(peak, equity_curve[-1])
-        dd_pct = (peak - equity_curve[-1]) if equity_curve else 0
+            equity_usdt.append(equity_usdt[-1] + (d.get('pnl_usdt', 0) or 0))
+            peak = max(peak, equity_usdt[-1])
+        dd_usdt = (peak - equity_usdt[-1]) if equity_usdt else 0
+        dd_pct = dd_usdt / balance * 100.0
         return {
             'open_positions': open_count,
-            'total_exposure_pct': total_exp,
-            'daily_pnl_pct': daily_pnl,
-            'current_dd_pct': max(0, dd_pct),
+            'total_exposure_pct': round(total_exp, 2),
+            'daily_pnl_pct': round(daily_pnl_pct, 2),
+            'current_dd_pct': round(max(0, dd_pct), 2),
         }
     except Exception as e:
         logger.debug(f'[auto-strategy] capital_state fail: {e}')
