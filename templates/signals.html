@@ -384,6 +384,9 @@ td {
 tr:last-child td { border-bottom: none; }
 tbody tr { transition: background 0.12s; }
 tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
+/* Journal: серая разделительная линия между сигналами (видна на фоне tier-подсветок) */
+#jBody > tr > td { border-bottom: 1px solid rgba(255,255,255,0.10); }
+#jBody > tr:last-child > td { border-bottom: none; }
 .badge {
   display: inline-flex;
   align-items: center;
