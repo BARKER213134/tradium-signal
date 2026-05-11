@@ -1275,12 +1275,19 @@
             crosshairMarkerVisible: false,
             title: `SMA${period}(RSI)`,
           });
+          // VISUAL OFFSET: сдвигаем линию SMA(RSI) ниже на 15 чтобы не
+          // сливалась с RSI (обе колеблются около 50). Это чисто
+          // визуальный shift — в баджу показываем настоящее значение.
+          const VISUAL_OFFSET = 15;
           const data = [];
           for (let i = 0; i < candles.length; i++) {
-            if (sma[i] != null) data.push({ time: candles[i].time, value: sma[i] });
+            if (sma[i] != null) data.push({
+              time: candles[i].time,
+              value: sma[i] - VISUAL_OFFSET,  // shift down
+            });
           }
           series.setData(data);
-          // Бадж (RSI vs SMA(RSI))
+          // Бадж (RSI vs SMA(RSI) — настоящие значения, без offset)
           let badgeEl = null;
           const anchor = opts.anchor;
           const lastSma = sma[sma.length - 1];
