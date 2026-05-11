@@ -7140,6 +7140,7 @@ if (document.readyState !== 'loading') hotLoad();
         <button id="accumToggleBtn" onclick="toggleAccumZones()" title="Accumulation zones — серая заливка периодов накопления (BB squeeze + low vol + tight range), 🧊 маркер на breakout candle (vol≥8x + body≥1ATR + close beyond range)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">🧊 Accum</button>
         <button id="rsiSmaToggleBtn" onclick="window._toggleRsiSma()" title="SMA(14) of RSI — золотистая сглаженная линия на RSI panel. Crossover с RSI = смена импульса" style="background:var(--dark-2);border:1px solid #ffd23e;border-radius:6px;color:#ffd23e;font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📈 SMA(RSI)</button>
         <button id="stOverlayToggleBtn" onclick="window._toggleStOverlay()" title="SuperTrend overlay (зелёные/красные stair-step линии). Off = чистый график" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">🌀 ST</button>
+        <button id="histMarkersToggleBtn" onclick="window._toggleHistMarkers()" title="Исторические сигнал-маркеры (🏆🔱🧭 ST tier, 🌊🐉🔋🌋♻️ strategies, 🔥 hot, ✨ verified, красные стрелки). Off = чистый chart без истории" style="background:var(--dark-2);border:1px solid #b28bff;border-radius:6px;color:#b28bff;font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📍 Hist</button>
         <button onclick="if(_currentJournalIdx>0)openJournalChart(_currentJournalIdx-1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">◀</button>
         <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
         <button onclick="if(_currentJournalIdx<_journalFiltered.length-1)openJournalChart(_currentJournalIdx+1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">▶</button>
@@ -8275,6 +8276,13 @@ async function openJournalChart(idx, forceTF) {
       _stOverlayBtn.style.color = window._stOverlayEnabled ? '#00e5a0' : 'var(--muted)';
       _stOverlayBtn.style.borderColor = window._stOverlayEnabled ? '#00e5a0' : 'var(--border)';
     }
+    // Sync Hist Markers toggle button state
+    const _histBtn = document.getElementById('histMarkersToggleBtn');
+    if (_histBtn) {
+      _histBtn.textContent = window._histMarkersEnabled ? '📍 Hist' : '📍 OFF';
+      _histBtn.style.color = window._histMarkersEnabled ? '#b28bff' : 'var(--muted)';
+      _histBtn.style.borderColor = window._histMarkersEnabled ? '#b28bff' : 'var(--border)';
+    }
     if (window._prefetchOtherTFs && sym) window._prefetchOtherTFs(sym, _modalTF, 200);
     // VPVR — отрисовываем после chart создан и series установлены.
     // setTimeout 100ms чтобы priceScale инициализировался (priceToCoordinate
@@ -8430,27 +8438,27 @@ async function openJournalChart(idx, forceTF) {
         _applyAll();
       }).catch(() => {});
     }
-    // ST-signals markers (🏆/🔱/🧭)
-    if (window._fetchStSignals && window._addStSignalMarkers && sym && d.candles.length) {
+    // ST-signals markers (🏆/🔱/🧭) — gated by _histMarkersEnabled
+    if (window._histMarkersEnabled && window._fetchStSignals && window._addStSignalMarkers && sym && d.candles.length) {
       window._fetchStSignals(sym, 336).then(stSigs => {
         if (!stSigs || !stSigs.length) return;
         _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
         _applyAll();
       }).catch(() => {});
     }
-    if (window._fetchNewStrategies && window._addNewStrategyMarkers && sym && d.candles.length) {
+    if (window._histMarkersEnabled && window._fetchNewStrategies && window._addNewStrategyMarkers && sym && d.candles.length) {
       window._fetchNewStrategies(sym, 72).then(nsf => {
         _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
         _applyAll();
       }).catch(()=>{});
     }
-    if (window._fetchHotSignals && window._addHotMarkers && sym && d.candles.length) {
+    if (window._histMarkersEnabled && window._fetchHotSignals && window._addHotMarkers && sym && d.candles.length) {
       window._fetchHotSignals(sym, 3).then(hotItems => {
         _hotM = window._addHotMarkers(d.candles, hotItems) || [];
         _applyAll();
       }).catch(()=>{});
     }
-    if (window._fetchCvFlips && window._addCvFlipMarkers && sym && d.candles.length) {
+    if (window._histMarkersEnabled && window._fetchCvFlips && window._addCvFlipMarkers && sym && d.candles.length) {
       window._fetchCvFlips(sym, 72).then(cvf => {
         if (!cvf || !cvf.length) return;
         _cvFlipM = window._addCvFlipMarkers(d.candles, cvf) || [];
@@ -8458,7 +8466,7 @@ async function openJournalChart(idx, forceTF) {
       }).catch(() => {});
     }
     // Verified Entries (✨) — маркеры от Entry Checker автоматической проверки
-    if (window._fetchVerifiedSignals && window._addVerifiedMarkers && sym && d.candles.length) {
+    if (window._histMarkersEnabled && window._fetchVerifiedSignals && window._addVerifiedMarkers && sym && d.candles.length) {
       window._fetchVerifiedSignals(sym, 168).then(verItems => {
         if (!verItems || !verItems.length) return;
         _verM = window._addVerifiedMarkers(d.candles, verItems) || [];

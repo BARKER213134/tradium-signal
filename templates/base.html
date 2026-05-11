@@ -1122,6 +1122,31 @@
         return { trend, st, candles };
       };
 
+      // Historical markers toggle (red arrows / 🏆🔱🧭 ST sigs / 💥⏳ CV flips
+      // / 🌊🐉🔋🌋♻️ new strategies / 🔥 hot / ✨ verified)
+      // Default ON (для контекста); off = clean chart, только текущий signal.
+      window._histMarkersEnabled = (function(){
+        try { return localStorage.getItem('tradium_hist_markers') !== '0'; }
+        catch { return true; }
+      })();
+
+      window._toggleHistMarkers = function() {
+        window._histMarkersEnabled = !window._histMarkersEnabled;
+        try {
+          localStorage.setItem('tradium_hist_markers',
+                               window._histMarkersEnabled ? '1' : '0');
+        } catch (_) {}
+        const btn = document.getElementById('histMarkersToggleBtn');
+        if (btn) {
+          btn.textContent = window._histMarkersEnabled ? '📍 Hist' : '📍 OFF';
+          btn.style.color = window._histMarkersEnabled ? '#b28bff' : 'var(--muted)';
+          btn.style.borderColor = window._histMarkersEnabled ? '#b28bff' : 'var(--border)';
+        }
+        if (typeof openJournalChart === 'function' && window._currentJournalIdx >= 0) {
+          openJournalChart(window._currentJournalIdx);
+        }
+      };
+
       // SuperTrend overlay toggle (localStorage tradium_st_overlay)
       // Default ON; user can toggle to clean up chart.
       window._stOverlayEnabled = (function(){

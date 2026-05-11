@@ -1,0 +1,63 @@
+Loaded 5534 signals
+Unique pairs: 546
+  25/546
+  50/546
+  75/546
+  100/546
+  125/546
+  150/546
+  175/546
+  200/546
+  225/546
+  250/546
+  275/546
+  300/546
+  325/546
+  350/546
+  375/546
+  400/546
+  425/546
+  450/546
+  475/546
+  500/546
+  525/546
+
+Processed 5534 signals in 659s
+Entry filter: 1216 passed, 4318 rejected (22.0%)
+
+========================================================================================
+OVERALL — ALPHA-CV + SMA EXIT
+========================================================================================
+  all (after ALPHA-CV filter)              N= 1216 wins= 680 losses= 529 WR= 55.9% AvgR=+1.01R PF=4.39
+  LONG                                     N=  890 wins= 354 losses= 529 WR= 39.8% AvgR=+0.96R PF=3.35
+  SHORT                                    N=  326 wins= 326 losses=   0 WR=100.0% AvgR=+1.16R PF=0.00
+
+========================================================================================
+PER SOURCE × DIRECTION
+========================================================================================
+  cryptovizor LONG                         N=  786 wins= 307 losses= 473 WR= 39.1% AvgR=+1.00R PF=3.40
+  cryptovizor SHORT                        N=  326 wins= 326 losses=   0 WR=100.0% AvgR=+1.16R PF=0.00
+  second_flip LONG                         N=   53 wins=  24 losses=  28 WR= 45.3% AvgR=+0.56R PF=2.56
+  triple_confluence LONG                   N=   51 wins=  23 losses=  28 WR= 45.1% AvgR=+0.81R PF=3.22
+
+========================================================================================
+EXIT REASONS
+========================================================================================
+  exit=rsi_cross_exit                      N=  613 wins= 362 losses= 244 WR= 59.1% AvgR=+1.96R PF=16.15
+  exit=sl_hit                              N=  603 wins= 318 losses= 285 WR= 52.7% AvgR=+0.05R PF=1.12
+
+========================================================================================
+FILTER REJECT REASONS
+========================================================================================
+  src_not_whitelist=supertrend             2771
+  src_not_whitelist=vol_accum              517
+  cv_tier_against                          417
+  src_not_whitelist=volume_surge           197
+  src_not_whitelist=triple_confluence      148
+  tc_tier_bad                              107
+  sf_tier_bad                              79
+  src_not_whitelist=second_flip            34
+  src_not_whitelist=volcano                25
+  src_not_whitelist=tradium                23
+
+Done in 659s
