@@ -3438,17 +3438,128 @@ safeInterval(loadConflicts, 30000);
 </script>
 
 {% elif bot == 'autotrading' %}
-<div class="strategy-box">
-  <div class="strat-icon">🤖</div>
-  <div class="strat-body">
-    <div class="strat-title">Стратегия · Paper Trader (Авто-торговля)</div>
-    <b>Симулированная торговля</b> на кластерных сигналах (MEGA/STRONG) и Top Picks.
-    Вход на trigger price, TP <code>+3%</code>, SL <code>-2%</code>, holding ≤72ч.
-    <b>Leverage boost</b>: при STRONG Confluence рядом — размер позиции ×1.5,
-    при MEGA ×2. Отслеживает live PnL, win-rate, streaks. Реальные сделки
-    не совершаются — инструмент для валидации стратегии перед ручным входом.
+<!-- ── Активная стратегия (clickable accordion) ─────────────────── -->
+<div id="activeStrategyCard" style="margin-bottom:16px;border:1px solid rgba(0,229,160,0.4);background:linear-gradient(135deg,rgba(0,229,160,0.06),rgba(178,139,255,0.03));border-radius:10px;overflow:hidden;">
+  <div onclick="_toggleStrategyAccordion()" style="padding:12px 18px;cursor:pointer;display:flex;align-items:center;gap:14px;user-select:none;" id="strategyHeader">
+    <div style="font-size:24px;">🎯</div>
+    <div style="flex:1;">
+      <div style="font-size:14px;font-weight:800;color:var(--text);" id="strategyName">ALPHA-CV v1.2</div>
+      <div style="font-size:11px;color:var(--muted);" id="strategySubline">Загрузка…</div>
+    </div>
+    <div id="strategyStatusBadge" style="padding:6px 12px;border-radius:6px;font-size:11px;font-weight:700;font-family:var(--font-mono);">…</div>
+    <div id="strategyChevron" style="font-size:16px;color:var(--muted);transition:transform 0.2s;">▾</div>
+  </div>
+  <div id="strategyDetails" style="display:none;padding:0 18px 16px 18px;border-top:1px solid var(--border);">
+    <div style="text-align:center;padding:20px;color:var(--muted);">Загрузка деталей…</div>
   </div>
 </div>
+
+<script>
+window._strategyExpanded = false;
+window._toggleStrategyAccordion = function() {
+  window._strategyExpanded = !window._strategyExpanded;
+  const det = document.getElementById('strategyDetails');
+  const ch = document.getElementById('strategyChevron');
+  if (det) det.style.display = window._strategyExpanded ? 'block' : 'none';
+  if (ch) ch.style.transform = window._strategyExpanded ? 'rotate(180deg)' : 'rotate(0)';
+  if (window._strategyExpanded) _loadStrategyDetails();
+};
+
+async function _loadStrategyHeader() {
+  try {
+    const r = await fetch('/api/auto-strategy/info');
+    const d = await r.json();
+    if (d.error) return;
+    const nameEl = document.getElementById('strategyName');
+    const subEl = document.getElementById('strategySubline');
+    const stEl = document.getElementById('strategyStatusBadge');
+    if (nameEl) nameEl.textContent = `${d.name} ${d.version}`;
+    const bt = d.backtest || {};
+    if (subEl) subEl.textContent = `Backtest: WR ${bt.win_rate_pct}% · AvgR +${bt.avg_r_per_trade}R · PF ${bt.profit_factor} · ${bt.trades_after_filter} trades`;
+    if (stEl) {
+      const clr = d.enabled ? '#00e5a0' : '#ff5e9c';
+      stEl.style.background = clr + '22';
+      stEl.style.border = '1px solid ' + clr;
+      stEl.style.color = clr;
+      stEl.textContent = d.enabled ? '● АКТИВНА' : '○ ОТКЛ.';
+    }
+    window._stratData = d;
+  } catch(e) {}
+}
+
+async function _loadStrategyDetails() {
+  const det = document.getElementById('strategyDetails');
+  if (!det) return;
+  const d = window._stratData;
+  if (!d) {
+    await _loadStrategyHeader();
+  }
+  const data = window._stratData;
+  if (!data) {
+    det.innerHTML = '<div style="text-align:center;padding:20px;color:var(--sell);">Ошибка загрузки</div>';
+    return;
+  }
+  const rules = data.rules || {};
+  const lim = data.limits || {};
+  const ex = data.exit_logic || {};
+  const sz = data.sizing || [];
+  const wl = (rules.entry_whitelist || []).map(r => `<li style="padding:2px 0;">✅ ${r}</li>`).join('');
+  const bl = (rules.blocked_sources || []).map(r => `<li style="padding:2px 0;color:#ff8c80;list-style:none;">❌ ${r}</li>`).join('');
+  const szRows = sz.map(s =>
+    `<tr><td style="padding:3px 8px;font-size:11px;">${s.setup}</td>
+     <td style="padding:3px 8px;text-align:right;color:#ffd23e;font-weight:700;font-size:11px;">${s.multiplier}×</td>
+     <td style="padding:3px 8px;text-align:right;color:#aaa;font-size:11px;">${(s.base_pct * s.multiplier).toFixed(1)}%</td></tr>`
+  ).join('');
+  det.innerHTML = `
+    <div style="font-size:11px;color:var(--muted);padding:10px 0;line-height:1.5;">${data.description || ''}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px;">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#00e5a0;margin-bottom:4px;">ENTRY WHITELIST</div>
+        <ul style="margin:0;padding:0 0 0 18px;font-size:11px;line-height:1.6;color:var(--text);">${wl}</ul>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#ff5e9c;margin-bottom:4px;">BLOCKED</div>
+        <ul style="margin:0;padding:0;font-size:11px;line-height:1.5;color:var(--text);">${bl}</ul>
+      </div>
+    </div>
+    <div style="margin-top:16px;">
+      <div style="font-size:11px;font-weight:700;color:#ffd23e;margin-bottom:4px;">POSITION SIZING</div>
+      <table style="width:100%;border-collapse:collapse;">${szRows}</table>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px;">Base 1% × multiplier. Hard cap: 5% per trade.</div>
+    </div>
+    <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:#b28bff;margin-bottom:4px;">EXIT LOGIC</div>
+        <div style="font-size:11px;line-height:1.6;color:var(--text);">
+          <div>📈 LONG: ${ex.long_exit || ''}</div>
+          <div>📉 SHORT: ${ex.short_exit || ''}</div>
+          <div>🛡 Backup SL: ${ex.backup_sl || ''}</div>
+          <div>⏱ Max hold: ${ex.max_hold_hours}h</div>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:4px;">RISK LIMITS</div>
+        <div style="font-size:11px;line-height:1.6;color:var(--text);">
+          <div>📊 Max позиций: <b>${lim.max_concurrent_positions}</b></div>
+          <div>💰 Max exposure: <b>${lim.max_total_exposure_pct}%</b></div>
+          <div>📉 Daily loss limit: <b>-${lim.daily_loss_limit_pct}%</b></div>
+          <div>🛑 Drawdown limit: <b>${lim.drawdown_limit_pct}%</b></div>
+          <div>🔒 Per-trade cap: <b>${lim.per_trade_hard_cap_pct}%</b></div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:14px;text-align:center;">
+      <button onclick="_loadStrategyDetails()" style="background:var(--card);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:4px 12px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">🔄 Обновить</button>
+    </div>
+  `;
+}
+
+// Auto-load header при появлении вкладки
+document.addEventListener('DOMContentLoaded', _loadStrategyHeader);
+if (document.readyState !== 'loading') _loadStrategyHeader();
+// Auto-refresh header каждые 30s
+setInterval(_loadStrategyHeader, 30000);
+</script>
 <!-- ── Авто-торговля ──────────────────────────────────────────────── -->
 <style>
 .at-card { background:var(--dark-2); border:1px solid var(--border); border-radius:10px; padding:16px 20px; text-align:center; }
@@ -6930,7 +7041,7 @@ async function _pollDeltaBackfill() {
 </div>
 {% endif %}{# /bot == 'journal' #}
 
-{% if bot == 'strategy' %}
+{% if bot == 'strategy' %}{# Legacy tab — kept for direct URL access /signals?bot=strategy #}
 <!-- ════════════ 🎯 Стратегия — активная стратегия автотрейдинга ════════════ -->
 <div id="stratView" style="padding:20px;max-width:1200px;margin:0 auto;font-family:var(--font-mono);">
   <div style="text-align:center;padding:40px;color:var(--muted);">Загрузка…</div>
