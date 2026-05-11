@@ -8736,6 +8736,7 @@ window._renderSmaCell = function(s) {
 // Delta anomaly per TF — z-score delta_pct сигнальной свечи vs 30 свечей до неё.
 // 🔥 z > 2.5 (экстремум), ⚡ z > 1.5 (повышенный), ⚪ норма, "—" нет данных.
 window._renderAnomalyCell = function(s) {
+  // 3 TF данных (15m/1h/4h) + invisible 1d row для align с RSI/SMA/Trend (4 строки)
   const tfs = ['15m', '1h', '4h'];
   const placeholder = '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
   const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
@@ -8749,7 +8750,6 @@ window._renderAnomalyCell = function(s) {
     if (abz > maxAbsZ) maxAbsZ = abz;
     let glyph, color, label;
     if (abz > 2.5) {
-      // Экстремум: 🔥 для bull, 🧊 для bear
       glyph = z > 0 ? '🔥' : '🧊';
       color = z > 0 ? '#ff8c50' : '#5e9cff';
       label = `z=${z.toFixed(2)} — экстремум ${z > 0 ? 'buy' : 'sell'}`;
@@ -8785,12 +8785,15 @@ window._renderAnomalyCell = function(s) {
     }
     return `<div title="${r.tf}: ${r.label}">${tfLbl(r.tf)} <span style="font-size:14px;margin-left:3px;">${r.glyph}</span></div>`;
   }).join('');
+  // Invisible 1d placeholder row — выравниваем высоту с RSI/SMA/Trend (4 TF строки)
+  const invisible_1d = '<div style="visibility:hidden;">' + tfLbl('1d') + ' <span style="font-size:14px;margin-left:3px;">·</span></div>';
   const tip = (info && info.label) || (anyData
     ? `Аномалия дельты: max |z|=${maxAbsZ.toFixed(2)} (vs baseline 30 свечей)`
     : 'Нет данных дельты для z-score');
   return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 4px !important;${bg}" title="${tip}">
     ${emojiHeader}
     ${inner}
+    ${invisible_1d}
   </td>`;
 };
 
