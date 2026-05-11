@@ -10704,6 +10704,63 @@ def _compute_journal_sync():
                             deltas.append(d.get('delta_pct') or 0.0)
                     if deltas:
                         it[f'resonance_{tf}'] = _resonance_from_deltas(deltas)
+
+            # ─── ANOMALY DETECTION: z-score delta_pct сигнальной свечи vs
+            # последних 30 свечей до неё. z>2.5 = экстремум (как SKYAI на
+            # 26.04 — массивный приток покупок против бэйзлайна).
+            # Bulk-fetch baseline candles per (pair, tf) одним find с
+            # range condition, потом считаем z в Python.
+            try:
+                from collections import defaultdict
+                BASELINE_BARS = 30
+                # Группируем сигналы по (pair, tf) → list of (item, sig_open)
+                sig_by_pt: dict = defaultdict(list)
+                for it in items:
+                    ats = it.get('at_ts') or 0
+                    pair = it.get('pair') or ''
+                    if not (ats and pair):
+                        continue
+                    if ats < delta_cutoff_ts:
+                        continue
+                    for tf in ('15m', '1h'):
+                        sig_open = _candle_open_ms(ats * 1000, tf)
+                        sig_by_pt[(pair, tf)].append((it, sig_open))
+                # Per (pair, tf): один find на весь диапазон,
+                # потом per-signal compute z-score
+                tf_minutes = {'15m': 15, '1h': 60}
+                for (pair, tf), sig_list in sig_by_pt.items():
+                    bucket_ms = tf_minutes[tf] * 60 * 1000
+                    min_open = min(o for _, o in sig_list)
+                    max_open = max(o for _, o in sig_list)
+                    range_start = min_open - BASELINE_BARS * bucket_ms
+                    try:
+                        docs = cd_col.find({
+                            'pair': pair, 'tf': tf,
+                            'open_ms': {'$gte': range_start, '$lte': max_open},
+                        }, {'open_ms':1, 'delta_pct':1, '_id':0})
+                        by_open = {d['open_ms']: float(d.get('delta_pct') or 0)
+                                    for d in docs}
+                    except Exception:
+                        continue
+                    if not by_open:
+                        continue
+                    sorted_opens = sorted(by_open.keys())
+                    for it, sig_open in sig_list:
+                        # 30 свечей строго ДО сигнальной
+                        preceding = [by_open[o] for o in sorted_opens
+                                      if o < sig_open][-BASELINE_BARS:]
+                        sig_delta = by_open.get(sig_open)
+                        if sig_delta is None or len(preceding) < 10:
+                            continue
+                        mean = sum(preceding) / len(preceding)
+                        var = sum((d - mean)**2 for d in preceding) / len(preceding)
+                        std = var ** 0.5
+                        if std < 0.1:
+                            continue
+                        z = (sig_delta - mean) / std
+                        it[f'delta_zscore_{tf}'] = round(z, 2)
+            except Exception as _e:
+                logging.getLogger(__name__).debug(f"[journal] anomaly z-score fail: {_e}")
             # ─── INLINE fast fill для свежих сигналов (last 6h) ───
             # Через klines (1 запрос/TF/пара = 5 свечей резонанса).
             # Параллельно через ThreadPoolExecutor, бюджет 4с total.
@@ -10829,6 +10886,13 @@ def _compute_journal_sync():
                 it['q_score'] = 0
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] q_score fail: {e}")
+
+    # ─── Trend 15m/1h/4h/1d enrichment из Mongo (signal_trend_cache) ───
+    try:
+        from trend_cache import bulk_get_trend_for_items
+        bulk_get_trend_for_items(items)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] trend enrich fail: {e}")
 
     # ─── RSI 15m/1h/4h/1d enrichment из Mongo cache (signal_rsi_cache) ───
     try:

@@ -3221,6 +3221,18 @@ async def _paper_on_signal(signal_data: dict):
     except Exception as e:
         logger.debug(f"[rsi-cache] schedule on signal fail: {e}")
 
+    # ── Trend cache fill (EMA20 vs EMA50, 4 TF) на каждый новый сигнал ──
+    try:
+        _pair_trend = signal_data.get("pair") or ""
+        if not _pair_trend and signal_data.get("symbol"):
+            _s = signal_data["symbol"]
+            _pair_trend = _s.replace("USDT", "/USDT") if "USDT" in _s else _s
+        if _pair_trend:
+            from trend_cache import fill_pair_trend_async
+            asyncio.create_task(fill_pair_trend_async(_pair_trend))
+    except Exception as e:
+        logger.debug(f"[trend-cache] schedule on signal fail: {e}")
+
     # ── Cluster Delta + Resonance fill IMMEDIATELY на каждый новый сигнал ──
     # Заполняет cluster_delta cache (15m + 1h свечи резонанса) сразу к моменту
     # когда журнал будет открыт. Журнал API читает из cluster_delta через
@@ -3519,6 +3531,59 @@ async def _rsi_cache_loop():
         except Exception:
             logger.exception('[rsi-cache] loop error')
         await _asyncio.sleep(300)
+
+
+async def _trend_cache_loop():
+    """Background task: периодически наполняет signal_trend_cache (Mongo)
+    для всех 4 TF: EMA20 vs EMA50. Cross-worker persistent. Интервал 6 мин."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(150)
+    while True:
+        try:
+            from database import _get_db
+            from datetime import timedelta as _td, datetime as _dt, timezone as _tz
+            from trend_cache import fill_pair_trend
+            db = _get_db()
+            since = _dt.now(_tz.utc) - _td(hours=24)
+            pairs = set()
+            for col_name in ('supertrend_signals', 'cv_flip_signals',
+                             'new_strategy_signals'):
+                ts_field = ('flip_at' if col_name == 'supertrend_signals'
+                            else 'created_at')
+                try:
+                    for s in db[col_name].find({ts_field: {'$gte': since}},
+                                                {'pair': 1}).limit(300):
+                        if s.get('pair'):
+                            pairs.add(s['pair'])
+                except Exception:
+                    pass
+            try:
+                for s in db.signals.find({'received_at': {'$gte': since}},
+                                          {'pair': 1}).limit(300):
+                    if s.get('pair'):
+                        pairs.add(s['pair'])
+            except Exception:
+                pass
+            pairs = list(pairs)[:400]
+            if not pairs:
+                await _asyncio.sleep(360)
+                continue
+            logger.info(f"[trend-cache] filling 4 TF for {len(pairs)} pairs")
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                fut_list = [ex.submit(fill_pair_trend, p) for p in pairs]
+                await _asyncio.to_thread(
+                    lambda: [f.result() for f in fut_list])
+            logger.info(f"[trend-cache] done {len(pairs)} pairs × 4 TF")
+            # Invalidate journal cache
+            try:
+                from cache_utils import journal_cache
+                journal_cache.invalidate("journal_all")
+            except Exception:
+                pass
+        except Exception:
+            logger.exception('[trend-cache] loop error')
+        await _asyncio.sleep(360)
 
 
 async def _cluster_delta_cache_loop():
@@ -4066,6 +4131,12 @@ async def start_watcher():
         logger.info("[cluster-delta] cache loop scheduled")
     except Exception:
         logger.exception("[cluster-delta] failed to schedule cache loop")
+    # Trend cache loop — каждые 6 мин наполняет signal_trend_cache (EMA20 vs EMA50)
+    try:
+        asyncio.create_task(_trend_cache_loop())
+        logger.info("[trend-cache] background loop scheduled")
+    except Exception:
+        logger.exception("[trend-cache] failed to schedule")
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())

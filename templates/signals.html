@@ -7035,15 +7035,17 @@ async function _pollDeltaBackfill() {
 <div class="table-wrap">
   <table style="table-layout:fixed;width:100%;">
     <colgroup>
-      <col style="width:6%;">    <!-- Время -->
-      <col style="width:8%;">    <!-- Источник -->
-      <col style="width:7%;">    <!-- Пара -->
-      <col style="width:5%;">    <!-- Напр. -->
-      <col style="width:7%;">    <!-- Entry -->
-      <col style="width:22%;">   <!-- Паттерн -->
+      <col style="width:5%;">    <!-- Время -->
+      <col style="width:6%;">    <!-- Источник -->
+      <col style="width:5%;">    <!-- Пара -->
+      <col style="width:4%;">    <!-- Напр. -->
+      <col style="width:5%;">    <!-- Entry -->
+      <col style="width:17%;">   <!-- Паттерн -->
       <col style="width:5%;">    <!-- Score -->
-      <col style="width:10%;">   <!-- RSI 4 TF -->
+      <col style="width:9%;">    <!-- RSI 4 TF -->
       <col style="width:6%;">    <!-- SMA vs RSI (circles) -->
+      <col style="width:7%;">    <!-- Аномалия (delta z-score) -->
+      <col style="width:7%;">    <!-- Trend (EMA20/50) -->
       <col style="width:12%;">   <!-- Δ% -->
       <col style="width:12%;">   <!-- Резонанс -->
     </colgroup>
@@ -7061,12 +7063,14 @@ async function _pollDeltaBackfill() {
           <span onclick="event.stopPropagation();window._toggleRsiHelp(event)" style="display:inline-block;margin-left:4px;width:14px;height:14px;line-height:14px;text-align:center;background:rgba(178,139,255,0.2);border:1px solid #b28bff;border-radius:50%;color:#b28bff;font-size:9px;font-weight:700;cursor:pointer;vertical-align:middle;" title="Backtest best RSI buckets">ⓘ</span>
         </th>
         <th id="jSortSma" title="SMA(14) of RSI per TF. 🟢 = RSI выше SMA (bullish momentum), 🔴 = ниже (bearish)" style="text-align:center;padding:14px 6px;">SMA</th>
+        <th id="jSortAnomaly" title="Аномалия дельты — z-score delta_pct сигнальной свечи vs последних 30 свечей до неё. 🔥 z>2.5 = экстремум (как SKYAI 26.04), ⚡ z>1.5 = повышенный приток, ⚪ норма" style="text-align:center;padding:14px 6px;">Аномалия</th>
+        <th id="jSortTrend" title="Тренд по EMA20 vs EMA50 на close per TF. ▲ зелёный = UP, ▼ красный = DOWN, ◆ серый = FLAT" style="text-align:center;padding:14px 6px;">Тренд</th>
         <th class="sortable" onclick="jSort('delta_15m')" id="jSortDelta" title="Cluster Delta 15m / 1h (buy vs sell volume на свече сигнала)" style="text-align:center;padding:14px 6px;">Δ%</th>
         <th class="sortable" onclick="jSort('resonance_15m')" id="jSortResonance" title="Резонанс — N подряд свечей одного знака дельты (-5..+5). Положительное в LONG = попутный поток; отрицательное в LONG = поток против сделки" style="text-align:center;padding:14px 6px;">Резонанс</th>
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="11" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="13" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -8341,6 +8345,12 @@ function renderJournal(items, startIdx) {
     // SMA(RSI) position vs RSI per TF — green/red circles
     const smaCell = window._renderSmaCell ? window._renderSmaCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    // Delta anomaly z-score (15m/1h) — 🔥/⚡/⚪
+    const anomalyCell = window._renderAnomalyCell ? window._renderAnomalyCell(s) :
+      '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    // Trend EMA20 vs EMA50 per TF
+    const trendCell = window._renderTrendCell ? window._renderTrendCell(s) :
+      '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     // Cluster Delta + Resonance (информативно, не влияет на сигналы)
     const deltaCell = window._renderDeltaCell ? window._renderDeltaCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
@@ -8356,6 +8366,8 @@ function renderJournal(items, startIdx) {
       ${qsCell}
       ${rsiCell}
       ${smaCell}
+      ${anomalyCell}
+      ${trendCell}
       ${deltaCell}
       ${resonanceCell}
     </tr>`;
@@ -8560,29 +8572,116 @@ window._renderSmaCell = function(s) {
   const rows = tfs.map(tf => {
     const r = s[`rsi_${tf}`];
     const sm = s[`sma_rsi_${tf}`];
-    if (r == null || sm == null) return null;
+    if (r == null || sm == null) return {tf, missing: true};
     anyData = true;
     const above = r > sm;  // RSI выше SMA = bullish
     const diff = (r - sm).toFixed(1);
     const color = above ? '#00e5a0' : '#ff5e9c';
     const arrow = above ? '↑' : '↓';
-    return {tf, color, arrow, diff, above};
+    return {tf, color, arrow, diff, above, missing: false};
   });
-  // Placeholder matches emoji header height in RSI cell (font-size:13px;line-height:1.2;margin-bottom:2px) — keeps TF rows aligned with RSI column
+  // Placeholder matches emoji header height in RSI cell — keeps TF rows aligned
   const placeholder = '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
-  if (!anyData) {
-    return `<td class="mono text-muted" style="text-align:center;font-size:11px;line-height:1.4;padding:4px 4px !important;">${placeholder}<div>—</div></td>`;
-  }
   const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
+  // ВСЕГДА рендерим все 4 TF строки — даже если данных нет (label + "—")
+  // Это гарантирует что строки 15m/1h/4h/1d стоят на одной горизонтали с RSI колонкой.
   const inner = rows.map(r => {
-    if (!r) return '<div style="opacity:0.3;font-size:12px;">—</div>';
+    if (r.missing) {
+      return `<div style="opacity:0.4;">${tfLbl(r.tf)} <span style="color:#555;font-size:12px;">—</span></div>`;
+    }
     return `<div title="RSI ${r.above ? '>' : '<'} SMA on ${r.tf} (diff ${r.diff})">
       ${tfLbl(r.tf)} <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${r.color};vertical-align:middle;margin-left:3px;box-shadow:0 0 4px ${r.color}44;"></span>
     </div>`;
   }).join('');
+  if (!anyData) {
+    return `<td class="mono text-muted" style="text-align:center;line-height:1.4;padding:4px 4px !important;">${placeholder}${inner}</td>`;
+  }
   return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 4px !important;" title="🟢 RSI > SMA(RSI) = бычий импульс · 🔴 RSI < SMA = медвежий">
     ${placeholder}
     ${inner}
+  </td>`;
+};
+
+// Delta anomaly per TF — z-score delta_pct сигнальной свечи vs 30 свечей до неё.
+// 🔥 z > 2.5 (экстремум), ⚡ z > 1.5 (повышенный), ⚪ норма, "—" нет данных.
+window._renderAnomalyCell = function(s) {
+  const tfs = ['15m', '1h'];
+  const placeholder = '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
+  const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
+  let maxAbsZ = 0;
+  let anyData = false;
+  const rows = tfs.map(tf => {
+    const z = s[`delta_zscore_${tf}`];
+    if (z == null) return {tf, missing: true};
+    anyData = true;
+    const abz = Math.abs(z);
+    if (abz > maxAbsZ) maxAbsZ = abz;
+    let glyph, color, label;
+    if (abz > 2.5) {
+      // Экстремум: 🔥 для bull, 🧊 для bear
+      glyph = z > 0 ? '🔥' : '🧊';
+      color = z > 0 ? '#ff8c50' : '#5e9cff';
+      label = `z=${z.toFixed(2)} — экстремум ${z > 0 ? 'buy' : 'sell'}`;
+    } else if (abz > 1.5) {
+      glyph = z > 0 ? '⚡' : '🌊';
+      color = z > 0 ? '#ffd23e' : '#88a8d8';
+      label = `z=${z.toFixed(2)} — повышенный ${z > 0 ? 'buy' : 'sell'}`;
+    } else {
+      glyph = '⚪';
+      color = '#666';
+      label = `z=${z.toFixed(2)} — норма`;
+    }
+    return {tf, glyph, color, label, z, abz};
+  });
+  // Подсветка ячейки если есть экстремум на любом TF
+  let bg = '';
+  if (maxAbsZ > 2.5) bg = 'background:rgba(255,140,80,0.12);border-left:2px solid #ff8c50;';
+  else if (maxAbsZ > 1.5) bg = 'background:rgba(255,210,62,0.08);';
+  const inner = rows.map(r => {
+    if (r.missing) {
+      return `<div style="opacity:0.4;">${tfLbl(r.tf)} <span style="color:#555;font-size:12px;">—</span></div>`;
+    }
+    return `<div title="${r.tf}: ${r.label}">${tfLbl(r.tf)} <span style="font-size:14px;margin-left:3px;">${r.glyph}</span></div>`;
+  }).join('');
+  const tip = anyData
+    ? `Аномалия дельты: max |z|=${maxAbsZ.toFixed(2)} (vs baseline 30 свечей)`
+    : 'Нет данных дельты для z-score';
+  return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 4px !important;${bg}" title="${tip}">
+    ${placeholder}
+    ${inner}
+  </td>`;
+};
+
+// Trend per TF — EMA20 vs EMA50 на свече сигнала. Возвращает ▲/▼/◆ с цветом.
+// Placeholder сверху матчит emoji header в RSI cell — alignment с RSI/SMA колонками.
+window._renderTrendCell = function(s) {
+  const tfs = ['15m', '1h', '4h', '1d'];
+  const placeholder = '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
+  const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
+  let anyData = false;
+  const cells = tfs.map(tf => {
+    const t = s[`trend_${tf}`];
+    if (!t || t === 'UNKNOWN') {
+      return `<div style="opacity:0.4;">${tfLbl(tf)} <span style="color:#555;font-size:12px;">—</span></div>`;
+    }
+    anyData = true;
+    let glyph, col, lbl;
+    if (t === 'UP')        { glyph = '▲'; col = '#00e5a0'; lbl = 'UP — EMA20 > EMA50'; }
+    else if (t === 'DOWN') { glyph = '▼'; col = '#ff5e9c'; lbl = 'DOWN — EMA20 < EMA50'; }
+    else                   { glyph = '◆'; col = '#aaa';    lbl = 'FLAT — EMA20 ≈ EMA50'; }
+    return `<div title="${tf}: ${lbl}">${tfLbl(tf)} <span style="color:${col};font-weight:700;font-size:13px;margin-left:3px;text-shadow:0 0 4px ${col}44;">${glyph}</span></div>`;
+  }).join('');
+  // Edge emoji header — наполнится после backtest (window._trendEdgeInfo)
+  let emojiHeader = placeholder;
+  if (window._trendEdgeInfo) {
+    const info = window._trendEdgeInfo(s);
+    if (info && info.emoji) {
+      emojiHeader = `<div style="font-size:13px;line-height:1.2;margin-bottom:2px;" title="${info.label||''}">${info.emoji}</div>`;
+    }
+  }
+  return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 4px !important;" title="Тренд по EMA20 vs EMA50 (close) на свече сигнала">
+    ${emojiHeader}
+    ${cells}
   </td>`;
 };
 
