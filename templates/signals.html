@@ -6902,16 +6902,11 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="LONG">🟢 LONG</option>
     <option value="SHORT">🔴 SHORT</option>
   </select>
-  <select id="jFilterKC" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
-    <option value="">KC: все</option>
-    <option value="pass">✅ Прошли</option>
-    <option value="fail">❌ Не прошли</option>
-  </select>
   <input id="jFilterScore" type="number" placeholder="Min Score" min="0" step="1" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);width:80px;">
-  <select id="jFilterPump" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
-    <option value="">Pump: все</option>
-    <option value="high">🔥 HIGH</option>
-  </select>
+  <!-- KC и Pump filter убраны из UI (колонки удалены из таблицы).
+       Hidden inputs для совместимости с filterJournal() — всегда пустые. -->
+  <select id="jFilterKC" style="display:none;"><option value=""></option></select>
+  <select id="jFilterPump" style="display:none;"><option value=""></option></select>
   <select id="jFilterTime" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">🕐 Всё время</option>
     <option value="1">1 час</option>
@@ -7007,17 +7002,15 @@ async function _pollDeltaBackfill() {
 <div class="table-wrap">
   <table style="table-layout:fixed;width:100%;">
     <colgroup>
-      <col style="width:6%;">    <!-- Время -->
-      <col style="width:8%;">    <!-- Источник -->
-      <col style="width:8%;">    <!-- Пара -->
-      <col style="width:5%;">    <!-- Напр. -->
-      <col style="width:7%;">    <!-- Entry -->
+      <col style="width:7%;">    <!-- Время -->
+      <col style="width:10%;">   <!-- Источник -->
+      <col style="width:10%;">   <!-- Пара -->
+      <col style="width:6%;">    <!-- Напр. -->
+      <col style="width:9%;">    <!-- Entry -->
       <col>                      <!-- Паттерн (auto-fit) -->
-      <col style="width:5%;">    <!-- Score -->
-      <col style="width:11%;">   <!-- Δ% -->
-      <col style="width:11%;">   <!-- Резонанс -->
-      <col style="width:4%;">    <!-- KC -->
-      <col style="width:4%;">    <!-- Pump -->
+      <col style="width:6%;">    <!-- Score -->
+      <col style="width:13%;">   <!-- Δ% -->
+      <col style="width:13%;">   <!-- Резонанс -->
     </colgroup>
     <thead>
       <tr>
@@ -7030,12 +7023,10 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('q_score')" id="jSortQScore" title="Quality Score 0-100 (по 5 факторам с штрафами)">Score</th>
         <th class="sortable" onclick="jSort('delta_15m')" id="jSortDelta" title="Cluster Delta 15m / 1h (buy vs sell volume на свече сигнала, Binance Futures aggTrades)">Δ%</th>
         <th class="sortable" onclick="jSort('resonance_15m')" id="jSortResonance" title="Резонанс — N подряд свечей одного знака дельты (-5..+5). Положительное в LONG = попутный поток; отрицательное в LONG = поток против сделки">Резонанс</th>
-        <th class="sortable" onclick="jSort('st_passed')" id="jSortKC">KC</th>
-        <th class="sortable" onclick="jSort('pump_score')" id="jSortPump">Pump</th>
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="11" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="9" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -8249,7 +8240,7 @@ function renderJournal(items, startIdx) {
   startIdx = startIdx || 0;
   const tbody = document.getElementById('jBody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
     return;
   }
   tbody.innerHTML = items.map((s, i) => {
@@ -8314,8 +8305,6 @@ function renderJournal(items, startIdx) {
       ${qsCell}
       ${deltaCell}
       ${resonanceCell}
-      <td style="${kcCellStyle}">${kcMark}</td>
-      <td>${pumpMark}</td>
     </tr>`;
   }).join('');
 }
@@ -8438,8 +8427,8 @@ function jSort(field) {
     _jSortAsc = field === 'symbol' || field === 'source' || field === 'direction'; // alpha = asc default
   }
   // Update header arrows
-  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',delta_15m:'jSortDelta',resonance_15m:'jSortResonance',st_passed:'jSortKC',pump_score:'jSortPump'};
-  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн/Score',q_score:'Score',delta_15m:'Δ%',resonance_15m:'Резонанс',st_passed:'KC',pump_score:'Pump'};
+  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',delta_15m:'jSortDelta',resonance_15m:'jSortResonance'};
+  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн/Score',q_score:'Score',delta_15m:'Δ%',resonance_15m:'Резонанс'};
   for (const [f, id] of Object.entries(cols)) {
     const el = document.getElementById(id);
     if (el) el.textContent = labels[f] + (f === _jSortField ? (_jSortAsc ? ' ▲' : ' ▼') : '');
