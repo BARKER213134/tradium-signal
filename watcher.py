@@ -3435,6 +3435,99 @@ async def _new_strategies_updater_loop():
         await _asyncio.sleep(300)  # каждые 5 минут
 
 
+async def _rsi_cache_loop():
+    """Background task: периодически наполняет admin._RSI_CACHE для пар
+    из недавних сигналов. Чтобы journal API не блокировался на HTTP fetch.
+
+    Интервал 5 мин. Кэш TTL 10 мин в admin._RSI_CACHE.
+    """
+    import asyncio as _asyncio
+    await _asyncio.sleep(120)  # warmup задержка
+    while True:
+        try:
+            from database import _get_db
+            from datetime import timedelta as _td, datetime as _dt, timezone as _tz
+            from delta_calculator import (fetch_klines_cdn, _normalize_symbol,
+                                           _compute_rsi_for_closes)
+            import admin as _admin
+            db = _get_db()
+            since = _dt.now(_tz.utc) - _td(hours=24)
+            # Уникальные pairs из коллекций
+            pairs = set()
+            for col_name in ('supertrend_signals', 'cv_flip_signals',
+                             'new_strategy_signals'):
+                ts_field = ('flip_at' if col_name == 'supertrend_signals'
+                            else 'created_at')
+                try:
+                    for s in db[col_name].find({ts_field: {'$gte': since}},
+                                                {'pair': 1}).limit(300):
+                        if s.get('pair'):
+                            pairs.add(s['pair'])
+                except Exception:
+                    pass
+            try:
+                for s in db.signals.find({'received_at': {'$gte': since}},
+                                          {'pair': 1}).limit(300):
+                    if s.get('pair'):
+                        pairs.add(s['pair'])
+            except Exception:
+                pass
+            pairs = list(pairs)[:120]  # max 120 unique pairs
+            if not pairs:
+                await _asyncio.sleep(300)
+                continue
+            logger.info(f"[rsi-cache] filling for {len(pairs)} pairs")
+
+            # Module-level cache в admin
+            if not hasattr(_admin, '_RSI_CACHE'):
+                _admin._RSI_CACHE = {}
+
+            def _process_one(pair):
+                sym = _normalize_symbol(pair)
+                if not sym:
+                    return
+                import time as _t
+                now_ms = int(_t.time() * 1000)
+                now_t = _t.time()
+                # 1h (last 48h)
+                try:
+                    start = now_ms - 48 * 3600 * 1000
+                    end = now_ms + 60 * 1000
+                    kl = fetch_klines_cdn(sym, '1h', start, end)
+                    if kl and len(kl) >= 16:
+                        closes = [float(k[4]) for k in kl]
+                        rsis = _compute_rsi_for_closes(closes, 14)
+                        rsi_map = {int(k[0]): rsis[i]
+                                   for i, k in enumerate(kl) if rsis[i] is not None}
+                        _admin._RSI_CACHE[f'{pair}|1h'] = (now_t, rsi_map)
+                except Exception:
+                    pass
+                # 4h (last 7d for warmup)
+                try:
+                    start = now_ms - 7 * 24 * 3600 * 1000
+                    end = now_ms + 60 * 1000
+                    kl = fetch_klines_cdn(sym, '4h', start, end)
+                    if kl and len(kl) >= 16:
+                        closes = [float(k[4]) for k in kl]
+                        rsis = _compute_rsi_for_closes(closes, 14)
+                        rsi_map = {int(k[0]): rsis[i]
+                                   for i, k in enumerate(kl) if rsis[i] is not None}
+                        _admin._RSI_CACHE[f'{pair}|4h'] = (now_t, rsi_map)
+                except Exception:
+                    pass
+
+            # Throttled: 4 workers + sleep между batches
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                fut_list = [ex.submit(_process_one, p) for p in pairs]
+                # Не блокируем event loop — wait через asyncio
+                await _asyncio.to_thread(lambda: [f.result() for f in fut_list])
+            logger.info(f"[rsi-cache] done, entries: {len(_admin._RSI_CACHE)}")
+        except Exception:
+            logger.exception('[rsi-cache] loop error')
+        await _asyncio.sleep(300)  # каждые 5 мин
+
+
 async def _alpha_cv_exit_monitor():
     """Каждые 3 мин проверяет ALPHA-CV открытые позиции на 1h SMA(RSI) crossover.
     LONG: exit когда 1h RSI < SMA на последнем закрытом баре
@@ -3816,6 +3909,14 @@ async def start_watcher():
         logger.info("[alpha-cv-exit] monitor scheduled")
     except Exception:
         logger.exception("[alpha-cv-exit] failed to schedule")
+
+    # RSI cache loop — каждые 5 мин наполняет admin._RSI_CACHE для журнала.
+    # Без него journal API НЕ блокируется на klines fetch.
+    try:
+        asyncio.create_task(_rsi_cache_loop())
+        logger.info("[rsi-cache] background loop scheduled")
+    except Exception:
+        logger.exception("[rsi-cache] failed to schedule")
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())
