@@ -3682,7 +3682,7 @@ async def _cluster_delta_cache_loop():
             for i in range(0, len(wanted_list), CHUNK):
                 conds = []
                 for (p, ms) in wanted_list[i:i+CHUNK]:
-                    for tf in ('15m', '1h'):
+                    for tf in ('15m', '1h', '4h'):
                         om = _candle_open_ms(ms, tf)
                         conds.append({'pair': p, 'tf': tf, 'open_ms': om})
                 if not conds:
@@ -3696,7 +3696,7 @@ async def _cluster_delta_cache_loop():
             for (p, ms) in wanted_list:
                 # Если хотя бы один TF отсутствует — пара в todo
                 miss = False
-                for tf in ('15m', '1h'):
+                for tf in ('15m', '1h', '4h'):
                     om = _candle_open_ms(ms, tf)
                     if (p, tf, om) not in existing:
                         miss = True

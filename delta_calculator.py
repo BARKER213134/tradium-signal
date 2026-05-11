@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # ─── Config ───────────────────────────────────────────────────────────
 BINANCE_FAPI = "https://fapi.binance.com"
 RESONANCE_BARS = 5      # окно резонанса (-5..+5)
-TF_MINUTES = {'15m': 15, '1h': 60}
+TF_MINUTES = {'15m': 15, '1h': 60, '4h': 240}
 DELTA_NEUTRAL_THRESHOLD = 0.1  # |delta_pct| < 0.1% = нейтрально (для резонанса)
 
 # HTTP client с keep-alive (отдельный от exchange.py чтобы не мешать)
@@ -205,7 +205,7 @@ def _fetch_klines_cdn(symbol: str, tf: str, date_str: str) -> list[dict]:
 
 
 def bulk_fill_pair_history_cdn(pair: str, start_dt, end_dt,
-                               timeframes: tuple = ('15m', '1h')) -> dict:
+                               timeframes: tuple = ('15m', '1h', '4h')) -> dict:
     """ПОЛНЫЙ backfill через CDN — без rate limit, без банов.
 
     start_dt, end_dt: datetime UTC объекты (или таймстемпы в секундах).
@@ -425,7 +425,7 @@ def _delta_from_klines_batch(symbol: str, tf: str,
 
 
 def bulk_fill_pair_history(pair: str, start_ms: int, end_ms: int,
-                           timeframes: tuple = ('15m', '1h')) -> dict:
+                           timeframes: tuple = ('15m', '1h', '4h')) -> dict:
     """Массовый backfill: фетчит klines диапазона и пишет cluster_delta cache
     для всех свечей. Используется для backfill всех signals из БД (год+ назад).
 
@@ -556,7 +556,7 @@ def _resonance_from_deltas(deltas: list[float]) -> int:
 
 
 def get_signal_delta_only(pair: str, at_ts_ms: Optional[int] = None,
-                          timeframes: tuple = ('15m', '1h')) -> dict:
+                          timeframes: tuple = ('15m', '1h', '4h')) -> dict:
     """СУПЕР-БЫСТРАЯ версия: только delta_pct сигнальной свечи (без резонанса).
 
     Делает 1 aggTrades call на TF (vs 5 в полной версии). Используется в
@@ -594,7 +594,7 @@ def get_signal_delta_only(pair: str, at_ts_ms: Optional[int] = None,
 
 
 def get_delta_snapshot_fast(pair: str, at_ts_ms: Optional[int] = None,
-                            timeframes: tuple = ('15m', '1h')) -> dict:
+                            timeframes: tuple = ('15m', '1h', '4h')) -> dict:
     """БЫСТРАЯ версия через klines (1 запрос на TF → 5 свечей резонанса).
 
     В ~10× быстрее `get_delta_snapshot` (aggTrades) на одиночных вызовах.
@@ -680,7 +680,7 @@ def get_delta_snapshot_fast(pair: str, at_ts_ms: Optional[int] = None,
 
 
 def get_delta_snapshot(pair: str, at_ts_ms: Optional[int] = None,
-                       timeframes: tuple = ('15m', '1h')) -> dict:
+                       timeframes: tuple = ('15m', '1h', '4h')) -> dict:
     """Главный entry-point: для пары на момент at_ts_ms возвращает
     delta_pct + resonance по каждому TF.
 
@@ -730,7 +730,7 @@ def get_delta_snapshot(pair: str, at_ts_ms: Optional[int] = None,
 
 # ─── Async wrapper для встраивания в watcher ──────────────────────────
 async def get_delta_snapshot_async(pair: str, at_ts_ms: Optional[int] = None,
-                                   timeframes: tuple = ('15m', '1h')) -> dict:
+                                   timeframes: tuple = ('15m', '1h', '4h')) -> dict:
     """Async-обёртка — выполняет sync HTTP+Mongo в to_thread."""
     import asyncio
     try:

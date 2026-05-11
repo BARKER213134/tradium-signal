@@ -10654,7 +10654,7 @@ def _compute_journal_sync():
                 continue
             if ats < delta_cutoff_ts:
                 continue  # старее 48h — skip enrichment
-            for tf in ('15m', '1h'):
+            for tf in ('15m', '1h', '4h'):
                 open_ms = _candle_open_ms(ats * 1000, tf)
                 wanted.setdefault((pair, tf, open_ms), []).append((it, tf))
         if wanted:
@@ -10685,7 +10685,7 @@ def _compute_journal_sync():
                 pair = it.get('pair') or ''
                 if not (ats and pair):
                     continue
-                for tf in ('15m', '1h'):
+                for tf in ('15m', '1h', '4h'):
                     minutes = TF_MINUTES.get(tf, 15)
                     sig_open = _candle_open_ms(ats * 1000, tf)
                     sig_doc = cached_map.get((pair, tf, sig_open))
@@ -10722,12 +10722,12 @@ def _compute_journal_sync():
                         continue
                     if ats < delta_cutoff_ts:
                         continue
-                    for tf in ('15m', '1h'):
+                    for tf in ('15m', '1h', '4h'):
                         sig_open = _candle_open_ms(ats * 1000, tf)
                         sig_by_pt[(pair, tf)].append((it, sig_open))
                 # Per (pair, tf): один find на весь диапазон,
                 # потом per-signal compute z-score
-                tf_minutes = {'15m': 15, '1h': 60}
+                tf_minutes = {'15m': 15, '1h': 60, '4h': 240}
                 for (pair, tf), sig_list in sig_by_pt.items():
                     bucket_ms = tf_minutes[tf] * 60 * 1000
                     min_open = min(o for _, o in sig_list)
@@ -10815,7 +10815,7 @@ def _compute_journal_sync():
                     snap = inline_results.get((pair, ats))
                     if not snap:
                         continue
-                    for tf in ('15m', '1h'):
+                    for tf in ('15m', '1h', '4h'):
                         s = snap.get(tf)
                         if not s:
                             continue

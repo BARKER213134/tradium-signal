@@ -8605,7 +8605,7 @@ window._renderSmaCell = function(s) {
 // Delta anomaly per TF — z-score delta_pct сигнальной свечи vs 30 свечей до неё.
 // 🔥 z > 2.5 (экстремум), ⚡ z > 1.5 (повышенный), ⚪ норма, "—" нет данных.
 window._renderAnomalyCell = function(s) {
-  const tfs = ['15m', '1h'];
+  const tfs = ['15m', '1h', '4h'];
   const placeholder = '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
   const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
   let maxAbsZ = 0;
