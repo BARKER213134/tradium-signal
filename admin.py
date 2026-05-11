@@ -10832,8 +10832,34 @@ def _compute_journal_sync():
 
     # ─── RSI 15m/1h/4h/1d enrichment из Mongo cache (signal_rsi_cache) ───
     try:
-        from rsi_cache import bulk_get_rsi_for_items
+        from rsi_cache import bulk_get_rsi_for_items, fill_pair_rsi
         bulk_get_rsi_for_items(items)
+        # Fallback: для items за last 10 мин БЕЗ RSI — fire background fill
+        # (если bg loop не успел или signal hook не запустился).
+        import time as _t_rsi2
+        import threading as _th_rsi
+        cutoff_10m = int(_t_rsi2.time()) - 600
+        missing_pairs = set()
+        for it in items:
+            ats = it.get('at_ts') or 0
+            if ats < cutoff_10m:
+                continue
+            pair = it.get('pair') or ''
+            if not pair:
+                continue
+            if it.get('rsi_1h') is None and it.get('rsi_4h') is None:
+                missing_pairs.add(pair)
+        if missing_pairs:
+            # Лимит 10 fill'ов за рендер чтобы не нагрузить CDN
+            to_fill = list(missing_pairs)[:10]
+            def _bg_fill():
+                for p in to_fill:
+                    try:
+                        fill_pair_rsi(p)
+                    except Exception:
+                        pass
+            _th_rsi.Thread(target=_bg_fill, daemon=True,
+                           name='rsi-inline-fill').start()
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] rsi read fail: {e}")
 

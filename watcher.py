@@ -3207,6 +3207,20 @@ async def _paper_on_signal(signal_data: dict):
         # Если symbols registry глючит — НЕ блокируем сигнал, пропускаем дальше
         logger.debug(f"[paper-signal] symbol filter error: {_fe}")
 
+    # ── RSI cache fill IMMEDIATELY на каждый новый сигнал ──
+    # Чтобы данные RSI были в журнале к моменту когда пользователь его откроет.
+    # fire-and-forget, не блокирует основной поток.
+    try:
+        pair = signal_data.get("pair") or ""
+        if not pair and signal_data.get("symbol"):
+            sym = signal_data["symbol"]
+            pair = sym.replace("USDT", "/USDT") if "USDT" in sym else sym
+        if pair:
+            from rsi_cache import fill_pair_rsi_async
+            asyncio.create_task(fill_pair_rsi_async(pair))
+    except Exception as e:
+        logger.debug(f"[rsi-cache] schedule on signal fail: {e}")
+
     # [УБРАНО] Pump fallback — он был нужен когда использовался AI (Claude
     # отказывал при pump_vol=0). Теперь система rule-based, check_entry
     # сам делает Vol/OI fallback через check_pump_potential (с кешем 120с).

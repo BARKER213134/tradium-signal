@@ -104,6 +104,17 @@ def fill_pair_rsi(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> dict:
     return result
 
 
+async def fill_pair_rsi_async(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> None:
+    """Async-wrapper — fire-and-forget. Используется хуками signal creation
+    чтобы RSI был готов сразу к моменту когда пользователь откроет журнал.
+    """
+    import asyncio
+    try:
+        await asyncio.to_thread(fill_pair_rsi, pair, tfs)
+    except Exception as e:
+        logger.debug(f'[rsi-cache] async fill {pair}: {e}')
+
+
 def bulk_get_rsi_for_items(items: list[dict]) -> None:
     """Bulk-read RSI cache для items, проставляет rsi_15m/rsi_1h/rsi_4h/rsi_1d.
 
