@@ -8413,19 +8413,20 @@ window._renderRsiCell = function(s) {
   else if (edge === 'good') { bg = 'background:rgba(0,229,160,0.10);'; border = 'border-left:2px solid #88d8a3;'; }
   else if (edge === 'warn') { bg = 'background:rgba(255,210,62,0.10);'; border = 'border-left:2px solid #ffd23e;'; }
   const fmt = (v) => {
-    if (v == null) return '<span style="color:#555">—</span>';
-    const c = v >= 70 ? '#ff5e9c' : v >= 60 ? '#88d8a3' : v >= 40 ? '#aaa' : v >= 30 ? '#ff9d6e' : '#ff4d6d';
-    return `<span style="color:${c};font-weight:600;">${v.toFixed(0)}</span>`;
+    if (v == null) return '<span style="color:#555;font-size:11px;">—</span>';
+    const c = v >= 70 ? '#ff5e9c' : v >= 60 ? '#88d8a3' : v >= 40 ? '#cfd3dc' : v >= 30 ? '#ff9d6e' : '#ff4d6d';
+    return `<span style="color:${c};font-weight:700;font-size:12px;">${v.toFixed(0)}</span>`;
   };
+  const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
   const tip = edge === 'strong' ? '⭐ Backtest sweet spot' :
               edge === 'good' ? '✅ Хороший RSI bucket' :
               edge === 'warn' ? '⚠ Counter-trend — risky' :
               'RSI(14) на свече сигнала';
-  return `<td class="mono" style="text-align:center;font-size:9px;line-height:1.35;${bg}${border}" title="${tip}">
-    <div>15m: ${fmt(r15)}</div>
-    <div>1h: ${fmt(r1)}</div>
-    <div>4h: ${fmt(r4)}</div>
-    <div>1d: ${fmt(rd)}</div>
+  return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 6px !important;${bg}${border}" title="${tip}">
+    <div>${tfLbl('15m')} ${fmt(r15)}</div>
+    <div>${tfLbl('1h')} ${fmt(r1)}</div>
+    <div>${tfLbl('4h')} ${fmt(r4)}</div>
+    <div>${tfLbl('1d')} ${fmt(rd)}</div>
   </td>`;
 };
 
@@ -8435,8 +8436,9 @@ window._renderDeltaCell = function(s) {
   if (d15 == null && d1h == null) {
     return '<td class="mono text-muted" style="text-align:center;font-size:11px;cursor:help;" title="Нет данных дельты (старый сигнал или Binance Bybit-only)">—</td>';
   }
-  const fmt = (v) => v == null ? '<span style="color:#555">—</span>' :
-    `<span style="color:${v >= 5 ? '#00e5a0' : v >= 1 ? '#88d8a3' : v >= -1 ? '#aaa' : v >= -5 ? '#ff9d6e' : '#ff4d6d'};">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+  const fmt = (v) => v == null ? '<span style="color:#555;font-size:11px;">—</span>' :
+    `<span style="color:${v >= 5 ? '#00e5a0' : v >= 1 ? '#88d8a3' : v >= -1 ? '#aaa' : v >= -5 ? '#ff9d6e' : '#ff4d6d'};font-weight:700;font-size:12px;">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+  const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
   const bg = window._deltaCellBg(s);
   const a = window._deltaAlignment(s);
   const tip = a ? (
@@ -8444,9 +8446,9 @@ window._renderDeltaCell = function(s) {
     a.tier === 'against' ? `⚠ Поток ПРОТИВ ${a.direction} — поздний вход (${a.score}/${a.total})` :
     `⚠ Смешанные сигналы (${a.score}/${a.total} aligned)`
   ) : 'Δ% buy vs sell на свече сигнала';
-  return `<td class="mono" style="text-align:center;font-size:10px;line-height:1.4;${bg}" title="${tip}">
-    <div>15m: ${fmt(d15)}</div>
-    <div>1h: ${fmt(d1h)}</div>
+  return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 6px !important;${bg}" title="${tip}">
+    <div>${tfLbl('15m')} ${fmt(d15)}</div>
+    <div>${tfLbl('1h')} ${fmt(d1h)}</div>
   </td>`;
 };
 
@@ -8476,8 +8478,9 @@ window._renderResonanceCell = function(s) {
     if (r >= -3) return '🔴';
     return '❄️';
   };
-  const fmt = (r) => r == null ? '<span style="color:#555">—</span>' :
-    `<span style="color:${matchDir(r)};font-weight:700;">${r >= 0 ? '+' : ''}${r}</span> <span style="font-size:10px;">${emoji(r)}</span>`;
+  const fmt = (r) => r == null ? '<span style="color:#555;font-size:11px;">—</span>' :
+    `<span style="color:${matchDir(r)};font-weight:700;font-size:12px;">${r >= 0 ? '+' : ''}${r}</span> <span style="font-size:11px;">${emoji(r)}</span>`;
+  const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
   const bg = window._deltaCellBg ? window._deltaCellBg(s) : '';
   const a = window._deltaAlignment ? window._deltaAlignment(s) : null;
   const tip = a ? (
@@ -8485,9 +8488,9 @@ window._renderResonanceCell = function(s) {
     a.tier === 'against' ? `⚠ Резонанс ПРОТИВ ${a.direction} (${a.score}/${a.total})` :
     `⚠ Смешанные сигналы (${a.score}/${a.total})`
   ) : 'Резонанс: N подряд свечей одного знака дельты (-5..+5)';
-  return `<td class="mono" style="text-align:center;font-size:10px;line-height:1.4;${bg}" title="${tip}">
-    <div>15m: ${fmt(r15)}</div>
-    <div>1h: ${fmt(r1h)}</div>
+  return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 6px !important;${bg}" title="${tip}">
+    <div>${tfLbl('15m')} ${fmt(r15)}</div>
+    <div>${tfLbl('1h')} ${fmt(r1h)}</div>
   </td>`;
 };
 
