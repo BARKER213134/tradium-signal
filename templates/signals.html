@@ -7002,15 +7002,16 @@ async function _pollDeltaBackfill() {
 <div class="table-wrap">
   <table style="table-layout:fixed;width:100%;">
     <colgroup>
-      <col style="width:7%;">    <!-- Время -->
-      <col style="width:10%;">   <!-- Источник -->
-      <col style="width:10%;">   <!-- Пара -->
-      <col style="width:6%;">    <!-- Напр. -->
-      <col style="width:9%;">    <!-- Entry -->
-      <col>                      <!-- Паттерн (auto-fit) -->
-      <col style="width:6%;">    <!-- Score -->
-      <col style="width:13%;">   <!-- Δ% -->
-      <col style="width:13%;">   <!-- Резонанс -->
+      <col style="width:6%;">    <!-- Время -->
+      <col style="width:9%;">    <!-- Источник -->
+      <col style="width:8%;">    <!-- Пара -->
+      <col style="width:5%;">    <!-- Напр. -->
+      <col style="width:8%;">    <!-- Entry -->
+      <col>                      <!-- Паттерн (auto-fit, шире) -->
+      <col style="width:5%;">    <!-- Score -->
+      <col style="width:9%;">    <!-- RSI 1h/4h -->
+      <col style="width:11%;">   <!-- Δ% -->
+      <col style="width:11%;">   <!-- Резонанс -->
     </colgroup>
     <thead>
       <tr>
@@ -7021,12 +7022,13 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry">Entry</th>
         <th class="sortable" onclick="jSort('score')" id="jSortScore">Паттерн</th>
         <th class="sortable" onclick="jSort('q_score')" id="jSortQScore" title="Quality Score 0-100 (по 5 факторам с штрафами)">Score</th>
+        <th class="sortable" onclick="jSort('rsi_4h')" id="jSortRsi" title="RSI(14) 1h / 4h на свече сигнала. Подсветка зеленым = совпадение с backtest edge для (source, direction)">RSI</th>
         <th class="sortable" onclick="jSort('delta_15m')" id="jSortDelta" title="Cluster Delta 15m / 1h (buy vs sell volume на свече сигнала, Binance Futures aggTrades)">Δ%</th>
         <th class="sortable" onclick="jSort('resonance_15m')" id="jSortResonance" title="Резонанс — N подряд свечей одного знака дельты (-5..+5). Положительное в LONG = попутный поток; отрицательное в LONG = поток против сделки">Резонанс</th>
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="9" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="10" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -8240,7 +8242,7 @@ function renderJournal(items, startIdx) {
   startIdx = startIdx || 0;
   const tbody = document.getElementById('jBody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
     return;
   }
   tbody.innerHTML = items.map((s, i) => {
@@ -8290,6 +8292,9 @@ function renderJournal(items, startIdx) {
     const qsCell = qs > 0
       ? `<td class="mono" style="text-align:center;color:${qsClr};font-weight:700;font-size:12px;" title="Quality Score">${qs}</td>`
       : `<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>`;
+    // RSI 1h / 4h с подсветкой по backtest edges
+    const rsiCell = window._renderRsiCell ? window._renderRsiCell(s) :
+      '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     // Cluster Delta + Resonance (информативно, не влияет на сигналы)
     const deltaCell = window._renderDeltaCell ? window._renderDeltaCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
@@ -8303,6 +8308,7 @@ function renderJournal(items, startIdx) {
       <td class="mono">${s.entry || '—'}</td>
       <td class="mono" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(s.pattern || '').replace(/"/g,'&quot;')}">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}${window._klBadge ? window._klBadge(s._kl) : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
       ${qsCell}
+      ${rsiCell}
       ${deltaCell}
       ${resonanceCell}
     </tr>`;
@@ -8349,6 +8355,56 @@ window._deltaCellBg = function(s) {
     return 'background:rgba(255,210,62,0.13);border-left:2px solid #ffd23e;';
   }
   return '';
+};
+
+// ─── RSI cell renderer с подсветкой по backtest edges ───
+// Backtest insights (14d, 5500 signals):
+//   CV LONG match + 4h RSI 60-70 → +1.45R
+//   CV SHORT + 1h RSI 30-40 → +5.90R
+//   CV SHORT + 4h RSI 30-50 → +3.66R
+//   SF LONG + 4h RSI 60-70 → +0.54R
+//   TC LONG + 4h RSI 60-80 → +0.69R
+window._rsiEdgeColor = function(s, rsi_4h, rsi_1h) {
+  if (rsi_4h == null && rsi_1h == null) return null;
+  const src = (s.source || '').toLowerCase();
+  const dir = (s.direction || '').toUpperCase();
+  if (src === 'cryptovizor') {
+    if (dir === 'SHORT' && rsi_1h != null && rsi_1h >= 30 && rsi_1h < 50) return 'strong';
+    if (dir === 'SHORT' && rsi_4h != null && rsi_4h >= 30 && rsi_4h < 50) return 'strong';
+    if (dir === 'LONG' && rsi_4h != null && rsi_4h >= 60 && rsi_4h < 70) return 'strong';
+    if (dir === 'LONG' && rsi_4h != null && rsi_4h >= 50 && rsi_4h < 70) return 'good';
+  }
+  if (src === 'second_flip' && dir === 'LONG' && rsi_4h != null && rsi_4h >= 60 && rsi_4h < 70) return 'good';
+  if (src === 'triple_confluence' && dir === 'LONG' && rsi_4h != null && rsi_4h >= 60 && rsi_4h < 80) return 'good';
+  if (dir === 'LONG' && rsi_4h != null && rsi_4h < 40) return 'warn';
+  if (dir === 'SHORT' && rsi_4h != null && rsi_4h > 70) return 'warn';
+  return null;
+};
+
+window._renderRsiCell = function(s) {
+  const r1 = s.rsi_1h;
+  const r4 = s.rsi_4h;
+  if (r1 == null && r4 == null) {
+    return '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+  }
+  const edge = window._rsiEdgeColor(s, r4, r1);
+  let bg = '', border = '';
+  if (edge === 'strong')  { bg = 'background:rgba(0,229,160,0.20);'; border = 'border-left:2px solid #00e5a0;'; }
+  else if (edge === 'good') { bg = 'background:rgba(0,229,160,0.10);'; border = 'border-left:2px solid #88d8a3;'; }
+  else if (edge === 'warn') { bg = 'background:rgba(255,210,62,0.10);'; border = 'border-left:2px solid #ffd23e;'; }
+  const fmt = (v) => {
+    if (v == null) return '<span style="color:#555">—</span>';
+    const c = v >= 70 ? '#ff5e9c' : v >= 60 ? '#88d8a3' : v >= 40 ? '#aaa' : v >= 30 ? '#ff9d6e' : '#ff4d6d';
+    return `<span style="color:${c};font-weight:600;">${v.toFixed(0)}</span>`;
+  };
+  const tip = edge === 'strong' ? '⭐ Backtest sweet spot' :
+              edge === 'good' ? '✅ Хороший RSI bucket' :
+              edge === 'warn' ? '⚠ Counter-trend — risky' :
+              'RSI(14) на свече сигнала';
+  return `<td class="mono" style="text-align:center;font-size:10px;line-height:1.4;${bg}${border}" title="${tip}">
+    <div>1h: ${fmt(r1)}</div>
+    <div>4h: ${fmt(r4)}</div>
+  </td>`;
 };
 
 window._renderDeltaCell = function(s) {
@@ -8427,8 +8483,8 @@ function jSort(field) {
     _jSortAsc = field === 'symbol' || field === 'source' || field === 'direction'; // alpha = asc default
   }
   // Update header arrows
-  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',delta_15m:'jSortDelta',resonance_15m:'jSortResonance'};
-  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн/Score',q_score:'Score',delta_15m:'Δ%',resonance_15m:'Резонанс'};
+  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',delta_15m:'jSortDelta',resonance_15m:'jSortResonance'};
+  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',delta_15m:'Δ%',resonance_15m:'Резонанс'};
   for (const [f, id] of Object.entries(cols)) {
     const el = document.getElementById(id);
     if (el) el.textContent = labels[f] + (f === _jSortField ? (_jSortAsc ? ' ▲' : ' ▼') : '');

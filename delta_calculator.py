@@ -277,6 +277,25 @@ def bulk_fill_pair_history_cdn(pair: str, start_dt, end_dt,
     return result
 
 
+def _compute_rsi_for_closes(closes: list[float], period: int = 14) -> list:
+    """RSI(14) Wilder — возвращает список того же размера, None для warmup."""
+    if len(closes) < period + 1:
+        return [None] * len(closes)
+    rsi = [None] * len(closes)
+    gains = [0.0]; losses = [0.0]
+    for i in range(1, len(closes)):
+        ch = closes[i] - closes[i-1]
+        gains.append(max(ch, 0)); losses.append(max(-ch, 0))
+    avg_g = sum(gains[1:period+1]) / period
+    avg_l = sum(losses[1:period+1]) / period
+    rsi[period] = 100.0 if avg_l == 0 else (100 - 100/(1 + avg_g/avg_l))
+    for i in range(period+1, len(closes)):
+        avg_g = (avg_g * (period-1) + gains[i]) / period
+        avg_l = (avg_l * (period-1) + losses[i]) / period
+        rsi[i] = 100.0 if avg_l == 0 else (100 - 100/(1 + avg_g/avg_l))
+    return rsi
+
+
 def _delta_from_klines_batch(symbol: str, tf: str,
                              start_ms: int, end_ms: int) -> list[dict]:
     """ПОЛНАЯ ИСТОРИЯ через /fapi/v1/klines (taker buy volume).

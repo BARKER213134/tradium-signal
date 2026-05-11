@@ -10830,6 +10830,114 @@ def _compute_journal_sync():
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] q_score fail: {e}")
 
+    # ─── RSI 1h + 4h enrichment (для items за last 24h) ───
+    try:
+        from delta_calculator import (fetch_klines_cdn, _normalize_symbol,
+                                       _candle_open_ms,
+                                       _compute_rsi_for_closes)
+        import time as _t_rsi
+        # Module-level cache (живёт пока процесс работает, TTL 10 мин)
+        global _RSI_CACHE
+        try:
+            _RSI_CACHE
+        except NameError:
+            _RSI_CACHE = {}
+        cutoff_24h = int(_t_rsi.time()) - 24 * 3600
+        # Группируем pairs items в last 24h
+        recent_by_pair = {}
+        for it in items:
+            ats = it.get('at_ts') or 0
+            pair = it.get('pair') or ''
+            if not (pair and ats >= cutoff_24h):
+                continue
+            recent_by_pair.setdefault(pair, []).append(it)
+        # Для каждого pair: получаем 1h+4h klines (с module-cache), считаем RSI
+        from concurrent.futures import ThreadPoolExecutor as _TPE
+        from concurrent.futures import as_completed as _ac
+
+        def _fetch_one_pair_rsi(pair):
+            sym = _normalize_symbol(pair)
+            if not sym:
+                return (pair, {}, {})
+            now_ms = int(_t_rsi.time() * 1000)
+            # 1h: 50 баров warmup × 1h = 50ч до min_ts
+            sigs = recent_by_pair[pair]
+            ts_min = min(s.get('at_ts') for s in sigs) * 1000
+            ts_max = max(s.get('at_ts') for s in sigs) * 1000
+            # 1h cache
+            ck1h = f'{pair}|1h'
+            now_t = _t_rsi.time()
+            cached1h = _RSI_CACHE.get(ck1h)
+            if cached1h and (now_t - cached1h[0]) < 600:  # 10min TTL
+                rsi_1h_by_open = cached1h[1]
+            else:
+                start = ts_min - 30 * 3600 * 1000
+                end = now_ms + 60 * 1000
+                try:
+                    kl = fetch_klines_cdn(sym, '1h', start, end)
+                except Exception:
+                    kl = []
+                rsi_1h_by_open = {}
+                if kl:
+                    closes = [float(k[4]) for k in kl]
+                    rsis = _compute_rsi_for_closes(closes, 14)
+                    for i, k in enumerate(kl):
+                        if rsis[i] is not None:
+                            rsi_1h_by_open[int(k[0])] = rsis[i]
+                _RSI_CACHE[ck1h] = (now_t, rsi_1h_by_open)
+            # 4h cache (80h warmup)
+            ck4h = f'{pair}|4h'
+            cached4h = _RSI_CACHE.get(ck4h)
+            if cached4h and (now_t - cached4h[0]) < 600:
+                rsi_4h_by_open = cached4h[1]
+            else:
+                start = ts_min - 100 * 3600 * 1000
+                end = now_ms + 60 * 1000
+                try:
+                    kl = fetch_klines_cdn(sym, '4h', start, end)
+                except Exception:
+                    kl = []
+                rsi_4h_by_open = {}
+                if kl:
+                    closes = [float(k[4]) for k in kl]
+                    rsis = _compute_rsi_for_closes(closes, 14)
+                    for i, k in enumerate(kl):
+                        if rsis[i] is not None:
+                            rsi_4h_by_open[int(k[0])] = rsis[i]
+                _RSI_CACHE[ck4h] = (now_t, rsi_4h_by_open)
+            return (pair, rsi_1h_by_open, rsi_4h_by_open)
+
+        # Limit pairs to first 80 (heaviest journal items)
+        pair_list = list(recent_by_pair.keys())[:80]
+        results = {}
+        if pair_list:
+            with _TPE(max_workers=10) as ex:
+                futs = [ex.submit(_fetch_one_pair_rsi, p) for p in pair_list]
+                for f in _ac(futs, timeout=6.0):
+                    try:
+                        pair, r1h, r4h = f.result()
+                        results[pair] = (r1h, r4h)
+                    except Exception:
+                        pass
+        # Attach to items
+        for it in items:
+            ats = it.get('at_ts') or 0
+            pair = it.get('pair') or ''
+            if pair not in results:
+                continue
+            r1h_map, r4h_map = results[pair]
+            ats_ms = ats * 1000
+            sig_open_1h = _candle_open_ms(ats_ms, '1h')
+            sig_open_4h = (ats_ms // (4 * 3600 * 1000)) * (4 * 3600 * 1000)
+            r1 = r1h_map.get(sig_open_1h)
+            r4 = r4h_map.get(sig_open_4h)
+            if r1 is not None:
+                it['rsi_1h'] = round(r1, 1)
+            if r4 is not None:
+                it['rsi_4h'] = round(r4, 1)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] rsi enrich fail: {e}")
+
     return {"items": items}
 
 
