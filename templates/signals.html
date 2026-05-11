@@ -6771,6 +6771,19 @@ safeInterval(loadForexJournal, 30000);
 
 {% elif bot == 'journal' or bot == 'hot_now' %}
 {% if bot == 'journal' %}
+<style>
+/* Компактная разметка ячеек журнала */
+#jBody td {
+  padding: 8px 8px !important;
+  text-align: center;
+  vertical-align: middle;
+}
+#jBody td:nth-child(6) {
+  /* Паттерн — текст слева */
+  text-align: left;
+  padding-left: 14px !important;
+}
+</style>
 <div class="strategy-box">
   <div class="strat-icon">📓</div>
   <div class="strat-body">
@@ -7004,27 +7017,27 @@ async function _pollDeltaBackfill() {
     <colgroup>
       <col style="width:6%;">    <!-- Время -->
       <col style="width:9%;">    <!-- Источник -->
-      <col style="width:8%;">    <!-- Пара -->
+      <col style="width:7%;">    <!-- Пара -->
       <col style="width:5%;">    <!-- Напр. -->
-      <col style="width:8%;">    <!-- Entry -->
-      <col>                      <!-- Паттерн (auto-fit, шире) -->
+      <col style="width:7%;">    <!-- Entry -->
+      <col style="width:25%;">   <!-- Паттерн -->
       <col style="width:5%;">    <!-- Score -->
-      <col style="width:9%;">    <!-- RSI 1h/4h -->
-      <col style="width:11%;">   <!-- Δ% -->
-      <col style="width:11%;">   <!-- Резонанс -->
+      <col style="width:11%;">   <!-- RSI 4 TF -->
+      <col style="width:13%;">   <!-- Δ% -->
+      <col style="width:12%;">   <!-- Резонанс -->
     </colgroup>
     <thead>
       <tr>
-        <th class="sortable" onclick="jSort('at_ts')" id="jSortTime">Время ▼</th>
-        <th class="sortable" onclick="jSort('source')" id="jSortSrc">Источник</th>
-        <th class="sortable" onclick="jSort('symbol')" id="jSortPair">Пара</th>
-        <th class="sortable" onclick="jSort('direction')" id="jSortDir">Напр.</th>
-        <th class="sortable" onclick="jSort('entry')" id="jSortEntry">Entry</th>
-        <th class="sortable" onclick="jSort('score')" id="jSortScore">Паттерн</th>
-        <th class="sortable" onclick="jSort('q_score')" id="jSortQScore" title="Quality Score 0-100 (по 5 факторам с штрафами)">Score</th>
-        <th class="sortable" onclick="jSort('rsi_4h')" id="jSortRsi" title="RSI(14) 1h / 4h на свече сигнала. Подсветка зеленым = совпадение с backtest edge для (source, direction)">RSI</th>
-        <th class="sortable" onclick="jSort('delta_15m')" id="jSortDelta" title="Cluster Delta 15m / 1h (buy vs sell volume на свече сигнала, Binance Futures aggTrades)">Δ%</th>
-        <th class="sortable" onclick="jSort('resonance_15m')" id="jSortResonance" title="Резонанс — N подряд свечей одного знака дельты (-5..+5). Положительное в LONG = попутный поток; отрицательное в LONG = поток против сделки">Резонанс</th>
+        <th class="sortable" onclick="jSort('at_ts')" id="jSortTime" style="text-align:center;padding:14px 8px;">Время ▼</th>
+        <th class="sortable" onclick="jSort('source')" id="jSortSrc" style="text-align:center;padding:14px 8px;">Источник</th>
+        <th class="sortable" onclick="jSort('symbol')" id="jSortPair" style="text-align:center;padding:14px 8px;">Пара</th>
+        <th class="sortable" onclick="jSort('direction')" id="jSortDir" style="text-align:center;padding:14px 6px;">Напр.</th>
+        <th class="sortable" onclick="jSort('entry')" id="jSortEntry" style="text-align:center;padding:14px 8px;">Entry</th>
+        <th class="sortable" onclick="jSort('score')" id="jSortScore" style="text-align:left;padding:14px 14px;">Паттерн</th>
+        <th class="sortable" onclick="jSort('q_score')" id="jSortQScore" title="Quality Score 0-100 (по 5 факторам с штрафами)" style="text-align:center;padding:14px 6px;">Score</th>
+        <th class="sortable" onclick="jSort('rsi_4h')" id="jSortRsi" title="RSI(14) 15m/1h/4h/1d на свече сигнала. Подсветка зелёным = совпадение с backtest edge для (source, direction)" style="text-align:center;padding:14px 6px;">RSI</th>
+        <th class="sortable" onclick="jSort('delta_15m')" id="jSortDelta" title="Cluster Delta 15m / 1h (buy vs sell volume на свече сигнала)" style="text-align:center;padding:14px 6px;">Δ%</th>
+        <th class="sortable" onclick="jSort('resonance_15m')" id="jSortResonance" title="Резонанс — N подряд свечей одного знака дельты (-5..+5). Положительное в LONG = попутный поток; отрицательное в LONG = поток против сделки" style="text-align:center;padding:14px 6px;">Резонанс</th>
       </tr>
     </thead>
     <tbody id="jBody">
