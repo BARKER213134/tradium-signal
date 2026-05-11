@@ -8478,6 +8478,125 @@ window._rsiEdgeInfo = function(s, rsi_4h, rsi_1h) {
   return {tier:'medium', emoji:'⚪', label:'нейтральная зона'};
 };
 
+// ─── SMA(RSI) edge info — на основе backtest 4877 closed сигналов ───
+// Top findings: CV SHORT × BBBB→+4.53R; CV SHORT × 1h_sma=A→WR94.5%+1.49R;
+// 1d_sma alignment with direction = strong signal; LONG+1d_sma=B (against) → -0.56R AVOID
+window._smaEdgeInfo = function(s) {
+  const src = (s.source || '').toLowerCase();
+  const dir = (s.direction || '').toUpperCase();
+  const r15 = s.rsi_15m, r1 = s.rsi_1h, r4 = s.rsi_4h, rd = s.rsi_1d;
+  const m15 = s.sma_rsi_15m, m1 = s.sma_rsi_1h, m4 = s.sma_rsi_4h, md = s.sma_rsi_1d;
+  // Position helpers: A = above SMA, B = below
+  const pos = (r, m) => (r == null || m == null) ? null : (r > m ? 'A' : 'B');
+  const p15 = pos(r15, m15), p1 = pos(r1, m1), p4 = pos(r4, m4), pd = pos(rd, md);
+  // 🥇 CV SHORT counter-positions (overbought RSI → SHORT works)
+  if (src === 'cryptovizor' && dir === 'SHORT') {
+    if (p1 === 'A' && p4 === 'A')
+      return {tier:'top', emoji:'🥇', label:'CV SHORT × RSI>SMA на 1h+4h (WR 94-98%, +1.5-4R)'};
+    if (p1 === 'A')
+      return {tier:'top', emoji:'🥇', label:'CV SHORT × 1h RSI>SMA (WR 94.5% +1.49R)'};
+    if (p4 === 'A')
+      return {tier:'top', emoji:'🥇', label:'CV SHORT × 4h RSI>SMA (WR 67.6% +0.79R)'};
+    if (pd === 'B')
+      return {tier:'good', emoji:'✅', label:'CV SHORT × 1d RSI<SMA aligned (+0.84R)'};
+  }
+  // 🥇 Multi-TF alignment: 4h + 1d совпадают с направлением
+  if (dir === 'LONG' && p4 === 'A' && pd === 'A')
+    return {tier:'top', emoji:'🥇', label:'LONG × multi-TF SMA bull alignment'};
+  if (dir === 'SHORT' && p4 === 'B' && pd === 'B')
+    return {tier:'top', emoji:'🥇', label:'SHORT × multi-TF SMA bear alignment'};
+  // ❌ AVOID — LONG + 1d below SMA (WR 17.3%, -0.56R)
+  if (dir === 'LONG' && pd === 'B')
+    return {tier:'avoid', emoji:'❌', label:'LONG × 1d RSI<SMA (WR 17.3% -0.56R)'};
+  // ✅ GOOD — 1d aligned
+  if (dir === 'LONG' && pd === 'A')
+    return {tier:'good', emoji:'✅', label:'LONG × 1d RSI>SMA aligned (+0.17R)'};
+  if (dir === 'SHORT' && pd === 'B')
+    return {tier:'good', emoji:'✅', label:'SHORT × 1d RSI<SMA aligned (+0.84R)'};
+  // ⚠ Counter-trend on 1d
+  if (dir === 'SHORT' && pd === 'A')
+    return {tier:'warn', emoji:'⚠', label:'SHORT × 1d RSI>SMA против (-0.27R)'};
+  return {tier:'medium', emoji:'⚪', label:'SMA нейтрально'};
+};
+
+// ─── TREND edge info (EMA20 vs EMA50 per TF) ───
+// Top findings: CV SHORT × DDDD→+5.34R; SHORT + 1h DOWN trend→+1.39R WR66%;
+// LONG + 4h DOWN→-0.41R AVOID; SHORT + 4h UP (against)→-0.4R
+window._trendEdgeInfo = function(s) {
+  const src = (s.source || '').toLowerCase();
+  const dir = (s.direction || '').toUpperCase();
+  const t15 = s.trend_15m, t1 = s.trend_1h, t4 = s.trend_4h, td = s.trend_1d;
+  // 🥇 CV SHORT + multi-TF DOWN trend = extreme edge
+  if (src === 'cryptovizor' && dir === 'SHORT') {
+    if (t1 === 'DOWN' && t4 === 'DOWN' && td === 'DOWN')
+      return {tier:'top', emoji:'🥇', label:'CV SHORT × all-TF DOWN (WR 100% +5.34R)'};
+    if (t1 === 'DOWN' && t4 === 'DOWN')
+      return {tier:'top', emoji:'🥇', label:'CV SHORT × 1h+4h DOWN (WR 95-100% +1.4-3.3R)'};
+    if (t4 === 'DOWN')
+      return {tier:'top', emoji:'🥇', label:'CV SHORT × 4h DOWN aligned'};
+  }
+  // 🥇 SHORT + 1h DOWN trend = strong edge across sources (+1.39R)
+  if (dir === 'SHORT' && t1 === 'DOWN' && t4 === 'DOWN')
+    return {tier:'top', emoji:'🥇', label:'SHORT × 1h+4h DOWN trend (WR 66% +1.39R)'};
+  if (dir === 'SHORT' && t1 === 'DOWN')
+    return {tier:'good', emoji:'✅', label:'SHORT × 1h DOWN aligned (+1.39R)'};
+  if (dir === 'SHORT' && t4 === 'DOWN')
+    return {tier:'good', emoji:'✅', label:'SHORT × 4h DOWN aligned (+0.89R)'};
+  // ✅ LONG + multi-TF UP alignment
+  if (dir === 'LONG' && t1 === 'UP' && t4 === 'UP' && td === 'UP')
+    return {tier:'good', emoji:'✅', label:'LONG × multi-TF UP aligned'};
+  // ⚠ LONG against trend on 4h (-0.41R)
+  if (dir === 'LONG' && t4 === 'DOWN')
+    return {tier:'warn', emoji:'⚠', label:'LONG × 4h DOWN counter-trend (-0.41R)'};
+  if (dir === 'LONG' && t1 === 'DOWN' && t4 === 'DOWN')
+    return {tier:'avoid', emoji:'❌', label:'LONG × 1h+4h DOWN counter (-0.54R)'};
+  // ⚠ SHORT against trend on 4h
+  if (dir === 'SHORT' && t4 === 'UP')
+    return {tier:'warn', emoji:'⚠', label:'SHORT × 4h UP counter (-0.4R)'};
+  return {tier:'medium', emoji:'⚪', label:'Trend нейтрально'};
+};
+
+// ─── ANOMALY edge info (delta z-score per TF) ───
+// Top: CV LONG × 1h HIGH_BUY → +3.23R WR58%; CV LONG × 15m HIGH_BUY → +2.44R;
+// CV SHORT × 4h HIGH_BUY → +4.11R (counter); LONG + 1h SELL anomaly → -0.43R
+window._anomalyEdgeInfo = function(s) {
+  const src = (s.source || '').toLowerCase();
+  const dir = (s.direction || '').toUpperCase();
+  const z15 = s.delta_zscore_15m, z1 = s.delta_zscore_1h, z4 = s.delta_zscore_4h;
+  const max = (...xs) => xs.filter(x => x != null).reduce((a, b) => Math.abs(b) > Math.abs(a) ? b : a, 0);
+  const maxZ = max(z15, z1, z4);
+  if (z15 == null && z1 == null && z4 == null)
+    return {tier:'medium', emoji:'', label:'нет данных дельты'};
+  // 🥇 CV LONG + BUY anomaly = sweet spot (+2.4..+3.2R)
+  if (src === 'cryptovizor' && dir === 'LONG') {
+    if (z1 != null && z1 > 1.5)
+      return {tier:'top', emoji:'🥇', label:`CV LONG × 1h BUY anomaly z=${z1} (+3.23R)`};
+    if (z15 != null && z15 > 1.5)
+      return {tier:'top', emoji:'🥇', label:`CV LONG × 15m BUY anomaly z=${z15} (+2.44R)`};
+  }
+  // 🥇 CV SHORT + 4h HIGH BUY (counter) = +4.11R WR 100%
+  if (src === 'cryptovizor' && dir === 'SHORT' && z4 != null && z4 > 1.5)
+    return {tier:'top', emoji:'🥇', label:`CV SHORT × 4h BUY anomaly z=${z4} (+4.11R)`};
+  // ✅ LONG + BUY anomaly on 1h aligned (+0.67R)
+  if (dir === 'LONG' && z1 != null && z1 > 1.5)
+    return {tier:'good', emoji:'✅', label:`LONG × 1h BUY anomaly z=${z1} (+0.67R)`};
+  // ✅ SHORT + SELL anomaly on 15m aligned (+0.47R)
+  if (dir === 'SHORT' && z15 != null && z15 < -1.5)
+    return {tier:'good', emoji:'✅', label:`SHORT × 15m SELL anomaly z=${z15} (+0.47R)`};
+  // ✅ SHORT + BUY anomaly on 4h (counter, but +1.5R)
+  if (dir === 'SHORT' && z4 != null && z4 > 1.5)
+    return {tier:'good', emoji:'✅', label:`SHORT × 4h BUY anomaly z=${z4} (+1.5R)`};
+  // ⚠ LONG + SELL anomaly (against)
+  if (dir === 'LONG' && z1 != null && z1 < -1.5)
+    return {tier:'warn', emoji:'⚠', label:`LONG × 1h SELL anomaly z=${z1} (-0.43R)`};
+  if (dir === 'LONG' && z4 != null && z4 < -1.5)
+    return {tier:'warn', emoji:'⚠', label:`LONG × 4h SELL anomaly z=${z4} (-0.35R)`};
+  // ⚪ Normal
+  if (Math.abs(maxZ) < 1.5)
+    return {tier:'medium', emoji:'⚪', label:'дельта в норме (z<1.5)'};
+  return {tier:'medium', emoji:'⚪', label:`max |z|=${Math.abs(maxZ).toFixed(2)}`};
+};
+
 // Backward-compat (используется для фона ячейки)
 window._rsiEdgeColor = function(s, rsi_4h, rsi_1h) {
   const info = window._rsiEdgeInfo(s, rsi_4h, rsi_1h);
@@ -8580,11 +8699,19 @@ window._renderSmaCell = function(s) {
     const arrow = above ? '↑' : '↓';
     return {tf, color, arrow, diff, above, missing: false};
   });
-  // Placeholder matches emoji header height in RSI cell — keeps TF rows aligned
   const placeholder = '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
   const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
-  // ВСЕГДА рендерим все 4 TF строки — даже если данных нет (label + "—")
-  // Это гарантирует что строки 15m/1h/4h/1d стоят на одной горизонтали с RSI колонкой.
+  // Edge emoji header (backtest-based)
+  const info = window._smaEdgeInfo ? window._smaEdgeInfo(s) : null;
+  let emojiHeader = placeholder;
+  let bg = '', border = '';
+  if (info && info.emoji) {
+    emojiHeader = `<div style="font-size:13px;line-height:1.2;margin-bottom:2px;" title="${info.label||''}">${info.emoji}</div>`;
+    if (info.tier === 'top')   { bg='background:rgba(0,229,160,0.18);'; border='border-left:2px solid #00e5a0;'; }
+    else if (info.tier === 'good') { bg='background:rgba(0,229,160,0.08);'; border='border-left:2px solid #88d8a3;'; }
+    else if (info.tier === 'warn') { bg='background:rgba(255,210,62,0.10);'; border='border-left:2px solid #ffd23e;'; }
+    else if (info.tier === 'avoid') { bg='background:rgba(255,77,109,0.10);'; border='border-left:2px solid #ff4d6d;'; }
+  }
   const inner = rows.map(r => {
     if (r.missing) {
       return `<div style="opacity:0.4;">${tfLbl(r.tf)} <span style="color:#555;font-size:12px;">—</span></div>`;
@@ -8593,11 +8720,12 @@ window._renderSmaCell = function(s) {
       ${tfLbl(r.tf)} <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${r.color};vertical-align:middle;margin-left:3px;box-shadow:0 0 4px ${r.color}44;"></span>
     </div>`;
   }).join('');
+  const tip = (info && info.label) || '🟢 RSI > SMA(RSI) = бычий импульс · 🔴 RSI < SMA = медвежий';
   if (!anyData) {
-    return `<td class="mono text-muted" style="text-align:center;line-height:1.4;padding:4px 4px !important;">${placeholder}${inner}</td>`;
+    return `<td class="mono text-muted" style="text-align:center;line-height:1.4;padding:4px 4px !important;${bg}${border}" title="${tip}">${emojiHeader}${inner}</td>`;
   }
-  return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 4px !important;" title="🟢 RSI > SMA(RSI) = бычий импульс · 🔴 RSI < SMA = медвежий">
-    ${placeholder}
+  return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 4px !important;${bg}${border}" title="${tip}">
+    ${emojiHeader}
     ${inner}
   </td>`;
 };
@@ -8633,21 +8761,32 @@ window._renderAnomalyCell = function(s) {
     }
     return {tf, glyph, color, label, z, abz};
   });
-  // Подсветка ячейки если есть экстремум на любом TF
+  // Edge info (backtest) + raw z-score background
+  const info = window._anomalyEdgeInfo ? window._anomalyEdgeInfo(s) : null;
+  let emojiHeader = placeholder;
   let bg = '';
-  if (maxAbsZ > 2.5) bg = 'background:rgba(255,140,80,0.12);border-left:2px solid #ff8c50;';
-  else if (maxAbsZ > 1.5) bg = 'background:rgba(255,210,62,0.08);';
+  if (info && info.emoji) {
+    emojiHeader = `<div style="font-size:13px;line-height:1.2;margin-bottom:2px;" title="${info.label||''}">${info.emoji}</div>`;
+    if (info.tier === 'top')   bg='background:rgba(0,229,160,0.18);border-left:2px solid #00e5a0;';
+    else if (info.tier === 'good') bg='background:rgba(0,229,160,0.08);border-left:2px solid #88d8a3;';
+    else if (info.tier === 'warn') bg='background:rgba(255,210,62,0.10);border-left:2px solid #ffd23e;';
+    else if (info.tier === 'avoid') bg='background:rgba(255,77,109,0.10);border-left:2px solid #ff4d6d;';
+  } else if (maxAbsZ > 2.5) {
+    bg = 'background:rgba(255,140,80,0.12);border-left:2px solid #ff8c50;';
+  } else if (maxAbsZ > 1.5) {
+    bg = 'background:rgba(255,210,62,0.08);';
+  }
   const inner = rows.map(r => {
     if (r.missing) {
       return `<div style="opacity:0.4;">${tfLbl(r.tf)} <span style="color:#555;font-size:12px;">—</span></div>`;
     }
     return `<div title="${r.tf}: ${r.label}">${tfLbl(r.tf)} <span style="font-size:14px;margin-left:3px;">${r.glyph}</span></div>`;
   }).join('');
-  const tip = anyData
+  const tip = (info && info.label) || (anyData
     ? `Аномалия дельты: max |z|=${maxAbsZ.toFixed(2)} (vs baseline 30 свечей)`
-    : 'Нет данных дельты для z-score';
+    : 'Нет данных дельты для z-score');
   return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 4px !important;${bg}" title="${tip}">
-    ${placeholder}
+    ${emojiHeader}
     ${inner}
   </td>`;
 };
@@ -8671,15 +8810,22 @@ window._renderTrendCell = function(s) {
     else                   { glyph = '◆'; col = '#aaa';    lbl = 'FLAT — EMA20 ≈ EMA50'; }
     return `<div title="${tf}: ${lbl}">${tfLbl(tf)} <span style="color:${col};font-weight:700;font-size:13px;margin-left:3px;text-shadow:0 0 4px ${col}44;">${glyph}</span></div>`;
   }).join('');
-  // Edge emoji header — наполнится после backtest (window._trendEdgeInfo)
+  // Edge emoji header (backtest-based)
   let emojiHeader = placeholder;
+  let bg = '', border = '';
+  let tip = 'Тренд по EMA20 vs EMA50 (close) на свече сигнала';
   if (window._trendEdgeInfo) {
     const info = window._trendEdgeInfo(s);
     if (info && info.emoji) {
       emojiHeader = `<div style="font-size:13px;line-height:1.2;margin-bottom:2px;" title="${info.label||''}">${info.emoji}</div>`;
+      if (info.tier === 'top')   { bg='background:rgba(0,229,160,0.18);'; border='border-left:2px solid #00e5a0;'; }
+      else if (info.tier === 'good') { bg='background:rgba(0,229,160,0.08);'; border='border-left:2px solid #88d8a3;'; }
+      else if (info.tier === 'warn') { bg='background:rgba(255,210,62,0.10);'; border='border-left:2px solid #ffd23e;'; }
+      else if (info.tier === 'avoid') { bg='background:rgba(255,77,109,0.10);'; border='border-left:2px solid #ff4d6d;'; }
+      tip = info.label || tip;
     }
   }
-  return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 4px !important;" title="Тренд по EMA20 vs EMA50 (close) на свече сигнала">
+  return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 4px !important;${bg}${border}" title="${tip}">
     ${emojiHeader}
     ${cells}
   </td>`;
