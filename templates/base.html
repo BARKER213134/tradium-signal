@@ -1122,7 +1122,33 @@
         return { trend, st, candles };
       };
 
+      // SuperTrend overlay toggle (localStorage tradium_st_overlay)
+      // Default ON; user can toggle to clean up chart.
+      window._stOverlayEnabled = (function(){
+        try { return localStorage.getItem('tradium_st_overlay') !== '0'; }
+        catch { return true; }
+      })();
+
+      window._toggleStOverlay = function() {
+        window._stOverlayEnabled = !window._stOverlayEnabled;
+        try {
+          localStorage.setItem('tradium_st_overlay',
+                               window._stOverlayEnabled ? '1' : '0');
+        } catch (_) {}
+        const btn = document.getElementById('stOverlayToggleBtn');
+        if (btn) {
+          btn.textContent = window._stOverlayEnabled ? '🌀 ST' : '🌀 OFF';
+          btn.style.color = window._stOverlayEnabled ? '#00e5a0' : 'var(--muted)';
+          btn.style.borderColor = window._stOverlayEnabled ? '#00e5a0' : 'var(--border)';
+        }
+        // Re-open chart to redraw
+        if (typeof openJournalChart === 'function' && window._currentJournalIdx >= 0) {
+          openJournalChart(window._currentJournalIdx);
+        }
+      };
+
       window._addSuperTrend = function(chart, candles, tf, opts) {
+        if (!window._stOverlayEnabled) return null;  // off — skip drawing
         opts = opts || {};
         if (!chart || !candles || candles.length < 15) return null;
         const preset = window._ST_PRESETS[(tf || '1h').toLowerCase()] || { period: 10, mult: 3.0 };

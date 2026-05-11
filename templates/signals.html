@@ -7139,6 +7139,7 @@ if (document.readyState !== 'loading') hotLoad();
         <button id="zigzagToggleBtn" onclick="toggleZigZagFib()" title="ZigZag swings (3% threshold) — major price pivots соединённые контрастной линией для чтения структуры тренда" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📐 ZigZag</button>
         <button id="accumToggleBtn" onclick="toggleAccumZones()" title="Accumulation zones — серая заливка периодов накопления (BB squeeze + low vol + tight range), 🧊 маркер на breakout candle (vol≥8x + body≥1ATR + close beyond range)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">🧊 Accum</button>
         <button id="rsiSmaToggleBtn" onclick="window._toggleRsiSma()" title="SMA(14) of RSI — золотистая сглаженная линия на RSI panel. Crossover с RSI = смена импульса" style="background:var(--dark-2);border:1px solid #ffd23e;border-radius:6px;color:#ffd23e;font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">📈 SMA(RSI)</button>
+        <button id="stOverlayToggleBtn" onclick="window._toggleStOverlay()" title="SuperTrend overlay (зелёные/красные stair-step линии). Off = чистый график" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 8px;">🌀 ST</button>
         <button onclick="if(_currentJournalIdx>0)openJournalChart(_currentJournalIdx-1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">◀</button>
         <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
         <button onclick="if(_currentJournalIdx<_journalFiltered.length-1)openJournalChart(_currentJournalIdx+1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">▶</button>
@@ -8266,6 +8267,13 @@ async function openJournalChart(idx, forceTF) {
       _rsiSmaBtn.textContent = window._rsiSmaEnabled ? '📈 SMA(RSI)' : '📈 OFF';
       _rsiSmaBtn.style.color = window._rsiSmaEnabled ? '#ffd23e' : 'var(--muted)';
       _rsiSmaBtn.style.borderColor = window._rsiSmaEnabled ? '#ffd23e' : 'var(--border)';
+    }
+    // Sync ST overlay toggle button state
+    const _stOverlayBtn = document.getElementById('stOverlayToggleBtn');
+    if (_stOverlayBtn) {
+      _stOverlayBtn.textContent = window._stOverlayEnabled ? '🌀 ST' : '🌀 OFF';
+      _stOverlayBtn.style.color = window._stOverlayEnabled ? '#00e5a0' : 'var(--muted)';
+      _stOverlayBtn.style.borderColor = window._stOverlayEnabled ? '#00e5a0' : 'var(--border)';
     }
     if (window._prefetchOtherTFs && sym) window._prefetchOtherTFs(sym, _modalTF, 200);
     // VPVR — отрисовываем после chart создан и series установлены.
