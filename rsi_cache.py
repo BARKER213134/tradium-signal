@@ -75,19 +75,35 @@ def fill_pair_rsi(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> dict:
             continue
         closes = [float(k[4]) for k in kl]
         rsis = _compute_rsi_for_closes(closes, 14)
+        # SMA(14) of RSI values
+        sma_rsi = [None] * len(rsis)
+        buf = []
+        s = 0
+        for i, r in enumerate(rsis):
+            if r is None:
+                continue
+            buf.append(r)
+            s += r
+            if len(buf) > 14:
+                s -= buf.pop(0)
+            if len(buf) == 14:
+                sma_rsi[i] = s / 14
         ops = []
         for i, k in enumerate(kl):
             if rsis[i] is None:
                 continue
             try:
+                set_doc = {
+                    'pair': pair, 'tf': tf, 'open_ms': int(k[0]),
+                    'rsi': round(rsis[i], 2),
+                    'close': float(k[4]),
+                    'cached_at': now_dt,
+                }
+                if sma_rsi[i] is not None:
+                    set_doc['sma_rsi'] = round(sma_rsi[i], 2)
                 ops.append(UpdateOne(
                     {'pair': pair, 'tf': tf, 'open_ms': int(k[0])},
-                    {'$set': {
-                        'pair': pair, 'tf': tf, 'open_ms': int(k[0]),
-                        'rsi': round(rsis[i], 2),
-                        'close': float(k[4]),
-                        'cached_at': now_dt,
-                    }},
+                    {'$set': set_doc},
                     upsert=True,
                 ))
             except Exception:
@@ -144,22 +160,29 @@ def bulk_get_rsi_for_items(items: list[dict]) -> None:
         item_keys.append((it, pair, keys_for_it))
     if not wanted:
         return
-    # Bulk find chunked
+    # Bulk find chunked — fetch RSI + SMA(RSI)
     chunks = list(wanted)
-    cached_map = {}
+    cached_map = {}  # (pair, tf, open_ms) → (rsi, sma_rsi)
     CHUNK = 500
     for i in range(0, len(chunks), CHUNK):
         conds = [{'pair': p, 'tf': t, 'open_ms': om}
                  for (p, t, om) in chunks[i:i+CHUNK]]
         try:
             for doc in col.find({'$or': conds},
-                                {'pair':1,'tf':1,'open_ms':1,'rsi':1,'_id':0}):
-                cached_map[(doc['pair'], doc['tf'], doc['open_ms'])] = doc.get('rsi')
+                                {'pair':1,'tf':1,'open_ms':1,
+                                 'rsi':1,'sma_rsi':1,'_id':0}):
+                cached_map[(doc['pair'], doc['tf'], doc['open_ms'])] = (
+                    doc.get('rsi'), doc.get('sma_rsi'))
         except Exception:
             pass
     # Apply to items
     for it, pair, keys in item_keys:
         for tf, open_ms in keys:
-            r = cached_map.get((pair, tf, open_ms))
-            if r is not None:
-                it[f'rsi_{tf}'] = r
+            cached = cached_map.get((pair, tf, open_ms))
+            if not cached:
+                continue
+            rsi, sma_rsi = cached
+            if rsi is not None:
+                it[f'rsi_{tf}'] = rsi
+            if sma_rsi is not None:
+                it[f'sma_rsi_{tf}'] = sma_rsi
