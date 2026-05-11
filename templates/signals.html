@@ -8411,20 +8411,67 @@ window._deltaCellBg = function(s) {
 //   CV SHORT + 4h RSI 30-50 → +3.66R
 //   SF LONG + 4h RSI 60-70 → +0.54R
 //   TC LONG + 4h RSI 60-80 → +0.69R
-window._rsiEdgeColor = function(s, rsi_4h, rsi_1h) {
-  if (rsi_4h == null && rsi_1h == null) return null;
+// Edge tier на основе backtest 14d × 5500 signals:
+//   🥇 TOP — sweet spot (+1.5R..+5.9R)
+//   ✅ GOOD — positive EV (+0.5..+1.5R)
+//   ⚪ MEDIUM — neutral / no specific edge
+//   ⚠ WARN — counter-trend / risky
+//   ❌ AVOID — known negative EV (volume_surge, volcano, TC SHORT, vol_accum SHORT)
+window._rsiEdgeInfo = function(s, rsi_4h, rsi_1h) {
   const src = (s.source || '').toLowerCase();
   const dir = (s.direction || '').toUpperCase();
-  if (src === 'cryptovizor') {
-    if (dir === 'SHORT' && rsi_1h != null && rsi_1h >= 30 && rsi_1h < 50) return 'strong';
-    if (dir === 'SHORT' && rsi_4h != null && rsi_4h >= 30 && rsi_4h < 50) return 'strong';
-    if (dir === 'LONG' && rsi_4h != null && rsi_4h >= 60 && rsi_4h < 70) return 'strong';
-    if (dir === 'LONG' && rsi_4h != null && rsi_4h >= 50 && rsi_4h < 70) return 'good';
+  // ❌ AVOID — known negative EV
+  if (src === 'volume_surge')
+    return {tier:'avoid', emoji:'❌', label:'volume_surge — negative EV (-0.63R)'};
+  if (src === 'volcano')
+    return {tier:'avoid', emoji:'❌', label:'volcano — 8% WR / -0.76R'};
+  if (src === 'triple_confluence' && dir === 'SHORT')
+    return {tier:'avoid', emoji:'❌', label:'TC SHORT — 5% WR / -0.85R'};
+  if (src === 'vol_accum' && dir === 'SHORT')
+    return {tier:'avoid', emoji:'❌', label:'vol_accum SHORT — 15% WR'};
+  if (rsi_4h == null && rsi_1h == null) {
+    return {tier:'medium', emoji:'', label:'нет данных RSI'};
   }
-  if (src === 'second_flip' && dir === 'LONG' && rsi_4h != null && rsi_4h >= 60 && rsi_4h < 70) return 'good';
-  if (src === 'triple_confluence' && dir === 'LONG' && rsi_4h != null && rsi_4h >= 60 && rsi_4h < 80) return 'good';
-  if (dir === 'LONG' && rsi_4h != null && rsi_4h < 40) return 'warn';
-  if (dir === 'SHORT' && rsi_4h != null && rsi_4h > 70) return 'warn';
+  // 🥇 TOP SHORT
+  if (src === 'cryptovizor' && dir === 'SHORT') {
+    if (rsi_1h != null && rsi_1h >= 30 && rsi_1h < 50)
+      return {tier:'top', emoji:'🥇', label:'TOP SHORT (+5.90R 1h RSI 30-40)'};
+    if (rsi_4h != null && rsi_4h >= 30 && rsi_4h < 50)
+      return {tier:'top', emoji:'🥇', label:'TOP SHORT (+3.66R 4h RSI 30-50)'};
+    if (rsi_4h != null && rsi_4h > 70)
+      return {tier:'warn', emoji:'⚠', label:'CV SHORT в overbought 4h'};
+    return {tier:'good', emoji:'✅', label:'CV SHORT (good)'};
+  }
+  // 🥇 TOP LONG
+  if (src === 'cryptovizor' && dir === 'LONG') {
+    if (rsi_4h != null && rsi_4h >= 60 && rsi_4h < 70)
+      return {tier:'top', emoji:'🥇', label:'TOP LONG (+1.45R 4h RSI 60-70)'};
+    if (rsi_4h != null && rsi_4h >= 50 && rsi_4h < 70)
+      return {tier:'good', emoji:'✅', label:'CV LONG good (4h RSI 50-70)'};
+    if (rsi_4h != null && rsi_4h < 40)
+      return {tier:'warn', emoji:'⚠', label:'CV LONG в oversold 4h'};
+    return {tier:'medium', emoji:'⚪', label:'CV LONG (нейтральная зона)'};
+  }
+  // ✅ GOOD secondary
+  if (src === 'second_flip' && dir === 'LONG' && rsi_4h != null && rsi_4h >= 60 && rsi_4h < 70)
+    return {tier:'good', emoji:'✅', label:'SF LONG (+0.54R 4h RSI 60-70)'};
+  if (src === 'triple_confluence' && dir === 'LONG' && rsi_4h != null && rsi_4h >= 60 && rsi_4h < 80)
+    return {tier:'good', emoji:'✅', label:'TC LONG (+0.69R 4h RSI 60-80)'};
+  // ⚠ counter-trend
+  if (dir === 'LONG' && rsi_4h != null && rsi_4h < 40)
+    return {tier:'warn', emoji:'⚠', label:'LONG в oversold 4h (counter-trend)'};
+  if (dir === 'SHORT' && rsi_4h != null && rsi_4h > 70)
+    return {tier:'warn', emoji:'⚠', label:'SHORT в overbought 4h'};
+  // ⚪ MEDIUM default
+  return {tier:'medium', emoji:'⚪', label:'нейтральная зона'};
+};
+
+// Backward-compat (используется для фона ячейки)
+window._rsiEdgeColor = function(s, rsi_4h, rsi_1h) {
+  const info = window._rsiEdgeInfo(s, rsi_4h, rsi_1h);
+  if (info.tier === 'top') return 'strong';
+  if (info.tier === 'good') return 'good';
+  if (info.tier === 'warn' || info.tier === 'avoid') return 'warn';
   return null;
 };
 
@@ -8438,6 +8485,7 @@ window._toggleRsiHelp = function(ev) {
       <h4>📊 Лучшие RSI бакеты для входа (14d backtest)</h4>
       <div style="color:var(--muted);font-size:10px;margin-bottom:8px;">
         Source × Direction × RSI bucket → AvgR per trade (по 5500+ сигналам).
+        <br>В колонке RSI рядом с сигналом emoji: 🥇 TOP edge · ✅ GOOD · ⚪ MEDIUM · ⚠ counter-trend · ❌ AVOID
       </div>
 
       <h4 style="margin-top:8px;">🥇 ТОП SHORT</h4>
@@ -8540,25 +8588,37 @@ window._renderRsiCell = function(s) {
   const r1 = s.rsi_1h;
   const r4 = s.rsi_4h;
   const rd = s.rsi_1d;
+  // Получаем edge info (даже для items без RSI — для AVOID source).
+  const info = window._rsiEdgeInfo(s, r4, r1);
+  // Если AVOID — показываем emoji даже без RSI данных
   if (r15 == null && r1 == null && r4 == null && rd == null) {
+    if (info.tier === 'avoid') {
+      return `<td class="mono" style="text-align:center;font-size:18px;background:rgba(255,77,109,0.10);border-left:2px solid #ff4d6d;" title="${info.label}">${info.emoji}</td>`;
+    }
     return '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
   }
-  const edge = window._rsiEdgeColor(s, r4, r1);
+  const edge = info.tier === 'top' ? 'strong' :
+               info.tier === 'good' ? 'good' :
+               (info.tier === 'warn' || info.tier === 'avoid') ? 'warn' : null;
   let bg = '', border = '';
   if (edge === 'strong')  { bg = 'background:rgba(0,229,160,0.20);'; border = 'border-left:2px solid #00e5a0;'; }
   else if (edge === 'good') { bg = 'background:rgba(0,229,160,0.10);'; border = 'border-left:2px solid #88d8a3;'; }
-  else if (edge === 'warn') { bg = 'background:rgba(255,210,62,0.10);'; border = 'border-left:2px solid #ffd23e;'; }
+  else if (edge === 'warn') {
+    bg = info.tier === 'avoid' ? 'background:rgba(255,77,109,0.10);' : 'background:rgba(255,210,62,0.10);';
+    border = info.tier === 'avoid' ? 'border-left:2px solid #ff4d6d;' : 'border-left:2px solid #ffd23e;';
+  }
   const fmt = (v) => {
     if (v == null) return '<span style="color:#555;font-size:11px;">—</span>';
     const c = v >= 70 ? '#ff5e9c' : v >= 60 ? '#88d8a3' : v >= 40 ? '#cfd3dc' : v >= 30 ? '#ff9d6e' : '#ff4d6d';
     return `<span style="color:${c};font-weight:700;font-size:12px;">${v.toFixed(0)}</span>`;
   };
   const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
-  const tip = edge === 'strong' ? '⭐ Backtest sweet spot' :
-              edge === 'good' ? '✅ Хороший RSI bucket' :
-              edge === 'warn' ? '⚠ Counter-trend — risky' :
-              'RSI(14) на свече сигнала';
+  const tip = info.label || 'RSI(14) на свече сигнала';
+  const emojiHeader = info.emoji
+    ? `<div style="font-size:13px;line-height:1.2;margin-bottom:2px;" title="${tip}">${info.emoji}</div>`
+    : '';
   return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 6px !important;${bg}${border}" title="${tip}">
+    ${emojiHeader}
     <div>${tfLbl('15m')} ${fmt(r15)}</div>
     <div>${tfLbl('1h')} ${fmt(r1)}</div>
     <div>${tfLbl('4h')} ${fmt(r4)}</div>
