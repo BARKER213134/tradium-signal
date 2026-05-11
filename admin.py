@@ -11189,6 +11189,86 @@ async def api_auto_strategy_close_all_and_start():
     }
 
 
+@app.get("/api/auto-strategy/info")
+async def api_auto_strategy_info():
+    """Метаданные активной стратегии для UI вкладки."""
+    try:
+        from auto_strategy import (STRATEGY_NAME, STRATEGY_VERSION,
+                                    STRATEGY_DESCRIPTION,
+                                    STRATEGY_BACKTEST_METRICS,
+                                    is_enabled, get_capital_state,
+                                    MAX_CONCURRENT_POSITIONS,
+                                    MAX_TOTAL_EXPOSURE_PCT,
+                                    DAILY_LOSS_LIMIT_PCT,
+                                    DRAWDOWN_LIMIT_PCT,
+                                    CV_TIER_ALLOWED, BAD_HOURS,
+                                    BAD_WEEKDAYS, MIN_Q_SCORE,
+                                    SIZING_RULES,
+                                    EXIT_PARTIAL_PCT,
+                                    EXIT_TRAIL_DISTANCE_R,
+                                    EXIT_TIMEOUT_HOURS)
+        enabled = is_enabled()
+        cap = await asyncio.to_thread(get_capital_state)
+        # SIZING rules — преобразуем в человеко-читаемый формат
+        sizing_human = [
+            {"setup": "CV SHORT match",  "multiplier": 3.0, "base_pct": 1.0},
+            {"setup": "CV SHORT mixed",  "multiplier": 2.5, "base_pct": 1.0},
+            {"setup": "CV LONG match",   "multiplier": 2.0, "base_pct": 1.0},
+            {"setup": "CV other",        "multiplier": 1.5, "base_pct": 1.0},
+            {"setup": "Second Flip",     "multiplier": 1.0, "base_pct": 1.0},
+            {"setup": "Triple Confluence", "multiplier": 0.7, "base_pct": 1.0},
+        ]
+        return {
+            "name": STRATEGY_NAME,
+            "version": STRATEGY_VERSION,
+            "description": STRATEGY_DESCRIPTION,
+            "enabled": enabled,
+            "backtest": STRATEGY_BACKTEST_METRICS,
+            "rules": {
+                "entry_whitelist": [
+                    f"cryptovizor + tier ∈ {list(CV_TIER_ALLOWED) + ['None (default mixed)']}",
+                    "second_flip + LONG + tier=match (or None → default)",
+                    "triple_confluence + LONG + tier=mixed (or None → default)",
+                ],
+                "blocked_sources": [
+                    "volume_surge (WR 10%, AvgR -0.63R)",
+                    "volcano (WR 8%, AvgR -0.76R)",
+                    "supertrend (WR 28%, AvgR -0.30R)",
+                    "vol_accum SHORT (WR 15%)",
+                    "cluster, tradium, anomaly (no edge or low N)",
+                    "CV + tier=against (low edge +0.16R, skip for concentration)",
+                ],
+                "time_filters": {
+                    "bad_hours_utc": list(BAD_HOURS) or "DISABLED (24/7)",
+                    "bad_weekdays": list(BAD_WEEKDAYS) or "DISABLED (7 days/week)",
+                    "min_q_score": MIN_Q_SCORE,
+                },
+            },
+            "sizing": sizing_human,
+            "limits": {
+                "max_concurrent_positions": MAX_CONCURRENT_POSITIONS,
+                "max_total_exposure_pct": MAX_TOTAL_EXPOSURE_PCT,
+                "daily_loss_limit_pct": DAILY_LOSS_LIMIT_PCT,
+                "drawdown_limit_pct": DRAWDOWN_LIMIT_PCT,
+                "per_trade_hard_cap_pct": 5.0,
+            },
+            "exit_logic": {
+                "method": "1h RSI / SMA(14)RSI crossover",
+                "long_exit": "RSI < SMA на закрытом 1h баре",
+                "short_exit": "RSI > SMA на закрытом 1h баре",
+                "backup_sl": "Signal SL (hard stop)",
+                "monitor_interval_sec": 180,
+                "partial_close_pct": EXIT_PARTIAL_PCT,
+                "trail_distance_r": EXIT_TRAIL_DISTANCE_R,
+                "max_hold_hours": EXIT_TIMEOUT_HOURS,
+            },
+            "capital_state": cap,
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "trace": traceback.format_exc()[:500]}
+
+
 @app.get("/api/auto-strategy/status")
 async def api_auto_strategy_status():
     """Текущее состояние стратегии: открытые позиции, capital state, daily PnL."""

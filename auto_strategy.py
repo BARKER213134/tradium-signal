@@ -1,4 +1,4 @@
-"""ALPHA-CV v1.1 — Автотрейдинговая стратегия с hybrid exits.
+"""ALPHA-CV v1.2 — Автотрейдинговая стратегия с hybrid exits.
 
 ИЗМЕНЕНИЯ v1.1 (2026-05-09):
 - Добавлены risk gates (concurrent positions, daily loss, drawdown)
@@ -133,6 +133,25 @@ MAX_CONCURRENT_POSITIONS = 10  # лимит 10 сделок (было 5)
 MAX_TOTAL_EXPOSURE_PCT = 20.0  # 10×base 1% × ~2× avg multiplier = до 20%
 DAILY_LOSS_LIMIT_PCT = 3.0
 DRAWDOWN_LIMIT_PCT = 10.0
+
+
+# ─── Strategy metadata (показывается на UI вкладке) ────────────────
+STRATEGY_NAME = "ALPHA-CV"
+STRATEGY_VERSION = "v1.2"
+STRATEGY_DESCRIPTION = (
+    "Концентрация на cryptovizor signals (highest edge per 14d backtest: "
+    "62% WR, +0.85R AvgR). Dynamic exit по 1h RSI/SMA crossover вместо "
+    "fixed TP."
+)
+STRATEGY_BACKTEST_METRICS = {
+    "backtest_period_days": 14,
+    "total_signals_tested": 5534,
+    "trades_after_filter": 1216,
+    "win_rate_pct": 55.9,
+    "avg_r_per_trade": 1.01,
+    "profit_factor": 4.39,
+    "validation": "walk-forward OOS (train 12d / test 2d) — stable",
+}
 
 
 # ─── Activation flag (Mongo-based, no env var needed) ──────────────
