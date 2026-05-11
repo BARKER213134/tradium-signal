@@ -1,0 +1,91 @@
+Loaded 5534 signals
+Unique pairs: 546
+Computing RSI на всех TF...
+  50/546
+  100/546
+  150/546
+  200/546
+  250/546
+  300/546
+  350/546
+  400/546
+  450/546
+  500/546
+  done in 1233s
+  RSI 1h: 5534/5534
+  RSI 4h: 5534/5534
+
+Running grid search...
+
+====================================================================================================
+TOP-30 EDGE COMBINATIONS (sorted by AvgR, min decided=20)
+====================================================================================================
+  # Source               Dir    Tier       RSI TF  Bucket         N   Dec      WR     AvgR
+----------------------------------------------------------------------------------------------------
+  1 cryptovizor          SHORT  any-tier   1h      30-40         30    30  100.0%   +5.90R
+  2 cryptovizor          SHORT  match      1h      30-50         86    85   98.8%   +3.72R
+  3 cryptovizor          SHORT  mixed      4h      30-40         34    34  100.0%   +3.66R
+  4 cryptovizor          SHORT  match      4h      30-40         42    40  100.0%   +3.41R
+  5 cryptovizor          SHORT  any-tier   1h      30-50        176   175   98.3%   +3.31R
+  6 cryptovizor          SHORT  mixed      1h      30-50         54    54  100.0%   +3.30R
+  7 cryptovizor          SHORT  any-tier   4h      30-40         95    93   98.9%   +3.12R
+  8 cryptovizor          SHORT  mixed      1h      40-50         45    45  100.0%   +3.10R
+  9 cryptovizor          SHORT  match      1h      40-50         70    69   98.6%   +2.81R
+ 10 cryptovizor          SHORT  any-tier   1h      40-50        146   145   97.9%   +2.78R
+ 11 cryptovizor          SHORT  mixed      4h      30-50         95    95   97.9%   +2.69R
+ 12 cryptovizor          SHORT  match      4h      30-50        145   141   99.3%   +2.66R
+ 13 cryptovizor          SHORT  mixed      1h      40-60         93    93   97.8%   +2.58R
+ 14 cryptovizor          SHORT  mixed      1h      any          123   123   97.6%   +2.54R
+ 15 cryptovizor          SHORT  mixed      4h      any          123   123   97.6%   +2.54R
+ 16 cryptovizor          SHORT  mixed      none    any          123   123   97.6%   +2.54R
+ 17 cryptovizor          SHORT  any-tier   4h      30-50        301   297   97.3%   +2.48R
+ 18 cryptovizor          SHORT  against    1h      30-50         35    35   97.1%   +2.47R
+ 19 cryptovizor          SHORT  match      1h      any          202   197   99.5%   +2.36R
+ 20 cryptovizor          SHORT  match      4h      any          202   197   99.5%   +2.36R
+ 21 cryptovizor          SHORT  match      none    any          202   197   99.5%   +2.36R
+ 22 cryptovizor          SHORT  match      4h      40-50        103   101   99.0%   +2.36R
+ 23 cryptovizor          SHORT  against    1h      40-50         30    30   96.7%   +2.35R
+ 24 cryptovizor          SHORT  any-tier   1h      any          415   410   97.1%   +2.20R
+ 25 cryptovizor          SHORT  any-tier   4h      any          415   410   97.1%   +2.20R
+ 26 cryptovizor          SHORT  any-tier   none    any          415   410   97.1%   +2.20R
+ 27 cryptovizor          SHORT  any-tier   4h      40-50        206   204   96.6%   +2.19R
+ 28 cryptovizor          SHORT  any-tier   1h      40-60        312   307   97.1%   +2.15R
+ 29 cryptovizor          SHORT  mixed      4h      40-50         61    61   96.7%   +2.14R
+ 30 cryptovizor          SHORT  match      1h      40-60        156   151   99.3%   +2.13R
+
+====================================================================================================
+TOP-15 для CRYPTOVIZOR (наш main edge)
+====================================================================================================
+  # Dir    Tier       RSI TF  Bucket         N   Dec      WR     AvgR
+----------------------------------------------------------------------------------------------------
+  1 SHORT  any-tier   1h      30-40         30    30  100.0%   +5.90R
+  2 SHORT  match      1h      30-50         86    85   98.8%   +3.72R
+  3 SHORT  mixed      4h      30-40         34    34  100.0%   +3.66R
+  4 SHORT  match      4h      30-40         42    40  100.0%   +3.41R
+  5 SHORT  any-tier   1h      30-50        176   175   98.3%   +3.31R
+  6 SHORT  mixed      1h      30-50         54    54  100.0%   +3.30R
+  7 SHORT  any-tier   4h      30-40         95    93   98.9%   +3.12R
+  8 SHORT  mixed      1h      40-50         45    45  100.0%   +3.10R
+  9 SHORT  match      1h      40-50         70    69   98.6%   +2.81R
+ 10 SHORT  any-tier   1h      40-50        146   145   97.9%   +2.78R
+ 11 SHORT  mixed      4h      30-50         95    95   97.9%   +2.69R
+ 12 SHORT  match      4h      30-50        145   141   99.3%   +2.66R
+ 13 SHORT  mixed      1h      40-60         93    93   97.8%   +2.58R
+ 14 SHORT  mixed      1h      any          123   123   97.6%   +2.54R
+ 15 SHORT  mixed      4h      any          123   123   97.6%   +2.54R
+
+====================================================================================================
+BEST COMBO PER SOURCE
+====================================================================================================
+Source               Dir    Tier       RSI TF  Bucket         N   Dec      WR     AvgR
+----------------------------------------------------------------------------------------------------
+cryptovizor          SHORT  any-tier   1h      30-40         30    30  100.0%   +5.90R
+triple_confluence    LONG   any-tier   4h      60-80         68    55   56.4%   +0.69R
+second_flip          LONG   any-tier   4h      60-70         50    42   64.3%   +0.54R
+supertrend           SHORT  match      4h      30-40         67    59   54.2%   +0.36R
+vol_accum            LONG   match      4h      60-70         62    59   47.5%   +0.19R
+volume_surge         LONG   match      4h      50-60         40    37   16.2%   -0.43R
+
+Saved to _bt_rsi_grid_results.json
+Total combinations tested: 485
+Total time: 1233s

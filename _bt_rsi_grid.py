@@ -18,10 +18,10 @@ http = httpx.Client(timeout=15.0,
                     headers={"Accept-Encoding": "gzip"})
 
 TFS = {
-    '15m': 15 * 60 * 1000,
+    # Только 1h и 4h — главные actionable TF. 15m шум, 1d мало bars в 14d
+    # window. Сократили с 4 TF до 2 для скорости (15-30 мин вместо часов).
     '1h':  60 * 60 * 1000,
     '4h':  4 * 60 * 60 * 1000,
-    '1d':  24 * 60 * 60 * 1000,
 }
 RSI_PERIOD = 14
 

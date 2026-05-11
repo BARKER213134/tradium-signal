@@ -118,25 +118,49 @@ def fill_one_pair_today(pair, ts_seconds_list):
     return written
 
 
-def main(loop=True, interval_sec=30):
+def main(loop=True, interval_sec=60):
     db = _get_db()
-    print(f"Hot-fill started (loop={loop}, interval={interval_sec}s)")
+    print(f"Hot-fill started (loop={loop}, interval={interval_sec}s, throttled)")
     while True:
         try:
             t0 = time.time()
+            # Только last 30 min (новые) + skip пары которые уже свежие в кэше
             pairs_ts = fetch_fresh_signals(db, hours=1)
-            print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Fresh signals: {len(pairs_ts)}")
-            # Group by pair
-            by_pair = defaultdict(list)
+            # Filter out pairs that already have FRESH cache (< 30 min old)
+            from delta_calculator import _candle_open_ms
+            cd = db.cluster_delta
+            now_ms = int(time.time() * 1000)
+            cutoff_ms = now_ms - 30 * 60 * 1000  # 30 min freshness threshold
+            filtered = []
             for (pair, ts) in pairs_ts:
+                # Check if signal candle (15m bucket) is already in cache
+                sig_open = _candle_open_ms(ts * 1000, '15m')
+                existing = cd.find_one(
+                    {'pair': pair, 'tf': '15m', 'open_ms': sig_open},
+                    {'_id': 1}
+                )
+                if not existing:
+                    filtered.append((pair, ts))
+            print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Fresh: {len(pairs_ts)}, "
+                  f"need fetch: {len(filtered)}")
+            by_pair = defaultdict(list)
+            for (pair, ts) in filtered:
                 by_pair[pair].append(ts)
             unique_pairs = list(by_pair.keys())
+            if not unique_pairs:
+                print(f"  all in cache, skip")
+                if not loop:
+                    break
+                time.sleep(interval_sec)
+                continue
             print(f"  unique pairs: {len(unique_pairs)}")
             written_total = 0
             errors = 0
-            with ThreadPoolExecutor(max_workers=15) as ex:
+            # ─── Throttled: 5 workers + sleep 0.5s каждые 10 пар ───
+            with ThreadPoolExecutor(max_workers=5) as ex:
                 futs = {ex.submit(fill_one_pair_today, p, by_pair[p]): p
                         for p in unique_pairs}
+                done_count = 0
                 for f in as_completed(futs):
                     pair = futs[f]
                     written = f.result()
@@ -144,6 +168,9 @@ def main(loop=True, interval_sec=30):
                         errors += 1
                     else:
                         written_total += written
+                    done_count += 1
+                    if done_count % 10 == 0:
+                        time.sleep(0.5)  # throttle
             elapsed = time.time() - t0
             print(f"  candles written: {written_total} in {elapsed:.1f}s, errors={errors}")
         except Exception as e:

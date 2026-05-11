@@ -9672,7 +9672,7 @@ async def api_paper_set_balance(payload: dict):
 
 
 @app.get("/api/journal")
-async def api_journal(limit: int = 3000, refresh: int = 0, debug: int = 0):
+async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     """Все сигналы из 4 источников — для вкладки Журнал.
     Server-side limit 14 days + per-source cap. Cache 45s (async-lock safe).
     _compute_journal делает 7 sync Mongo-запросов → выносим в thread,
@@ -10640,7 +10640,11 @@ def _compute_journal_sync():
     try:
         from delta_calculator import _candle_open_ms, get_delta_snapshot
         from database import _get_db
+        import time as _t_enrich
         cd_col = _get_db().cluster_delta
+        # PERFORMANCE: Enrich только last 48h items (новых много, старее
+        # юзер не смотрит часто, экономим ~80% query weight).
+        delta_cutoff_ts = int(_t_enrich.time()) - 48 * 3600
         # Собираем уникальные (pair, tf, open_ms) для items с at_ts
         wanted: dict = {}  # (pair, tf, open_ms) → list of items
         for it in items:
@@ -10648,6 +10652,8 @@ def _compute_journal_sync():
             pair = it.get('pair') or ''
             if not (ats and pair):
                 continue
+            if ats < delta_cutoff_ts:
+                continue  # старее 48h — skip enrichment
             for tf in ('15m', '1h'):
                 open_ms = _candle_open_ms(ats * 1000, tf)
                 wanted.setdefault((pair, tf, open_ms), []).append((it, tf))
