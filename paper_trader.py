@@ -1732,11 +1732,19 @@ async def on_signal(signal_data: dict):
                  f"{summary}{param_note}")
 
     # ── 5. Открытие ──
-    # ALPHA-CV multiplier: если стратегия активна — мультиплицируем sizing
+    # ALPHA-CV sizing: ПЕРЕЗАПИСЫВАЕМ size_pct (не мультиплицируем mode-based)
+    # потому что mode по умолчанию даёт ~11% base, что × multiplier=3 даёт 33% —
+    # катастрофически большая позиция. Strategy size_pct уже включает base × mult.
     alpha_mult = signal_data.get('_alpha_cv_size_mult')
     if alpha_mult and alpha_mult > 0:
-        size_pct = round(size_pct * alpha_mult, 2)
-        logger.info(f"[ALPHA-CV] sizing multiplied: ×{alpha_mult} → {size_pct}%")
+        # alpha_mult приходит уже как итоговый процент (base 1% × multiplier)
+        # Так что просто перезаписываем, не умножаем на mode-based size
+        size_pct = round(alpha_mult, 2)
+        # Hard cap 5% per trade (safety guardrail)
+        if size_pct > 5.0:
+            logger.warning(f"[ALPHA-CV] capped size {size_pct}% → 5.0% (hard cap)")
+            size_pct = 5.0
+        logger.info(f"[ALPHA-CV] sizing OVERRIDE: {size_pct}% (mode-base ignored)")
     # open_position() — sync function с counter+insert+balance update.
     pos = await asyncio.to_thread(
         open_position,

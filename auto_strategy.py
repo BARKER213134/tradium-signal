@@ -306,12 +306,22 @@ def should_enter(signal: dict) -> tuple[bool, str]:
         return False, f'cv_tier={tier}_skipped'
 
     if src == 'second_flip':
-        if direction == SF_REQUIRED['direction'] and tier == SF_REQUIRED['tier']:
+        if direction != SF_REQUIRED['direction']:
+            return False, f'sf_filter_failed({direction}/{tier})'
+        # tier=None → default match (если cluster_delta cache не дал данных)
+        if tier is None or tier == '':
+            return True, 'sf_long_no_tier_default'
+        if tier == SF_REQUIRED['tier']:
             return True, 'sf_long_match'
         return False, f'sf_filter_failed({direction}/{tier})'
 
     if src == 'triple_confluence':
-        if direction == TC_REQUIRED['direction'] and tier == TC_REQUIRED['tier']:
+        if direction != TC_REQUIRED['direction']:
+            return False, f'tc_filter_failed({direction}/{tier})'
+        # tier=None → default mixed
+        if tier is None or tier == '':
+            return True, 'tc_long_no_tier_default'
+        if tier == TC_REQUIRED['tier']:
             return True, 'tc_long_mixed'
         return False, f'tc_filter_failed({direction}/{tier})'
 
@@ -483,6 +493,10 @@ def reason_to_human(reason: str, signal: dict) -> str:
                 f"мало edge, скипаем для concentration)")
     if reason == 'cv_no_tier_default_mixed':
         return f"✅ {pair} CV (tier=undef → default mixed)"
+    if reason == 'sf_long_no_tier_default':
+        return f"✅ {pair} second_flip LONG (tier=undef → default)"
+    if reason == 'tc_long_no_tier_default':
+        return f"✅ {pair} triple_confluence LONG (tier=undef → default)"
     if reason.startswith('sf_filter_failed'):
         return f"❌ second_flip требует LONG+match, у нас {direction}/{tier}"
     if reason.startswith('tc_filter_failed'):
