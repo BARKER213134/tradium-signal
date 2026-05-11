@@ -8568,17 +8568,20 @@ window._renderSmaCell = function(s) {
     const arrow = above ? '↑' : '↓';
     return {tf, color, arrow, diff, above};
   });
+  // Placeholder matches emoji header height in RSI cell (font-size:13px;line-height:1.2;margin-bottom:2px) — keeps TF rows aligned with RSI column
+  const placeholder = '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
   if (!anyData) {
-    return '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    return `<td class="mono text-muted" style="text-align:center;font-size:11px;line-height:1.4;padding:4px 4px !important;">${placeholder}<div>—</div></td>`;
   }
   const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
   const inner = rows.map(r => {
-    if (!r) return '<div style="opacity:0.3;font-size:10px;">—</div>';
+    if (!r) return '<div style="opacity:0.3;font-size:12px;">—</div>';
     return `<div title="RSI ${r.above ? '>' : '<'} SMA on ${r.tf} (diff ${r.diff})">
       ${tfLbl(r.tf)} <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${r.color};vertical-align:middle;margin-left:3px;box-shadow:0 0 4px ${r.color}44;"></span>
     </div>`;
   }).join('');
   return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 4px !important;" title="🟢 RSI > SMA(RSI) = бычий импульс · 🔴 RSI < SMA = медвежий">
+    ${placeholder}
     ${inner}
   </td>`;
 };
@@ -8616,7 +8619,7 @@ window._renderRsiCell = function(s) {
   const tip = info.label || 'RSI(14) на свече сигнала';
   const emojiHeader = info.emoji
     ? `<div style="font-size:13px;line-height:1.2;margin-bottom:2px;" title="${tip}">${info.emoji}</div>`
-    : '';
+    : '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
   return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 6px !important;${bg}${border}" title="${tip}">
     ${emojiHeader}
     <div>${tfLbl('15m')} ${fmt(r15)}</div>

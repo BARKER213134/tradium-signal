@@ -3221,6 +3221,29 @@ async def _paper_on_signal(signal_data: dict):
     except Exception as e:
         logger.debug(f"[rsi-cache] schedule on signal fail: {e}")
 
+    # ── Cluster Delta + Resonance fill IMMEDIATELY на каждый новый сигнал ──
+    # Заполняет cluster_delta cache (15m + 1h свечи резонанса) сразу к моменту
+    # когда журнал будет открыт. Журнал API читает из cluster_delta через
+    # bulk $or — поэтому здесь только пишем кэш, без attach в signal doc.
+    # fire-and-forget — не блокирует основной поток.
+    try:
+        _pair_for_delta = signal_data.get("pair") or ""
+        if not _pair_for_delta and signal_data.get("symbol"):
+            _s = signal_data["symbol"]
+            _pair_for_delta = _s.replace("USDT", "/USDT") if "USDT" in _s else _s
+        if _pair_for_delta:
+            from delta_calculator import get_delta_snapshot_fast as _gdsf
+            import time as _t_delta
+            _at_ms = int(_t_delta.time() * 1000)
+            async def _fill_delta_now(_p, _ms):
+                try:
+                    await asyncio.to_thread(_gdsf, _p, _ms)
+                except Exception as _e:
+                    logger.debug(f"[cluster-delta] on-signal fill {_p}: {_e}")
+            asyncio.create_task(_fill_delta_now(_pair_for_delta, _at_ms))
+    except Exception as e:
+        logger.debug(f"[cluster-delta] schedule on signal fail: {e}")
+
     # [УБРАНО] Pump fallback — он был нужен когда использовался AI (Claude
     # отказывал при pump_vol=0). Теперь система rule-based, check_entry
     # сам делает Vol/OI fallback через check_pump_potential (с кешем 120с).
@@ -3496,6 +3519,154 @@ async def _rsi_cache_loop():
         except Exception:
             logger.exception('[rsi-cache] loop error')
         await _asyncio.sleep(300)
+
+
+async def _cluster_delta_cache_loop():
+    """Background task: периодически наполняет cluster_delta cache для
+    свежих сигналов всех источников (supertrend_signals, cv_flip_signals,
+    new_strategy_signals, signals, anomalies, confluence_signals, clusters).
+    Использует get_delta_snapshot_fast (klines, 1 запрос/TF/пара) — быстрый.
+    Интервал 7 мин. Persistent через Mongo, cross-worker.
+
+    Без этого loop'а delta+resonance колонки в журнале остаются пустыми
+    для сигналов где не сработал хук on_signal (например, при перезапуске).
+    """
+    import asyncio as _asyncio
+    await _asyncio.sleep(120)
+    while True:
+        try:
+            from database import _get_db
+            from datetime import timedelta as _td, datetime as _dt, timezone as _tz
+            from delta_calculator import (
+                get_delta_snapshot_fast, _candle_open_ms, TF_MINUTES,
+            )
+            db = _get_db()
+            now_dt = _dt.now(_tz.utc)
+            since = now_dt - _td(hours=24)
+            # Собираем (pair, at_ts_ms) из всех источников
+            wanted: set = set()  # set of (pair, at_ts_ms)
+            # supertrend_signals
+            try:
+                for s in db.supertrend_signals.find(
+                        {'flip_at': {'$gte': since}},
+                        {'pair': 1, 'flip_at': 1}).limit(500):
+                    p = s.get('pair')
+                    fa = s.get('flip_at')
+                    if p and fa:
+                        wanted.add((p, int(fa.timestamp() * 1000)))
+            except Exception:
+                pass
+            # cv_flip / new_strategy
+            for col_name in ('cv_flip_signals', 'new_strategy_signals'):
+                try:
+                    for s in db[col_name].find(
+                            {'created_at': {'$gte': since}},
+                            {'pair': 1, 'created_at': 1,
+                             'st_flip_at': 1}).limit(500):
+                        p = s.get('pair')
+                        ts = s.get('st_flip_at') or s.get('created_at')
+                        if p and ts:
+                            wanted.add((p, int(ts.timestamp() * 1000)))
+                except Exception:
+                    pass
+            # signals (tradium / cryptovizor)
+            try:
+                for s in db.signals.find(
+                        {'received_at': {'$gte': since}},
+                        {'pair': 1, 'received_at': 1,
+                         'pattern_triggered_at': 1}).limit(500):
+                    p = s.get('pair')
+                    ts = s.get('pattern_triggered_at') or s.get('received_at')
+                    if p and ts:
+                        wanted.add((p, int(ts.timestamp() * 1000)))
+            except Exception:
+                pass
+            # anomalies
+            try:
+                for a in db.anomalies.find(
+                        {'detected_at': {'$gte': since}},
+                        {'pair': 1, 'detected_at': 1}).limit(300):
+                    p = a.get('pair')
+                    ts = a.get('detected_at')
+                    if p and ts:
+                        wanted.add((p, int(ts.timestamp() * 1000)))
+            except Exception:
+                pass
+            # confluence
+            try:
+                for c in db.confluence_signals.find(
+                        {'detected_at': {'$gte': since}},
+                        {'pair': 1, 'detected_at': 1}).limit(500):
+                    p = c.get('pair')
+                    ts = c.get('detected_at')
+                    if p and ts:
+                        wanted.add((p, int(ts.timestamp() * 1000)))
+            except Exception:
+                pass
+            if not wanted:
+                await _asyncio.sleep(420)
+                continue
+            # Отфильтровываем те, для которых уже есть cluster_delta cache
+            # (по обоим TF — 15m и 1h на signal candle).
+            cd_col = db.cluster_delta
+            todo: list = []
+            wanted_list = list(wanted)[:600]  # cap 600 pairs/ts за один цикл
+            # Чанк find для существующих
+            existing: set = set()
+            CHUNK = 300
+            for i in range(0, len(wanted_list), CHUNK):
+                conds = []
+                for (p, ms) in wanted_list[i:i+CHUNK]:
+                    for tf in ('15m', '1h'):
+                        om = _candle_open_ms(ms, tf)
+                        conds.append({'pair': p, 'tf': tf, 'open_ms': om})
+                if not conds:
+                    continue
+                try:
+                    for doc in cd_col.find({'$or': conds},
+                                           {'pair':1,'tf':1,'open_ms':1,'_id':0}):
+                        existing.add((doc['pair'], doc['tf'], doc['open_ms']))
+                except Exception:
+                    pass
+            for (p, ms) in wanted_list:
+                # Если хотя бы один TF отсутствует — пара в todo
+                miss = False
+                for tf in ('15m', '1h'):
+                    om = _candle_open_ms(ms, tf)
+                    if (p, tf, om) not in existing:
+                        miss = True
+                        break
+                if miss:
+                    todo.append((p, ms))
+            todo = todo[:200]  # cap fetch за один цикл
+            if not todo:
+                logger.debug('[cluster-delta] cache complete')
+                await _asyncio.sleep(420)
+                continue
+            logger.info(f"[cluster-delta] filling for {len(todo)} pair+ts pairs")
+            from concurrent.futures import ThreadPoolExecutor
+            def _one(p, ms):
+                try:
+                    return get_delta_snapshot_fast(p, ms)
+                except Exception:
+                    return None
+            filled = 0
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                futs = [ex.submit(_one, p, ms) for (p, ms) in todo]
+                results = await _asyncio.to_thread(
+                    lambda: [f.result() for f in futs])
+                filled = sum(1 for r in results
+                             if r and (r.get('15m') or r.get('1h')))
+            logger.info(f"[cluster-delta] cache loop done: {filled}/{len(todo)} filled")
+            # Invalidate journal cache → следующий рендер увидит новые поля
+            try:
+                from cache_utils import journal_cache
+                journal_cache.invalidate("journal_all")
+            except Exception:
+                pass
+        except Exception:
+            logger.exception('[cluster-delta] cache loop error')
+        await _asyncio.sleep(420)  # 7 min
 
 
 async def _alpha_cv_exit_monitor():
@@ -3887,6 +4058,14 @@ async def start_watcher():
         logger.info("[rsi-cache] background loop scheduled")
     except Exception:
         logger.exception("[rsi-cache] failed to schedule")
+    # Cluster Delta cache loop — каждые 7 мин наполняет cluster_delta для
+    # всех источников сигналов (CV/ST/Anomaly/Confluence/NewStrategy).
+    # Гарантирует что Δ% + Резонанс колонки в журнале не пустые.
+    try:
+        asyncio.create_task(_cluster_delta_cache_loop())
+        logger.info("[cluster-delta] cache loop scheduled")
+    except Exception:
+        logger.exception("[cluster-delta] failed to schedule cache loop")
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())
