@@ -3468,7 +3468,7 @@ async def _rsi_cache_loop():
                         pairs.add(s['pair'])
             except Exception:
                 pass
-            pairs = list(pairs)[:150]
+            pairs = list(pairs)[:400]  # увеличили до 400 (было 150)
             if not pairs:
                 await _asyncio.sleep(300)
                 continue

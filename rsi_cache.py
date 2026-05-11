@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 
 # Какие TF и сколько часов истории нужно (warmup ~14 баров + signals window 24h)
 TF_WARMUP_HOURS = {
-    '15m': 6,     # 24 бара warmup
-    '1h':  20,    # 20 бар warmup
-    '4h':  80,    # 20 бар warmup
-    '1d':  16 * 24,  # 16 баров warmup
+    '15m': 24,    # 96 баров — RSI стабильно для last 1 day
+    '1h':  48,    # 48 баров warmup
+    '4h':  120,   # 30 баров warmup
+    '1d':  35 * 24,  # 35 баров warmup (1 month history)
 }
 TF_BUCKET_MS = {
     '15m': 15 * 60 * 1000,
