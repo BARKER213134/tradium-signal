@@ -10706,11 +10706,12 @@ def _compute_journal_sync():
                         it[f'resonance_{tf}'] = _resonance_from_deltas(deltas)
 
             # ─── ANOMALY DETECTION: z-score delta_pct сигнальной свечи vs
-            # последних 30 свечей до неё. z>2.5 = экстремум (как SKYAI на
-            # 26.04 — массивный приток покупок против бэйзлайна).
-            # Bulk-fetch baseline candles per (pair, tf) одним find с
-            # range condition, потом считаем z в Python.
+            # последних 30 свечей до неё. Time-budgeted: skip если медленно.
+            # Bulk $or через chunks чтоб не делать N round-trips.
             try:
+                import time as _t_anom
+                _anom_t0 = _t_anom.time()
+                _ANOM_BUDGET_S = 2.5  # max время на enrich
                 from collections import defaultdict
                 BASELINE_BARS = 30
                 # Группируем сигналы по (pair, tf) → list of (item, sig_open)
@@ -10725,28 +10726,42 @@ def _compute_journal_sync():
                     for tf in ('15m', '1h', '4h'):
                         sig_open = _candle_open_ms(ats * 1000, tf)
                         sig_by_pt[(pair, tf)].append((it, sig_open))
-                # Per (pair, tf): один find на весь диапазон,
-                # потом per-signal compute z-score
+                # Один bulk $or query через chunks (вместо N find'ов)
                 tf_minutes = {'15m': 15, '1h': 60, '4h': 240}
+                or_conds = []
                 for (pair, tf), sig_list in sig_by_pt.items():
                     bucket_ms = tf_minutes[tf] * 60 * 1000
                     min_open = min(o for _, o in sig_list)
                     max_open = max(o for _, o in sig_list)
                     range_start = min_open - BASELINE_BARS * bucket_ms
+                    or_conds.append({
+                        'pair': pair, 'tf': tf,
+                        'open_ms': {'$gte': range_start, '$lte': max_open},
+                    })
+                # Chunked find — 50 conds/chunk (range query тяжелее обычного)
+                docs_by_pt: dict = defaultdict(dict)
+                CHUNK_ANOM = 50
+                for i in range(0, len(or_conds), CHUNK_ANOM):
+                    if _t_anom.time() - _anom_t0 > _ANOM_BUDGET_S:
+                        logging.getLogger(__name__).debug(
+                            f"[journal] anomaly z-score budget exceeded, partial")
+                        break
                     try:
-                        docs = cd_col.find({
-                            'pair': pair, 'tf': tf,
-                            'open_ms': {'$gte': range_start, '$lte': max_open},
-                        }, {'open_ms':1, 'delta_pct':1, '_id':0})
-                        by_open = {d['open_ms']: float(d.get('delta_pct') or 0)
-                                    for d in docs}
+                        for doc in cd_col.find(
+                                {'$or': or_conds[i:i+CHUNK_ANOM]},
+                                {'pair':1,'tf':1,'open_ms':1,
+                                 'delta_pct':1,'_id':0}):
+                            docs_by_pt[(doc['pair'], doc['tf'])][
+                                doc['open_ms']] = float(doc.get('delta_pct') or 0)
                     except Exception:
-                        continue
+                        pass
+                # Compute z-scores per signal
+                for (pair, tf), sig_list in sig_by_pt.items():
+                    by_open = docs_by_pt.get((pair, tf), {})
                     if not by_open:
                         continue
                     sorted_opens = sorted(by_open.keys())
                     for it, sig_open in sig_list:
-                        # 30 свечей строго ДО сигнальной
                         preceding = [by_open[o] for o in sorted_opens
                                       if o < sig_open][-BASELINE_BARS:]
                         sig_delta = by_open.get(sig_open)
