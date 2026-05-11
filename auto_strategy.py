@@ -449,6 +449,63 @@ EXIT_TRAIL_DISTANCE_R = 0.5  # trailing distance in R (after TP1 hit)
 EXIT_TIMEOUT_HOURS = 24
 
 
+def compute_exit_signal(pair: str, direction: str) -> dict:
+    """Проверяет — пора ли закрывать ALPHA-CV позицию по 1h RSI/SMA crossover.
+
+    Логика:
+      LONG → exit когда 1h RSI < 1h SMA14(RSI) на ПОСЛЕДНЕМ закрытом 1h баре
+      SHORT → exit когда 1h RSI > 1h SMA14(RSI)
+
+    Returns: {'should_exit': bool, 'rsi': float, 'sma': float, 'reason': str}
+    """
+    try:
+        from exchange import get_klines_any
+        # 50 баров hour = достаточно для RSI(14) + SMA(14) = warmup
+        candles = get_klines_any(pair, '1h', 60)
+        if not candles or len(candles) < 30:
+            return {'should_exit': False, 'reason': 'insufficient_klines'}
+        # Берём ВСЕ кроме последнего (текущий незакрытый бар)
+        closes = [float(c.get('c', 0)) for c in candles[:-1]]
+        if len(closes) < 30:
+            return {'should_exit': False, 'reason': 'too_few_closes'}
+        # RSI(14) Wilder
+        gains, losses = [0.0], [0.0]
+        for i in range(1, len(closes)):
+            ch = closes[i] - closes[i-1]
+            gains.append(max(ch, 0))
+            losses.append(max(-ch, 0))
+        period = 14
+        avg_g = sum(gains[1:period+1]) / period
+        avg_l = sum(losses[1:period+1]) / period
+        rsi = [None] * (period + 1)
+        rsi[period] = 100.0 if avg_l == 0 else (100 - 100/(1 + avg_g/avg_l))
+        for i in range(period+1, len(closes)):
+            avg_g = (avg_g * (period-1) + gains[i]) / period
+            avg_l = (avg_l * (period-1) + losses[i]) / period
+            rsi.append(100.0 if avg_l == 0 else (100 - 100/(1 + avg_g/avg_l)))
+        # SMA(14) of RSI series
+        valid_rsi = [r for r in rsi if r is not None]
+        if len(valid_rsi) < 14:
+            return {'should_exit': False, 'reason': 'rsi_insufficient'}
+        sma_buf = valid_rsi[-14:]
+        sma = sum(sma_buf) / 14
+        last_rsi = valid_rsi[-1]
+        is_long = (direction or '').upper() == 'LONG'
+        # Crossover: для LONG exit когда RSI ушёл ниже SMA
+        if is_long:
+            should_exit = last_rsi < sma
+        else:
+            should_exit = last_rsi > sma
+        return {
+            'should_exit': should_exit,
+            'rsi': round(last_rsi, 2),
+            'sma': round(sma, 2),
+            'reason': f'crossover_{direction}' if should_exit else 'no_cross',
+        }
+    except Exception as e:
+        return {'should_exit': False, 'reason': f'error:{e}'}
+
+
 def get_exit_plan(signal: dict, decision: dict) -> dict:
     """Возвращает exit plan для позиции.
     Используется paper_trader для управления позицией.

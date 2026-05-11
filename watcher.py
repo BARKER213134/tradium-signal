@@ -3435,6 +3435,64 @@ async def _new_strategies_updater_loop():
         await _asyncio.sleep(300)  # каждые 5 минут
 
 
+async def _alpha_cv_exit_monitor():
+    """Каждые 3 мин проверяет ALPHA-CV открытые позиции на 1h SMA(RSI) crossover.
+    LONG: exit когда 1h RSI < SMA на последнем закрытом баре
+    SHORT: exit когда 1h RSI > SMA
+
+    SL и backup TP1 (10R далеко) остаются как safety net.
+    """
+    import asyncio as _asyncio
+    await _asyncio.sleep(180)  # стартовая задержка
+    while True:
+        try:
+            from database import _get_db
+            from auto_strategy import compute_exit_signal
+            import paper_trader as pt
+            db = _get_db()
+            open_positions = list(db.paper_trades.find({
+                'status': 'OPEN',
+                'auto_strategy_label': {'$exists': True}
+            }, {'trade_id': 1, 'pair': 1, 'symbol': 1,
+                'direction': 1, 'opened_at': 1}))
+            if not open_positions:
+                logger.debug("[alpha-cv-exit] no open positions")
+                await _asyncio.sleep(180)
+                continue
+            logger.info(f"[alpha-cv-exit] checking {len(open_positions)} positions")
+            from exchange import get_prices_any
+            for pos in open_positions:
+                pair = pos.get('pair') or pos.get('symbol', '').replace('USDT', '/USDT')
+                direction = pos.get('direction')
+                trade_id = pos.get('trade_id')
+                if not (pair and direction and trade_id):
+                    continue
+                try:
+                    sig = await _asyncio.to_thread(compute_exit_signal, pair, direction)
+                    if sig.get('should_exit'):
+                        # Получаем current price для close
+                        prices = await _asyncio.to_thread(get_prices_any, [pair])
+                        sym = pair.replace('/', '').upper()
+                        if not sym.endswith('USDT'):
+                            sym += 'USDT'
+                        cur_price = prices.get(sym)
+                        if cur_price:
+                            logger.info(
+                                f"[alpha-cv-exit] CLOSE #{trade_id} {pair} {direction} "
+                                f"@ {cur_price} | RSI={sig['rsi']} SMA={sig['sma']} "
+                                f"reason={sig['reason']}"
+                            )
+                            await _asyncio.to_thread(
+                                pt.close_position, int(trade_id),
+                                float(cur_price), "ALPHA_CV_RSI_CROSS"
+                            )
+                except Exception as e:
+                    logger.debug(f"[alpha-cv-exit] pos #{trade_id}: {e}")
+        except Exception:
+            logger.exception("[alpha-cv-exit] cycle error")
+        await _asyncio.sleep(180)  # каждые 3 мин
+
+
 async def _cluster_delta_backfill_once():
     """Однократный backfill cluster_delta для сигналов последних 24 часов.
     Запускается один раз при старте watcher с задержкой 90с (даём время
@@ -3750,6 +3808,14 @@ async def start_watcher():
         logger.info("[delta-ws] kline stream task scheduled")
     except Exception:
         logger.exception("[delta-ws] failed to schedule")
+
+    # ALPHA-CV Exit Monitor — каждые 3 мин проверяет открытые ALPHA-CV
+    # позиции на 1h RSI < SMA(RSI) crossover. Закрывает momentum-loss signals.
+    try:
+        asyncio.create_task(_alpha_cv_exit_monitor())
+        logger.info("[alpha-cv-exit] monitor scheduled")
+    except Exception:
+        logger.exception("[alpha-cv-exit] failed to schedule")
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())

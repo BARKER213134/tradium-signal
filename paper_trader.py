@@ -1736,15 +1736,28 @@ async def on_signal(signal_data: dict):
     # потому что mode по умолчанию даёт ~11% base, что × multiplier=3 даёт 33% —
     # катастрофически большая позиция. Strategy size_pct уже включает base × mult.
     alpha_mult = signal_data.get('_alpha_cv_size_mult')
-    if alpha_mult and alpha_mult > 0:
-        # alpha_mult приходит уже как итоговый процент (base 1% × multiplier)
-        # Так что просто перезаписываем, не умножаем на mode-based size
+    is_alpha_cv = bool(alpha_mult and alpha_mult > 0)
+    if is_alpha_cv:
         size_pct = round(alpha_mult, 2)
         # Hard cap 5% per trade (safety guardrail)
         if size_pct > 5.0:
             logger.warning(f"[ALPHA-CV] capped size {size_pct}% → 5.0% (hard cap)")
             size_pct = 5.0
         logger.info(f"[ALPHA-CV] sizing OVERRIDE: {size_pct}% (mode-base ignored)")
+        # TP1 для ALPHA-CV — отодвигаем ОЧЕНЬ далеко чтобы не закрывалось рано.
+        # Выход управляется через 1h SMA(RSI) crossover монитор (watcher).
+        # SL остаётся как backstop.
+        if tp1 and entry:
+            try:
+                # Отодвигаем TP1 на 10R (то есть TP не сработает почти никогда)
+                sl_dist = abs(float(entry) - float(sl))
+                if direction == "LONG":
+                    tp1 = entry + 10 * sl_dist
+                else:
+                    tp1 = entry - 10 * sl_dist
+                logger.info(f"[ALPHA-CV] TP1 отодвинут на 10R → {tp1} (exit by 1h SMA cross)")
+            except Exception:
+                pass
     # open_position() — sync function с counter+insert+balance update.
     pos = await asyncio.to_thread(
         open_position,
