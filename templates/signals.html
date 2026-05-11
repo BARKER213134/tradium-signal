@@ -6783,6 +6783,26 @@ safeInterval(loadForexJournal, 30000);
   text-align: left;
   padding-left: 14px !important;
 }
+/* RSI help popover (backtest edges) */
+#rsiHelpPopover {
+  display:none; position:absolute; right:0; top:calc(100% + 4px); z-index:1000;
+  background:#0a0e14; border:1px solid #b28bff; border-radius:8px;
+  padding:14px 16px; min-width:480px; max-width:520px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.6); text-align:left;
+  font-family:var(--font-mono); font-size:11px; color:var(--text);
+  line-height:1.6; letter-spacing:0;
+  text-transform:none; font-weight:400;
+}
+#rsiHelpPopover h4 {
+  margin:0 0 8px 0; font-size:12px; color:#b28bff; font-weight:700;
+  text-transform:uppercase; letter-spacing:0.05em;
+}
+#rsiHelpPopover .edge-row { display:flex; gap:10px; padding:3px 0; }
+#rsiHelpPopover .edge-tag {
+  padding:1px 6px; border-radius:3px; font-size:9px; font-weight:700;
+  display:inline-block; min-width:56px; text-align:center;
+}
+#rsiHelpPopover hr { border:none; border-top:1px solid #1a1e2a; margin:8px 0; }
 </style>
 <div class="strategy-box">
   <div class="strat-icon">📓</div>
@@ -7035,7 +7055,10 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry" style="text-align:center;padding:14px 8px;">Entry</th>
         <th class="sortable" onclick="jSort('score')" id="jSortScore" style="text-align:left;padding:14px 14px;">Паттерн</th>
         <th class="sortable" onclick="jSort('q_score')" id="jSortQScore" title="Quality Score 0-100 (по 5 факторам с штрафами)" style="text-align:center;padding:14px 6px;">Score</th>
-        <th class="sortable" onclick="jSort('rsi_4h')" id="jSortRsi" title="RSI(14) 15m/1h/4h/1d на свече сигнала. Подсветка зелёным = совпадение с backtest edge для (source, direction)" style="text-align:center;padding:14px 6px;">RSI</th>
+        <th id="jSortRsi" style="text-align:center;padding:14px 6px;position:relative;">
+          <span class="sortable" onclick="jSort('rsi_4h')">RSI</span>
+          <span onclick="event.stopPropagation();window._toggleRsiHelp(event)" style="display:inline-block;margin-left:4px;width:14px;height:14px;line-height:14px;text-align:center;background:rgba(178,139,255,0.2);border:1px solid #b28bff;border-radius:50%;color:#b28bff;font-size:9px;font-weight:700;cursor:pointer;vertical-align:middle;" title="Backtest best RSI buckets">ⓘ</span>
+        </th>
         <th class="sortable" onclick="jSort('delta_15m')" id="jSortDelta" title="Cluster Delta 15m / 1h (buy vs sell volume на свече сигнала)" style="text-align:center;padding:14px 6px;">Δ%</th>
         <th class="sortable" onclick="jSort('resonance_15m')" id="jSortResonance" title="Резонанс — N подряд свечей одного знака дельты (-5..+5). Положительное в LONG = попутный поток; отрицательное в LONG = поток против сделки" style="text-align:center;padding:14px 6px;">Резонанс</th>
       </tr>
@@ -8397,6 +8420,83 @@ window._rsiEdgeColor = function(s, rsi_4h, rsi_1h) {
   if (dir === 'LONG' && rsi_4h != null && rsi_4h < 40) return 'warn';
   if (dir === 'SHORT' && rsi_4h != null && rsi_4h > 70) return 'warn';
   return null;
+};
+
+// RSI help popover content + toggle
+window._toggleRsiHelp = function(ev) {
+  let pop = document.getElementById('rsiHelpPopover');
+  if (!pop) {
+    pop = document.createElement('div');
+    pop.id = 'rsiHelpPopover';
+    pop.innerHTML = `
+      <h4>📊 Лучшие RSI бакеты для входа (14d backtest)</h4>
+      <div style="color:var(--muted);font-size:10px;margin-bottom:8px;">
+        Source × Direction × RSI bucket → AvgR per trade (по 5500+ сигналам).
+      </div>
+
+      <h4 style="margin-top:8px;">🥇 ТОП SHORT</h4>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(0,229,160,0.25);color:#00e5a0;">+5.90R</span>
+        <span><b>CV SHORT</b> + <b>1h RSI 30-40</b> · 100% WR (N=30)</span></div>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(0,229,160,0.25);color:#00e5a0;">+3.72R</span>
+        <span><b>CV SHORT match</b> + <b>1h RSI 30-50</b> · 99% WR (N=86)</span></div>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(0,229,160,0.20);color:#00e5a0;">+3.66R</span>
+        <span><b>CV SHORT mixed</b> + <b>4h RSI 30-40</b> · 100% WR (N=34)</span></div>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(0,229,160,0.15);color:#88d8a3;">+2.36R</span>
+        <span><b>CV SHORT</b> any · 99% WR (без RSI фильтра, N=202)</span></div>
+
+      <hr>
+      <h4>🥈 ТОП LONG</h4>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(0,229,160,0.25);color:#00e5a0;">+1.45R</span>
+        <span><b>CV LONG match</b> + <b>4h RSI 60-70</b> · 58% WR (N=320)</span></div>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(0,229,160,0.15);color:#88d8a3;">+1.06R</span>
+        <span><b>CV LONG match</b> any RSI · 54% WR (N=420)</span></div>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(0,229,160,0.15);color:#88d8a3;">+0.81R</span>
+        <span><b>LONG against</b> + <b>1d RSI 60-80</b> · 70% WR (N=111)</span></div>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(0,229,160,0.10);color:#88d8a3;">+0.69R</span>
+        <span><b>TC LONG</b> + <b>4h RSI 60-80</b> · 56% WR (N=68)</span></div>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(0,229,160,0.10);color:#88d8a3;">+0.54R</span>
+        <span><b>SF LONG</b> + <b>4h RSI 60-70</b> · 64% WR (N=50)</span></div>
+
+      <hr>
+      <h4 style="color:#ff8c80;">❌ Избегать</h4>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(255,77,109,0.20);color:#ff5e9c;">-0.89R</span>
+        <span><b>volume_surge SHORT</b> + RSI 50-70 · 3% WR</span></div>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(255,77,109,0.20);color:#ff5e9c;">-0.85R</span>
+        <span><b>TC SHORT</b> any RSI · 5% WR</span></div>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(255,77,109,0.20);color:#ff5e9c;">-0.64R</span>
+        <span><b>volume_surge</b> + 1h RSI 50-70 · 13% WR</span></div>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(255,210,62,0.15);color:#ffd23e;">warn</span>
+        <span><b>LONG</b> + 4h RSI &lt;40 · counter-trend (avoid)</span></div>
+      <div class="edge-row"><span class="edge-tag" style="background:rgba(255,210,62,0.15);color:#ffd23e;">warn</span>
+        <span><b>SHORT</b> + 4h RSI &gt;70 · counter-trend (avoid)</span></div>
+
+      <hr>
+      <div style="color:var(--muted);font-size:10px;margin-top:8px;">
+        Подсветка фона в RSI колонке отражает эти edges. 🟢 strong = sweet spot, 🟢 good = positive EV, 🟡 warn = counter-trend.
+      </div>
+    `;
+    // Append к RSI header cell для абсолютного позиционирования
+    const hdr = document.getElementById('jSortRsi');
+    if (hdr) {
+      hdr.appendChild(pop);
+    } else {
+      document.body.appendChild(pop);
+    }
+  }
+  const isVisible = pop.style.display === 'block';
+  pop.style.display = isVisible ? 'none' : 'block';
+  // Close on outside click
+  if (!isVisible) {
+    setTimeout(() => {
+      const closer = (e) => {
+        if (!pop.contains(e.target) && !ev.target.contains(e.target)) {
+          pop.style.display = 'none';
+          document.removeEventListener('click', closer);
+        }
+      };
+      document.addEventListener('click', closer);
+    }, 100);
+  }
 };
 
 window._renderRsiCell = function(s) {
