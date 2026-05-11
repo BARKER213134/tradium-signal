@@ -1275,10 +1275,11 @@
             crosshairMarkerVisible: false,
             title: `SMA${period}(RSI)`,
           });
-          // VISUAL OFFSET: сдвигаем линию SMA(RSI) ниже на 15 чтобы не
+          // VISUAL OFFSET: сдвигаем линию SMA(RSI) ниже на 7 чтобы не
           // сливалась с RSI (обе колеблются около 50). Это чисто
           // визуальный shift — в баджу показываем настоящее значение.
-          const VISUAL_OFFSET = 15;
+          // 15 был слишком сильно вниз, 7 — заметно но в читаемой зоне.
+          const VISUAL_OFFSET = 7;
           const data = [];
           for (let i = 0; i < candles.length; i++) {
             if (sma[i] != null) data.push({
