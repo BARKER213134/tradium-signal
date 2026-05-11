@@ -8382,9 +8382,11 @@ window._rsiEdgeColor = function(s, rsi_4h, rsi_1h) {
 };
 
 window._renderRsiCell = function(s) {
+  const r15 = s.rsi_15m;
   const r1 = s.rsi_1h;
   const r4 = s.rsi_4h;
-  if (r1 == null && r4 == null) {
+  const rd = s.rsi_1d;
+  if (r15 == null && r1 == null && r4 == null && rd == null) {
     return '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
   }
   const edge = window._rsiEdgeColor(s, r4, r1);
@@ -8401,9 +8403,11 @@ window._renderRsiCell = function(s) {
               edge === 'good' ? '✅ Хороший RSI bucket' :
               edge === 'warn' ? '⚠ Counter-trend — risky' :
               'RSI(14) на свече сигнала';
-  return `<td class="mono" style="text-align:center;font-size:10px;line-height:1.4;${bg}${border}" title="${tip}">
+  return `<td class="mono" style="text-align:center;font-size:9px;line-height:1.35;${bg}${border}" title="${tip}">
+    <div>15m: ${fmt(r15)}</div>
     <div>1h: ${fmt(r1)}</div>
     <div>4h: ${fmt(r4)}</div>
+    <div>1d: ${fmt(rd)}</div>
   </td>`;
 };
 

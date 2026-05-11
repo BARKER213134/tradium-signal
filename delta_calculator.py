@@ -277,6 +277,68 @@ def bulk_fill_pair_history_cdn(pair: str, start_dt, end_dt,
     return result
 
 
+def fetch_klines_cdn(symbol: str, tf: str, start_ms: int, end_ms: int) -> list:
+    """Klines через CDN (без банов) + REST для today.
+    Returns list of [open_ms, open, high, low, close, volume, close_ms].
+    """
+    import io, zipfile, csv
+    out = []
+    today = datetime.now(timezone.utc).date()
+    start_dt = datetime.fromtimestamp(start_ms/1000, tz=timezone.utc).date()
+    end_dt = datetime.fromtimestamp(end_ms/1000, tz=timezone.utc).date()
+    cur = start_dt
+    while cur <= end_dt:
+        if cur >= today:
+            # REST для today
+            try:
+                day_start = int(datetime(cur.year, cur.month, cur.day,
+                                          tzinfo=timezone.utc).timestamp() * 1000)
+                day_end = day_start + 24 * 3600 * 1000
+                r = _http_client.get(
+                    f"{BINANCE_FAPI}/fapi/v1/klines",
+                    params={'symbol': symbol, 'interval': tf,
+                            'startTime': max(day_start, start_ms),
+                            'endTime': min(day_end, end_ms),
+                            'limit': 1500},
+                    timeout=10)
+                if r.status_code == 200:
+                    for kr in r.json():
+                        try:
+                            out.append([int(kr[0]), float(kr[1]), float(kr[2]),
+                                        float(kr[3]), float(kr[4]),
+                                        float(kr[5]), int(kr[6])])
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+            cur += timedelta(days=1)
+            continue
+        url = (f'{BINANCE_VISION}/data/futures/um/daily/klines/'
+               f'{symbol}/{tf}/{symbol}-{tf}-{cur.strftime("%Y-%m-%d")}.zip')
+        try:
+            r = _http_client.get(url, timeout=15)
+            if r.status_code == 200:
+                z = zipfile.ZipFile(io.BytesIO(r.content))
+                with z.open(z.namelist()[0]) as f:
+                    rdr = csv.reader(io.TextIOWrapper(f, encoding='utf-8'))
+                    for row in rdr:
+                        if not row or not row[0].isdigit():
+                            continue
+                        try:
+                            o = int(row[0])
+                            if o < start_ms or o > end_ms:
+                                continue
+                            out.append([o, float(row[1]), float(row[2]),
+                                        float(row[3]), float(row[4]),
+                                        float(row[5]), int(row[6])])
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+        cur += timedelta(days=1)
+    return sorted(out, key=lambda k: int(k[0]))
+
+
 def _compute_rsi_for_closes(closes: list[float], period: int = 14) -> list:
     """RSI(14) Wilder — возвращает список того же размера, None для warmup."""
     if len(closes) < period + 1:

@@ -10830,40 +10830,10 @@ def _compute_journal_sync():
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] q_score fail: {e}")
 
-    # ─── RSI 1h + 4h enrichment — ТОЛЬКО из cache (без блокирующих fetch) ───
-    # Cache fills via background task _rsi_cache_loop. Если данных нет — пропуск.
+    # ─── RSI 15m/1h/4h/1d enrichment из Mongo cache (signal_rsi_cache) ───
     try:
-        from delta_calculator import _candle_open_ms
-        global _RSI_CACHE
-        try:
-            _RSI_CACHE
-        except NameError:
-            _RSI_CACHE = {}
-        # Просто читаем из cache что есть — НИКАКИХ HTTP fetch'ей в journal API
-        for it in items:
-            ats = it.get('at_ts') or 0
-            pair = it.get('pair') or ''
-            if not (pair and ats):
-                continue
-            ats_ms = ats * 1000
-            # 1h
-            ck1h = f'{pair}|1h'
-            cached1h = _RSI_CACHE.get(ck1h)
-            if cached1h:
-                rsi_map = cached1h[1] if isinstance(cached1h, tuple) else cached1h
-                sig_open = _candle_open_ms(ats_ms, '1h')
-                r = rsi_map.get(sig_open)
-                if r is not None:
-                    it['rsi_1h'] = round(r, 1)
-            # 4h
-            ck4h = f'{pair}|4h'
-            cached4h = _RSI_CACHE.get(ck4h)
-            if cached4h:
-                rsi_map = cached4h[1] if isinstance(cached4h, tuple) else cached4h
-                sig_open_4h = (ats_ms // (4 * 3600 * 1000)) * (4 * 3600 * 1000)
-                r = rsi_map.get(sig_open_4h)
-                if r is not None:
-                    it['rsi_4h'] = round(r, 1)
+        from rsi_cache import bulk_get_rsi_for_items
+        bulk_get_rsi_for_items(items)
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] rsi read fail: {e}")
 
