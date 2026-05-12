@@ -6989,6 +6989,19 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="SHORT">🔴 SHORT</option>
   </select>
   <input id="jFilterScore" type="number" placeholder="Min Score" min="0" step="1" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);width:80px;">
+  <select id="jFilterVerdict" onchange="filterJournal()" title="Фильтр по Вердикту (агрегат RSI/SMA/Trend/Anomaly tiers)" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">🎯 Вердикт: все</option>
+    <option value="ELITE">🏆 ELITE (3+ top)</option>
+    <option value="STRONG">🔥 STRONG (2+ top)</option>
+    <option value="strict">🏆+🔥 STRICT (ELITE/STRONG)</option>
+    <option value="GOOD">✅ GOOD (1 top)</option>
+    <option value="OK">👍 OK (2+ good)</option>
+    <option value="MEH">⚪ MEH</option>
+    <option value="CAUTION">⚠ CAUTION</option>
+    <option value="SKIP">❌ SKIP</option>
+    <option value="no_skip">🚫 Скрыть SKIP</option>
+    <option value="positive">📈 Прибыльные (ELITE+STRONG+GOOD+OK)</option>
+  </select>
   <!-- KC и Pump filter убраны из UI (колонки удалены из таблицы).
        Hidden inputs для совместимости с filterJournal() — всегда пустые. -->
   <select id="jFilterKC" style="display:none;"><option value=""></option></select>
@@ -8090,6 +8103,28 @@ function filterJournal() {
     // 🔥 HOT only — Quality Score >= 60
     if (window._journalHotOnly) {
       if ((s.q_score || 0) < 60) return false;
+    }
+    // 🎯 Verdict filter (агрегат RSI/SMA/Trend/Anomaly tiers)
+    const verdictFilter = document.getElementById('jFilterVerdict');
+    const vf = verdictFilter ? verdictFilter.value : '';
+    if (vf && window._verdictInfo) {
+      const v = window._verdictInfo(s).tier.toUpperCase();
+      const verdictName = v === 'AVOID' ? 'SKIP' :
+                          v === 'ELITE' ? 'ELITE' :
+                          v === 'STRONG' ? 'STRONG' :
+                          v === 'GOOD' ? 'GOOD' :
+                          v === 'OK' ? 'OK' :
+                          v === 'WARN' ? 'CAUTION' :
+                          v === 'MEH' ? 'MEH' : v;
+      if (vf === 'strict') {
+        if (!['ELITE','STRONG'].includes(verdictName)) return false;
+      } else if (vf === 'no_skip') {
+        if (verdictName === 'SKIP') return false;
+      } else if (vf === 'positive') {
+        if (!['ELITE','STRONG','GOOD','OK'].includes(verdictName)) return false;
+      } else {
+        if (verdictName !== vf) return false;
+      }
     }
     return true;
   });
