@@ -9695,12 +9695,12 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     async def _compute_in_thread():
         return await asyncio.to_thread(_compute_journal_sync)
 
-    # HARD TIMEOUT 18s — защита от зависающих inline fill'ов / Mongo stalls.
-    # Если превысили, возвращаем что есть из cache (или пустой ответ).
+    # HARD TIMEOUT 25s — защита от зависающих inline fill'ов / Mongo stalls.
+    # Compute обычно 5-12с на Railway (Atlas Stockholm), 25-40с локально.
     try:
         full = await asyncio.wait_for(
             journal_cache.get_or_compute("journal_all", _compute_in_thread),
-            timeout=18.0,
+            timeout=25.0,
         )
     except asyncio.TimeoutError:
         # Возвращаем stale cache если есть, иначе пустой
@@ -10935,13 +10935,18 @@ def _compute_journal_sync():
     # Остальные fill'ы — fire-and-forget background.
     try:
         from rsi_cache import bulk_get_rsi_for_items, fill_pair_rsi
-        bulk_get_rsi_for_items(items)
         import time as _t_rsi
+        # PERF: enrich только items за last 48h (cache TTL 48h, старые не имеют smysl)
+        # Раньше прогоняли все 11000 items × 4 TF = 44000 lookups (~8с).
+        # Теперь ~last 1000 items × 4 TF = 4000 lookups = 1-2с.
+        _cutoff_48h = int(_t_rsi.time()) - 48 * 3600
+        _recent_items = [it for it in items if (it.get('at_ts') or 0) >= _cutoff_48h]
+        bulk_get_rsi_for_items(_recent_items)
         import threading as _th_rsi
         from concurrent.futures import ThreadPoolExecutor, as_completed
         # Сортируем missing pairs по recency (свежие первые)
         missing_with_ts = []
-        for it in items:
+        for it in _recent_items:
             ats = it.get('at_ts') or 0
             pair = it.get('pair') or ''
             if not (ats and pair):
@@ -11002,12 +11007,15 @@ def _compute_journal_sync():
     # ─── Trend enrichment — INLINE fill для top-10 свежих + bg остальные ───
     try:
         from trend_cache import bulk_get_trend_for_items, fill_pair_trend
-        bulk_get_trend_for_items(items)
         import time as _t_tr
+        # PERF: enrich только items за last 48h (cache TTL 48h)
+        _cutoff_48h_tr = int(_t_tr.time()) - 48 * 3600
+        _recent_items_tr = [it for it in items if (it.get('at_ts') or 0) >= _cutoff_48h_tr]
+        bulk_get_trend_for_items(_recent_items_tr)
         import threading as _th_tr
         from concurrent.futures import ThreadPoolExecutor as _TPE_tr, as_completed as _ac_tr
         missing_with_ts_tr = []
-        for it in items:
+        for it in _recent_items_tr:
             ats = it.get('at_ts') or 0
             pair = it.get('pair') or ''
             if not (ats and pair):
