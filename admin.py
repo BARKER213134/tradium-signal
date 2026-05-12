@@ -10873,7 +10873,19 @@ def _compute_journal_sync():
                         preceding = [by_open[o] for o in sorted_opens
                                       if o < sig_open][-BASELINE_BARS:]
                         sig_delta = by_open.get(sig_open)
-                        if sig_delta is None or len(preceding) < 10:
+                        # FIX: для 4h сигнальная свеча часто ещё открыта и не
+                        # пишется в cache. Используем самую свежую closed
+                        # свечу <= sig_open как proxy для signal delta.
+                        if sig_delta is None:
+                            latest_le = [by_open[o] for o in sorted_opens
+                                          if o <= sig_open]
+                            if latest_le:
+                                sig_delta = latest_le[-1]
+                                # Убираем эту свечу из preceding чтобы не было self-correlation
+                                preceding = [by_open[o] for o in sorted_opens
+                                              if o < sorted_opens[len(latest_le)-1]][-BASELINE_BARS:]
+                        # FIX: понизил baseline threshold 10 → 5 (новые пары)
+                        if sig_delta is None or len(preceding) < 5:
                             continue
                         mean = sum(preceding) / len(preceding)
                         var = sum((d - mean)**2 for d in preceding) / len(preceding)

@@ -654,7 +654,9 @@ def get_delta_snapshot_fast(pair: str, at_ts_ms: Optional[int] = None,
                 'resonance': _resonance_from_deltas(deltas),
                 'resonance_window': len(deltas),
             }
-            # Записываем в cache (только закрытые свечи)
+            # Записываем в cache (включая ОТКРЫТУЮ текущую свечу — для anomaly
+            # z-score на 4h/1h где signal candle часто ещё активна. Upsert
+            # перезапишет её при следующем fill с обновлёнными значениями.)
             if cd_col is not None:
                 now_ms = int(time.time() * 1000)
                 try:
@@ -662,9 +664,6 @@ def get_delta_snapshot_fast(pair: str, at_ts_ms: Optional[int] = None,
                     now_dt = datetime.now(timezone.utc)
                     ops = []
                     for c in candles:
-                        # Только закрытые свечи
-                        if c['open_ms'] + minutes * 60 * 1000 > now_ms:
-                            continue
                         ops.append(UpdateOne(
                             {'pair': pair, 'tf': tf, 'open_ms': c['open_ms']},
                             {'$set': {
