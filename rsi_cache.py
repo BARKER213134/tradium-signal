@@ -17,12 +17,15 @@ from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
-# Какие TF и сколько часов истории нужно (warmup ~14 баров + signals window 24h)
+# Warmup: нужно покрывать БЕЗ дыр все сигналы за 14d (journal window) +
+# 28+ баров перед самым старым для расчёта RSI(14)+SMA(14).
+# Старые значения были рассчитаны на 24h, поэтому сигналы > 1 дня
+# имели пустые 4h/1d (видно в журнале).
 TF_WARMUP_HOURS = {
-    '15m': 24,    # 96 баров — RSI стабильно для last 1 day
-    '1h':  48,    # 48 баров warmup
-    '4h':  120,   # 30 баров warmup
-    '1d':  35 * 24,  # 35 баров warmup (1 month history)
+    '15m': 15 * 24,       # 15 дней = 1440 баров (покрывает 14d journal + warmup)
+    '1h':  17 * 24,       # 17 дней = 408 баров
+    '4h':  20 * 24,       # 20 дней = 120 баров
+    '1d':  60 * 24,       # 60 дней (для 1d cache — критично т.к. RSI(14) на дневке)
 }
 TF_BUCKET_MS = {
     '15m': 15 * 60 * 1000,

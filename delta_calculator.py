@@ -70,8 +70,10 @@ def _ensure_cache_indexes_once():
         from database import _get_db
         col = _get_db().cluster_delta
         col.create_index([('pair', 1), ('tf', 1), ('open_ms', 1)], unique=True)
-        # TTL 7 дней — старее не нужно (сигналы живут 24h в журнале)
-        col.create_index('cached_at', expireAfterSeconds=7 * 24 * 3600)
+        # TTL 21 день — z-score anomaly на 4h требует 30 свечей baseline = 5 дней,
+        # для сигналов 14d journal окна нужно держать candles до 14+5 = 19 дней.
+        # Жёсткий лимит сверху чтобы не разрастаться (1500 пар × 4 TF × ... candles).
+        col.create_index('cached_at', expireAfterSeconds=21 * 24 * 3600)
         _indexes_ready = True
     except Exception as e:
         logger.debug(f'[delta] index ensure fail: {e}')
@@ -614,14 +616,18 @@ def get_delta_snapshot_fast(pair: str, at_ts_ms: Optional[int] = None,
         _ensure_cache_indexes_once()
     except Exception:
         cd_col = None
+    # Окно baseline для anomaly z-score (30 свечей). Берём 35 чтоб иметь запас.
+    # Раньше брали только RESONANCE_BARS=5, поэтому anomaly cell в журнале была
+    # пустой - не хватало истории для расчёта std/mean baseline.
+    BASELINE_BARS = 35
     for tf in timeframes:
         try:
             minutes = TF_MINUTES.get(tf)
             if minutes is None:
                 continue
             sig_open = _candle_open_ms(at_ts_ms, tf)
-            # Берём (RESONANCE_BARS+1) свечей до signal candle включительно
-            start_ms = sig_open - RESONANCE_BARS * minutes * 60 * 1000
+            # Берём BASELINE_BARS свечей ДО signal candle (для z-score + резонанс)
+            start_ms = sig_open - BASELINE_BARS * minutes * 60 * 1000
             end_ms = sig_open + minutes * 60 * 1000
             candles = _delta_from_klines_batch(sym, tf, start_ms, end_ms)
             if not candles:
