@@ -1802,6 +1802,12 @@ async def on_signal(signal_data: dict):
     if signal_data.get('_alpha_cv_label'):
         try:
             trades, _ = _get_collections()
+            # Detect strict-mode: v2.1+ имеет STRICT_MODE_ENABLED активный
+            try:
+                import auto_strategy as _ast
+                _strict = bool(getattr(_ast, 'STRICT_MODE_ENABLED', False))
+            except Exception:
+                _strict = False
             trades.update_one(
                 {'trade_id': pos['trade_id']},
                 {'$set': {
@@ -1809,6 +1815,8 @@ async def on_signal(signal_data: dict):
                     'auto_strategy_reason': signal_data.get('_alpha_cv_reason'),
                     'auto_strategy_exit_plan': signal_data.get('_alpha_cv_exit_plan') or {},
                     'auto_strategy_size_mult': alpha_mult,
+                    'auto_strategy_version': 'v2.1',
+                    'strict_mode_open': _strict,
                 }}
             )
         except Exception as e:

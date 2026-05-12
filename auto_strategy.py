@@ -529,15 +529,20 @@ def check_and_update_auto_pause() -> None:
     """Считает rolling AvgR последних AUTO_PAUSE_WINDOW closed ALPHA-CV сделок.
     Если AvgR < AUTO_PAUSE_AVGR_THRESHOLD → выставляет pause на AUTO_PAUSE_HOURS.
 
+    ВАЖНО: учитываем только сделки с strict_mode_open=True (открытые на v2.1+
+    после внедрения verdict gate). Сделки на v1.2/v2.0 baseline = другая
+    стратегия, их статистика не репрезентативна для v2.1.
+
     Вызывается после каждого закрытия сделки (либо периодически).
     """
     try:
         from database import _get_db
         from datetime import timedelta
         db = _get_db()
-        # Последние closed ALPHA-CV trades
+        # ТОЛЬКО сделки с strict_mode_open=True (v2.1+)
         cursor = db.paper_trades.find({
             'auto_strategy_label': {'$exists': True, '$nin': [None, '']},
+            'strict_mode_open': True,  # ← key filter
             'status': {'$in': ['TP', 'SL', 'CLOSED', 'TIMEOUT']},
             'pnl_pct': {'$exists': True},
         }, {'pnl_pct': 1, 'size_pct': 1, 'sl_pct': 1, 'closed_at': 1, 'pair': 1}).sort('closed_at', -1).limit(AUTO_PAUSE_WINDOW)
