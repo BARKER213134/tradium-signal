@@ -622,6 +622,41 @@ def should_enter(signal: dict) -> tuple[bool, str]:
         verdict = v['verdict']
         if verdict not in ALLOWED_VERDICTS:
             return False, f'strict_skip_verdict={verdict}'
+        # ── PRICE EXTENSION CHECK: не входим если цена уже сделала большое
+        # движение в направлении сделки (mean-reversion bounce risk).
+        # Например: SHORT на TAC @ 0.01736 после drop -13.4% от 0.01999 →
+        # следующий 15m бар +5.9% bounce → instant SL.
+        # Проверяем 1h klines: если range от high до low >= 5% и entry в
+        # нижних 30% диапазона для SHORT (верхних 30% для LONG) — отказ.
+        try:
+            from exchange import get_klines_any
+            pair = signal.get('pair') or ''
+            entry = float(signal.get('entry') or 0)
+            if pair and entry > 0:
+                kl = get_klines_any(pair, '1h', 4)
+                if kl and len(kl) >= 2:
+                    closes = [float(k.get('c', 0)) for k in kl]
+                    highs = [float(k.get('h', 0)) for k in kl]
+                    lows = [float(k.get('l', 0)) for k in kl]
+                    range_high = max(highs)
+                    range_low = min(lows)
+                    range_pct = (range_high - range_low) / range_low * 100 if range_low > 0 else 0
+                    if range_pct >= 5.0:  # значимое движение
+                        # Position entry в диапазоне (0=low, 1=high)
+                        if range_high > range_low:
+                            position = (entry - range_low) / (range_high - range_low)
+                            # SHORT не открывать в нижних 30% (after drop)
+                            if direction == 'SHORT' and position < 0.30:
+                                return False, (f'extended_short: цена в нижних '
+                                                f'{position*100:.0f}% диапазона '
+                                                f'{range_pct:.1f}% за 4h')
+                            # LONG не открывать в верхних 30% (after pump)
+                            if direction == 'LONG' and position > 0.70:
+                                return False, (f'extended_long: цена в верхних '
+                                                f'{(1-position)*100:.0f}% диапазона '
+                                                f'{range_pct:.1f}% за 4h')
+        except Exception:
+            pass  # filter best-effort, не блокирует на ошибке
         # ── Auto-pause gate: если в паузе и НЕ ELITE → отказ ──
         paused, pause_state = is_paused_now()
         if paused:
@@ -1024,6 +1059,10 @@ def reason_to_human(reason: str, signal: dict) -> str:
     if reason.startswith('strict_skip_verdict'):
         v = reason.split('=')[1] if '=' in reason else '?'
         return f"❌ STRICT-mode: verdict={v} (нужно ELITE или STRONG)"
+    if reason.startswith('extended_short'):
+        return f"❌ Цена SHORT на дне диапазона — mean-reversion risk ({reason.split(':',1)[1] if ':' in reason else ''})"
+    if reason.startswith('extended_long'):
+        return f"❌ Цена LONG на вершине диапазона — mean-reversion risk ({reason.split(':',1)[1] if ':' in reason else ''})"
     if reason.startswith('strict_ELITE') or reason.startswith('strict_STRONG'):
         parts = reason.split('_')
         verdict = parts[1] if len(parts) > 1 else '?'
