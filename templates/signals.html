@@ -9480,6 +9480,34 @@ async function openJournalChart(idx, forceTF) {
         size: 0,
       });
     }
+    // ─── Verdict marker для текущего сигнала s (на свече сигнала) ───
+    // Большой emoji-marker под/над баром показывающий вердикт по 4 edges.
+    try {
+      if (window._verdictInfo && s.at_ts) {
+        const verdict = window._verdictInfo(s);
+        const isLong = (s.direction || '').toUpperCase() === 'LONG';
+        const sigCandle = nearestCandle(s.at_ts);
+        if (sigCandle && verdict && verdict.emoji) {
+          // Tier color → marker color
+          const tierColor = verdict.tier === 'elite' ? '#ffd700' :
+                            verdict.tier === 'strong' ? '#ff8c50' :
+                            verdict.tier === 'good' ? '#00e5a0' :
+                            verdict.tier === 'ok' ? '#88d8a3' :
+                            verdict.tier === 'warn' ? '#ffd23e' :
+                            verdict.tier === 'avoid' ? '#ff4d6d' : '#888';
+          markers.push({
+            time: sigCandle.time,
+            // LONG sigs marker сверху (чтоб не наезжал на arrowUp снизу)
+            // SHORT sigs marker снизу (arrowDown сверху)
+            position: isLong ? 'aboveBar' : 'belowBar',
+            color: tierColor,
+            shape: 'circle',
+            text: verdict.emoji + ' ' + verdict.tier.toUpperCase(),
+            size: 2,
+          });
+        }
+      }
+    } catch(_e) {}
     markers.sort((a,b) => a.time - b.time);
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу + ST-signals
     let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [], _nsM = [], _hotM = [];
