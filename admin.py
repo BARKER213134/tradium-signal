@@ -10899,30 +10899,59 @@ def _compute_journal_sync():
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] q_score fail: {e}")
 
-    # ─── RSI 15m/1h/4h/1d enrichment из Mongo (signal_rsi_cache) ───
-    # Inline fill отменён — слишком медленно. Bulk read из cache (мгновенно)
-    # + fire-and-forget fill для miss'ов (данные появятся на след. рендере).
+    # ─── RSI 15m/1h/4h/1d enrichment из Mongo + INLINE fill для top-10 свежих ───
+    # Smart fill: только 10 самых свежих пар где cache miss, budget 3s через FAPI.
+    # Остальные fill'ы — fire-and-forget background.
     try:
         from rsi_cache import bulk_get_rsi_for_items, fill_pair_rsi
         bulk_get_rsi_for_items(items)
         import time as _t_rsi
         import threading as _th_rsi
-        cutoff_6h = int(_t_rsi.time()) - 6 * 3600
-        missing_pairs = set()
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        # Сортируем missing pairs по recency (свежие первые)
+        missing_with_ts = []
         for it in items:
             ats = it.get('at_ts') or 0
-            if ats < cutoff_6h:
-                continue
             pair = it.get('pair') or ''
-            if not pair:
+            if not (ats and pair):
                 continue
             if (it.get('rsi_1h') is None or it.get('rsi_4h') is None
                     or it.get('rsi_1d') is None):
-                missing_pairs.add(pair)
-        if missing_pairs:
-            to_fill = list(missing_pairs)[:20]
+                missing_with_ts.append((ats, pair))
+        # Top-10 свежих pairs (sort by ats desc, dedup pair)
+        missing_with_ts.sort(key=lambda x: -x[0])
+        seen = set()
+        top_recent = []
+        for ats, p in missing_with_ts:
+            if p in seen:
+                continue
+            seen.add(p)
+            top_recent.append(p)
+            if len(top_recent) >= 10:
+                break
+        if top_recent:
+            _t_start = _t_rsi.time()
+            try:
+                with ThreadPoolExecutor(max_workers=10) as ex:
+                    futs = [ex.submit(fill_pair_rsi, p) for p in top_recent]
+                    for f in as_completed(futs, timeout=3.0):
+                        try:
+                            f.result(timeout=0.1)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            # Re-read cache после inline fill
+            if _t_rsi.time() - _t_start < 3.5:
+                try:
+                    bulk_get_rsi_for_items(items)
+                except Exception:
+                    pass
+        # Background fill для остальных свежих миссов (без блокировки render)
+        rest_missing = list(seen)[10:30]  # next 20 pairs в фоне
+        if rest_missing:
             def _bg_fill_rsi():
-                for p in to_fill:
+                for p in rest_missing:
                     try:
                         fill_pair_rsi(p)
                     except Exception:
@@ -10932,27 +10961,52 @@ def _compute_journal_sync():
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] rsi enrich fail: {e}")
 
-    # ─── Trend enrichment — bulk read + fire-and-forget background fill ───
+    # ─── Trend enrichment — INLINE fill для top-10 свежих + bg остальные ───
     try:
         from trend_cache import bulk_get_trend_for_items, fill_pair_trend
         bulk_get_trend_for_items(items)
         import time as _t_tr
         import threading as _th_tr
-        cutoff_6h_tr = int(_t_tr.time()) - 6 * 3600
-        missing_pairs_tr = set()
+        from concurrent.futures import ThreadPoolExecutor as _TPE_tr, as_completed as _ac_tr
+        missing_with_ts_tr = []
         for it in items:
             ats = it.get('at_ts') or 0
-            if ats < cutoff_6h_tr:
-                continue
             pair = it.get('pair') or ''
-            if not pair:
+            if not (ats and pair):
                 continue
             if (it.get('trend_1h') is None or it.get('trend_4h') is None):
-                missing_pairs_tr.add(pair)
-        if missing_pairs_tr:
-            to_fill_tr = list(missing_pairs_tr)[:20]
+                missing_with_ts_tr.append((ats, pair))
+        missing_with_ts_tr.sort(key=lambda x: -x[0])
+        seen_tr = set()
+        top_recent_tr = []
+        for ats, p in missing_with_ts_tr:
+            if p in seen_tr:
+                continue
+            seen_tr.add(p)
+            top_recent_tr.append(p)
+            if len(top_recent_tr) >= 10:
+                break
+        if top_recent_tr:
+            _t_start_tr = _t_tr.time()
+            try:
+                with _TPE_tr(max_workers=10) as ex:
+                    futs = [ex.submit(fill_pair_trend, p) for p in top_recent_tr]
+                    for f in _ac_tr(futs, timeout=3.0):
+                        try:
+                            f.result(timeout=0.1)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            if _t_tr.time() - _t_start_tr < 3.5:
+                try:
+                    bulk_get_trend_for_items(items)
+                except Exception:
+                    pass
+        rest_missing_tr = list(seen_tr)[10:30]
+        if rest_missing_tr:
             def _bg_fill_trend():
-                for p in to_fill_tr:
+                for p in rest_missing_tr:
                     try:
                         fill_pair_trend(p)
                     except Exception:
