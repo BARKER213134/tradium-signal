@@ -117,10 +117,11 @@ def _tier_of(t: dict) -> str:
 
 SIZING_RULES = [
     # (predicate_fn, multiplier, label)
-    # v3.0 multi-regime sizing (приоритет)
-    (lambda s, t: t.get('_regime') == 'CHOP',             2.0, 'regime_CHOP'),
-    (lambda s, t: t.get('_regime') == 'BEAR',             1.5, 'regime_BEAR'),
-    (lambda s, t: t.get('_regime') == 'BULL',             0.5, 'regime_BULL'),
+    # v3.0 multi-regime sizing (приоритет). Mult × base 1% = % от баланса.
+    # На $1000: CHOP=4% ($40), BEAR=3% ($30), BULL=1.5% ($15)
+    (lambda s, t: t.get('_regime') == 'CHOP',             4.0, 'regime_CHOP'),
+    (lambda s, t: t.get('_regime') == 'BEAR',             3.0, 'regime_BEAR'),
+    (lambda s, t: t.get('_regime') == 'BULL',             1.5, 'regime_BULL'),
     # Legacy STRICT verdict-based (если regime отключён)
     (lambda s, t: t.get('_verdict') == 'ELITE',           3.0, 'verdict_ELITE'),
     (lambda s, t: t.get('_verdict') == 'STRONG',          2.0, 'verdict_STRONG'),
@@ -365,7 +366,7 @@ REGIME_CONFIG = {
         'allowed_directions': ('LONG',),
         'allowed_verdicts': ('STRONG', 'ELITE'),    # strict only
         'exit_label': 'signal_tpsl',                # legacy TP/SL
-        'size_mult': 0.5,                           # halve sizing — marginal edge
+        'size_mult': 1.5,                           # marginal edge — small size
         'use_be_at_1R': False,
         'notes': 'BULL: LONG_STRICT (мизер edge +0.086R)',
     },
@@ -373,17 +374,17 @@ REGIME_CONFIG = {
         'allowed_directions': ('LONG', 'SHORT'),
         'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),  # широко — каждый no-SKIP работает
         'exit_label': 'be_at_1R',
-        'size_mult': 2.0,                            # БОЛЬШЕ — лучший edge
+        'size_mult': 4.0,                            # БОЛЬШЕ — лучший edge (+0.99R)
         'use_be_at_1R': True,                        # move SL to BE после +1R
-        'notes': 'CHOP: both dirs no-SKIP, be_at_1R, AvgR +0.99R',
+        'notes': 'CHOP: both dirs no-SKIP, be_at_1R, AvgR +0.99R, size 4×',
     },
     'BEAR': {
         'allowed_directions': ('SHORT',),
         'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),
         'exit_label': 'be_at_1R',
-        'size_mult': 1.5,
+        'size_mult': 3.0,                           # mirror CHOP с небольшим dampening
         'use_be_at_1R': True,
-        'notes': 'BEAR: SHORT GOOD+, be_at_1R (no historical data, mirror CHOP)',
+        'notes': 'BEAR: SHORT GOOD+, be_at_1R, size 3×',
     },
 }
 
