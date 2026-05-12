@@ -454,6 +454,13 @@ def close_position(trade_id: int, exit_price: float, reason: str = "TP"):
         paper_learnings_cache.invalidate()
     except Exception:
         pass
+    # ── ALPHA-CV: trigger auto-pause check after each close ──
+    if pos.get("auto_strategy_label"):
+        try:
+            import auto_strategy as _ast
+            _ast.check_and_update_auto_pause()
+        except Exception as _e:
+            logger.debug(f'[auto-strategy] auto-pause check fail: {_e}')
     return {"trade_id": trade_id, "pnl_pct": total_pnl_pct, "pnl_usdt": total_pnl_usdt, "reason": reason,
             "realized_pnl_usdt": realized, "final_leg_pnl_usdt": pnl_usdt_remainder}
 

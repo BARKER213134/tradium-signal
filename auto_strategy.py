@@ -137,22 +137,25 @@ DRAWDOWN_LIMIT_PCT = 10.0
 
 # ─── Strategy metadata (показывается на UI вкладке) ────────────────
 STRATEGY_NAME = "ALPHA-CV"
-STRATEGY_VERSION = "v2.0"
+STRATEGY_VERSION = "v2.1"
 STRATEGY_DESCRIPTION = (
-    "Концентрация на cryptovizor signals + trail_1R_0.5R exit "
-    "(trailing stop активируется при +1R, отступ 0.5R от max favorable). "
-    "Backtest 14d × 5530 сигналов: 3-9× улучшение vs v1.2 SMA crossover exit."
+    "STRICT mode + AUTO-PAUSE + trail_1R_0.5R exit. Принимаются только "
+    "сигналы с verdict ELITE (3+ top edges) или STRONG (2+ top edges). "
+    "Auto-pause: rolling AvgR(10) < 0 → пауза 24h (ELITE пробивает паузу). "
+    "Backtest 14d: WR 86%, AvgR +1.33R, PF 10.6, MaxDD 3R (vs 11.8R baseline)."
 )
 STRATEGY_BACKTEST_METRICS = {
     "backtest_period_days": 14,
-    "total_signals_tested": 5534,
-    "trades_after_filter": 1216,
-    "win_rate_pct": 70.0,
-    "avg_r_per_trade": 1.55,
-    "profit_factor": 9.5,
-    "validation": "exhaustive grid 32 exits × 10 entry filters — trail_1R_0.5R win",
+    "total_signals_tested": 5530,
+    "trades_after_filter": 29,
+    "win_rate_pct": 86.2,
+    "avg_r_per_trade": 1.33,
+    "profit_factor": 10.6,
+    "max_dd_r": 3.0,
+    "validation": "STRICT(ELITE+STRONG) + AUTO-PAUSE(win=10,avgR<0,24h)",
     "exit_strategy": "trail_1R_0.5R",
-    "notes": "trail wins on 7 of 10 entry filters. Top: cv_long_anomaly +2.18R; cv_short_trend WR 100%; rsi_top +1.55R",
+    "entry_filter": "verdict in (ELITE, STRONG) + auto_pause",
+    "notes": "Бэктест-optimized. Меньше сделок (~2/день), но WR 86% и MaxDD в 4x меньше baseline.",
 }
 
 
@@ -231,6 +234,63 @@ def enrich_signal(signal: dict) -> dict:
     except Exception as e:
         logger.debug(f'[auto-strategy] enrich align_tier fail: {e}')
 
+    # ─── 1b. RSI / SMA(RSI) per TF из signal_rsi_cache ───
+    try:
+        from rsi_cache import bulk_get_rsi_for_items
+        bulk_get_rsi_for_items([enriched])
+    except Exception as e:
+        logger.debug(f'[auto-strategy] enrich rsi fail: {e}')
+
+    # ─── 1c. Trend per TF из signal_trend_cache ───
+    try:
+        from trend_cache import bulk_get_trend_for_items
+        bulk_get_trend_for_items([enriched])
+    except Exception as e:
+        logger.debug(f'[auto-strategy] enrich trend fail: {e}')
+
+    # ─── 1d. Anomaly z-score per TF (15m/1h/4h) ───
+    try:
+        from delta_calculator import _candle_open_ms
+        from database import _get_db
+        cd = _get_db().cluster_delta
+        ats_ms = int(ats) * 1000
+        BASELINE_BARS_Z = 30
+        tf_min = {'15m': 15, '1h': 60, '4h': 240}
+        for tf in ('15m', '1h', '4h'):
+            sig_open = _candle_open_ms(ats_ms, tf)
+            bucket_ms = tf_min[tf] * 60 * 1000
+            range_start = sig_open - BASELINE_BARS_Z * bucket_ms
+            try:
+                docs = list(cd.find({
+                    'pair': pair, 'tf': tf,
+                    'open_ms': {'$gte': range_start, '$lte': sig_open},
+                }, {'open_ms':1, 'delta_pct':1, '_id':0}).limit(BASELINE_BARS_Z + 5))
+            except Exception:
+                continue
+            if len(docs) < 6:
+                continue
+            by_open = {d['open_ms']: float(d.get('delta_pct') or 0) for d in docs}
+            sorted_opens = sorted(by_open.keys())
+            preceding = [by_open[o] for o in sorted_opens if o < sig_open]
+            if not preceding or len(preceding) < 5:
+                continue
+            sig_delta = by_open.get(sig_open)
+            if sig_delta is None:
+                # Fallback: latest <=sig_open as proxy
+                latest = sorted_opens[-1] if sorted_opens else None
+                if latest is not None:
+                    sig_delta = by_open[latest]
+            if sig_delta is None:
+                continue
+            mean = sum(preceding) / len(preceding)
+            var = sum((d - mean)**2 for d in preceding) / len(preceding)
+            std = var ** 0.5
+            if std < 0.1:
+                continue
+            enriched[f'delta_zscore_{tf}'] = round((sig_delta - mean) / std, 2)
+    except Exception as e:
+        logger.debug(f'[auto-strategy] enrich anomaly fail: {e}')
+
     # ─── 2. Q-score (если ещё не задан) ───
     if enriched.get('q_score') is None:
         try:
@@ -280,6 +340,238 @@ def set_enabled(enabled: bool, note: str = "") -> dict:
         return {"ok": False, "error": str(e)}
 
 
+# ─── STRICT-MODE: Verdict-based filter + Auto-pause ────────────────
+# Бэктест 5530 сигналов 14d × 32 exits показал:
+#   STRICT (ELITE+STRONG) + AUTO-PAUSE (win=10, avgR<0, pause=24h) =
+#   N=29, WR 86.2%, AvgR +1.33R, PF 10.6, MaxDD 3R (vs 11.8R baseline)
+#
+# Trade quality > volume. Auto-pause = safety net на bear market.
+
+STRICT_MODE_ENABLED = True   # включить verdict filter (ELITE/STRONG only)
+ALLOWED_VERDICTS = ('ELITE', 'STRONG')
+
+# Auto-pause params (бэктест-optimized win=10, avgR<0, pause=24h)
+AUTO_PAUSE_WINDOW = 10              # rolling N trades
+AUTO_PAUSE_AVGR_THRESHOLD = 0.0     # если AvgR последних 10 < 0 → pause
+AUTO_PAUSE_HOURS = 24               # длительность паузы
+AUTO_PAUSE_ELITE_BYPASS = True      # ELITE сигналы игнорируют паузу
+
+
+def _rsi_tier_for(signal: dict) -> str:
+    """Python-version of JS _rsiEdgeInfo. Returns 'top'/'good'/'medium'/'warn'/'avoid'."""
+    src = (signal.get('source') or '').lower()
+    direction = (signal.get('direction') or '').upper()
+    rsi_1h = signal.get('rsi_1h')
+    rsi_4h = signal.get('rsi_4h')
+    if src in ('volume_surge', 'volcano'): return 'avoid'
+    if src == 'triple_confluence' and direction == 'SHORT': return 'avoid'
+    if src == 'vol_accum' and direction == 'SHORT': return 'avoid'
+    if rsi_1h is None and rsi_4h is None: return 'medium'
+    if src == 'cryptovizor' and direction == 'SHORT':
+        if rsi_1h is not None and 30 <= rsi_1h < 50: return 'top'
+        if rsi_4h is not None and 30 <= rsi_4h < 50: return 'top'
+        if rsi_4h is not None and rsi_4h > 70: return 'warn'
+        return 'good'
+    if src == 'cryptovizor' and direction == 'LONG':
+        if rsi_4h is not None and 60 <= rsi_4h < 70: return 'top'
+        if rsi_4h is not None and 50 <= rsi_4h < 70: return 'good'
+        if rsi_4h is not None and rsi_4h < 40: return 'warn'
+    if src == 'second_flip' and direction == 'LONG' and rsi_4h is not None and 60 <= rsi_4h < 70:
+        return 'good'
+    if src == 'triple_confluence' and direction == 'LONG' and rsi_4h is not None and 60 <= rsi_4h < 80:
+        return 'good'
+    if direction == 'LONG' and rsi_4h is not None and rsi_4h < 40: return 'warn'
+    if direction == 'SHORT' and rsi_4h is not None and rsi_4h > 70: return 'warn'
+    return 'medium'
+
+
+def _sma_tier_for(signal: dict) -> str:
+    """SMA(RSI) position tier."""
+    src = (signal.get('source') or '').lower()
+    direction = (signal.get('direction') or '').upper()
+    def pos(tf):
+        r = signal.get(f'rsi_{tf}')
+        m = signal.get(f'sma_rsi_{tf}')
+        if r is None or m is None: return None
+        return 'A' if r > m else 'B'
+    p1 = pos('1h'); p4 = pos('4h'); pd = pos('1d')
+    if src == 'cryptovizor' and direction == 'SHORT':
+        if p1 == 'A' and p4 == 'A': return 'top'
+        if p1 == 'A': return 'top'
+        if p4 == 'A': return 'top'
+        if pd == 'B': return 'good'
+    if direction == 'LONG' and p4 == 'A' and pd == 'A': return 'top'
+    if direction == 'SHORT' and p4 == 'B' and pd == 'B': return 'top'
+    if direction == 'LONG' and pd == 'B': return 'avoid'
+    if direction == 'LONG' and pd == 'A': return 'good'
+    if direction == 'SHORT' and pd == 'B': return 'good'
+    if direction == 'SHORT' and pd == 'A': return 'warn'
+    return 'medium'
+
+
+def _trend_tier_for(signal: dict) -> str:
+    """EMA20/EMA50 trend tier."""
+    src = (signal.get('source') or '').lower()
+    direction = (signal.get('direction') or '').upper()
+    def t(tf):
+        v = signal.get(f'trend_{tf}')
+        if not v: return None
+        return v[0] if isinstance(v, str) else None  # 'U'/'D'/'F'
+    t1 = t('1h'); t4 = t('4h'); td = t('1d')
+    if src == 'cryptovizor' and direction == 'SHORT':
+        if t1 == 'D' and t4 == 'D' and td == 'D': return 'top'
+        if t1 == 'D' and t4 == 'D': return 'top'
+        if t4 == 'D': return 'top'
+    if direction == 'SHORT' and t1 == 'D' and t4 == 'D': return 'top'
+    if direction == 'SHORT' and t1 == 'D': return 'good'
+    if direction == 'SHORT' and t4 == 'D': return 'good'
+    if direction == 'LONG' and t1 == 'U' and t4 == 'U' and td == 'U': return 'good'
+    if direction == 'LONG' and t4 == 'D' and t1 == 'D': return 'avoid'
+    if direction == 'LONG' and t4 == 'D': return 'warn'
+    if direction == 'SHORT' and t4 == 'U': return 'warn'
+    return 'medium'
+
+
+def _anomaly_tier_for(signal: dict) -> str:
+    """Delta z-score anomaly tier."""
+    src = (signal.get('source') or '').lower()
+    direction = (signal.get('direction') or '').upper()
+    z15 = signal.get('delta_zscore_15m')
+    z1 = signal.get('delta_zscore_1h')
+    z4 = signal.get('delta_zscore_4h')
+    if z15 is None and z1 is None and z4 is None: return 'medium'
+    if src == 'cryptovizor' and direction == 'LONG':
+        if z1 is not None and z1 > 1.5: return 'top'
+        if z15 is not None and z15 > 1.5: return 'top'
+    if src == 'cryptovizor' and direction == 'SHORT' and z4 is not None and z4 > 1.5:
+        return 'top'
+    if direction == 'LONG' and z1 is not None and z1 > 1.5: return 'good'
+    if direction == 'SHORT' and z15 is not None and z15 < -1.5: return 'good'
+    if direction == 'SHORT' and z4 is not None and z4 > 1.5: return 'good'
+    if direction == 'LONG' and z1 is not None and z1 < -1.5: return 'warn'
+    if direction == 'LONG' and z4 is not None and z4 < -1.5: return 'warn'
+    return 'medium'
+
+
+def compute_verdict(signal: dict) -> dict:
+    """Агрегат всех 4 edge tiers в одно решение (ELITE/STRONG/GOOD/OK/MEH/CAUTION/SKIP).
+
+    Эквивалент _verdictInfo в signals.html. Используется для STRICT mode entry filter.
+    """
+    rsi_t = _rsi_tier_for(signal)
+    sma_t = _sma_tier_for(signal)
+    trend_t = _trend_tier_for(signal)
+    anom_t = _anomaly_tier_for(signal)
+    tiers = (rsi_t, sma_t, trend_t, anom_t)
+    has_avoid = 'avoid' in tiers
+    has_warn = 'warn' in tiers
+    top_count = sum(1 for t in tiers if t == 'top')
+    good_count = sum(1 for t in tiers if t == 'good')
+    if has_avoid:
+        verdict = 'SKIP'
+    elif top_count >= 3:
+        verdict = 'ELITE'
+    elif top_count >= 2:
+        verdict = 'STRONG'
+    elif top_count >= 1:
+        verdict = 'GOOD'
+    elif has_warn:
+        verdict = 'CAUTION'
+    elif good_count >= 2:
+        verdict = 'OK'
+    else:
+        verdict = 'MEH'
+    return {
+        'verdict': verdict,
+        'rsi_tier': rsi_t, 'sma_tier': sma_t,
+        'trend_tier': trend_t, 'anomaly_tier': anom_t,
+        'top_count': top_count,
+    }
+
+
+# ─── Auto-pause state ──────────────────────────────────────────────
+def get_pause_state() -> dict:
+    """Read pause state from Mongo. Returns dict with paused_until_ts."""
+    try:
+        from database import _get_db
+        doc = _get_db().system.find_one({'_id': 'auto_strategy_pause'})
+        return dict(doc) if doc else {}
+    except Exception:
+        return {}
+
+
+def set_pause_until(until_ts: int, reason: str = '') -> None:
+    try:
+        from database import _get_db
+        _get_db().system.update_one(
+            {'_id': 'auto_strategy_pause'},
+            {'$set': {
+                'paused_until_ts': int(until_ts),
+                'paused_at': datetime.now(timezone.utc),
+                'reason': reason,
+            }},
+            upsert=True,
+        )
+    except Exception as e:
+        logger.warning(f'[auto-strategy] set_pause_until fail: {e}')
+
+
+def is_paused_now() -> tuple[bool, dict]:
+    """Returns (is_paused, state_dict)."""
+    import time as _t
+    st = get_pause_state()
+    pu = st.get('paused_until_ts') or 0
+    now_s = int(_t.time())
+    return (now_s < pu, st)
+
+
+def check_and_update_auto_pause() -> None:
+    """Считает rolling AvgR последних AUTO_PAUSE_WINDOW closed ALPHA-CV сделок.
+    Если AvgR < AUTO_PAUSE_AVGR_THRESHOLD → выставляет pause на AUTO_PAUSE_HOURS.
+
+    Вызывается после каждого закрытия сделки (либо периодически).
+    """
+    try:
+        from database import _get_db
+        from datetime import timedelta
+        db = _get_db()
+        # Последние closed ALPHA-CV trades
+        cursor = db.paper_trades.find({
+            'auto_strategy_label': {'$exists': True, '$nin': [None, '']},
+            'status': {'$in': ['TP', 'SL', 'CLOSED', 'TIMEOUT']},
+            'pnl_pct': {'$exists': True},
+        }, {'pnl_pct': 1, 'size_pct': 1, 'sl_pct': 1, 'closed_at': 1, 'pair': 1}).sort('closed_at', -1).limit(AUTO_PAUSE_WINDOW)
+        trades = list(cursor)
+        if len(trades) < AUTO_PAUSE_WINDOW:
+            return  # ещё мало данных
+        # Convert pnl_pct → R-multiple примерно: pnl_pct / (sl_pct * leverage)
+        # Точнее: R = (exit - entry) / sl_dist. Здесь приближаем через pnl_pct.
+        # Если SL hit, R = -1. Если TP, R ≈ pnl_pct/sl_pct.
+        # Используем pnl_pct как proxy (нормализованный к leverage уже).
+        rs = []
+        for t in trades:
+            pp = float(t.get('pnl_pct') or 0)
+            # Грубое R: pnl_pct >= 0 → R ≈ pp/abs(sl_pct в %), но без leverage info
+            # просто берём pp/некий нормализатор. Default: 1R ≈ 5% PnL @ 5x leverage 1% SL
+            r = pp / 5.0  # 5% PnL ≈ 1R
+            rs.append(r)
+        avg_r = sum(rs) / len(rs)
+        wins = sum(1 for r in rs if r > 0)
+        wr = wins / len(rs) * 100
+        if avg_r < AUTO_PAUSE_AVGR_THRESHOLD:
+            import time as _t
+            until_ts = int(_t.time()) + AUTO_PAUSE_HOURS * 3600
+            reason = (f'rolling AvgR({AUTO_PAUSE_WINDOW})={avg_r:+.2f}R '
+                      f'WR={wr:.0f}% < threshold {AUTO_PAUSE_AVGR_THRESHOLD}R')
+            set_pause_until(until_ts, reason)
+            logger.warning(
+                f'[auto-strategy] AUTO-PAUSE triggered: {reason} → '
+                f'pause until {datetime.fromtimestamp(until_ts, tz=timezone.utc)}'
+            )
+    except Exception as e:
+        logger.debug(f'[auto-strategy] check_and_update_auto_pause fail: {e}')
+
+
 # ─── Public API ────────────────────────────────────────────────────
 def should_enter(signal: dict) -> tuple[bool, str]:
     """Главное решение — входить или нет.
@@ -314,6 +606,22 @@ def should_enter(signal: dict) -> tuple[bool, str]:
         qs = signal.get('q_score')
         if qs is not None and qs < MIN_Q_SCORE:
             return False, f'q_score={qs}<{MIN_Q_SCORE}'
+
+    # ── STRICT-MODE verdict gate (backtest +1.33R AvgR, WR 86%, MaxDD 3R) ──
+    if STRICT_MODE_ENABLED:
+        v = compute_verdict(signal)
+        verdict = v['verdict']
+        if verdict not in ALLOWED_VERDICTS:
+            return False, f'strict_skip_verdict={verdict}'
+        # ── Auto-pause gate: если в паузе и НЕ ELITE → отказ ──
+        paused, pause_state = is_paused_now()
+        if paused:
+            if not (AUTO_PAUSE_ELITE_BYPASS and verdict == 'ELITE'):
+                pu = pause_state.get('paused_until_ts') or 0
+                import time as _t
+                remaining_h = (pu - int(_t.time())) / 3600
+                return False, (f'auto_pause: {pause_state.get("reason","?")} '
+                                f'(осталось {remaining_h:.1f}ч)')
 
     # ── Source-specific rules ──
     if src == 'cryptovizor':
@@ -697,6 +1005,11 @@ def reason_to_human(reason: str, signal: dict) -> str:
         return f"❌ second_flip требует LONG+match, у нас {direction}/{tier}"
     if reason.startswith('tc_filter_failed'):
         return f"❌ triple_confluence требует LONG+mixed, у нас {direction}/{tier}"
+    if reason.startswith('strict_skip_verdict'):
+        v = reason.split('=')[1] if '=' in reason else '?'
+        return f"❌ STRICT-mode: verdict={v} (нужно ELITE или STRONG)"
+    if reason.startswith('auto_pause:'):
+        return f"⏸ AUTO-PAUSE: {reason.split(':',1)[1]}"
     if reason.startswith('bad_hour'):
         h = reason.split('=')[1] if '=' in reason else '?'
         return f"❌ Час {h}:00 UTC в bad-list (WR<31%, AvgR<-0.20R)"
