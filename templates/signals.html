@@ -7060,7 +7060,7 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('direction')" id="jSortDir" style="text-align:center;padding:14px 6px;">Напр.</th>
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry" style="text-align:center;padding:14px 8px;">Entry</th>
         <th class="sortable" onclick="jSort('score')" id="jSortScore" style="text-align:left;padding:14px 14px;">Паттерн</th>
-        <th class="sortable" onclick="jSort('q_score')" id="jSortQScore" title="Quality Score 0-100 (по 5 факторам с штрафами)" style="text-align:center;padding:14px 6px;">Score</th>
+        <th id="jSortVerdict" title="Вердикт по сигналу — агрегат 4 edge tiers (RSI/SMA/Trend/Anomaly) на основе backtest 5500 сигналов. 🏆=3+top edges, 🔥=2 top, ✅=1 top, ⚪=neutral, ⚠=каres, ❌=avoid" style="text-align:center;padding:14px 6px;">Вердикт</th>
         <th id="jSortRsi" style="text-align:center;padding:14px 6px;position:relative;">
           <span class="sortable" onclick="jSort('rsi_4h')">RSI</span>
           <span onclick="event.stopPropagation();window._toggleRsiHelp(event)" style="display:inline-block;margin-left:4px;width:14px;height:14px;line-height:14px;text-align:center;background:rgba(178,139,255,0.2);border:1px solid #b28bff;border-radius:50%;color:#b28bff;font-size:9px;font-weight:700;cursor:pointer;vertical-align:middle;" title="Backtest best RSI buckets">ⓘ</span>
@@ -8336,12 +8336,9 @@ function renderJournal(items, startIdx) {
 
     const globalIdx = startIdx + i;
     const pairCell = `<span class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.4);">${pair}</span>`;
-    // Quality Score 0-100 цветной badge
-    const qs = s.q_score || 0;
-    const qsClr = qs >= 70 ? '#00e5a0' : qs >= 60 ? '#88d8a3' : qs >= 45 ? '#ffd23e' : qs >= 30 ? '#ff8c50' : '#666';
-    const qsCell = qs > 0
-      ? `<td class="mono" style="text-align:center;color:${qsClr};font-weight:700;font-size:12px;" title="Quality Score">${qs}</td>`
-      : `<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>`;
+    // Вердикт — агрегат всех 4 edge tiers в один emoji
+    const verdictCell = window._renderVerdictCell ? window._renderVerdictCell(s) :
+      `<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>`;
     // RSI 4 TF (15m/1h/4h/1d) с подсветкой по backtest edges
     const rsiCell = window._renderRsiCell ? window._renderRsiCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
@@ -8366,7 +8363,7 @@ function renderJournal(items, startIdx) {
       <td>${dir}</td>
       <td class="mono">${s.entry || '—'}</td>
       <td class="mono" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(s.pattern || '').replace(/"/g,'&quot;')}">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}${window._klBadge ? window._klBadge(s._kl) : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
-      ${qsCell}
+      ${verdictCell}
       ${rsiCell}
       ${smaCell}
       ${anomalyCell}
@@ -8479,6 +8476,76 @@ window._rsiEdgeInfo = function(s, rsi_4h, rsi_1h) {
     return {tier:'warn', emoji:'⚠', label:'SHORT в overbought 4h'};
   // ⚪ MEDIUM default
   return {tier:'medium', emoji:'⚪', label:'нейтральная зона'};
+};
+
+// ─── VERDICT: summary эмоджи по сигналу (агрегат RSI/SMA/Trend/Anomaly edge tiers) ───
+// Основано на exhaustive backtest 5530 сигналов × 32 exit стратегий:
+//   🏆 ELITE   — 3+ top tiers (WR 99.3%, AvgR +1.63R, 280 trades)
+//   🔥 STRONG  — 2 top tiers (WR 83.5%, AvgR +1.36R, 708 trades)
+//   ✅ GOOD    — 1 top tier (WR 68-86%, AvgR +1.0..+2.18R)
+//   ⚪ MEH     — нейтральный (no top, no warn)
+//   ⚠ CAUTION — has warn (counter-trend etc.)
+//   ❌ SKIP    — has avoid (volume_surge / volcano / TC SHORT / vol_accum SHORT)
+window._verdictInfo = function(s) {
+  // Build tier list. RSI tier через _rsiEdgeInfo (если он есть)
+  const tiers = [];
+  if (window._rsiEdgeInfo) {
+    const r4 = (s.rsi_4h != null) ? s.rsi_4h : null;
+    const r1 = (s.rsi_1h != null) ? s.rsi_1h : null;
+    tiers.push(window._rsiEdgeInfo(s, r4, r1).tier);
+  }
+  if (window._smaEdgeInfo) tiers.push(window._smaEdgeInfo(s).tier);
+  if (window._trendEdgeInfo) tiers.push(window._trendEdgeInfo(s).tier);
+  if (window._anomalyEdgeInfo) tiers.push(window._anomalyEdgeInfo(s).tier);
+
+  const hasAvoid = tiers.includes('avoid');
+  const hasWarn = tiers.includes('warn');
+  const topCount = tiers.filter(t => t === 'top').length;
+  const goodCount = tiers.filter(t => t === 'good').length;
+
+  // PRIORITY: avoid > top tiers > warn > medium
+  if (hasAvoid) {
+    return {emoji:'❌', label:'SKIP — есть avoid edge', tier:'avoid',
+             color:'#ff4d6d', bg:'rgba(255,77,109,0.22)',
+             expR: '−0.4 .. −1.0R'};
+  }
+  if (topCount >= 3) {
+    return {emoji:'🏆', label:'ELITE — 3+ top edges (backtest: WR 99.3%, +1.63R)',
+             tier:'elite', color:'#ffd700', bg:'rgba(255,215,0,0.20)',
+             expR: '+1.6 .. +2.2R'};
+  }
+  if (topCount >= 2) {
+    return {emoji:'🔥', label:'STRONG — 2 top edges (backtest: WR 83.5%, +1.36R)',
+             tier:'strong', color:'#ff8c50', bg:'rgba(255,140,80,0.20)',
+             expR: '+1.0 .. +1.5R'};
+  }
+  if (topCount >= 1) {
+    return {emoji:'✅', label:'GOOD — 1 top edge (backtest: WR 70%, +1.0R)',
+             tier:'good', color:'#00e5a0', bg:'rgba(0,229,160,0.15)',
+             expR: '+0.7 .. +1.5R'};
+  }
+  if (hasWarn) {
+    return {emoji:'⚠', label:'CAUTION — counter-trend warning',
+             tier:'warn', color:'#ffd23e', bg:'rgba(255,210,62,0.12)',
+             expR: '−0.1 .. +0.3R'};
+  }
+  if (goodCount >= 2) {
+    return {emoji:'👍', label:'OK — multiple good edges',
+             tier:'ok', color:'#88d8a3', bg:'rgba(136,216,163,0.12)',
+             expR: '+0.3 .. +0.7R'};
+  }
+  return {emoji:'⚪', label:'MEH — нейтральная зона',
+           tier:'meh', color:'#888', bg:'',
+           expR: '~0R'};
+};
+
+window._renderVerdictCell = function(s) {
+  const v = window._verdictInfo(s);
+  const tip = `${v.label} · ожидаемый AvgR: ${v.expR}`;
+  return `<td class="mono" style="text-align:center;padding:6px 4px !important;${v.bg ? 'background:'+v.bg+';' : ''}" title="${tip}">
+    <div style="font-size:20px;line-height:1;">${v.emoji}</div>
+    <div style="font-size:8px;color:${v.color};font-weight:700;margin-top:2px;letter-spacing:0.5px;text-transform:uppercase;">${v.tier}</div>
+  </td>`;
 };
 
 // ─── SMA(RSI) edge info — на основе backtest 4877 closed сигналов ───
