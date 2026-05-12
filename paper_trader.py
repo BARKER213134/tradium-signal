@@ -1579,6 +1579,26 @@ async def on_signal(signal_data: dict):
             pass
         return None
 
+    # ── F0 GATE: символ должен торговаться на default exchange (BingX) ──
+    # КРИТИЧНО: F0 filter был только в watcher._paper_on_signal. new_strategies
+    # (vol_accum/triple_confluence/volume_surge) вызывает on_signal() напрямую,
+    # минуя watcher → paper открывал XPT/etc которые не на BingX, live mirror
+    # падал → DESYNC alert "paper=OPEN, live=FAILED" (12.05.26 XPTUSDT).
+    # Дублируем check здесь чтобы все callers были защищены.
+    try:
+        from exchange_symbols import is_symbol_supported, get_default_exchange
+        sym_check = (symbol or pair.replace("/", "")).upper()
+        if sym_check and not is_symbol_supported(sym_check):
+            ex_name = get_default_exchange()
+            _log_rejection_sync(signal_data,
+                f"⛔ F0: пара не на {ex_name.upper()} Futures USDT-perp")
+            logger.info(f"[paper] F0 skip {sym_check} — not on {ex_name.upper()}")
+            return None
+    except Exception as _fe:
+        # Если symbols registry глючит — НЕ блокируем сигнал, пропускаем дальше.
+        # Watcher уже сделал check раньше для большинства путей.
+        logger.debug(f"[paper] F0 check error: {_fe}")
+
     # ── 0z. ALPHA-CV strategy gate (Mongo flag или env var) ──
     # Включается через POST /api/auto-strategy/enable или env AUTO_STRATEGY_ALPHA_CV=1.
     # Backtest 14d 5500 signals walk-forward: WR 66.4% / +1.05R OOS.
