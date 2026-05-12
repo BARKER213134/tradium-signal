@@ -1799,18 +1799,24 @@ async def on_signal(signal_data: dict):
             size_pct = round(alpha_mult, 2)
             if size_pct > 5.0:
                 size_pct = 5.0
-        # TP1 для ALPHA-CV — отодвигаем ОЧЕНЬ далеко чтобы не закрывалось рано.
-        # Выход управляется через 1h SMA(RSI) crossover монитор (watcher).
-        # SL остаётся как backstop.
+        # TP1 для ALPHA-CV v3.0 — зависит от regime:
+        #   CHOP/BEAR (be_at_1R exit) → пушим TP1 на 10R далеко (monitor закрывает на BE)
+        #   BULL (signal_tpsl exit)   → ОСТАВЛЯЕМ оригинальный signal TP1
+        # Это fix v3.0.3: в BULL signal_tpsl не работал т.к. TP был пушнут.
         if tp1 and entry:
             try:
-                # Отодвигаем TP1 на 10R (то есть TP не сработает почти никогда)
-                sl_dist = abs(float(entry) - float(sl))
-                if direction == "LONG":
-                    tp1 = entry + 10 * sl_dist
+                regime_for_tp = (alpha_regime or 'CHOP').upper()
+                if regime_for_tp == 'BULL':
+                    # Signal TP1 как есть — exchange закроет позицию при достижении
+                    logger.info(f"[ALPHA-CV v3.0] BULL regime: TP1={tp1} (оригинальный signal TP)")
                 else:
-                    tp1 = entry - 10 * sl_dist
-                logger.info(f"[ALPHA-CV] TP1 отодвинут на 10R → {tp1} (exit by 1h SMA cross)")
+                    # CHOP/BEAR — пушим TP1 на 10R (exit через be_at_1R monitor)
+                    sl_dist = abs(float(entry) - float(sl))
+                    if direction == "LONG":
+                        tp1 = entry + 10 * sl_dist
+                    else:
+                        tp1 = entry - 10 * sl_dist
+                    logger.info(f"[ALPHA-CV v3.0] {regime_for_tp} regime: TP1 → 10R far ({tp1}) (exit by be_at_1R monitor)")
             except Exception:
                 pass
     # open_position() — sync function с counter+insert+balance update.
