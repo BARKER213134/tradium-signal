@@ -9694,7 +9694,19 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     async def _compute_in_thread():
         return await asyncio.to_thread(_compute_journal_sync)
 
-    full = await journal_cache.get_or_compute("journal_all", _compute_in_thread)
+    # HARD TIMEOUT 18s — защита от зависающих inline fill'ов / Mongo stalls.
+    # Если превысили, возвращаем что есть из cache (или пустой ответ).
+    try:
+        full = await asyncio.wait_for(
+            journal_cache.get_or_compute("journal_all", _compute_in_thread),
+            timeout=18.0,
+        )
+    except asyncio.TimeoutError:
+        # Возвращаем stale cache если есть, иначе пустой
+        full = journal_cache.get("journal_all") or {"items": []}
+        logging.getLogger(__name__).warning(
+            "[api/journal] compute timeout 18s — returning stale/empty"
+        )
     items = full.get("items", []) if isinstance(full, dict) else []
     total = len(items)
 
@@ -10740,18 +10752,24 @@ def _compute_journal_sync():
                         return (p, ts, snap)
                     except Exception:
                         return (p, ts, None)
+                # FIX: with ThreadPoolExecutor блокирует на __exit__ ожидая
+                # все futures. Используем manual shutdown(wait=False, cancel_futures)
+                # чтобы не зависать на медленных fetch'ах.
+                ex_delta = ThreadPoolExecutor(max_workers=12)
                 try:
-                    with ThreadPoolExecutor(max_workers=12) as ex:
-                        futs = [ex.submit(_fetch_one, p, ts) for (p, ts) in inline_list]
+                    futs = [ex_delta.submit(_fetch_one, p, ts) for (p, ts) in inline_list]
+                    try:
                         for f in as_completed(futs, timeout=2.0):
                             try:
-                                p, ts, snap = f.result()
+                                p, ts, snap = f.result(timeout=0.05)
                                 if snap:
                                     inline_results[(p, ts)] = snap
                             except Exception:
                                 pass
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
+                finally:
+                    ex_delta.shutdown(wait=False, cancel_futures=True)
                 # Распихиваем результаты обратно в items
                 for it in items:
                     ats = it.get('at_ts') or 0
@@ -10931,16 +10949,20 @@ def _compute_journal_sync():
                 break
         if top_recent:
             _t_start = _t_rsi.time()
+            # FIX: manual shutdown(wait=False) — не блокировать на медленных fetch'ах
+            ex_rsi = ThreadPoolExecutor(max_workers=10)
             try:
-                with ThreadPoolExecutor(max_workers=10) as ex:
-                    futs = [ex.submit(fill_pair_rsi, p) for p in top_recent]
+                futs = [ex_rsi.submit(fill_pair_rsi, p) for p in top_recent]
+                try:
                     for f in as_completed(futs, timeout=3.0):
                         try:
-                            f.result(timeout=0.1)
+                            f.result(timeout=0.05)
                         except Exception:
                             pass
-            except Exception:
-                pass
+                except Exception:
+                    pass
+            finally:
+                ex_rsi.shutdown(wait=False, cancel_futures=True)
             # Re-read cache после inline fill
             if _t_rsi.time() - _t_start < 3.5:
                 try:
@@ -10988,16 +11010,19 @@ def _compute_journal_sync():
                 break
         if top_recent_tr:
             _t_start_tr = _t_tr.time()
+            ex_tr = _TPE_tr(max_workers=10)
             try:
-                with _TPE_tr(max_workers=10) as ex:
-                    futs = [ex.submit(fill_pair_trend, p) for p in top_recent_tr]
+                futs = [ex_tr.submit(fill_pair_trend, p) for p in top_recent_tr]
+                try:
                     for f in _ac_tr(futs, timeout=3.0):
                         try:
-                            f.result(timeout=0.1)
+                            f.result(timeout=0.05)
                         except Exception:
                             pass
-            except Exception:
-                pass
+                except Exception:
+                    pass
+            finally:
+                ex_tr.shutdown(wait=False, cancel_futures=True)
             if _t_tr.time() - _t_start_tr < 3.5:
                 try:
                     bulk_get_trend_for_items(items)

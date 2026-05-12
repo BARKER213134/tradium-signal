@@ -3517,17 +3517,34 @@ async def _rsi_cache_loop():
                         pairs.add(s['pair'])
             except Exception:
                 pass
-            pairs = list(pairs)[:400]  # увеличили до 400 (было 150)
+            pairs = list(pairs)[:500]  # cap 500 пар на цикл
             if not pairs:
                 await _asyncio.sleep(300)
                 continue
-            logger.info(f"[rsi-cache] filling 4 TF for {len(pairs)} pairs")
+            logger.info(f"[rsi-cache] filling 4 TF for {len(pairs)} pairs (16 workers, FAPI)")
             from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=4) as ex:
-                fut_list = [ex.submit(fill_pair_rsi, p) for p in pairs]
-                await _asyncio.to_thread(
-                    lambda: [f.result() for f in fut_list])
-            logger.info(f"[rsi-cache] done {len(pairs)} pairs × 4 TF")
+            # 16 workers с FAPI fetcher (single-call) — ~30-60s на 500 пар.
+            # Раньше было 4 worker × CDN day-by-day = 10+ мин (не успевал).
+            ex_pool = ThreadPoolExecutor(max_workers=16)
+            try:
+                fut_list = [ex_pool.submit(fill_pair_rsi, p) for p in pairs]
+                # Timeout 180s — после этого новый цикл начинается, недокачанное доделается потом
+                import time as _t_loop
+                _t0 = _t_loop.time()
+                from concurrent.futures import as_completed as _ac
+                try:
+                    for f in await _asyncio.to_thread(
+                        lambda: list(_ac(fut_list, timeout=180.0))
+                    ):
+                        try:
+                            f.result(timeout=0.05)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                logger.info(f"[rsi-cache] done {len(pairs)} pairs in {_t_loop.time()-_t0:.0f}s")
+            finally:
+                ex_pool.shutdown(wait=False, cancel_futures=True)
         except Exception:
             logger.exception('[rsi-cache] loop error')
         await _asyncio.sleep(300)
@@ -3568,13 +3585,26 @@ async def _trend_cache_loop():
             if not pairs:
                 await _asyncio.sleep(360)
                 continue
-            logger.info(f"[trend-cache] filling 4 TF for {len(pairs)} pairs")
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=4) as ex:
-                fut_list = [ex.submit(fill_pair_trend, p) for p in pairs]
-                await _asyncio.to_thread(
-                    lambda: [f.result() for f in fut_list])
-            logger.info(f"[trend-cache] done {len(pairs)} pairs × 4 TF")
+            logger.info(f"[trend-cache] filling 4 TF for {len(pairs)} pairs (16 workers, FAPI)")
+            from concurrent.futures import ThreadPoolExecutor, as_completed as _ac_tr
+            import time as _t_tr_loop
+            ex_pool_tr = ThreadPoolExecutor(max_workers=16)
+            _t0_tr = _t_tr_loop.time()
+            try:
+                fut_list_tr = [ex_pool_tr.submit(fill_pair_trend, p) for p in pairs]
+                try:
+                    for f in await _asyncio.to_thread(
+                        lambda: list(_ac_tr(fut_list_tr, timeout=180.0))
+                    ):
+                        try:
+                            f.result(timeout=0.05)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                logger.info(f"[trend-cache] done {len(pairs)} pairs in {_t_tr_loop.time()-_t0_tr:.0f}s")
+            finally:
+                ex_pool_tr.shutdown(wait=False, cancel_futures=True)
             # Invalidate journal cache
             try:
                 from cache_utils import journal_cache
