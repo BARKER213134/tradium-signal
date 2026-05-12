@@ -9710,18 +9710,20 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     async def _compute_in_thread():
         return await asyncio.to_thread(_compute_journal_sync)
 
-    # HARD TIMEOUT 25s — защита от зависающих inline fill'ов / Mongo stalls.
-    # Compute обычно 5-12с на Railway (Atlas Stockholm), 25-40с локально.
+    # HARD TIMEOUT 40s — защита от зависающих inline fill'ов / Mongo stalls.
+    # Compute обычно 8-15с на Railway (Atlas Stockholm), 30-40с локально.
+    # Увеличили с 25→40 после добавления resonance prior-candles range query
+    # (~3х больше Mongo-данных но всё ещё в пределах разумного на Railway).
     try:
         full = await asyncio.wait_for(
             journal_cache.get_or_compute("journal_all", _compute_in_thread),
-            timeout=25.0,
+            timeout=40.0,
         )
     except asyncio.TimeoutError:
         # Возвращаем stale cache если есть, иначе пустой
         full = journal_cache.get("journal_all") or {"items": []}
         logging.getLogger(__name__).warning(
-            "[api/journal] compute timeout 18s — returning stale/empty"
+            "[api/journal] compute timeout 40s — returning stale/empty"
         )
     items = full.get("items", []) if isinstance(full, dict) else []
     total = len(items)
@@ -10673,8 +10675,13 @@ def _compute_journal_sync():
         # PERFORMANCE: Enrich только last 48h items (новых много, старее
         # юзер не смотрит часто, экономим ~80% query weight).
         delta_cutoff_ts = int(_t_enrich.time()) - 48 * 3600
-        # Собираем уникальные (pair, tf, open_ms) для items с at_ts
-        wanted: dict = {}  # (pair, tf, open_ms) → list of items
+        # Собираем (pair, tf) → (min_open_ms, max_open_ms) для range queries.
+        # ВАЖНО: для резонанса нужны signal candle + RESONANCE_BARS-1 предыдущих.
+        # Раньше fetch'или только signal candle через $or compound — cached_map
+        # не содержал prior candles → резонанс всегда None ("резонанс пропал").
+        # Сейчас одна range query на (pair, tf) даёт ВСЕ нужные свечи + buffer.
+        from delta_calculator import RESONANCE_BARS as _RB, TF_MINUTES as _TFM
+        pair_tf_range: dict = {}  # (pair, tf) → [min_ms, max_ms]
         for it in items:
             ats = it.get('at_ts') or 0
             pair = it.get('pair') or ''
@@ -10683,24 +10690,32 @@ def _compute_journal_sync():
             if ats < delta_cutoff_ts:
                 continue  # старее 48h — skip enrichment
             for tf in ('15m', '1h', '4h'):
-                open_ms = _candle_open_ms(ats * 1000, tf)
-                wanted.setdefault((pair, tf, open_ms), []).append((it, tf))
-        if wanted:
-            # Bulk find через $or — Mongo поддерживает up to 1000 conditions
-            # без проблем. Чанкуем чтобы не упереться в BSON 16MB.
-            keys = list(wanted.keys())
-            CHUNK = 200
-            cached_map: dict = {}
-            for i in range(0, len(keys), CHUNK):
-                conds = [
-                    {'pair': p, 'tf': t, 'open_ms': om}
-                    for (p, t, om) in keys[i:i+CHUNK]
-                ]
+                minutes = _TFM.get(tf, 15)
+                sig_open = _candle_open_ms(ats * 1000, tf)
+                # Range: от signal_open back до RESONANCE_BARS-1 свечей
+                min_ms = sig_open - (_RB - 1) * minutes * 60 * 1000
+                key = (pair, tf)
+                if key not in pair_tf_range:
+                    pair_tf_range[key] = [min_ms, sig_open]
+                else:
+                    if min_ms < pair_tf_range[key][0]:
+                        pair_tf_range[key][0] = min_ms
+                    if sig_open > pair_tf_range[key][1]:
+                        pair_tf_range[key][1] = sig_open
+        cached_map: dict = {}
+        if pair_tf_range:
+            # Bulk $or range queries — каждая cond = (pair, tf, range).
+            # Chunk 50 — каждая cond может match много docs, осторожнее с BSON 16MB.
+            conds_all = [
+                {'pair': p, 'tf': t, 'open_ms': {'$gte': mn, '$lte': mx}}
+                for (p, t), (mn, mx) in pair_tf_range.items()
+            ]
+            CHUNK = 50
+            for i in range(0, len(conds_all), CHUNK):
                 try:
-                    for doc in cd_col.find({'$or': conds},
+                    for doc in cd_col.find({'$or': conds_all[i:i+CHUNK]},
                                            {'pair':1,'tf':1,'open_ms':1,
-                                            'delta_pct':1,'buy_vol':1,
-                                            'sell_vol':1,'_id':0}):
+                                            'delta_pct':1,'_id':0}):
                         k = (doc.get('pair'), doc.get('tf'), doc.get('open_ms'))
                         cached_map[k] = doc
                 except Exception:
@@ -10717,21 +10732,33 @@ def _compute_journal_sync():
                     minutes = TF_MINUTES.get(tf, 15)
                     sig_open = _candle_open_ms(ats * 1000, tf)
                     sig_doc = cached_map.get((pair, tf, sig_open))
-                    if not sig_doc:
-                        continue
-                    # Уже было set из new_strategy_signals doc — не перезаписываем
-                    if it.get(f'delta_{tf}') is not None:
-                        continue
-                    it[f'delta_{tf}'] = sig_doc.get('delta_pct')
-                    # Резонанс: соберём N свечей до signal candle
-                    deltas: list[float] = []
-                    for j in range(RESONANCE_BARS - 1, -1, -1):
-                        bk = sig_open - j * minutes * 60 * 1000
-                        d = cached_map.get((pair, tf, bk))
-                        if d:
-                            deltas.append(d.get('delta_pct') or 0.0)
-                    if deltas:
-                        it[f'resonance_{tf}'] = _resonance_from_deltas(deltas)
+                    # Set signal delta if available (skip if already set from source doc)
+                    if sig_doc and it.get(f'delta_{tf}') is None:
+                        it[f'delta_{tf}'] = sig_doc.get('delta_pct')
+                    # Резонанс: соберём N свечей до signal candle.
+                    # ВАЖНО: считаем резонанс ДАЖЕ если signal candle ещё не закрыта
+                    # (раньше тут был `if not sig_doc: continue` — резонанс терялся для
+                    # всех свежих сигналов где текущая свеча ещё открыта). Резонанс
+                    # = N consecutive same-sign deltas в окне предыдущих свечей,
+                    # signal candle включается опционально если уже есть delta.
+                    if it.get(f'resonance_{tf}') is None:
+                        deltas: list[float] = []
+                        for j in range(RESONANCE_BARS - 1, -1, -1):
+                            bk = sig_open - j * minutes * 60 * 1000
+                            if bk == sig_open and not sig_doc:
+                                # signal candle ещё не закрыта и нет данных — используем
+                                # уже выставленную delta_tf (если есть, из inline fill).
+                                v = it.get(f'delta_{tf}')
+                                if v is not None:
+                                    deltas.append(float(v))
+                                continue
+                            d = cached_map.get((pair, tf, bk))
+                            if d:
+                                deltas.append(d.get('delta_pct') or 0.0)
+                        # Считаем резонанс если есть минимум 3 свечи (раньше требовалось 5,
+                        # это терялось для свежих сигналов)
+                        if len(deltas) >= 3:
+                            it[f'resonance_{tf}'] = _resonance_from_deltas(deltas)
 
             # ─── INLINE fast fill для свежих сигналов (last 6h) ───
             # Через klines (1 запрос/TF/пара = 5 свечей резонанса).
@@ -10746,7 +10773,11 @@ def _compute_journal_sync():
                 pair = it.get('pair') or ''
                 if not (ats and pair) or ats < recent_cutoff:
                     continue
-                if it.get('delta_15m') is not None or it.get('delta_1h') is not None:
+                # FIX: было OR → если 1h уже был заполнен из cache, 15m тоже не пытались
+                # заполнить. Теперь AND — добавляем в inline_keys если хотя бы один TF
+                # отсутствует. Затем _fetch_one добавит недостающие.
+                if (it.get('delta_15m') is not None and it.get('delta_1h') is not None
+                        and it.get('delta_4h') is not None):
                     continue
                 inline_keys.add((pair, ats))
             inline_list = list(inline_keys)[:30]  # больше пар т.к. signal-only fast
@@ -10786,7 +10817,9 @@ def _compute_journal_sync():
                         pass
                 finally:
                     ex_delta.shutdown(wait=False, cancel_futures=True)
-                # Распихиваем результаты обратно в items
+                # Распихиваем результаты обратно в items + считаем резонанс
+                # из cluster_delta cache prior candles, если inline snap дал только
+                # signal-only delta (aggTrades path не возвращает резонанс).
                 for it in items:
                     ats = it.get('at_ts') or 0
                     pair = it.get('pair') or ''
@@ -10797,10 +10830,29 @@ def _compute_journal_sync():
                         s = snap.get(tf)
                         if not s:
                             continue
+                        minutes = TF_MINUTES.get(tf, 15)
+                        sig_open = _candle_open_ms(ats * 1000, tf)
                         if it.get(f'delta_{tf}') is None:
                             it[f'delta_{tf}'] = s.get('delta_pct')
+                        # Резонанс: предпочитаем значение из snap (klines path даёт),
+                        # иначе считаем из cluster_delta cache prior candles + signal delta.
                         if it.get(f'resonance_{tf}') is None:
-                            it[f'resonance_{tf}'] = s.get('resonance')
+                            if s.get('resonance') is not None:
+                                it[f'resonance_{tf}'] = s.get('resonance')
+                            else:
+                                deltas: list[float] = []
+                                for j in range(RESONANCE_BARS - 1, -1, -1):
+                                    bk = sig_open - j * minutes * 60 * 1000
+                                    if bk == sig_open:
+                                        v = it.get(f'delta_{tf}')
+                                        if v is not None:
+                                            deltas.append(float(v))
+                                        continue
+                                    d = cached_map.get((pair, tf, bk))
+                                    if d:
+                                        deltas.append(d.get('delta_pct') or 0.0)
+                                if len(deltas) >= 3:
+                                    it[f'resonance_{tf}'] = _resonance_from_deltas(deltas)
 
             # ─── Background fill для остальных miss'ов (last 24h) ───
             cutoff_s = now_s - 24 * 3600
