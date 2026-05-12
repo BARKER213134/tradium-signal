@@ -1569,6 +1569,11 @@ async def on_signal(signal_data: dict):
             signal_data['_alpha_cv_label'] = decision.get('size_label', '')
             signal_data['_alpha_cv_exit_plan'] = decision.get('exit_plan') or {}
             signal_data['_alpha_cv_reason'] = decision.get('reason_human', '')
+            # v3.0: regime + verdict from sig_eval
+            signal_data['_regime'] = sig_eval.get('_regime')
+            signal_data['_verdict'] = sig_eval.get('_verdict')
+            signal_data['_alpha_cv_regime'] = sig_eval.get('_regime')
+            signal_data['_alpha_cv_verdict'] = sig_eval.get('_verdict')
             logger.info(f"[ALPHA-CV] ✅ ACCEPT {pair} {direction} "
                         f"size={decision.get('size_label')} reason='{decision.get('reason_human')}'")
         except Exception as e:
@@ -1808,6 +1813,9 @@ async def on_signal(signal_data: dict):
                 _strict = bool(getattr(_ast, 'STRICT_MODE_ENABLED', False))
             except Exception:
                 _strict = False
+            # v3.0: extract regime + verdict from signal enrichment
+            _regime = signal_data.get('_regime') or signal_data.get('_alpha_cv_regime') or 'CHOP'
+            _verdict = signal_data.get('_verdict') or signal_data.get('_alpha_cv_verdict')
             trades.update_one(
                 {'trade_id': pos['trade_id']},
                 {'$set': {
@@ -1815,7 +1823,9 @@ async def on_signal(signal_data: dict):
                     'auto_strategy_reason': signal_data.get('_alpha_cv_reason'),
                     'auto_strategy_exit_plan': signal_data.get('_alpha_cv_exit_plan') or {},
                     'auto_strategy_size_mult': alpha_mult,
-                    'auto_strategy_version': 'v2.1',
+                    'auto_strategy_version': 'v3.0',
+                    'auto_strategy_regime': _regime,
+                    'auto_strategy_verdict': _verdict,
                     'strict_mode_open': _strict,
                 }}
             )

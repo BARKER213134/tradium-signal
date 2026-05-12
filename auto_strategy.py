@@ -117,7 +117,11 @@ def _tier_of(t: dict) -> str:
 
 SIZING_RULES = [
     # (predicate_fn, multiplier, label)
-    # STRICT-mode verdict-based sizing (приоритет — проверяем первым)
+    # v3.0 multi-regime sizing (приоритет)
+    (lambda s, t: t.get('_regime') == 'CHOP',             2.0, 'regime_CHOP'),
+    (lambda s, t: t.get('_regime') == 'BEAR',             1.5, 'regime_BEAR'),
+    (lambda s, t: t.get('_regime') == 'BULL',             0.5, 'regime_BULL'),
+    # Legacy STRICT verdict-based (если regime отключён)
     (lambda s, t: t.get('_verdict') == 'ELITE',           3.0, 'verdict_ELITE'),
     (lambda s, t: t.get('_verdict') == 'STRONG',          2.0, 'verdict_STRONG'),
     # Source-based fallback (legacy v1.x rules)
@@ -141,25 +145,30 @@ DRAWDOWN_LIMIT_PCT = 10.0
 
 # ─── Strategy metadata (показывается на UI вкладке) ────────────────
 STRATEGY_NAME = "ALPHA-CV"
-STRATEGY_VERSION = "v2.1"
+STRATEGY_VERSION = "v3.0"
 STRATEGY_DESCRIPTION = (
-    "STRICT mode + AUTO-PAUSE + trail_1R_0.5R exit. Принимаются только "
-    "сигналы с verdict ELITE (3+ top edges) или STRONG (2+ top edges). "
-    "Auto-pause: rolling AvgR(10) < 0 → пауза 24h (ELITE пробивает паузу). "
-    "Backtest 14d: WR 86%, AvgR +1.33R, PF 10.6, MaxDD 3R (vs 11.8R baseline)."
+    "Multi-regime: разные правила для BULL/BEAR/CHOP. "
+    "BULL — LONG STRICT (мизер edge); CHOP — both dirs no-SKIP + be_at_1R (winner +0.99R!); "
+    "BEAR — SHORT GOOD+ + be_at_1R. Fresh 7d backtest на текущем market: "
+    "CHOP regime даёт +128R total за 7 дней (vs −20R на trail_1R_0.5R)."
 )
 STRATEGY_BACKTEST_METRICS = {
-    "backtest_period_days": 14,
-    "total_signals_tested": 5530,
-    "trades_after_filter": 29,
-    "win_rate_pct": 86.2,
-    "avg_r_per_trade": 1.33,
-    "profit_factor": 10.6,
-    "max_dd_r": 3.0,
-    "validation": "STRICT(ELITE+STRONG) + AUTO-PAUSE(win=10,avgR<0,24h)",
-    "exit_strategy": "trail_1R_0.5R",
-    "entry_filter": "verdict in (ELITE, STRONG) + auto_pause",
-    "notes": "Бэктест-optimized. Меньше сделок (~2/день), но WR 86% и MaxDD в 4x меньше baseline.",
+    "backtest_period_days": 7,
+    "data_source": "fresh Mongo last 7d (current market regime)",
+    "total_signals_tested": 551,
+    "regime_split": {"BULL": 394, "CHOP": 157, "BEAR": 0},
+    "best_per_regime": {
+        "BULL": {"filter": "LONG_STRICT", "exit": "signal_tpsl",
+                 "n": 33, "wr": 57.6, "avg_r": 0.086, "total_r": 2.9,
+                 "note": "marginal edge — reduce sizing"},
+        "CHOP": {"filter": "both_no_skip", "exit": "be_at_1R",
+                 "n": 129, "wr": 50.4, "avg_r": 0.992, "total_r": 128.0,
+                 "pf": 3.7,
+                 "note": "JACKPOT — reversal signals love range market"},
+        "BEAR": {"filter": "SHORT_GOOD+", "exit": "be_at_1R",
+                 "note": "no BEAR data in 7d, fallback to CHOP rules with SHORT only"},
+    },
+    "exit_strategy": "be_at_1R (CHOP/BEAR) / signal_tpsl (BULL)",
 }
 
 
@@ -342,6 +351,99 @@ def set_enabled(enabled: bool, note: str = "") -> dict:
         return {"ok": True, "enabled": bool(enabled), "note": note}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ─── v3.0 Multi-Regime config ──────────────────────────────────────
+# Fresh backtest 7d: разные filter/exit per market regime.
+#   BULL — мало edge, LONG_STRICT only, size×0.5
+#   CHOP — best edge +0.99R AvgR, both dirs no-SKIP, size×2.0
+#   BEAR — no historical data, use CHOP rules с SHORT only
+MULTI_REGIME_ENABLED = True
+
+REGIME_CONFIG = {
+    'BULL': {
+        'allowed_directions': ('LONG',),
+        'allowed_verdicts': ('STRONG', 'ELITE'),    # strict only
+        'exit_label': 'signal_tpsl',                # legacy TP/SL
+        'size_mult': 0.5,                           # halve sizing — marginal edge
+        'use_be_at_1R': False,
+        'notes': 'BULL: LONG_STRICT (мизер edge +0.086R)',
+    },
+    'CHOP': {
+        'allowed_directions': ('LONG', 'SHORT'),
+        'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),  # широко — каждый no-SKIP работает
+        'exit_label': 'be_at_1R',
+        'size_mult': 2.0,                            # БОЛЬШЕ — лучший edge
+        'use_be_at_1R': True,                        # move SL to BE после +1R
+        'notes': 'CHOP: both dirs no-SKIP, be_at_1R, AvgR +0.99R',
+    },
+    'BEAR': {
+        'allowed_directions': ('SHORT',),
+        'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),
+        'exit_label': 'be_at_1R',
+        'size_mult': 1.5,
+        'use_be_at_1R': True,
+        'notes': 'BEAR: SHORT GOOD+, be_at_1R (no historical data, mirror CHOP)',
+    },
+}
+
+
+# Regime cache (5 min TTL — BTC trend меняется не быстро)
+_regime_cache = {'regime': None, 'ts': 0}
+
+
+def _get_btc_ema_cached():
+    """Cache BTC 4h/1d EMAs для regime detection."""
+    import time as _t
+    now = _t.time()
+    if _regime_cache.get('emas') and now - _regime_cache.get('ts', 0) < 300:
+        return _regime_cache.get('emas')
+    try:
+        from exchange import get_klines_any
+        kl_4h = get_klines_any('BTC/USDT', '4h', 60) or []
+        kl_1d = get_klines_any('BTC/USDT', '1d', 60) or []
+        if len(kl_4h) < 50 or len(kl_1d) < 50:
+            return None
+        def _ema(closes, p):
+            out = [None]*len(closes)
+            out[p-1] = sum(closes[:p])/p
+            k = 2/(p+1)
+            for i in range(p, len(closes)):
+                out[i] = closes[i]*k + out[i-1]*(1-k)
+            return out
+        c4 = [float(c.get('c', 0)) for c in kl_4h]
+        c1d = [float(c.get('c', 0)) for c in kl_1d]
+        emas = {
+            'c_4h': c4[-1],
+            'e20_4h': _ema(c4, 20)[-1],
+            'e50_4h': _ema(c4, 50)[-1],
+            'e20_1d': _ema(c1d, 20)[-1],
+            'e50_1d': _ema(c1d, 50)[-1],
+        }
+        _regime_cache['emas'] = emas
+        _regime_cache['ts'] = now
+        return emas
+    except Exception as e:
+        logger.debug(f'[regime] btc emas fail: {e}')
+        return None
+
+
+def detect_regime() -> str:
+    """Returns BULL / BEAR / CHOP based on BTC 4h+1d EMAs.
+
+    BULL: 4h EMA20>EMA50 AND 1d EMA20>EMA50 AND price>EMA20_4h
+    BEAR: mirror
+    CHOP: mixed / conflicting
+    """
+    emas = _get_btc_ema_cached()
+    if not emas: return 'CHOP'
+    bull_4h = emas['e20_4h'] > emas['e50_4h']
+    bull_1d = emas['e20_1d'] > emas['e50_1d']
+    above_4h = emas['c_4h'] > emas['e20_4h']
+    below_4h = emas['c_4h'] < emas['e20_4h']
+    if bull_4h and bull_1d and above_4h: return 'BULL'
+    if (not bull_4h) and (not bull_1d) and below_4h: return 'BEAR'
+    return 'CHOP'
 
 
 # ─── STRICT-MODE: Verdict-based filter + Auto-pause ────────────────
@@ -616,7 +718,35 @@ def should_enter(signal: dict) -> tuple[bool, str]:
         if qs is not None and qs < MIN_Q_SCORE:
             return False, f'q_score={qs}<{MIN_Q_SCORE}'
 
-    # ── STRICT-MODE verdict gate (backtest +1.33R AvgR, WR 86%, MaxDD 3R) ──
+    # ── v3.0 MULTI-REGIME gate ──
+    # Регим определяется по BTC 4h+1d EMAs (cache 5min).
+    # Per-regime rules from REGIME_CONFIG (backtest 7d data).
+    if MULTI_REGIME_ENABLED:
+        regime = detect_regime()
+        signal['_regime'] = regime
+        cfg = REGIME_CONFIG.get(regime, REGIME_CONFIG['CHOP'])
+        # Direction filter
+        if direction not in cfg['allowed_directions']:
+            return False, f'regime_{regime}_skip_direction={direction}'
+        # Verdict filter per regime
+        v_info = compute_verdict(signal)
+        verdict = v_info['verdict']
+        signal['_verdict'] = verdict
+        if verdict not in cfg['allowed_verdicts']:
+            return False, f'regime_{regime}_skip_verdict={verdict}'
+        # Auto-pause gate
+        paused, pause_state = is_paused_now()
+        if paused:
+            if not (AUTO_PAUSE_ELITE_BYPASS and verdict == 'ELITE'):
+                pu = pause_state.get('paused_until_ts') or 0
+                import time as _t
+                remaining_h = (pu - int(_t.time())) / 3600
+                return False, (f'auto_pause: {pause_state.get("reason","?")} '
+                                f'(осталось {remaining_h:.1f}ч)')
+        # Pass — return accept reason with regime
+        return True, f'regime_{regime}_{verdict}_{direction}'
+
+    # ── LEGACY STRICT-MODE verdict gate (v2.x, отключено в v3.0) ──
     if STRICT_MODE_ENABLED:
         v = compute_verdict(signal)
         verdict = v['verdict']
@@ -827,6 +957,90 @@ def can_enter_now(open_positions: int = 0,
 EXIT_PARTIAL_PCT = 50  # % to close at TP1
 EXIT_TRAIL_DISTANCE_R = 0.5  # trailing distance in R (after TP1 hit)
 EXIT_TIMEOUT_HOURS = 24
+
+
+def compute_exit_state_v3(pair: str, direction: str, entry_price: float,
+                           sl_price: float, opened_at_ms: int,
+                           regime: str = 'CHOP') -> dict:
+    """v3.0 exit dispatcher — выбирает exit logic per regime.
+
+    BULL  → signal_tpsl (TP/SL hits)
+    CHOP  → be_at_1R (move SL to BE после +1R, иначе hold)
+    BEAR  → be_at_1R (same as CHOP)
+    """
+    cfg = REGIME_CONFIG.get(regime, REGIME_CONFIG['CHOP'])
+    use_be = cfg.get('use_be_at_1R', True)
+    if not use_be:
+        # BULL → используем signal TP/SL (paper_trader сам обрабатывает TP/SL hit).
+        # Этот dispatcher возвращает should_exit=False — ничего не делаем,
+        # paper_trader проверит SL/TP по price.
+        return {'should_exit': False, 'reason': f'{regime}_use_signal_tpsl',
+                'trail_active': False}
+    # BE_AT_1R: trail SL до BE после +1R favorable
+    try:
+        from exchange import get_klines_any, get_prices_any
+        import time as _t
+        is_long = (direction or '').upper() == 'LONG'
+        sl_dist = abs(entry_price - sl_price)
+        if sl_dist <= 0:
+            return {'should_exit': False, 'reason': 'invalid_sl_dist'}
+        now_ms = int(_t.time() * 1000)
+        hours_open = max(1, int((now_ms - opened_at_ms) / 3_600_000) + 1)
+        n_bars = min(72, max(2, hours_open + 1))
+        candles = get_klines_any(pair, '1h', n_bars)
+        if not candles or len(candles) < 1:
+            return {'should_exit': False, 'reason': 'no_klines'}
+        # Track max favorable
+        max_fav = entry_price
+        for c in candles:
+            t = c.get('t') or c.get('open_ms')
+            if t is None or t < opened_at_ms - 3_600_000: continue
+            h = float(c.get('h', 0) or 0)
+            l = float(c.get('l', 0) or 0)
+            if is_long and h > max_fav: max_fav = h
+            elif not is_long and l > 0 and (max_fav == entry_price or l < max_fav): max_fav = l
+        # Current price
+        sym = pair.replace('/', '').upper()
+        if not sym.endswith('USDT'): sym += 'USDT'
+        prices = get_prices_any([pair])
+        current = prices.get(sym)
+        if current is None:
+            current = float(candles[-1].get('c', 0) or 0)
+        if current <= 0:
+            return {'should_exit': False, 'reason': 'no_price'}
+        # Update max_fav with current
+        if is_long and current > max_fav: max_fav = current
+        elif not is_long and (current < max_fav or max_fav == entry_price): max_fav = current
+        max_fav_r = (max_fav - entry_price)/sl_dist if is_long else (entry_price - max_fav)/sl_dist
+        # SL check
+        if is_long and current <= sl_price:
+            return {'should_exit': True, 'reason': 'sl_hit',
+                    'exit_price': sl_price, 'current_price': current,
+                    'max_fav_r': round(max_fav_r,2), 'be_active': False}
+        if not is_long and current >= sl_price:
+            return {'should_exit': True, 'reason': 'sl_hit',
+                    'exit_price': sl_price, 'current_price': current,
+                    'max_fav_r': round(max_fav_r,2), 'be_active': False}
+        # BE activation после +1R favorable
+        be_active = max_fav_r >= 1.0
+        if be_active:
+            # New SL = entry (break-even)
+            new_sl = entry_price
+            if is_long and current <= new_sl:
+                return {'should_exit': True, 'reason': 'be_hit',
+                        'exit_price': new_sl, 'current_price': current,
+                        'max_fav_r': round(max_fav_r,2), 'be_active': True,
+                        'new_sl': new_sl}
+            if not is_long and current >= new_sl:
+                return {'should_exit': True, 'reason': 'be_hit',
+                        'exit_price': new_sl, 'current_price': current,
+                        'max_fav_r': round(max_fav_r,2), 'be_active': True,
+                        'new_sl': new_sl}
+        return {'should_exit': False, 'reason': 'holding',
+                'current_price': current, 'max_fav_r': round(max_fav_r,2),
+                'be_active': be_active, 'new_sl': entry_price if be_active else sl_price}
+    except Exception as e:
+        return {'should_exit': False, 'reason': f'error:{e}'}
 
 
 def compute_trail_state(pair: str, direction: str, entry_price: float,
@@ -1056,6 +1270,18 @@ def reason_to_human(reason: str, signal: dict) -> str:
         return f"❌ second_flip требует LONG+match, у нас {direction}/{tier}"
     if reason.startswith('tc_filter_failed'):
         return f"❌ triple_confluence требует LONG+mixed, у нас {direction}/{tier}"
+    if reason.startswith('regime_BULL_skip'):
+        return f"❌ BULL рынок: только LONG STRICT (ELITE/STRONG) — {reason}"
+    if reason.startswith('regime_BEAR_skip'):
+        return f"❌ BEAR рынок: только SHORT GOOD+ — {reason}"
+    if reason.startswith('regime_CHOP_skip'):
+        return f"❌ CHOP рынок: оба direction GOOD+ — {reason}"
+    if reason.startswith('regime_'):
+        # accept
+        parts = reason.split('_')
+        if len(parts) >= 4:
+            regime, verdict, direction = parts[1], parts[2], parts[3]
+            return f"✅ {regime} regime · {verdict} · {direction}"
     if reason.startswith('strict_skip_verdict'):
         v = reason.split('=')[1] if '=' in reason else '?'
         return f"❌ STRICT-mode: verdict={v} (нужно ELITE или STRONG)"

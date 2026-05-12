@@ -3783,7 +3783,7 @@ async def _alpha_cv_exit_monitor():
     while True:
         try:
             from database import _get_db
-            from auto_strategy import compute_trail_state
+            from auto_strategy import compute_exit_state_v3
             import paper_trader as pt
             db = _get_db()
             open_positions = list(db.paper_trades.find({
@@ -3791,7 +3791,7 @@ async def _alpha_cv_exit_monitor():
                 'auto_strategy_label': {'$exists': True}
             }, {'trade_id': 1, 'pair': 1, 'symbol': 1,
                 'direction': 1, 'entry': 1, 'sl': 1, 'original_sl': 1,
-                'opened_at': 1}))
+                'opened_at': 1, 'auto_strategy_regime': 1}))
             if not open_positions:
                 logger.debug("[alpha-cv-exit] no open positions")
                 await _asyncio.sleep(180)
@@ -3810,9 +3810,10 @@ async def _alpha_cv_exit_monitor():
                     continue
                 try:
                     opened_at_ms = int(opened_at.timestamp() * 1000) if hasattr(opened_at, 'timestamp') else int(opened_at)
+                    regime = pos.get('auto_strategy_regime') or 'CHOP'
                     sig = await _asyncio.to_thread(
-                        compute_trail_state, pair, direction,
-                        float(entry), float(sl), opened_at_ms,
+                        compute_exit_state_v3, pair, direction,
+                        float(entry), float(sl), opened_at_ms, regime,
                     )
                     # Save state to trade doc для UI/monitoring
                     if sig.get('max_fav_r') is not None:
