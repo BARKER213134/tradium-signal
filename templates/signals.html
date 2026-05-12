@@ -7165,8 +7165,12 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
 .tf-btn.active { background:var(--accent); color:#000; border-color:var(--accent); font-weight:700; }
 </style>
 
-<!-- Строка 1: Поиск монеты -->
+<!-- Строка 1: Поиск монеты + Market Regime badge -->
 <div class="an-toolbar" style="padding:10px 18px;margin-bottom:0;">
+  <span id="jRegimeBadge" title="Текущая фаза рынка по BTC EMA20/50 (4h+1d). Обновляется каждые 60с." style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:0.03em;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);color:var(--muted);cursor:default;">
+    <span style="font-size:10px;color:var(--muted);">PHASE</span>
+    <span id="jRegimeText">…</span>
+  </span>
   <span style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">🔍 Монета:</span>
   <input id="jCoinSearch" type="text" placeholder="DUSK, ETH, BTC..." oninput="onCoinSearch(this.value)" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:12px;font-family:var(--font-mono);width:160px;outline:none;" autocomplete="off">
   <span id="jCoinCount" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
@@ -8202,6 +8206,42 @@ function _showJournalToast(newSignals) {
 function _signalKey(s) {
   return `${s.source}|${s.symbol||s.pair}|${s.at_ts}`;
 }
+
+// Market regime badge — текущая фаза рынка (BULL/CHOP/BEAR) над журналом.
+// Опрашиваем /api/auto-strategy/info каждые 60с — фактический regime cache
+// внутри auto_strategy = 5min, так что чаще опрашивать смысла нет.
+async function loadJournalRegime() {
+  const el = document.getElementById('jRegimeBadge');
+  const txt = document.getElementById('jRegimeText');
+  if (!el || !txt) return;
+  try {
+    const r = await fetch('/api/auto-strategy/info');
+    const d = await r.json();
+    const reg = d.current_regime || d.regime || '?';
+    // API возвращает regime_config = REGIME_CONFIG.get(current_regime, {}) уже для текущего regime,
+    // не вложенный dict. Берём напрямую.
+    const cfg = d.regime_config || {};
+    const styles = {
+      BULL: {bg:'rgba(0,229,160,0.15)', border:'#00e5a0', color:'#00e5a0', emoji:'🚀', desc:'LONG STRICT, full size'},
+      BEAR: {bg:'rgba(255,77,109,0.15)', border:'#ff4d6d', color:'#ff4d6d', emoji:'📉', desc:'SHORT STRICT, be_at_1R'},
+      CHOP: {bg:'rgba(255,215,0,0.13)', border:'#ffd23e', color:'#ffd23e', emoji:'🌀', desc:'both dirs GOOD+, be_at_1R'},
+    };
+    const s = styles[reg] || {bg:'rgba(255,255,255,0.04)', border:'rgba(255,255,255,0.1)', color:'var(--muted)', emoji:'?', desc:'unknown'};
+    el.style.background = s.bg;
+    el.style.borderColor = s.border;
+    el.style.color = s.color;
+    const dirs = (cfg.allowed_directions || []).join('/') || '-';
+    const verdicts = (cfg.allowed_verdicts || []).join('/') || '-';
+    const sizeFrac = cfg.size_fraction != null ? `${Math.round(cfg.size_fraction*100)}%` : '-';
+    txt.innerHTML = `<span style="font-size:13px;">${s.emoji}</span> <b>${reg}</b> <span style="color:var(--muted);font-weight:400;font-size:10px;">· ${dirs} · ${verdicts} · ${sizeFrac}</span>`;
+    el.title = `Текущая фаза рынка по BTC EMA20/50 (4h+1d) — обновляется каждые 60с\n\nRegime: ${reg}\nDirections: ${dirs}\nVerdicts: ${verdicts}\nSize fraction (от mode_max): ${sizeFrac}\nExit: ${cfg.exit_label || '-'}\n\n${cfg.notes || s.desc}`;
+  } catch(e) {
+    // Сеть отвалилась — не трогаем badge
+  }
+}
+// Initial + interval (60s)
+setTimeout(loadJournalRegime, 800);
+safeInterval(loadJournalRegime, 60000);
 
 async function loadJournal() {
   try {
