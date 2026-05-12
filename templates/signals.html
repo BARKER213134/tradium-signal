@@ -6806,6 +6806,32 @@ safeInterval(loadForexJournal, 30000);
   display:inline-block; min-width:56px; text-align:center;
 }
 #rsiHelpPopover hr { border:none; border-top:1px solid #1a1e2a; margin:8px 0; }
+/* Verdict help popover (summary tier system) */
+#verdictHelpPopover {
+  display:none; position:absolute; right:0; top:calc(100% + 4px); z-index:1000;
+  background:#0a0e14; border:1px solid #ffd700; border-radius:8px;
+  padding:14px 16px; min-width:520px; max-width:580px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.6); text-align:left;
+  font-family:var(--font-mono); font-size:11px; color:var(--text);
+  line-height:1.6; letter-spacing:0;
+  text-transform:none; font-weight:400;
+}
+#verdictHelpPopover h4 {
+  margin:0 0 8px 0; font-size:12px; color:#ffd700; font-weight:700;
+  text-transform:uppercase; letter-spacing:0.05em;
+}
+#verdictHelpPopover .v-row {
+  display:flex; gap:10px; padding:5px 0; align-items:flex-start;
+}
+#verdictHelpPopover .v-emoji {
+  font-size:18px; min-width:24px; text-align:center; line-height:1;
+}
+#verdictHelpPopover .v-tier {
+  padding:2px 7px; border-radius:3px; font-size:9px; font-weight:700;
+  min-width:60px; text-align:center; text-transform:uppercase;
+}
+#verdictHelpPopover .v-desc { flex:1; }
+#verdictHelpPopover hr { border:none; border-top:1px solid #1a1e2a; margin:8px 0; }
 </style>
 <div class="strategy-box">
   <div class="strat-icon">📓</div>
@@ -7060,7 +7086,10 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('direction')" id="jSortDir" style="text-align:center;padding:14px 6px;">Напр.</th>
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry" style="text-align:center;padding:14px 8px;">Entry</th>
         <th class="sortable" onclick="jSort('score')" id="jSortScore" style="text-align:left;padding:14px 14px;">Паттерн</th>
-        <th id="jSortVerdict" title="Вердикт по сигналу — агрегат 4 edge tiers (RSI/SMA/Trend/Anomaly) на основе backtest 5500 сигналов. 🏆=3+top edges, 🔥=2 top, ✅=1 top, ⚪=neutral, ⚠=каres, ❌=avoid" style="text-align:center;padding:14px 6px;">Вердикт</th>
+        <th id="jSortVerdict" style="text-align:center;padding:14px 6px;position:relative;">
+          <span>Вердикт</span>
+          <span onclick="event.stopPropagation();window._toggleVerdictHelp(event)" style="display:inline-block;margin-left:4px;width:14px;height:14px;line-height:14px;text-align:center;background:rgba(255,215,0,0.18);border:1px solid #ffd700;border-radius:50%;color:#ffd700;font-size:9px;font-weight:700;cursor:pointer;vertical-align:middle;" title="Памятка по вердикту">ⓘ</span>
+        </th>
         <th id="jSortRsi" style="text-align:center;padding:14px 6px;position:relative;">
           <span class="sortable" onclick="jSort('rsi_4h')">RSI</span>
           <span onclick="event.stopPropagation();window._toggleRsiHelp(event)" style="display:inline-block;margin-left:4px;width:14px;height:14px;line-height:14px;text-align:center;background:rgba(178,139,255,0.2);border:1px solid #b28bff;border-radius:50%;color:#b28bff;font-size:9px;font-weight:700;cursor:pointer;vertical-align:middle;" title="Backtest best RSI buckets">ⓘ</span>
@@ -8677,6 +8706,115 @@ window._rsiEdgeColor = function(s, rsi_4h, rsi_1h) {
 };
 
 // RSI help popover content + toggle
+window._toggleVerdictHelp = function(ev) {
+  let pop = document.getElementById('verdictHelpPopover');
+  if (!pop) {
+    pop = document.createElement('div');
+    pop.id = 'verdictHelpPopover';
+    pop.innerHTML = `
+      <h4>🎯 Вердикт по сигналу — как читать</h4>
+      <div style="color:var(--muted);font-size:10px;margin-bottom:10px;">
+        Агрегат 4 edge tiers (RSI / SMA / Trend / Anomaly) в одно решение.<br>
+        База: exhaustive backtest 5530 сигналов × 32 exit стратегий (14 дней).<br>
+        Использует best exit = trail_1R_0.5R (winner всех бэктестов).
+      </div>
+
+      <div class="v-row" style="background:rgba(255,215,0,0.10);padding:6px 8px;border-radius:5px;">
+        <div class="v-emoji">🏆</div>
+        <div class="v-tier" style="background:rgba(255,215,0,0.25);color:#ffd700;">ELITE</div>
+        <div class="v-desc">
+          <b>3+ top edges</b> совпадают. Sniper-mode.<br>
+          <span style="color:#00e5a0;">WR 99.3% · AvgR +1.63R · 280 trades / 14d</span><br>
+          <span style="color:var(--muted);font-size:10px;">→ Жми безусловно, если risk gates позволяют</span>
+        </div>
+      </div>
+
+      <div class="v-row" style="background:rgba(255,140,80,0.10);padding:6px 8px;border-radius:5px;margin-top:4px;">
+        <div class="v-emoji">🔥</div>
+        <div class="v-tier" style="background:rgba(255,140,80,0.25);color:#ff8c50;">STRONG</div>
+        <div class="v-desc">
+          <b>2 top edges</b> совпадают. Сильный edge.<br>
+          <span style="color:#00e5a0;">WR 83.5% · AvgR +1.36R · 708 trades / 14d</span><br>
+          <span style="color:var(--muted);font-size:10px;">→ Хороший вход</span>
+        </div>
+      </div>
+
+      <div class="v-row" style="background:rgba(0,229,160,0.08);padding:6px 8px;border-radius:5px;margin-top:4px;">
+        <div class="v-emoji">✅</div>
+        <div class="v-tier" style="background:rgba(0,229,160,0.20);color:#00e5a0;">GOOD</div>
+        <div class="v-desc">
+          <b>1 top edge.</b> Положительный EV.<br>
+          <span style="color:#00e5a0;">WR 70-86% · AvgR +1.0..+2.18R</span><br>
+          <span style="color:var(--muted);font-size:10px;">→ Можно входить, особенно если top = Anomaly (+2.18R)</span>
+        </div>
+      </div>
+
+      <div class="v-row" style="background:rgba(136,216,163,0.08);padding:6px 8px;border-radius:5px;margin-top:4px;">
+        <div class="v-emoji">👍</div>
+        <div class="v-tier" style="background:rgba(136,216,163,0.15);color:#88d8a3;">OK</div>
+        <div class="v-desc">
+          <b>2+ good edges</b> (без top). Умеренный edge.<br>
+          <span style="color:#88d8a3;">AvgR +0.3..+0.7R</span><br>
+          <span style="color:var(--muted);font-size:10px;">→ Brake-even с лёгким плюсом</span>
+        </div>
+      </div>
+
+      <hr>
+
+      <div class="v-row" style="padding:6px 8px;">
+        <div class="v-emoji">⚪</div>
+        <div class="v-tier" style="background:rgba(136,136,136,0.20);color:#aaa;">MEH</div>
+        <div class="v-desc">
+          Нейтрально (no edge, no warn). AvgR ≈0R<br>
+          <span style="color:var(--muted);font-size:10px;">→ Скорее скип. Шум.</span>
+        </div>
+      </div>
+
+      <div class="v-row" style="background:rgba(255,210,62,0.08);padding:6px 8px;border-radius:5px;margin-top:4px;">
+        <div class="v-emoji">⚠</div>
+        <div class="v-tier" style="background:rgba(255,210,62,0.20);color:#ffd23e;">CAUTION</div>
+        <div class="v-desc">
+          Counter-trend warning (например LONG при 4h DOWN).<br>
+          <span style="color:#ffd23e;">AvgR −0.1..+0.3R</span><br>
+          <span style="color:var(--muted);font-size:10px;">→ Лучше пропустить</span>
+        </div>
+      </div>
+
+      <div class="v-row" style="background:rgba(255,77,109,0.10);padding:6px 8px;border-radius:5px;margin-top:4px;">
+        <div class="v-emoji">❌</div>
+        <div class="v-tier" style="background:rgba(255,77,109,0.20);color:#ff4d6d;">SKIP</div>
+        <div class="v-desc">
+          <b>Avoid edge</b> — известный negative EV source (volume_surge / volcano / TC SHORT / vol_accum SHORT).<br>
+          <span style="color:#ff4d6d;">AvgR −0.4..−1.0R · WR 0-15%</span><br>
+          <span style="color:var(--muted);font-size:10px;">→ ВСЕГДА игнорируй</span>
+        </div>
+      </div>
+
+      <hr>
+      <div style="color:var(--muted);font-size:10px;margin-top:8px;">
+        Priority: <b>avoid</b> побеждает всё → 3+top → 2 top → 1 top → warn → 2 good → neutral.<br>
+        Хочешь sniper-mode = только 🏆 ELITE и 🔥 STRONG.
+      </div>
+    `;
+    const hdr = document.getElementById('jSortVerdict');
+    if (hdr) hdr.appendChild(pop);
+    else document.body.appendChild(pop);
+  }
+  const isVisible = pop.style.display === 'block';
+  pop.style.display = isVisible ? 'none' : 'block';
+  if (!isVisible) {
+    setTimeout(() => {
+      const closer = (e) => {
+        if (!pop.contains(e.target) && !ev.target.contains(e.target)) {
+          pop.style.display = 'none';
+          document.removeEventListener('click', closer);
+        }
+      };
+      document.addEventListener('click', closer);
+    }, 100);
+  }
+};
+
 window._toggleRsiHelp = function(ev) {
   let pop = document.getElementById('rsiHelpPopover');
   if (!pop) {
