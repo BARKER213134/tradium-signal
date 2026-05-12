@@ -8907,14 +8907,14 @@ window._renderSmaCell = function(s) {
     const arrow = above ? '↑' : '↓';
     return {tf, color, arrow, diff, above, missing: false};
   });
-  const placeholder = '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
+  const placeholder = '<div style="height:18px;line-height:18px;margin-bottom:2px;visibility:hidden;font-size:14px;">·</div>';
   const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
   // Edge emoji header (backtest-based)
   const info = window._smaEdgeInfo ? window._smaEdgeInfo(s) : null;
   let emojiHeader = placeholder;
   let bg = '', border = '';
   if (info && info.emoji) {
-    emojiHeader = `<div style="font-size:13px;line-height:1.2;margin-bottom:2px;" title="${info.label||''}">${info.emoji}</div>`;
+    emojiHeader = `<div style="height:18px;line-height:18px;margin-bottom:2px;font-size:14px;display:flex;align-items:center;justify-content:center;" title="${info.label||''}">${info.emoji}</div>`;
     if (info.tier === 'top')   { bg='background:rgba(0,229,160,0.18);'; border='border-left:2px solid #00e5a0;'; }
     else if (info.tier === 'good') { bg='background:rgba(0,229,160,0.08);'; border='border-left:2px solid #88d8a3;'; }
     else if (info.tier === 'warn') { bg='background:rgba(255,210,62,0.10);'; border='border-left:2px solid #ffd23e;'; }
@@ -8943,7 +8943,7 @@ window._renderSmaCell = function(s) {
 window._renderAnomalyCell = function(s) {
   // 3 TF данных (15m/1h/4h) + invisible 1d row для align с RSI/SMA/Trend (4 строки)
   const tfs = ['15m', '1h', '4h'];
-  const placeholder = '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
+  const placeholder = '<div style="height:18px;line-height:18px;margin-bottom:2px;visibility:hidden;font-size:14px;">·</div>';
   const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
   let maxAbsZ = 0;
   let anyData = false;
@@ -8974,7 +8974,7 @@ window._renderAnomalyCell = function(s) {
   let emojiHeader = placeholder;
   let bg = '';
   if (info && info.emoji) {
-    emojiHeader = `<div style="font-size:13px;line-height:1.2;margin-bottom:2px;" title="${info.label||''}">${info.emoji}</div>`;
+    emojiHeader = `<div style="height:18px;line-height:18px;margin-bottom:2px;font-size:14px;display:flex;align-items:center;justify-content:center;" title="${info.label||''}">${info.emoji}</div>`;
     if (info.tier === 'top')   bg='background:rgba(0,229,160,0.18);border-left:2px solid #00e5a0;';
     else if (info.tier === 'good') bg='background:rgba(0,229,160,0.08);border-left:2px solid #88d8a3;';
     else if (info.tier === 'warn') bg='background:rgba(255,210,62,0.10);border-left:2px solid #ffd23e;';
@@ -9006,7 +9006,7 @@ window._renderAnomalyCell = function(s) {
 // Placeholder сверху матчит emoji header в RSI cell — alignment с RSI/SMA колонками.
 window._renderTrendCell = function(s) {
   const tfs = ['15m', '1h', '4h', '1d'];
-  const placeholder = '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
+  const placeholder = '<div style="height:18px;line-height:18px;margin-bottom:2px;visibility:hidden;font-size:14px;">·</div>';
   const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
   let anyData = false;
   const cells = tfs.map(tf => {
@@ -9028,7 +9028,7 @@ window._renderTrendCell = function(s) {
   if (window._trendEdgeInfo) {
     const info = window._trendEdgeInfo(s);
     if (info && info.emoji) {
-      emojiHeader = `<div style="font-size:13px;line-height:1.2;margin-bottom:2px;" title="${info.label||''}">${info.emoji}</div>`;
+      emojiHeader = `<div style="height:18px;line-height:18px;margin-bottom:2px;font-size:14px;display:flex;align-items:center;justify-content:center;" title="${info.label||''}">${info.emoji}</div>`;
       if (info.tier === 'top')   { bg='background:rgba(0,229,160,0.18);'; border='border-left:2px solid #00e5a0;'; }
       else if (info.tier === 'good') { bg='background:rgba(0,229,160,0.08);'; border='border-left:2px solid #88d8a3;'; }
       else if (info.tier === 'warn') { bg='background:rgba(255,210,62,0.10);'; border='border-left:2px solid #ffd23e;'; }
@@ -9074,8 +9074,8 @@ window._renderRsiCell = function(s) {
   const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
   const tip = info.label || 'RSI(14) на свече сигнала';
   const emojiHeader = info.emoji
-    ? `<div style="font-size:13px;line-height:1.2;margin-bottom:2px;" title="${tip}">${info.emoji}</div>`
-    : '<div style="font-size:13px;line-height:1.2;margin-bottom:2px;visibility:hidden;">·</div>';
+    ? `<div style="height:18px;line-height:18px;margin-bottom:2px;font-size:14px;display:flex;align-items:center;justify-content:center;" title="${tip}">${info.emoji}</div>`
+    : '<div style="height:18px;line-height:18px;margin-bottom:2px;visibility:hidden;font-size:14px;">·</div>';
   return `<td class="mono" style="text-align:center;line-height:1.4;padding:4px 6px !important;${bg}${border}" title="${tip}">
     ${emojiHeader}
     <div>${tfLbl('15m')} ${fmt(r15)}</div>
