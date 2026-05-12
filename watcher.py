@@ -3764,6 +3764,18 @@ async def _cluster_delta_cache_loop():
         await _asyncio.sleep(420)  # 7 min
 
 
+async def _regime_warm_on_startup():
+    """Warm BTC EMA cache в первую же секунду — чтобы первый signal не ждал."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(15)  # дать watcher подняться
+    try:
+        from auto_strategy import detect_regime
+        regime = await _asyncio.to_thread(detect_regime)
+        logger.info(f"[regime-warm] startup regime cache: {regime}")
+    except Exception as e:
+        logger.debug(f"[regime-warm] fail: {e}")
+
+
 async def _regime_monitor_loop():
     """Каждые 5 мин сканирует market regime (BTC 4h+1d EMAs).
     При смене регима:
@@ -4264,6 +4276,7 @@ async def start_watcher():
     # ALPHA-CV Exit Monitor — каждые 3 мин проверяет открытые ALPHA-CV
     # позиции на 1h RSI < SMA(RSI) crossover. Закрывает momentum-loss signals.
     try:
+        asyncio.create_task(_regime_warm_on_startup())  # warm BTC EMA cache <30с после старта
         asyncio.create_task(_regime_monitor_loop())
         asyncio.create_task(_alpha_cv_exit_monitor())
         logger.info("[alpha-cv-exit] monitor scheduled")
