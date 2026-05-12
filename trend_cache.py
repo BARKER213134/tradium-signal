@@ -22,13 +22,13 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# Warmup: покрываем 14d journal window + EMA50 warmup (50 баров)
-# Старые значения (24h для 15m) давали пустоту для сигналов > 1 дня — fix
+# Warmup для EMA20/EMA50: достаточно для last 24h сигналов + 50 баров warmup
+# Слишком большие значения убивают CDN throughput (120 дней × 1d × 500 пар = blocked).
 TF_WARMUP_HOURS = {
-    '15m': 15 * 24,       # 15 дней = 1440 баров
-    '1h':  17 * 24,       # 17 дней = 408 баров
+    '15m': 96,            # 4 дня = 384 баров
+    '1h':  144,           # 6 дней = 144 баров
     '4h':  25 * 24,       # 25 дней = 150 баров (50 EMA + warmup)
-    '1d':  120 * 24,      # 120 дней (для EMA50 на дневке)
+    '1d':  90 * 24,       # 90 дней (для EMA50 на дневке)
 }
 TF_BUCKET_MS = {
     '15m': 15 * 60 * 1000,

@@ -616,10 +616,12 @@ def get_delta_snapshot_fast(pair: str, at_ts_ms: Optional[int] = None,
         _ensure_cache_indexes_once()
     except Exception:
         cd_col = None
-    # Окно baseline для anomaly z-score (30 свечей). Берём 35 чтоб иметь запас.
-    # Раньше брали только RESONANCE_BARS=5, поэтому anomaly cell в журнале была
-    # пустой - не хватало истории для расчёта std/mean baseline.
-    BASELINE_BARS = 35
+    # Окно baseline для anomaly z-score. Раньше брали только RESONANCE_BARS=5,
+    # из-за чего anomaly cell в журнале была пустой. Увеличили до 15 — этого
+    # хватит для grubo точного z-score (стандартная ошибка mean 1/sqrt(15) ~25%
+    # уже информативно). Полные 30 баров будут накапливаться органически через
+    # повторные fill'ы при работе bg loop.
+    BASELINE_BARS = 15
     for tf in timeframes:
         try:
             minutes = TF_MINUTES.get(tf)
