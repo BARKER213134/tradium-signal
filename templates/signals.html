@@ -7001,18 +7001,24 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
 
 <!-- Строка 2: Фильтры -->
 <div class="an-toolbar" style="padding:8px 18px;gap:6px;flex-wrap:wrap;">
-  <select id="jFilterVerdict" onchange="filterJournal()" title="Фильтр по Вердикту (агрегат RSI/SMA/Trend/Anomaly tiers)" style="background:linear-gradient(135deg, rgba(255,215,0,0.12), rgba(255,140,80,0.08));color:#ffd700;border:1px solid rgba(255,215,0,0.55);border-radius:6px;padding:5px 12px;font-size:11px;font-family:var(--font-mono);font-weight:700;letter-spacing:0.03em;">
+  <select id="jFilterVerdict" onchange="filterJournal()" title="Фильтр по Вердикту (агрегат RSI/SMA/Trend/Anomaly tiers + v3.0 regime)" style="background:linear-gradient(135deg, rgba(255,215,0,0.12), rgba(255,140,80,0.08));color:#ffd700;border:1px solid rgba(255,215,0,0.55);border-radius:6px;padding:5px 12px;font-size:11px;font-family:var(--font-mono);font-weight:700;letter-spacing:0.03em;">
     <option value="">🎯 Вердикт: все</option>
-    <option value="ELITE">🏆 ELITE (3+ top)</option>
-    <option value="STRONG">🔥 STRONG (2+ top)</option>
-    <option value="strict">🏆+🔥 STRICT (ELITE+STRONG)</option>
-    <option value="GOOD">✅ GOOD (1 top)</option>
-    <option value="OK">👍 OK (2+ good)</option>
-    <option value="MEH">⚪ MEH</option>
-    <option value="CAUTION">⚠ CAUTION</option>
-    <option value="SKIP">❌ SKIP</option>
-    <option value="no_skip">🚫 Скрыть SKIP</option>
-    <option value="positive">📈 Прибыльные (ELITE+STRONG+GOOD+OK)</option>
+    <optgroup label="── v3.0 (текущий regime) ──">
+      <option value="v3_accept">✅ v3.0 ПРИНЯЛ бы (открылась бы сделка)</option>
+      <option value="v3_reject">⛔ v3.0 ОТКЛОНИЛ бы (wrong regime/dir)</option>
+    </optgroup>
+    <optgroup label="── По качеству ──">
+      <option value="ELITE">🏆 ELITE (3+ top)</option>
+      <option value="STRONG">🔥 STRONG (2+ top)</option>
+      <option value="strict">🏆+🔥 STRICT (ELITE+STRONG)</option>
+      <option value="GOOD">✅ GOOD (1 top)</option>
+      <option value="OK">👍 OK (2+ good)</option>
+      <option value="MEH">⚪ MEH</option>
+      <option value="CAUTION">⚠ CAUTION</option>
+      <option value="SKIP">❌ SKIP</option>
+      <option value="no_skip">🚫 Скрыть SKIP</option>
+      <option value="positive">📈 Прибыльные (ELITE+STRONG+GOOD+OK)</option>
+    </optgroup>
   </select>
   <select id="jFilterSrc" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все источники</option>
@@ -8140,19 +8146,20 @@ function filterJournal() {
     if (window._journalHotOnly) {
       if ((s.q_score || 0) < 60) return false;
     }
-    // 🎯 Verdict filter (агрегат RSI/SMA/Trend/Anomaly tiers)
+    // 🎯 Verdict filter (агрегат RSI/SMA/Trend/Anomaly tiers + v3.0 regime)
     const verdictFilter = document.getElementById('jFilterVerdict');
     const vf = verdictFilter ? verdictFilter.value : '';
     if (vf && window._verdictInfo) {
-      const v = window._verdictInfo(s).tier.toUpperCase();
-      const verdictName = v === 'AVOID' ? 'SKIP' :
-                          v === 'ELITE' ? 'ELITE' :
-                          v === 'STRONG' ? 'STRONG' :
-                          v === 'GOOD' ? 'GOOD' :
-                          v === 'OK' ? 'OK' :
-                          v === 'WARN' ? 'CAUTION' :
-                          v === 'MEH' ? 'MEH' : v;
-      if (vf === 'strict') {
+      const info = window._verdictInfo(s);
+      // Quality tier (original): сохранён в original_tier (при v3 reject) или tier (при accept)
+      const quality = (info.original_tier || info.tier || '').toUpperCase();
+      const verdictName = quality === 'AVOID' ? 'SKIP' :
+                          quality === 'WARN' ? 'CAUTION' : quality;
+      if (vf === 'v3_accept') {
+        if (!info.v3_accept) return false;
+      } else if (vf === 'v3_reject') {
+        if (info.v3_accept !== false) return false;
+      } else if (vf === 'strict') {
         if (!['ELITE','STRONG'].includes(verdictName)) return false;
       } else if (vf === 'no_skip') {
         if (verdictName === 'SKIP') return false;
@@ -8602,14 +8609,35 @@ window._rsiEdgeInfo = function(s, rsi_4h, rsi_1h) {
   return {tier:'medium', emoji:'⚪', label:'нейтральная зона'};
 };
 
-// ─── VERDICT: summary эмоджи по сигналу (агрегат RSI/SMA/Trend/Anomaly edge tiers) ───
-// Основано на exhaustive backtest 5530 сигналов × 32 exit стратегий:
-//   🏆 ELITE   — 3+ top tiers (WR 99.3%, AvgR +1.63R, 280 trades)
-//   🔥 STRONG  — 2 top tiers (WR 83.5%, AvgR +1.36R, 708 trades)
-//   ✅ GOOD    — 1 top tier (WR 68-86%, AvgR +1.0..+2.18R)
-//   ⚪ MEH     — нейтральный (no top, no warn)
-//   ⚠ CAUTION — has warn (counter-trend etc.)
-//   ❌ SKIP    — has avoid (volume_surge / volcano / TC SHORT / vol_accum SHORT)
+// ─── REGIME cache (fetched from /api/auto-strategy/info) ───
+// Используется в _verdictInfo для regime-aware verdict (v3.0).
+window._currentRegime = window._currentRegime || null;
+window._currentRegimeConfig = window._currentRegimeConfig || null;
+window._regimeCacheTs = window._regimeCacheTs || 0;
+window._refreshRegimeCache = function() {
+  if (Date.now() - window._regimeCacheTs < 60000) return;
+  fetch('/api/auto-strategy/info').then(r => r.json()).then(info => {
+    if (info) {
+      window._currentRegime = info.current_regime || null;
+      window._currentRegimeConfig = info.regime_config || null;
+      window._regimeCacheTs = Date.now();
+    }
+  }).catch(() => {});
+};
+window._refreshRegimeCache();
+setInterval(() => window._refreshRegimeCache(), 60000);
+
+// ─── VERDICT v3.0 regime-aware ───
+// Объединяет quality (4 edges) + acceptance v3.0 для current regime.
+//
+// Regime config (mirror auto_strategy.REGIME_CONFIG):
+//   BULL: LONG only, verdicts={STRONG,ELITE}, size×0.5
+//   CHOP: both dirs, verdicts={GOOD,STRONG,ELITE}, size×2.0
+//   BEAR: SHORT only, verdicts={GOOD,STRONG,ELITE}, size×1.5
+//
+// Если v3.0 принял бы signal → original emoji (🏆/🔥/✅/...)
+// Если v3.0 отклонил бы (direction OR verdict против regime) → ⛔ REJECT
+// Если ВООБЩЕ SKIP (avoid edge) → ❌ SKIP всегда
 window._verdictInfo = function(s) {
   // Build tier list. RSI tier через _rsiEdgeInfo (если он есть)
   const tiers = [];
@@ -8627,45 +8655,91 @@ window._verdictInfo = function(s) {
   const topCount = tiers.filter(t => t === 'top').length;
   const goodCount = tiers.filter(t => t === 'good').length;
 
-  // PRIORITY: avoid > top tiers > warn > medium
+  // Compute base quality tier
+  let base;
   if (hasAvoid) {
-    return {emoji:'❌', label:'SKIP — есть avoid edge', tier:'avoid',
-             color:'#ff4d6d', bg:'rgba(255,77,109,0.22)',
-             expR: '−0.4 .. −1.0R'};
+    base = {emoji:'❌', tier:'SKIP', qualityLabel:'есть avoid edge',
+             color:'#ff4d6d', bg:'rgba(255,77,109,0.22)', expR:'−0.4 .. −1.0R'};
+  } else if (topCount >= 3) {
+    base = {emoji:'🏆', tier:'ELITE', qualityLabel:'3+ top edges',
+             color:'#ffd700', bg:'rgba(255,215,0,0.20)', expR:'+1.6 .. +2.2R'};
+  } else if (topCount >= 2) {
+    base = {emoji:'🔥', tier:'STRONG', qualityLabel:'2 top edges',
+             color:'#ff8c50', bg:'rgba(255,140,80,0.20)', expR:'+1.0 .. +1.5R'};
+  } else if (topCount >= 1) {
+    base = {emoji:'✅', tier:'GOOD', qualityLabel:'1 top edge',
+             color:'#00e5a0', bg:'rgba(0,229,160,0.15)', expR:'+0.7 .. +1.5R'};
+  } else if (hasWarn) {
+    base = {emoji:'⚠', tier:'CAUTION', qualityLabel:'counter-trend warn',
+             color:'#ffd23e', bg:'rgba(255,210,62,0.12)', expR:'−0.1 .. +0.3R'};
+  } else if (goodCount >= 2) {
+    base = {emoji:'👍', tier:'OK', qualityLabel:'multiple good edges',
+             color:'#88d8a3', bg:'rgba(136,216,163,0.12)', expR:'+0.3 .. +0.7R'};
+  } else {
+    base = {emoji:'⚪', tier:'MEH', qualityLabel:'нейтрально',
+             color:'#888', bg:'', expR:'~0R'};
   }
-  if (topCount >= 3) {
-    return {emoji:'🏆', label:'ELITE — 3+ top edges (backtest: WR 99.3%, +1.63R)',
-             tier:'elite', color:'#ffd700', bg:'rgba(255,215,0,0.20)',
-             expR: '+1.6 .. +2.2R'};
+
+  // SKIP всегда отклоняется (no regime override saves it)
+  if (base.tier === 'SKIP') {
+    return {...base, tierLower:'avoid', label:`SKIP — ${base.qualityLabel}`,
+             v3_accept:false, v3_reason:'avoid_edge'};
   }
-  if (topCount >= 2) {
-    return {emoji:'🔥', label:'STRONG — 2 top edges (backtest: WR 83.5%, +1.36R)',
-             tier:'strong', color:'#ff8c50', bg:'rgba(255,140,80,0.20)',
-             expR: '+1.0 .. +1.5R'};
+
+  // ─── v3.0 REGIME GATE — accept/reject by current regime + direction ───
+  const regime = window._currentRegime;
+  const cfg = window._currentRegimeConfig;
+  const direction = (s.direction || '').toUpperCase();
+
+  if (regime && cfg) {
+    const allowedDirs = cfg.directions || [];
+    const allowedVerdicts = (cfg.verdicts || []).map(v => v.toUpperCase());
+    let v3_reason = null;
+    if (direction && allowedDirs.length && !allowedDirs.includes(direction)) {
+      v3_reason = `regime_${regime}_direction_${direction}`;
+    } else if (!allowedVerdicts.includes(base.tier)) {
+      v3_reason = `regime_${regime}_verdict_${base.tier}`;
+    }
+    if (v3_reason) {
+      // v3.0 REJECT — показываем ⛔ + small badge с original tier
+      return {
+        emoji: '⛔',
+        tier: 'REJECT_' + base.tier,
+        tierLower: 'reject',
+        label: `⛔ v3.0 REJECT (regime=${regime}) · quality=${base.tier} ${base.qualityLabel}`,
+        color: '#7a8ba6',
+        bg: 'rgba(122,139,166,0.10)',
+        expR: 'n/a (отклонено)',
+        v3_accept: false,
+        v3_reason: v3_reason,
+        original_emoji: base.emoji,
+        original_tier: base.tier,
+      };
+    }
   }
-  if (topCount >= 1) {
-    return {emoji:'✅', label:'GOOD — 1 top edge (backtest: WR 70%, +1.0R)',
-             tier:'good', color:'#00e5a0', bg:'rgba(0,229,160,0.15)',
-             expR: '+0.7 .. +1.5R'};
-  }
-  if (hasWarn) {
-    return {emoji:'⚠', label:'CAUTION — counter-trend warning',
-             tier:'warn', color:'#ffd23e', bg:'rgba(255,210,62,0.12)',
-             expR: '−0.1 .. +0.3R'};
-  }
-  if (goodCount >= 2) {
-    return {emoji:'👍', label:'OK — multiple good edges',
-             tier:'ok', color:'#88d8a3', bg:'rgba(136,216,163,0.12)',
-             expR: '+0.3 .. +0.7R'};
-  }
-  return {emoji:'⚪', label:'MEH — нейтральная зона',
-           tier:'meh', color:'#888', bg:'',
-           expR: '~0R'};
+
+  // v3.0 ACCEPT (или regime unknown)
+  const regimeLabel = regime ? ` · ${regime} regime` : '';
+  return {
+    ...base,
+    tierLower: base.tier.toLowerCase(),
+    label: `${base.emoji} ${base.tier} — ${base.qualityLabel}${regimeLabel}`,
+    v3_accept: true,
+  };
 };
 
 window._renderVerdictCell = function(s) {
   const v = window._verdictInfo(s);
   const tip = `${v.label} · ожидаемый AvgR: ${v.expR}`;
+  // Если v3.0 reject — показываем ⛔ сверху + dimmed original emoji
+  if (v.v3_accept === false && v.original_emoji) {
+    return `<td class="mono" style="text-align:center;padding:6px 4px !important;${v.bg};" title="${tip}">
+      <div style="font-size:16px;line-height:1;">${v.emoji}</div>
+      <div style="font-size:12px;line-height:1;opacity:0.4;margin-top:1px;">${v.original_emoji}</div>
+      <div style="font-size:7px;color:${v.color};font-weight:700;margin-top:2px;letter-spacing:0.3px;">REJECT</div>
+    </td>`;
+  }
+  // Accept (или regime unknown) — full emoji
   return `<td class="mono" style="text-align:center;padding:6px 4px !important;${v.bg ? 'background:'+v.bg+';' : ''}" title="${tip}">
     <div style="font-size:20px;line-height:1;">${v.emoji}</div>
     <div style="font-size:8px;color:${v.color};font-weight:700;margin-top:2px;letter-spacing:0.5px;text-transform:uppercase;">${v.tier}</div>
@@ -8807,11 +8881,18 @@ window._toggleVerdictHelp = function(ev) {
     pop = document.createElement('div');
     pop.id = 'verdictHelpPopover';
     pop.innerHTML = `
-      <h4>🎯 Вердикт по сигналу — как читать</h4>
+      <h4>🎯 Вердикт по сигналу — v3.0 regime-aware</h4>
       <div style="color:var(--muted);font-size:10px;margin-bottom:10px;">
-        Агрегат 4 edge tiers (RSI / SMA / Trend / Anomaly) в одно решение.<br>
-        База: exhaustive backtest 5530 сигналов × 32 exit стратегий (14 дней).<br>
-        Использует best exit = trail_1R_0.5R (winner всех бэктестов).
+        Вердикт = quality (4 edges aligned) + текущий market regime (BTC EMAs).<br>
+        Если v3.0 принял бы сигнал → original emoji 🏆/🔥/✅/...<br>
+        Если v3.0 ОТКЛОНИЛ бы (wrong direction OR low verdict для regime) → ⛔ REJECT<br>
+        Например: 🏆 ELITE SHORT в BULL regime → ⛔ (только LONG в BULL).
+      </div>
+      <div style="color:var(--muted);font-size:10px;margin-bottom:8px;padding:6px 8px;background:rgba(178,139,255,0.08);border-radius:5px;">
+        <b>Regime rules:</b><br>
+        🚀 BULL: LONG only, STRONG+ELITE only, size ×0.5<br>
+        🌀 CHOP: оба dir, GOOD+STRONG+ELITE, size ×2.0<br>
+        📉 BEAR: SHORT only, GOOD+STRONG+ELITE, size ×1.5
       </div>
 
       <div class="v-row" style="background:rgba(255,215,0,0.10);padding:6px 8px;border-radius:5px;">
