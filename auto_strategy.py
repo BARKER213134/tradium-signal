@@ -367,27 +367,27 @@ MULTI_REGIME_ENABLED = True
 REGIME_CONFIG = {
     'BULL': {
         'allowed_directions': ('LONG',),
-        'allowed_verdicts': ('STRONG', 'ELITE'),
+        'allowed_verdicts': ('STRONG', 'ELITE'),     # strict — высокое качество для trend ride
         'exit_label': 'signal_tpsl',
-        'size_fraction': 0.30,                       # 30% от mode_max — низкий edge
+        'size_fraction': 1.00,                       # FULL mode max — ride the trend
         'use_be_at_1R': False,
-        'notes': 'BULL: LONG_STRICT (мизер edge +0.086R)',
+        'notes': 'BULL: LONG STRICT, full size — ride trend with quality signals only',
     },
     'CHOP': {
         'allowed_directions': ('LONG', 'SHORT'),
-        'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),
+        'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),  # широкий — оба direction
         'exit_label': 'be_at_1R',
-        'size_fraction': 1.00,                       # 100% от mode_max — лучший edge
+        'size_fraction': 0.80,                       # 80% — high but not max (uncertainty)
         'use_be_at_1R': True,
-        'notes': 'CHOP: both dirs no-SKIP, be_at_1R, AvgR +0.99R, full mode size',
+        'notes': 'CHOP: both dirs GOOD+, be_at_1R, 80% mode size — uncertainty cap',
     },
     'BEAR': {
         'allowed_directions': ('SHORT',),
-        'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),
+        'allowed_verdicts': ('STRONG', 'ELITE'),     # strict — высокое качество для trend ride
         'exit_label': 'be_at_1R',
-        'size_fraction': 0.75,                       # 75% от mode_max — mirror CHOP с dampening
+        'size_fraction': 1.00,                       # FULL mode max — ride downtrend
         'use_be_at_1R': True,
-        'notes': 'BEAR: SHORT GOOD+, be_at_1R, 75% mode size',
+        'notes': 'BEAR: SHORT STRICT, full size — ride trend with quality signals',
     },
 }
 
