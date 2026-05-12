@@ -10705,77 +10705,6 @@ def _compute_journal_sync():
                     if deltas:
                         it[f'resonance_{tf}'] = _resonance_from_deltas(deltas)
 
-            # ─── ANOMALY DETECTION: z-score delta_pct сигнальной свечи vs
-            # последних 30 свечей до неё. Time-budgeted: skip если медленно.
-            # Bulk $or через chunks чтоб не делать N round-trips.
-            try:
-                import time as _t_anom
-                _anom_t0 = _t_anom.time()
-                _ANOM_BUDGET_S = 2.5  # max время на enrich
-                from collections import defaultdict
-                BASELINE_BARS = 30
-                # Группируем сигналы по (pair, tf) → list of (item, sig_open)
-                sig_by_pt: dict = defaultdict(list)
-                for it in items:
-                    ats = it.get('at_ts') or 0
-                    pair = it.get('pair') or ''
-                    if not (ats and pair):
-                        continue
-                    if ats < delta_cutoff_ts:
-                        continue
-                    for tf in ('15m', '1h', '4h'):
-                        sig_open = _candle_open_ms(ats * 1000, tf)
-                        sig_by_pt[(pair, tf)].append((it, sig_open))
-                # Один bulk $or query через chunks (вместо N find'ов)
-                tf_minutes = {'15m': 15, '1h': 60, '4h': 240}
-                or_conds = []
-                for (pair, tf), sig_list in sig_by_pt.items():
-                    bucket_ms = tf_minutes[tf] * 60 * 1000
-                    min_open = min(o for _, o in sig_list)
-                    max_open = max(o for _, o in sig_list)
-                    range_start = min_open - BASELINE_BARS * bucket_ms
-                    or_conds.append({
-                        'pair': pair, 'tf': tf,
-                        'open_ms': {'$gte': range_start, '$lte': max_open},
-                    })
-                # Chunked find — 50 conds/chunk (range query тяжелее обычного)
-                docs_by_pt: dict = defaultdict(dict)
-                CHUNK_ANOM = 50
-                for i in range(0, len(or_conds), CHUNK_ANOM):
-                    if _t_anom.time() - _anom_t0 > _ANOM_BUDGET_S:
-                        logging.getLogger(__name__).debug(
-                            f"[journal] anomaly z-score budget exceeded, partial")
-                        break
-                    try:
-                        for doc in cd_col.find(
-                                {'$or': or_conds[i:i+CHUNK_ANOM]},
-                                {'pair':1,'tf':1,'open_ms':1,
-                                 'delta_pct':1,'_id':0}):
-                            docs_by_pt[(doc['pair'], doc['tf'])][
-                                doc['open_ms']] = float(doc.get('delta_pct') or 0)
-                    except Exception:
-                        pass
-                # Compute z-scores per signal
-                for (pair, tf), sig_list in sig_by_pt.items():
-                    by_open = docs_by_pt.get((pair, tf), {})
-                    if not by_open:
-                        continue
-                    sorted_opens = sorted(by_open.keys())
-                    for it, sig_open in sig_list:
-                        preceding = [by_open[o] for o in sorted_opens
-                                      if o < sig_open][-BASELINE_BARS:]
-                        sig_delta = by_open.get(sig_open)
-                        if sig_delta is None or len(preceding) < 10:
-                            continue
-                        mean = sum(preceding) / len(preceding)
-                        var = sum((d - mean)**2 for d in preceding) / len(preceding)
-                        std = var ** 0.5
-                        if std < 0.1:
-                            continue
-                        z = (sig_delta - mean) / std
-                        it[f'delta_zscore_{tf}'] = round(z, 2)
-            except Exception as _e:
-                logging.getLogger(__name__).debug(f"[journal] anomaly z-score fail: {_e}")
             # ─── INLINE fast fill для свежих сигналов (last 6h) ───
             # Через klines (1 запрос/TF/пара = 5 свечей резонанса).
             # Параллельно через ThreadPoolExecutor, бюджет 4с total.
@@ -10869,6 +10798,74 @@ def _compute_journal_sync():
                         pass
                 _th.Thread(target=_bg_fill, daemon=True,
                           name='delta-bg-fill').start()
+
+            # ─── ANOMALY DETECTION: z-score delta_pct сигнальной свечи vs
+            # 30 свечей до неё. Запускается ПОСЛЕ inline fill чтобы свежие
+            # baseline candles были в cluster_delta. Time-budgeted 2.5s.
+            try:
+                import time as _t_anom
+                _anom_t0 = _t_anom.time()
+                _ANOM_BUDGET_S = 2.5
+                from collections import defaultdict
+                BASELINE_BARS = 30
+                sig_by_pt: dict = defaultdict(list)
+                for it in items:
+                    ats = it.get('at_ts') or 0
+                    pair = it.get('pair') or ''
+                    if not (ats and pair):
+                        continue
+                    if ats < delta_cutoff_ts:
+                        continue
+                    for tf in ('15m', '1h', '4h'):
+                        sig_open = _candle_open_ms(ats * 1000, tf)
+                        sig_by_pt[(pair, tf)].append((it, sig_open))
+                tf_minutes = {'15m': 15, '1h': 60, '4h': 240}
+                or_conds = []
+                for (pair, tf), sig_list in sig_by_pt.items():
+                    bucket_ms = tf_minutes[tf] * 60 * 1000
+                    min_open = min(o for _, o in sig_list)
+                    max_open = max(o for _, o in sig_list)
+                    range_start = min_open - BASELINE_BARS * bucket_ms
+                    or_conds.append({
+                        'pair': pair, 'tf': tf,
+                        'open_ms': {'$gte': range_start, '$lte': max_open},
+                    })
+                docs_by_pt: dict = defaultdict(dict)
+                CHUNK_ANOM = 50
+                for i in range(0, len(or_conds), CHUNK_ANOM):
+                    if _t_anom.time() - _anom_t0 > _ANOM_BUDGET_S:
+                        logging.getLogger(__name__).debug(
+                            f"[journal] anomaly z-score budget exceeded, partial")
+                        break
+                    try:
+                        for doc in cd_col.find(
+                                {'$or': or_conds[i:i+CHUNK_ANOM]},
+                                {'pair':1,'tf':1,'open_ms':1,
+                                 'delta_pct':1,'_id':0}):
+                            docs_by_pt[(doc['pair'], doc['tf'])][
+                                doc['open_ms']] = float(doc.get('delta_pct') or 0)
+                    except Exception:
+                        pass
+                for (pair, tf), sig_list in sig_by_pt.items():
+                    by_open = docs_by_pt.get((pair, tf), {})
+                    if not by_open:
+                        continue
+                    sorted_opens = sorted(by_open.keys())
+                    for it, sig_open in sig_list:
+                        preceding = [by_open[o] for o in sorted_opens
+                                      if o < sig_open][-BASELINE_BARS:]
+                        sig_delta = by_open.get(sig_open)
+                        if sig_delta is None or len(preceding) < 10:
+                            continue
+                        mean = sum(preceding) / len(preceding)
+                        var = sum((d - mean)**2 for d in preceding) / len(preceding)
+                        std = var ** 0.5
+                        if std < 0.1:
+                            continue
+                        z = (sig_delta - mean) / std
+                        it[f'delta_zscore_{tf}'] = round(z, 2)
+            except Exception as _e:
+                logging.getLogger(__name__).debug(f"[journal] anomaly z-score fail: {_e}")
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] delta enrich fail: {e}")
 
@@ -10902,45 +10899,88 @@ def _compute_journal_sync():
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] q_score fail: {e}")
 
-    # ─── Trend 15m/1h/4h/1d enrichment из Mongo (signal_trend_cache) ───
-    try:
-        from trend_cache import bulk_get_trend_for_items
-        bulk_get_trend_for_items(items)
-    except Exception as e:
-        logging.getLogger(__name__).warning(f"[journal] trend enrich fail: {e}")
-
-    # ─── RSI 15m/1h/4h/1d enrichment из Mongo cache (signal_rsi_cache) ───
+    # ─── RSI 15m/1h/4h/1d enrichment из Mongo (signal_rsi_cache) ───
+    # + INLINE FILL для miss'ов (за last 6h) c budget 3.5s
     try:
         from rsi_cache import bulk_get_rsi_for_items, fill_pair_rsi
         bulk_get_rsi_for_items(items)
-        # Fallback: для items за last 10 мин БЕЗ RSI — fire background fill
-        # (если bg loop не успел или signal hook не запустился).
-        import time as _t_rsi2
-        import threading as _th_rsi
-        cutoff_10m = int(_t_rsi2.time()) - 600
+        # INLINE FILL: для items с пустыми RSI (любой TF из 1h/4h/1d) → fetch+cache+re-read
+        import time as _t_rsi
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        cutoff_6h = int(_t_rsi.time()) - 6 * 3600
         missing_pairs = set()
         for it in items:
             ats = it.get('at_ts') or 0
-            if ats < cutoff_10m:
+            if ats < cutoff_6h:
                 continue
             pair = it.get('pair') or ''
             if not pair:
                 continue
-            if it.get('rsi_1h') is None and it.get('rsi_4h') is None:
+            # Считаем missing если ANY of 1h/4h/1d пустой
+            if (it.get('rsi_1h') is None or it.get('rsi_4h') is None
+                    or it.get('rsi_1d') is None):
                 missing_pairs.add(pair)
         if missing_pairs:
-            # Лимит 10 fill'ов за рендер чтобы не нагрузить CDN
-            to_fill = list(missing_pairs)[:10]
-            def _bg_fill():
-                for p in to_fill:
-                    try:
-                        fill_pair_rsi(p)
-                    except Exception:
-                        pass
-            _th_rsi.Thread(target=_bg_fill, daemon=True,
-                           name='rsi-inline-fill').start()
+            to_fill = list(missing_pairs)[:20]  # cap 20 pairs/render
+            _t_start = _t_rsi.time()
+            try:
+                with ThreadPoolExecutor(max_workers=8) as ex:
+                    futs = {ex.submit(fill_pair_rsi, p): p for p in to_fill}
+                    for f in as_completed(futs, timeout=3.5):
+                        try:
+                            f.result(timeout=0.1)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            # После fill — re-read cache для свежих данных
+            if _t_rsi.time() - _t_start < 4.0:
+                try:
+                    bulk_get_rsi_for_items(items)
+                except Exception:
+                    pass
     except Exception as e:
-        logging.getLogger(__name__).warning(f"[journal] rsi read fail: {e}")
+        logging.getLogger(__name__).warning(f"[journal] rsi enrich fail: {e}")
+
+    # ─── Trend 15m/1h/4h/1d enrichment из Mongo (signal_trend_cache) ───
+    # + INLINE FILL для miss'ов (за last 6h)
+    try:
+        from trend_cache import bulk_get_trend_for_items, fill_pair_trend
+        bulk_get_trend_for_items(items)
+        # INLINE FILL для items с пустым trend на 1h/4h
+        import time as _t_tr
+        from concurrent.futures import ThreadPoolExecutor as _TPE_tr, as_completed as _ac_tr
+        cutoff_6h_tr = int(_t_tr.time()) - 6 * 3600
+        missing_pairs_tr = set()
+        for it in items:
+            ats = it.get('at_ts') or 0
+            if ats < cutoff_6h_tr:
+                continue
+            pair = it.get('pair') or ''
+            if not pair:
+                continue
+            if (it.get('trend_1h') is None or it.get('trend_4h') is None):
+                missing_pairs_tr.add(pair)
+        if missing_pairs_tr:
+            to_fill_tr = list(missing_pairs_tr)[:20]
+            _t_start_tr = _t_tr.time()
+            try:
+                with _TPE_tr(max_workers=8) as ex:
+                    futs = {ex.submit(fill_pair_trend, p): p for p in to_fill_tr}
+                    for f in _ac_tr(futs, timeout=3.5):
+                        try:
+                            f.result(timeout=0.1)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            if _t_tr.time() - _t_start_tr < 4.0:
+                try:
+                    bulk_get_trend_for_items(items)
+                except Exception:
+                    pass
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] trend enrich fail: {e}")
 
     return {"items": items}
 
