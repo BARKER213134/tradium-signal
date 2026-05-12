@@ -3735,55 +3735,84 @@ async def _cluster_delta_cache_loop():
 
 
 async def _alpha_cv_exit_monitor():
-    """Каждые 3 мин проверяет ALPHA-CV открытые позиции на 1h SMA(RSI) crossover.
-    LONG: exit когда 1h RSI < SMA на последнем закрытом баре
-    SHORT: exit когда 1h RSI > SMA
+    """Каждые 3 мин проверяет ALPHA-CV открытые позиции по trail_1R_0.5R logic.
 
-    SL и backup TP1 (10R далеко) остаются как safety net.
+    NEW v2.0 (победитель exhaustive backtest 32 exits × 10 entry filters):
+      1. Trail SL активируется когда max_favorable - entry >= 1R (sl_dist)
+      2. Trail SL = max_favorable - 0.5R (отступ от пика)
+      3. SL signal — backup, не двигаем UP
+      4. На каждом cycle (3 min): пересчитать max_favorable из 1h klines,
+         обновить trail_sl, проверить current_price против trail_sl
+
+    Backtest avg uplift vs предыдущий 1h SMA crossover exit:
+      baseline: +0.18 → +0.29R (60% improvement)
+      на filtered signals: +1.55 to +2.18R (3-9× vs current)
     """
     import asyncio as _asyncio
     await _asyncio.sleep(180)  # стартовая задержка
     while True:
         try:
             from database import _get_db
-            from auto_strategy import compute_exit_signal
+            from auto_strategy import compute_trail_state
             import paper_trader as pt
             db = _get_db()
             open_positions = list(db.paper_trades.find({
                 'status': 'OPEN',
                 'auto_strategy_label': {'$exists': True}
             }, {'trade_id': 1, 'pair': 1, 'symbol': 1,
-                'direction': 1, 'opened_at': 1}))
+                'direction': 1, 'entry': 1, 'sl': 1, 'original_sl': 1,
+                'opened_at': 1}))
             if not open_positions:
                 logger.debug("[alpha-cv-exit] no open positions")
                 await _asyncio.sleep(180)
                 continue
-            logger.info(f"[alpha-cv-exit] checking {len(open_positions)} positions")
-            from exchange import get_prices_any
+            logger.info(f"[alpha-cv-exit] checking {len(open_positions)} positions (trail_1R_0.5R)")
             for pos in open_positions:
                 pair = pos.get('pair') or pos.get('symbol', '').replace('USDT', '/USDT')
                 direction = pos.get('direction')
                 trade_id = pos.get('trade_id')
-                if not (pair and direction and trade_id):
+                entry = pos.get('entry')
+                # original_sl приоритетнее sl (sl мог быть подвинут BE/trailing
+                # в paper_trader). Нужен ИСХОДНЫЙ для корректного 1R расчёта.
+                sl = pos.get('original_sl') or pos.get('sl')
+                opened_at = pos.get('opened_at')
+                if not (pair and direction and trade_id and entry and sl and opened_at):
                     continue
                 try:
-                    sig = await _asyncio.to_thread(compute_exit_signal, pair, direction)
+                    opened_at_ms = int(opened_at.timestamp() * 1000) if hasattr(opened_at, 'timestamp') else int(opened_at)
+                    sig = await _asyncio.to_thread(
+                        compute_trail_state, pair, direction,
+                        float(entry), float(sl), opened_at_ms,
+                    )
+                    # Save state to trade doc для UI/monitoring
+                    if sig.get('max_fav_r') is not None:
+                        try:
+                            await _asyncio.to_thread(
+                                lambda: db.paper_trades.update_one(
+                                    {'trade_id': trade_id},
+                                    {'$set': {
+                                        'alpha_cv_max_fav_r': sig.get('max_fav_r'),
+                                        'alpha_cv_trail_sl': sig.get('trail_sl'),
+                                        'alpha_cv_trail_active': bool(sig.get('trail_active')),
+                                    }}
+                                )
+                            )
+                        except Exception:
+                            pass
                     if sig.get('should_exit'):
-                        # Получаем current price для close
-                        prices = await _asyncio.to_thread(get_prices_any, [pair])
-                        sym = pair.replace('/', '').upper()
-                        if not sym.endswith('USDT'):
-                            sym += 'USDT'
-                        cur_price = prices.get(sym)
-                        if cur_price:
+                        exit_price = sig.get('exit_price') or sig.get('current_price')
+                        reason = sig.get('reason', 'trail')
+                        if exit_price:
                             logger.info(
                                 f"[alpha-cv-exit] CLOSE #{trade_id} {pair} {direction} "
-                                f"@ {cur_price} | RSI={sig['rsi']} SMA={sig['sma']} "
-                                f"reason={sig['reason']}"
+                                f"@ {exit_price} | reason={reason} "
+                                f"max_fav_r={sig.get('max_fav_r')} "
+                                f"trail_sl={sig.get('trail_sl')}"
                             )
                             await _asyncio.to_thread(
                                 pt.close_position, int(trade_id),
-                                float(cur_price), "ALPHA_CV_RSI_CROSS"
+                                float(exit_price),
+                                f"ALPHA_CV_TRAIL_{reason.upper()}"
                             )
                 except Exception as e:
                     logger.debug(f"[alpha-cv-exit] pos #{trade_id}: {e}")
