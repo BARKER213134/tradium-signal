@@ -6586,6 +6586,12 @@ async def api_paper_accepts(limit: int = 200):
                 "score": t.get("score"),
                 "is_top_pick": bool(t.get("is_top_pick")),
                 "ai_reasoning": t.get("ai_reasoning"),
+                # v3.0 fields: regime/verdict/version при открытии
+                "auto_strategy_regime": t.get("auto_strategy_regime"),
+                "auto_strategy_verdict": t.get("auto_strategy_verdict"),
+                "auto_strategy_version": t.get("auto_strategy_version"),
+                "auto_strategy_label": t.get("auto_strategy_label"),
+                "auto_strategy_reason": t.get("auto_strategy_reason"),
                 "status": t.get("status"),
                 "pnl_usdt": t.get("pnl_usdt"),
                 "pnl_pct": t.get("pnl_pct"),

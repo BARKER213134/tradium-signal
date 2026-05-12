@@ -5952,6 +5952,10 @@ async function loadAccepts() {
 
       // Парсим reasoning — ищем секции
       const reasoning = (it.ai_reasoning || it.reasoning || '');
+      // v3.0 fields из trade doc
+      const regime = it.auto_strategy_regime;
+      const verdict = it.auto_strategy_verdict;
+      const version = it.auto_strategy_version;
       // Извлечь основные сигналы для матча
       const signals = [];
       if (it.entry) signals.push(`Entry: <b>${it.entry}</b>`);
@@ -5960,6 +5964,32 @@ async function loadAccepts() {
       if (it.leverage) signals.push(`×${it.leverage}`);
       if (it.size_pct) signals.push(`${it.size_pct}%`);
       if (it.score != null) signals.push(`score=<b>${it.score}</b>`);
+
+      // v3.0 badges
+      let v3Badges = '';
+      if (regime) {
+        const regStyles = {
+          BULL: {bg:'rgba(0,229,160,0.18)', border:'#00e5a0', color:'#00e5a0', emoji:'🚀'},
+          BEAR: {bg:'rgba(255,77,109,0.18)', border:'#ff4d6d', color:'#ff4d6d', emoji:'📉'},
+          CHOP: {bg:'rgba(122,139,166,0.15)', border:'#a8b6c8', color:'#a8b6c8', emoji:'🌀'},
+        };
+        const rs = regStyles[regime] || regStyles.CHOP;
+        v3Badges += `<span style="padding:1px 7px;background:${rs.bg};border:1px solid ${rs.border};color:${rs.color};border-radius:8px;font-size:9px;font-weight:700;letter-spacing:0.03em;">${rs.emoji} ${regime}</span>`;
+      }
+      if (verdict) {
+        const vEmojis = {ELITE:'🏆', STRONG:'🔥', GOOD:'✅', OK:'👍', MEH:'⚪', CAUTION:'⚠', SKIP:'❌'};
+        const vCol = {ELITE:'#ffd700', STRONG:'#ff8c50', GOOD:'#00e5a0', OK:'#88d8a3', MEH:'#888', CAUTION:'#ffd23e', SKIP:'#ff4d6d'};
+        const ve = vEmojis[verdict] || '?';
+        const vc = vCol[verdict] || '#888';
+        v3Badges += `<span style="padding:1px 7px;background:${vc}22;border:1px solid ${vc}55;color:${vc};border-radius:8px;font-size:9px;font-weight:700;margin-left:4px;">${ve} ${verdict}</span>`;
+      }
+      if (version) {
+        v3Badges += `<span style="padding:1px 6px;background:rgba(178,139,255,0.12);border:1px solid rgba(178,139,255,0.35);color:#b28bff;border-radius:8px;font-size:9px;font-weight:700;margin-left:4px;">${version}</span>`;
+      }
+
+      // Humanize reasoning (accept reason)
+      const h = window._humanizeReason ? window._humanizeReason(reasoning) : null;
+      const col = (h && window._reasonColors && window._reasonColors[h.cls]) || window._reasonColors.accept;
 
       // Phase + checks из reasoning
       const checksList = (it.entry_checks || []).map(c => {
@@ -5978,15 +6008,20 @@ async function loadAccepts() {
           <span class="mono fw-700" style="min-width:55px;">${pair}</span>
           <span class="mono fw-700" style="color:${dirC};">${it.direction || ''}</span>
           <span>${se} ${it.source || ''}</span>
+          ${v3Badges}
           <span class="mono text-muted" style="font-size:10px;">${tp}</span>
           <span style="margin-left:auto;font-family:var(--font-mono);font-size:10.5px;">${pnlBadge}</span>
         </div>
         <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-bottom:5px;">
           ${signals.join(' · ')}
         </div>
-        <div style="color:var(--text);padding:4px 6px;background:rgba(0,229,160,0.05);border-left:2px solid rgba(0,229,160,0.4);font-size:11px;line-height:1.4;margin-bottom:6px;">
+        ${h ? `<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 10px;background:${col.bg};border-left:3px solid ${col.border};border-radius:0 4px 4px 0;margin-bottom:6px;">
+          <span style="font-size:14px;line-height:1.2;">${h.emoji}</span>
+          <span style="color:${col.text};font-size:11px;line-height:1.4;font-weight:600;flex:1;">${h.label}</span>
+          <span class="mono text-muted" style="font-size:9px;opacity:0.5;" title="Raw machine reason">${reasoning.replace(/</g,'&lt;').slice(0, 60)}</span>
+        </div>` : `<div style="color:var(--text);padding:4px 6px;background:rgba(0,229,160,0.05);border-left:2px solid rgba(0,229,160,0.4);font-size:11px;line-height:1.4;margin-bottom:6px;">
           ${reasoning.replace(/</g,'&lt;') || '<span style="color:var(--muted)">нет описания</span>'}
-        </div>
+        </div>`}
         ${checksList ? `<div style="background:rgba(255,255,255,0.02);border-radius:4px;padding:4px;margin-top:4px;">${checksList}</div>` : ''}
       </div>`;
     }).join('');
@@ -5994,6 +6029,126 @@ async function loadAccepts() {
     body.innerHTML = `<div style="padding:20px;color:var(--sell);">Ошибка сети: ${e.message}</div>`;
   }
 }
+
+// ─── Human-readable reason translator ───
+// Преобразует машинные reject/accept reasons в понятный русский с emoji.
+window._humanizeReason = function(reason) {
+  if (!reason) return {emoji:'❓', label:'неизвестная причина', cls:'neutral'};
+  const r = String(reason);
+
+  // v3.0 multi-regime
+  if (r.startsWith('regime_BULL_skip_direction')) {
+    return {emoji:'❌', label:`BULL рынок: торгуем ТОЛЬКО LONG (SHORT отклонён)`, cls:'reject'};
+  }
+  if (r.startsWith('regime_BEAR_skip_direction')) {
+    return {emoji:'❌', label:`BEAR рынок: торгуем ТОЛЬКО SHORT (LONG отклонён)`, cls:'reject'};
+  }
+  if (r.startsWith('regime_BULL_skip_verdict')) {
+    const v = r.split('=')[1] || '?';
+    return {emoji:'❌', label:`BULL рынок: нужно STRONG/ELITE, качество = ${v}`, cls:'reject'};
+  }
+  if (r.startsWith('regime_BEAR_skip_verdict')) {
+    const v = r.split('=')[1] || '?';
+    return {emoji:'❌', label:`BEAR рынок: нужно GOOD/STRONG/ELITE, качество = ${v}`, cls:'reject'};
+  }
+  if (r.startsWith('regime_CHOP_skip_verdict')) {
+    const v = r.split('=')[1] || '?';
+    return {emoji:'❌', label:`CHOP рынок: нужно GOOD+, качество = ${v}`, cls:'reject'};
+  }
+  // Accepts с regime
+  if (r.startsWith('regime_BULL')) {
+    return {emoji:'🚀', label:`BULL regime · LONG STRICT (passes)`, cls:'accept'};
+  }
+  if (r.startsWith('regime_CHOP')) {
+    return {emoji:'🌀', label:`CHOP regime · GOOD+ passes (2× size)`, cls:'accept'};
+  }
+  if (r.startsWith('regime_BEAR')) {
+    return {emoji:'📉', label:`BEAR regime · SHORT GOOD+ (passes)`, cls:'accept'};
+  }
+
+  // Auto-pause
+  if (r.startsWith('auto_pause:')) {
+    return {emoji:'⏸', label:`AUTO-PAUSE: rolling loss too high — пауза 24h`, cls:'pause'};
+  }
+
+  // STRICT mode (v2.1)
+  if (r.startsWith('strict_skip_verdict')) {
+    const v = r.split('=')[1] || '?';
+    return {emoji:'❌', label:`STRICT mode: нужно ELITE/STRONG, у нас ${v}`, cls:'reject'};
+  }
+  if (r.startsWith('strict_ELITE') || r.startsWith('strict_STRONG')) {
+    const parts = r.split('_');
+    return {emoji:'✅', label:`STRICT accept · ${parts[1]} verdict`, cls:'accept'};
+  }
+
+  // Source filters
+  if (r.startsWith('source_not_whitelisted')) {
+    const src = r.split('=')[1] || '?';
+    return {emoji:'❌', label:`Источник '${src}' не в whitelist (low edge)`, cls:'reject'};
+  }
+  if (r.startsWith('cv_tier=against')) {
+    return {emoji:'❌', label:`CV против потока (tier=against, low edge)`, cls:'reject'};
+  }
+  if (r === 'cv_no_tier_default_mixed') {
+    return {emoji:'✅', label:`CV (tier=mixed default — нет cluster_delta)`, cls:'accept'};
+  }
+  if (r.startsWith('cv_')) {
+    const parts = r.split('_');
+    return {emoji:'✅', label:`CV ${parts[1] || ''} ${parts[2] || ''}`.trim(), cls:'accept'};
+  }
+  if (r.startsWith('sf_filter_failed')) {
+    return {emoji:'❌', label:`Second Flip требует LONG+match`, cls:'reject'};
+  }
+  if (r.startsWith('sf_long')) {
+    return {emoji:'✅', label:`Second Flip LONG (passes)`, cls:'accept'};
+  }
+  if (r.startsWith('tc_filter_failed')) {
+    return {emoji:'❌', label:`Triple Confluence требует LONG+mixed`, cls:'reject'};
+  }
+  if (r.startsWith('tc_long')) {
+    return {emoji:'✅', label:`Triple Confluence LONG (passes)`, cls:'accept'};
+  }
+
+  // Price extension
+  if (r.startsWith('extended_short')) {
+    return {emoji:'❌', label:`Цена SHORT на дне диапазона — bounce risk`, cls:'reject'};
+  }
+  if (r.startsWith('extended_long')) {
+    return {emoji:'❌', label:`Цена LONG на вершине диапазона — dump risk`, cls:'reject'};
+  }
+
+  // Time / capital
+  if (r.startsWith('bad_hour')) {
+    const h = r.split('=')[1] || '?';
+    return {emoji:'❌', label:`Час ${h}:00 UTC в bad-list (WR<31%)`, cls:'reject'};
+  }
+  if (r.startsWith('bad_weekday')) {
+    const wd = parseInt(r.split('=')[1] || '0');
+    const names = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+    return {emoji:'❌', label:`${names[wd]} в bad-list`, cls:'reject'};
+  }
+  if (r.startsWith('q_score')) {
+    return {emoji:'❌', label:`Quality Score ниже порога`, cls:'reject'};
+  }
+  if (r.startsWith('capital_gate:')) {
+    return {emoji:'⛔', label:`Risk gate: ${r.split(':',2)[1].trim()}`, cls:'risk'};
+  }
+  if (r.startsWith('[ALPHA-CV]')) {
+    return {emoji:'❌', label:r.replace('[ALPHA-CV]','').trim(), cls:'reject'};
+  }
+
+  // Default fallback
+  return {emoji:'•', label:r.slice(0, 80), cls:'neutral'};
+};
+
+// CSS classes для reasons
+window._reasonColors = {
+  accept:  {bg:'rgba(0,229,160,0.10)',  border:'#00e5a0',  text:'#00e5a0'},
+  reject:  {bg:'rgba(255,77,109,0.08)', border:'#ff4d6d',  text:'#ff4d6d'},
+  pause:   {bg:'rgba(255,210,62,0.10)', border:'#ffd23e',  text:'#ffd23e'},
+  risk:    {bg:'rgba(178,139,255,0.10)',border:'#b28bff',  text:'#b28bff'},
+  neutral: {bg:'rgba(255,255,255,0.04)',border:'#7a8ba6',  text:'#aaa'},
+};
 
 // 🛑 Отказы AI — гармошка (почему не вошёл в сделку)
 async function toggleRejections() {
@@ -6037,16 +6192,23 @@ async function loadRejections() {
       const se = srcEmoji[it.source] || '•';
       const tp = it.is_top_pick ? '👑' : '';
       const score = it.score != null ? `· ${it.score}` : '';
-      const reason = (it.reasoning || '').replace(/</g,'&lt;');
+      const rawReason = (it.reasoning || '');
+      // Humanize
+      const h = window._humanizeReason ? window._humanizeReason(rawReason) : {emoji:'❌', label:rawReason, cls:'reject'};
+      const col = (window._reasonColors && window._reasonColors[h.cls]) || window._reasonColors.reject;
       return `<div style="padding:9px 14px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:11px;">
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px;">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:5px;">
           <span class="mono text-muted" style="font-size:10px;">${when}</span>
           <span class="mono fw-700" style="min-width:60px;">${pair}</span>
           <span class="mono fw-700" style="color:${dirC};">${it.direction || ''}</span>
           <span>${se} ${it.source || ''}</span>
           <span class="mono text-muted" style="font-size:10px;">${score} ${tp}</span>
         </div>
-        <div style="color:var(--text);padding-left:2px;font-size:11px;line-height:1.4;">${reason}</div>
+        <div style="display:flex;gap:8px;align-items:flex-start;padding:6px 10px;background:${col.bg};border-left:3px solid ${col.border};border-radius:0 4px 4px 0;">
+          <span style="font-size:14px;line-height:1.2;">${h.emoji}</span>
+          <span style="color:${col.text};font-size:11px;line-height:1.4;font-weight:600;flex:1;">${h.label}</span>
+          <span class="mono text-muted" style="font-size:9px;opacity:0.5;" title="Raw machine reason">${rawReason.replace(/</g,'&lt;').slice(0, 50)}</span>
+        </div>
       </div>`;
     }).join('');
   } catch (e) {
