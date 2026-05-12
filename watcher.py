@@ -3764,6 +3764,99 @@ async def _cluster_delta_cache_loop():
         await _asyncio.sleep(420)  # 7 min
 
 
+async def _regime_monitor_loop():
+    """Каждые 5 мин сканирует market regime (BTC 4h+1d EMAs).
+    При смене регима:
+      1. Логирует событие в auto_strategy_regime_log (Mongo)
+      2. Сохраняет в system.auto_strategy_current_regime
+      3. Закрывает open positions с direction ПРОТИВ нового regime:
+         - BEAR detected → закрыть все LONG ALPHA-CV positions
+         - BULL detected → закрыть все SHORT ALPHA-CV positions
+         - CHOP detected → не трогаем (оба направления OK)
+
+    Это защищает капитал от резкой смены тренда (например, BTC обвал → закрываем
+    все LONGs не дожидаясь SL по каждому).
+    """
+    import asyncio as _asyncio
+    await _asyncio.sleep(120)  # startup delay (после auto_strategy import)
+    last_regime = None
+    while True:
+        try:
+            from auto_strategy import detect_regime
+            from database import _get_db
+            from datetime import datetime as _dt, timezone as _tz
+            db = _get_db()
+            new_regime = await _asyncio.to_thread(detect_regime)
+            now = _dt.now(_tz.utc)
+            if last_regime is None:
+                # First scan — load last known from Mongo
+                cached = db.system.find_one({'_id': 'auto_strategy_current_regime'})
+                last_regime = cached.get('regime') if cached else None
+            if new_regime != last_regime:
+                logger.warning(
+                    f"[regime-monitor] REGIME CHANGED: {last_regime} → {new_regime}"
+                )
+                # Log event
+                try:
+                    db.auto_strategy_regime_log.insert_one({
+                        'at': now,
+                        'from_regime': last_regime,
+                        'to_regime': new_regime,
+                        'detected_by': 'auto',
+                    })
+                except Exception as e:
+                    logger.debug(f'[regime-monitor] log fail: {e}')
+                # Update current regime
+                try:
+                    db.system.update_one(
+                        {'_id': 'auto_strategy_current_regime'},
+                        {'$set': {
+                            'regime': new_regime,
+                            'changed_at': now,
+                            'previous': last_regime,
+                        }},
+                        upsert=True,
+                    )
+                except Exception:
+                    pass
+                # ── PROTECT CAPITAL: close positions against new regime ──
+                if new_regime in ('BULL', 'BEAR'):
+                    bad_direction = 'SHORT' if new_regime == 'BULL' else 'LONG'
+                    open_against = list(db.paper_trades.find({
+                        'status': 'OPEN',
+                        'auto_strategy_label': {'$exists': True},
+                        'direction': bad_direction,
+                    }, {'trade_id': 1, 'pair': 1, 'symbol': 1,
+                        'direction': 1, 'entry': 1}))
+                    if open_against:
+                        logger.warning(
+                            f"[regime-monitor] {new_regime}: закрываю "
+                            f"{len(open_against)} {bad_direction} positions"
+                        )
+                        from exchange import get_prices_any
+                        import paper_trader as pt
+                        for pos in open_against:
+                            try:
+                                pair = pos.get('pair') or pos['symbol'].replace('USDT','/USDT')
+                                prices = await _asyncio.to_thread(get_prices_any, [pair])
+                                sym = pos['symbol']
+                                if not sym.endswith('USDT'): sym += 'USDT'
+                                cur = prices.get(sym)
+                                if cur:
+                                    await _asyncio.to_thread(
+                                        pt.close_position,
+                                        int(pos['trade_id']),
+                                        float(cur),
+                                        f'REGIME_CHANGE_{new_regime}',
+                                    )
+                            except Exception as e:
+                                logger.debug(f'[regime-close] {pos.get("trade_id")}: {e}')
+                last_regime = new_regime
+        except Exception:
+            logger.exception('[regime-monitor] cycle error')
+        await _asyncio.sleep(300)  # 5 мин
+
+
 async def _alpha_cv_exit_monitor():
     """Каждые 3 мин проверяет ALPHA-CV открытые позиции по trail_1R_0.5R logic.
 
@@ -4171,6 +4264,7 @@ async def start_watcher():
     # ALPHA-CV Exit Monitor — каждые 3 мин проверяет открытые ALPHA-CV
     # позиции на 1h RSI < SMA(RSI) crossover. Закрывает momentum-loss signals.
     try:
+        asyncio.create_task(_regime_monitor_loop())
         asyncio.create_task(_alpha_cv_exit_monitor())
         logger.info("[alpha-cv-exit] monitor scheduled")
     except Exception:

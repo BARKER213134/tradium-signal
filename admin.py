@@ -11460,10 +11460,21 @@ async def api_auto_strategy_info():
         # v3.0: current market regime + pause state
         current_regime = None
         regime_config = None
+        regime_changed_at = None
+        regime_previous = None
         try:
             from auto_strategy import detect_regime, REGIME_CONFIG
             current_regime = await asyncio.to_thread(detect_regime)
             regime_config = REGIME_CONFIG.get(current_regime, {})
+            # Last regime change from Mongo
+            from database import _get_db
+            db = _get_db()
+            cur_doc = db.system.find_one({'_id': 'auto_strategy_current_regime'})
+            if cur_doc:
+                regime_changed_at = cur_doc.get('changed_at')
+                regime_previous = cur_doc.get('previous')
+                if hasattr(regime_changed_at, 'isoformat'):
+                    regime_changed_at = regime_changed_at.isoformat()
         except Exception:
             pass
         pause_state = None
@@ -11494,6 +11505,8 @@ async def api_auto_strategy_info():
                 "size_mult": regime_config.get('size_mult'),
                 "notes": regime_config.get('notes'),
             } if regime_config else None,
+            "regime_changed_at": regime_changed_at,
+            "regime_previous": regime_previous,
             "pause": pause_state,
             "rules": {
                 "entry_whitelist": [
