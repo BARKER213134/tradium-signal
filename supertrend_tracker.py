@@ -377,30 +377,39 @@ async def _alert_signal(sig: dict) -> None:
     # === 2. Paper trader — AI решает входить или нет ===
     # Передаём все 3 tier'а. VIP и MTF имеют хорошую edge по бектесту,
     # Daily — слабее но тоже попадёт в ai_decide чтобы AI сам решил.
+    pair = sig.get("pair") or ""
+    symbol = sig.get("pair_norm") or pair.replace("/", "").upper()
+    # tier → score mapping (чтобы AI видел силу)
+    tier_score = {"vip": 9, "mtf": 7, "daily": 5}.get(tier, 5)
+    paper_payload = {
+        "symbol": symbol,
+        "pair": pair,
+        "direction": sig.get("direction"),
+        "entry": sig.get("entry_price"),
+        "tp1": None,                       # trailing via ST — AI сам поставит
+        "sl": sig.get("sl_price"),
+        "source": "supertrend",
+        "score": tier_score,
+        "pattern": f"ST {tier.upper()}",
+        "st_tier": tier,
+        "is_top_pick": tier == "vip",
+        "aligned_bots": sig.get("aligned_bots", []),
+        "aligned_tfs": sig.get("aligned_tfs", []),
+    }
     try:
         from watcher import _paper_on_signal
-        pair = sig.get("pair") or ""
-        symbol = sig.get("pair_norm") or pair.replace("/", "").upper()
-        # tier → score mapping (чтобы AI видел силу)
-        tier_score = {"vip": 9, "mtf": 7, "daily": 5}.get(tier, 5)
-        # Флаг is_top_pick для VIP — AI применит boost
-        await _paper_on_signal({
-            "symbol": symbol,
-            "pair": pair,
-            "direction": sig.get("direction"),
-            "entry": sig.get("entry_price"),
-            "tp1": None,                       # trailing via ST — AI сам поставит
-            "sl": sig.get("sl_price"),
-            "source": "supertrend",
-            "score": tier_score,
-            "pattern": f"ST {tier.upper()}",
-            "st_tier": tier,
-            "is_top_pick": tier == "vip",
-            "aligned_bots": sig.get("aligned_bots", []),
-            "aligned_tfs": sig.get("aligned_tfs", []),
-        })
+        await _paper_on_signal(paper_payload)
     except Exception as e:
-        logger.debug(f"[st-tracker] paper route fail: {e}")
+        # User reported "сигнал в Telegram, но в Отказах его нет" — раньше
+        # тут был тихий debug-лог. Теперь пишем явный rejection чтобы UI
+        # показывал что сигнал был получен, но обработка упала.
+        logger.warning(f"[st-tracker] paper route fail: {e}", exc_info=True)
+        try:
+            import paper_trader as pt
+            pt._log_rejection_sync(paper_payload,
+                f'[CRASH] supertrend→paper exception — {type(e).__name__}: {str(e)[:200]}')
+        except Exception:
+            pass
 
 
 async def _process_pair(pair_norm: str, alert_enabled: bool = True) -> int:

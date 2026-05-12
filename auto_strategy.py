@@ -971,6 +971,210 @@ EXIT_TRAIL_DISTANCE_R = 0.5  # trailing distance in R (after TP1 hit)
 EXIT_TIMEOUT_HOURS = 24
 
 
+# ─── SMART SL (source-aware structure-based stop loss) ─────────────
+# Backtest 7d × 1003 signals × be_at_1R exit (commit reference):
+#   SIGNAL : N=1001 WR=27.9% AvgR=+0.077 PF=1.16 Total=+76.7R
+#   SMA_RSI: N=942  WR=35.5% AvgR=+0.121 PF=1.32 Total=+113.8R ← overall best
+#   ATR_2X : N=1003 WR=40.7% AvgR=+0.060 PF=1.16 Total=+60.2R
+#   HYBRID : N=1003 WR=42.6% AvgR=+0.061 PF=1.18 Total=+60.8R
+# Per-source winners:
+#   cryptovizor       (338): SMA_RSI BEST (+0.009 vs SIGNAL -0.141)
+#   supertrend        (330): ATR_2X best  (+0.190 vs SIGNAL +0.142)
+#   vol_accum         (131): SMA_RSI best (+0.194)
+#   second_flip       ( 89): SIGNAL BEST  (+0.570 — DO NOT touch)
+#   triple_confluence ( 53): HYBRID best  (+0.070)
+# Sanity bounds: structure SL clamped to [1.5× ATR, 3.5× ATR] of entry.
+SMART_SL_ENABLED = True
+SMART_SL_ATR_MULT = 2.0           # ATR fallback distance (between 1.5 and 3.5)
+SMART_SL_MIN_ATR_MULT = 1.5       # min SL distance in ATR multiples
+SMART_SL_MAX_ATR_MULT = 3.5       # max SL distance in ATR multiples
+SMART_SL_RSI_LOOKBACK_BARS = 60   # max bars back to search SMA(RSI) cross on 15m
+
+# Per-source SL method (lower() of signal source). Default = HYBRID.
+SMART_SL_RULES = {
+    'cryptovizor':       'SMA_RSI',
+    'vol_accum':         'SMA_RSI',
+    'triple_confluence': 'HYBRID',
+    'supertrend':        'ATR_2X',
+    'supertrend_vip':    'ATR_2X',
+    'supertrend_mtf':    'ATR_2X',
+    'supertrend_daily':  'ATR_2X',
+    'second_flip':       'SIGNAL',   # +0.570R AvgR — keep signal SL untouched
+}
+
+
+def _smart_rsi_series(closes, p=14):
+    """Wilder RSI series (None until warmup complete)."""
+    n = len(closes)
+    if n < p + 1:
+        return [None] * n
+    rsi = [None] * n
+    gains, losses = [0.0], [0.0]
+    for i in range(1, n):
+        ch = closes[i] - closes[i - 1]
+        gains.append(max(ch, 0))
+        losses.append(max(-ch, 0))
+    avg_g = sum(gains[1:p + 1]) / p
+    avg_l = sum(losses[1:p + 1]) / p
+    rsi[p] = 100.0 if avg_l == 0 else (100 - 100 / (1 + avg_g / avg_l))
+    for i in range(p + 1, n):
+        avg_g = (avg_g * (p - 1) + gains[i]) / p
+        avg_l = (avg_l * (p - 1) + losses[i]) / p
+        rsi[i] = 100.0 if avg_l == 0 else (100 - 100 / (1 + avg_g / avg_l))
+    return rsi
+
+
+def _smart_sma_series(values, p=14):
+    """Simple moving average of a series with None gaps."""
+    out = [None] * len(values)
+    buf = []
+    s = 0.0
+    for i, v in enumerate(values):
+        if v is None:
+            continue
+        buf.append(v)
+        s += v
+        if len(buf) > p:
+            s -= buf.pop(0)
+        if len(buf) == p:
+            out[i] = s / p
+    return out
+
+
+def find_sma_rsi_cross_sl(pair: str, direction: str, entry: float,
+                          buffer: float = 0.003,
+                          max_lookback_bars: int = SMART_SL_RSI_LOOKBACK_BARS) -> Optional[float]:
+    """Find SL price under low of last SMA(RSI) crossover on 15m.
+
+    LONG  → look for upward RSI/SMA cross (RSI was below SMA, now above),
+            SL = low_of_cross_bar × (1 - buffer)
+    SHORT → mirror (downward cross, SL = high × (1 + buffer))
+
+    Returns None if no valid cross within lookback or SL ends up on wrong side
+    of entry.
+    """
+    try:
+        from exchange import get_klines_any
+        candles = get_klines_any(pair, '15m', 200) or []
+        if len(candles) < 30:
+            return None
+        closes = [float(c.get('c', 0) or 0) for c in candles]
+        rsi = _smart_rsi_series(closes, 14)
+        sma_rsi = _smart_sma_series(rsi, 14)
+        is_long = (direction or '').upper() == 'LONG'
+        # Walk back from last fully closed bar (len-2) up to lookback limit
+        start_idx = len(candles) - 2
+        end_idx = max(15, start_idx - max_lookback_bars)
+        for i in range(start_idx, end_idx, -1):
+            if (rsi[i] is None or rsi[i - 1] is None or
+                    sma_rsi[i] is None or sma_rsi[i - 1] is None):
+                continue
+            if is_long:
+                if rsi[i - 1] < sma_rsi[i - 1] and rsi[i] > sma_rsi[i]:
+                    cross_low = float(candles[i].get('l', 0) or 0)
+                    if cross_low <= 0:
+                        continue
+                    sl = cross_low * (1 - buffer)
+                    if sl < entry:
+                        return sl
+            else:
+                if rsi[i - 1] > sma_rsi[i - 1] and rsi[i] < sma_rsi[i]:
+                    cross_high = float(candles[i].get('h', 0) or 0)
+                    if cross_high <= 0:
+                        continue
+                    sl = cross_high * (1 + buffer)
+                    if sl > entry:
+                        return sl
+        return None
+    except Exception as e:
+        logger.debug(f'[smart-sl] find_sma_rsi_cross_sl fail {pair}: {e}')
+        return None
+
+
+def compute_atr_1h(pair: str, period: int = 14) -> Optional[float]:
+    """ATR on 1h candles. Returns None on insufficient data."""
+    try:
+        from exchange import get_klines_any
+        candles = get_klines_any(pair, '1h', period + 16) or []
+        if len(candles) < period + 1:
+            return None
+        trs = []
+        prev_close = None
+        for c in candles:
+            h = float(c.get('h', 0) or 0)
+            l = float(c.get('l', 0) or 0)
+            cl = float(c.get('c', 0) or 0)
+            if prev_close is not None:
+                tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
+                trs.append(tr)
+            prev_close = cl
+        if len(trs) < period:
+            return None
+        return sum(trs[-period:]) / period
+    except Exception as e:
+        logger.debug(f'[smart-sl] compute_atr_1h fail {pair}: {e}')
+        return None
+
+
+def smart_sl(signal_sl: float, entry: float, direction: str,
+             source: str, pair: str) -> tuple[float, str]:
+    """Source-aware Smart SL placement.
+
+    Returns: (sl_price, method_label) — sl_price может быть == signal_sl если fallback.
+
+    Methods:
+      SIGNAL  — leave signal SL untouched (second_flip best AvgR with this)
+      SMA_RSI — last SMA(RSI) cross on 15m, clamped to [1.5× ATR, 3.5× ATR]
+      ATR_2X  — entry ± 2× ATR(1h)
+      HYBRID  — SMA_RSI if it lands in [1.5× ATR, 3.5× ATR] window, else ATR_2X
+    """
+    if not SMART_SL_ENABLED or not entry or not signal_sl:
+        return signal_sl, 'SIGNAL_disabled'
+    direction = (direction or '').upper()
+    if direction not in ('LONG', 'SHORT'):
+        return signal_sl, 'SIGNAL_bad_dir'
+    src = (source or '').lower()
+    method = SMART_SL_RULES.get(src, 'HYBRID')
+    if method == 'SIGNAL':
+        return signal_sl, 'SIGNAL'
+    is_long = direction == 'LONG'
+    atr = compute_atr_1h(pair)
+    if not atr or atr <= 0:
+        return signal_sl, 'SIGNAL_no_atr'
+    atr_sl = (entry - SMART_SL_ATR_MULT * atr) if is_long else (entry + SMART_SL_ATR_MULT * atr)
+    atr_min_sl = (entry - SMART_SL_MIN_ATR_MULT * atr) if is_long else (entry + SMART_SL_MIN_ATR_MULT * atr)
+    atr_max_sl = (entry - SMART_SL_MAX_ATR_MULT * atr) if is_long else (entry + SMART_SL_MAX_ATR_MULT * atr)
+
+    def _in_bounds(sl_val: float) -> bool:
+        if is_long:
+            # SL должен быть ниже entry; atr_max_sl (3.5 ATR away) < atr_min_sl (1.5 ATR away)
+            return atr_max_sl <= sl_val <= atr_min_sl
+        # SHORT: SL выше entry; atr_min_sl (1.5 ATR) < atr_max_sl (3.5 ATR)
+        return atr_min_sl <= sl_val <= atr_max_sl
+
+    if method == 'ATR_2X':
+        return atr_sl, 'ATR_2X'
+
+    if method == 'SMA_RSI':
+        struct_sl = find_sma_rsi_cross_sl(pair, direction, entry)
+        if struct_sl is None:
+            return atr_sl, 'SMA_RSI_fallback_ATR'
+        if not _in_bounds(struct_sl):
+            return atr_sl, 'SMA_RSI_out_of_bounds_ATR'
+        return struct_sl, 'SMA_RSI'
+
+    if method == 'HYBRID':
+        struct_sl = find_sma_rsi_cross_sl(pair, direction, entry)
+        if struct_sl is None:
+            return atr_sl, 'HYBRID_fallback_ATR'
+        if _in_bounds(struct_sl):
+            return struct_sl, 'HYBRID_SMA_RSI'
+        return atr_sl, 'HYBRID_ATR'
+
+    # Unknown method label — keep signal SL
+    return signal_sl, f'SIGNAL_unknown_method_{method}'
+
+
 def compute_exit_state_v3(pair: str, direction: str, entry_price: float,
                            sl_price: float, opened_at_ms: int,
                            regime: str = 'CHOP') -> dict:

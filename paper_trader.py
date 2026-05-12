@@ -129,15 +129,30 @@ def get_stats() -> dict:
 
 
 def get_rejections(limit: int = 50) -> list:
-    """Последние N отказов AI от сделок (enter=false) — для UI-лога."""
+    """Последние N отказов от сделок — для UI-лога.
+
+    Возвращает и `symbol`, и `pair` (нормализованный из symbol если пуст в БД).
+    Старые rejection-документы могли быть записаны без pair — нормализуем
+    on-read чтобы UI фильтр по паре работал и для исторических записей.
+    """
     from database import _get_db
     db = _get_db()
     out = []
     try:
         for r in db.paper_rejections.find({}).sort("at", -1).limit(limit):
             at = r.get("at")
+            sym = r.get("symbol") or ""
+            pair = r.get("pair") or ""
+            # On-read normalization for legacy docs
+            if not pair and sym:
+                sym_up = sym.upper()
+                if sym_up.endswith("USDT") and len(sym_up) > 4:
+                    pair = sym_up[:-4] + "/USDT"
+                elif "/" in sym_up:
+                    pair = sym_up
             out.append({
-                "symbol": r.get("symbol"),
+                "symbol": sym,
+                "pair": pair,
                 "direction": r.get("direction"),
                 "source": r.get("source"),
                 "score": r.get("score"),
@@ -1376,12 +1391,31 @@ async def ai_review_trade(trade: dict) -> str:
 
 
 def _log_rejection_sync(signal_data: dict, reason: str):
-    """Пишет в paper_rejections БЕЗ AI. Sync-версия для не-async вызывающих."""
+    """Пишет в paper_rejections БЕЗ AI. Sync-версия для не-async вызывающих.
+
+    ВАЖНО: нормализуем `pair` из `symbol` если pair пуст. Cryptovizor /
+    supertrend / new_strategies сигналы часто приходят с symbol='OPNUSDT'
+    без поля pair → раньше rejection писался с pair='' и фильтр UI по
+    паре не находил сигнал. Юзер видел сигнал в Telegram, но в "Отказах"
+    его не было при поиске по паре.
+    """
     try:
+        sym = signal_data.get("symbol", "") or ""
+        pair = signal_data.get("pair", "") or ""
+        # Normalize pair from symbol if missing
+        if not pair and sym:
+            sym_up = sym.upper()
+            if sym_up.endswith("USDT") and len(sym_up) > 4:
+                pair = sym_up[:-4] + "/USDT"
+            elif "/" in sym_up:
+                pair = sym_up
+        # Normalize symbol from pair if missing
+        if not sym and pair:
+            sym = pair.replace("/", "").upper()
         from database import _get_db
         _get_db().paper_rejections.insert_one({
-            "symbol": signal_data.get("symbol", ""),
-            "pair": signal_data.get("pair", ""),
+            "symbol": sym,
+            "pair": pair,
             "direction": signal_data.get("direction", ""),
             "source": signal_data.get("source", ""),
             "score": signal_data.get("score"),
@@ -1530,8 +1564,19 @@ async def on_signal(signal_data: dict):
     pair = signal_data.get("pair") or (symbol.replace("USDT", "/USDT") if "USDT" in symbol else symbol)
     direction = (signal_data.get("direction") or "").upper()
     source = (signal_data.get("source") or "").lower()
+    # Ensure pair is set in signal_data так чтобы все downstream rejections
+    # имели нормальную пару (а не пустую строку) — фиксим UI search by pair.
+    if pair and not signal_data.get("pair"):
+        signal_data["pair"] = pair
 
     if not pair or direction not in ("LONG", "SHORT"):
+        # Силно битый сигнал — раньше тихо return None. Теперь хотя бы залогируем
+        # причину чтобы юзер мог отследить.
+        try:
+            _log_rejection_sync(signal_data,
+                f"[BAD-INPUT] pair={pair!r} direction={direction!r} — нечего обрабатывать")
+        except Exception:
+            pass
         return None
 
     # ── 0z. ALPHA-CV strategy gate (Mongo flag или env var) ──
@@ -1670,7 +1715,11 @@ async def on_signal(signal_data: dict):
     open_pos = get_open_positions()
     if len(open_pos) >= MAX_POSITIONS:
         logger.info(f"Paper SKIP (max): {symbol} — {MAX_POSITIONS} открыто")
-        return None  # тихий отказ без rejections-лога
+        # Раньше был тихий return None — юзер видел сигнал в Telegram, но в
+        # "Отказах" его не было. Теперь явный rejection чтобы видеть лимит.
+        _log_rejection(signal_data,
+            f"[MAX-POSITIONS] открыто {len(open_pos)}/{MAX_POSITIONS} — ждём закрытия")
+        return None
 
     # Дубль на этой паре?
     pair_norm = pair.replace("/", "").upper()
@@ -1799,6 +1848,35 @@ async def on_signal(signal_data: dict):
             size_pct = round(alpha_mult, 2)
             if size_pct > 5.0:
                 size_pct = 5.0
+        # Smart SL override (source-aware structure-based stop)
+        # Backtest 7d: per-source rules from auto_strategy.SMART_SL_RULES.
+        # second_flip→SIGNAL (best +0.570R), CV/vol_accum→SMA_RSI, ST→ATR_2X.
+        # Live mirror picks up the new SL from paper_trades.sl automatically.
+        sl_method = 'SIGNAL_skipped'
+        original_sl_for_log = sl
+        try:
+            import auto_strategy as _ast
+            new_sl, sl_method = await asyncio.to_thread(
+                _ast.smart_sl,
+                float(sl), float(entry), direction, source, pair,
+            )
+            if new_sl and float(new_sl) > 0 and abs(float(new_sl) - float(sl)) / max(float(sl), 1e-9) > 1e-4:
+                # Sanity: SL должен быть на правильной стороне entry
+                if direction == 'LONG' and new_sl >= entry:
+                    logger.warning(f"[ALPHA-CV] smart_sl invalid for LONG: new_sl={new_sl} >= entry={entry} → keep signal SL")
+                elif direction == 'SHORT' and new_sl <= entry:
+                    logger.warning(f"[ALPHA-CV] smart_sl invalid for SHORT: new_sl={new_sl} <= entry={entry} → keep signal SL")
+                else:
+                    logger.info(
+                        f"[ALPHA-CV v3.0] Smart SL ({sl_method}): {sl} → {new_sl} "
+                        f"({pair} {direction} src={source})"
+                    )
+                    sl = float(new_sl)
+        except Exception as _e:
+            logger.warning(f"[ALPHA-CV] smart_sl fail: {_e}")
+            sl_method = f'SIGNAL_error_{type(_e).__name__}'
+        signal_data['_alpha_cv_smart_sl_method'] = sl_method
+        signal_data['_alpha_cv_smart_sl_original'] = float(original_sl_for_log)
         # TP1 для ALPHA-CV v3.0 — зависит от regime:
         #   CHOP/BEAR (be_at_1R exit) → пушим TP1 на 10R далеко (monitor закрывает на BE)
         #   BULL (signal_tpsl exit)   → ОСТАВЛЯЕМ оригинальный signal TP1
@@ -1848,6 +1926,8 @@ async def on_signal(signal_data: dict):
                     'auto_strategy_version': 'v3.0',
                     'auto_strategy_regime': _regime,
                     'auto_strategy_verdict': _verdict,
+                    'auto_strategy_smart_sl_method': signal_data.get('_alpha_cv_smart_sl_method'),
+                    'auto_strategy_smart_sl_original': signal_data.get('_alpha_cv_smart_sl_original'),
                     'strict_mode_open': _strict,
                 }}
             )

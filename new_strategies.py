@@ -613,8 +613,22 @@ async def _auto_paper_for_strategies(triggered: list[dict], pair: str,
         await asyncio.wait_for(pt.on_signal(signal_data), timeout=30.0)
     except asyncio.TimeoutError:
         logger.warning(f'[new-strategies] auto-paper TIMEOUT {best["strategy"]}/{pair}')
+        # Silent timeouts → user-invisible: пишем явный rejection чтобы сигнал
+        # появился в вкладке "Отказы" а не пропал в логах.
+        try:
+            import paper_trader as pt
+            pt._log_rejection_sync(signal_data,
+                f'[TIMEOUT] auto-paper >30s — {best["strategy"]}/{pair}')
+        except Exception:
+            pass
     except Exception as e:
         logger.warning(f'[new-strategies] auto-paper fail {best["strategy"]}/{pair}: {e}')
+        try:
+            import paper_trader as pt
+            pt._log_rejection_sync(signal_data,
+                f'[CRASH] auto-paper exception — {type(e).__name__}: {str(e)[:200]}')
+        except Exception:
+            pass
 
 
 async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,

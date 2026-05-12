@@ -1204,17 +1204,31 @@ async def _cv_alert_followup(signal: Signal, pattern: str, current_price: float,
     Запускается через asyncio.create_task — НЕ блокирует доставку Telegram.
     Каждый sub-step с timeout — не накапливаем висящие задачи."""
     # 1) Paper trader (открытие позиции) — bounded 20с
+    cv_payload = {
+        "symbol": sym, "direction": signal.direction, "entry": current_price,
+        "source": "cryptovizor", "pattern": pattern,
+        "score": getattr(signal, "ai_score", None),
+        "pump_vol": 0, "pump_oi": 0,
+    }
     try:
-        await asyncio.wait_for(_paper_on_signal({
-            "symbol": sym, "direction": signal.direction, "entry": current_price,
-            "source": "cryptovizor", "pattern": pattern,
-            "score": getattr(signal, "ai_score", None),
-            "pump_vol": 0, "pump_oi": 0,
-        }), timeout=20.0)
+        await asyncio.wait_for(_paper_on_signal(cv_payload), timeout=20.0)
     except asyncio.TimeoutError:
+        # Раньше тихо терялись — теперь юзер увидит явный rejection в UI.
         logger.warning(f"[CV-ALERT-FU] paper timeout 20s #{signal.id}")
+        try:
+            import paper_trader as pt
+            pt._log_rejection_sync(cv_payload,
+                f'[TIMEOUT] cv-followup paper >20s #{signal.id}')
+        except Exception:
+            pass
     except Exception as e:
         logger.warning(f"[CV-ALERT-FU] paper fail #{signal.id}: {e}")
+        try:
+            import paper_trader as pt
+            pt._log_rejection_sync(cv_payload,
+                f'[CRASH] cv-followup exception — {type(e).__name__}: {str(e)[:200]}')
+        except Exception:
+            pass
 
     # 2) Cluster check — bounded 10с
     try:
