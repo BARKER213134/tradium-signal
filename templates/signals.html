@@ -3903,7 +3903,13 @@ setInterval(_loadStrategyHeader, 30000);
       </div>
     </div>
     <div>
-      <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">Последние сделки</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;">Последние сделки</div>
+        <div id="atHistoryStratBadge" style="font-family:var(--font-mono);font-size:9px;color:var(--muted);display:flex;gap:6px;align-items:center;" title="Версия активной стратегии">
+          <span style="opacity:0.6;">strategy:</span>
+          <span id="atHistoryStratName" style="background:rgba(178,139,255,0.12);border:1px solid rgba(178,139,255,0.35);color:#b28bff;padding:1px 8px;border-radius:10px;font-weight:700;letter-spacing:0.05em;">loading…</span>
+        </div>
+      </div>
       <div id="atHistory" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;min-height:100px;">
         <div style="padding:30px;text-align:center;color:var(--muted);font-size:12px;">Нет закрытых сделок</div>
       </div>
@@ -4467,6 +4473,24 @@ async function loadPaperStatus() {
   } catch {}
 
   // История — гармошка (как позиции)
+  // Подгружаем strategy version в badge (cached 60s)
+  try {
+    if (!window._atStratInfoCachedAt || (Date.now() - window._atStratInfoCachedAt) > 60000) {
+      fetch('/api/auto-strategy/info').then(r => r.json()).then(info => {
+        const badge = document.getElementById('atHistoryStratName');
+        if (badge && info) {
+          const enabled = info.enabled ? '🟢' : '⏸';
+          badge.textContent = `${enabled} ${info.name || 'ALPHA-CV'} ${info.version || ''}`;
+          const wr = info.backtest && info.backtest.win_rate_pct;
+          const avgr = info.backtest && info.backtest.avg_r_per_trade;
+          const desc = info.description || '';
+          badge.title = `${desc}\n\nBacktest: WR ${wr}% · AvgR +${avgr}R · PF ${info.backtest && info.backtest.profit_factor}`;
+          if (!info.enabled) badge.style.opacity = '0.55';
+        }
+        window._atStratInfoCachedAt = Date.now();
+      }).catch(() => {});
+    }
+  } catch {}
   try {
     const r2 = await fetch('/api/paper/history?limit=20');
     const d2 = await r2.json();
