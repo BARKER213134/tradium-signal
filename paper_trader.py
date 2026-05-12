@@ -159,6 +159,15 @@ def get_rejections(limit: int = 50) -> list:
                 "pattern": r.get("pattern"),
                 "is_top_pick": r.get("is_top_pick"),
                 "reasoning": r.get("reasoning", ""),
+                # RSI per TF на момент сигнала (legacy записи будут пустыми)
+                "rsi_15m": r.get("rsi_15m"),
+                "rsi_1h": r.get("rsi_1h"),
+                "rsi_4h": r.get("rsi_4h"),
+                "rsi_1d": r.get("rsi_1d"),
+                "sma_rsi_15m": r.get("sma_rsi_15m"),
+                "sma_rsi_1h": r.get("sma_rsi_1h"),
+                "sma_rsi_4h": r.get("sma_rsi_4h"),
+                "sma_rsi_1d": r.get("sma_rsi_1d"),
                 "at": at.isoformat() if hasattr(at, "isoformat") else str(at or ""),
             })
     except Exception as e:
@@ -1423,6 +1432,15 @@ def _log_rejection_sync(signal_data: dict, reason: str):
             "is_top_pick": bool(signal_data.get("is_top_pick")),
             "is_cluster": bool(signal_data.get("is_cluster")),
             "reasoning": str(reason)[:800],
+            # RSI snapshot per TF на момент сигнала (фикс "хочу видеть RSI в Отказах")
+            "rsi_15m": signal_data.get("rsi_15m"),
+            "rsi_1h": signal_data.get("rsi_1h"),
+            "rsi_4h": signal_data.get("rsi_4h"),
+            "rsi_1d": signal_data.get("rsi_1d"),
+            "sma_rsi_15m": signal_data.get("sma_rsi_15m"),
+            "sma_rsi_1h": signal_data.get("sma_rsi_1h"),
+            "sma_rsi_4h": signal_data.get("sma_rsi_4h"),
+            "sma_rsi_1d": signal_data.get("sma_rsi_1d"),
             "at": _utcnow(),
         })
     except Exception:
@@ -1598,6 +1616,19 @@ async def on_signal(signal_data: dict):
         # Если symbols registry глючит — НЕ блокируем сигнал, пропускаем дальше.
         # Watcher уже сделал check раньше для большинства путей.
         logger.debug(f"[paper] F0 check error: {_fe}")
+
+    # ── RSI ENRICH (15m/1h/4h/1d) ──
+    # Заполняем сразу после F0 чтобы все downstream rejections + open
+    # имели RSI в БД. Юзер хочет видеть RSI на момент сигнала в вкладках
+    # "Входы" / "Отказы". One Mongo $or query — fast (<200ms typical).
+    try:
+        import time as _t
+        if not signal_data.get('at_ts'):
+            signal_data['at_ts'] = int(_t.time())
+        from rsi_cache import bulk_get_rsi_for_items
+        await asyncio.to_thread(bulk_get_rsi_for_items, [signal_data])
+    except Exception as _re:
+        logger.debug(f"[paper] RSI enrich fail: {_re}")
 
     # ── 0z. ALPHA-CV strategy gate (Mongo flag или env var) ──
     # Включается через POST /api/auto-strategy/enable или env AUTO_STRATEGY_ALPHA_CV=1.
@@ -1923,6 +1954,19 @@ async def on_signal(signal_data: dict):
         symbol, direction, entry, tp1, sl,
         leverage, size_pct, source or "?", reasoning,
     )
+    # RSI snapshot per TF на момент сигнала — для UI "Входы" / post-mortem
+    try:
+        trades_col, _ = _get_collections()
+        rsi_set = {}
+        for tf in ('15m','1h','4h','1d'):
+            r = signal_data.get(f'rsi_{tf}')
+            s = signal_data.get(f'sma_rsi_{tf}')
+            if r is not None: rsi_set[f'rsi_{tf}'] = r
+            if s is not None: rsi_set[f'sma_rsi_{tf}'] = s
+        if rsi_set:
+            trades_col.update_one({'trade_id': pos['trade_id']}, {'$set': rsi_set})
+    except Exception as _re:
+        logger.debug(f'[paper] RSI annotate fail: {_re}')
     # Аннотируем trade auto_strategy метаданными для post-mortem
     if signal_data.get('_alpha_cv_label'):
         try:
