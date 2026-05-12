@@ -204,7 +204,7 @@ def bulk_get_rsi_for_items(items: list[dict]) -> None:
     # Bulk find chunked — fetch RSI + SMA(RSI)
     chunks = list(wanted)
     cached_map = {}  # (pair, tf, open_ms) → (rsi, sma_rsi)
-    CHUNK = 500
+    CHUNK = 1000  # увеличил с 500 — Mongo $or поддерживает до ~1500 conds
     for i in range(0, len(chunks), CHUNK):
         conds = [{'pair': p, 'tf': t, 'open_ms': om}
                  for (p, t, om) in chunks[i:i+CHUNK]]

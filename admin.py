@@ -10962,7 +10962,6 @@ def _compute_journal_sync():
                 break
         if top_recent:
             _t_start = _t_rsi.time()
-            # FIX: manual shutdown(wait=False) — не блокировать на медленных fetch'ах
             ex_rsi = ThreadPoolExecutor(max_workers=10)
             try:
                 futs = [ex_rsi.submit(fill_pair_rsi, p) for p in top_recent]
@@ -10976,10 +10975,14 @@ def _compute_journal_sync():
                     pass
             finally:
                 ex_rsi.shutdown(wait=False, cancel_futures=True)
-            # Re-read cache после inline fill
+            # PERF: re-read ТОЛЬКО для заполненных пар (10 шт), не всех 10000+
+            # Раньше бесполезно повторял bulk_get по всему items (8 сек).
             if _t_rsi.time() - _t_start < 3.5:
                 try:
-                    bulk_get_rsi_for_items(items)
+                    filled_set = set(top_recent)
+                    sub_items = [it for it in items if it.get('pair') in filled_set]
+                    if sub_items:
+                        bulk_get_rsi_for_items(sub_items)
                 except Exception:
                     pass
         # Background fill для остальных свежих миссов (без блокировки render)
@@ -11036,9 +11039,13 @@ def _compute_journal_sync():
                     pass
             finally:
                 ex_tr.shutdown(wait=False, cancel_futures=True)
+            # PERF: re-read только для заполненных пар (10 шт)
             if _t_tr.time() - _t_start_tr < 3.5:
                 try:
-                    bulk_get_trend_for_items(items)
+                    filled_tr_set = set(top_recent_tr)
+                    sub_items_tr = [it for it in items if it.get('pair') in filled_tr_set]
+                    if sub_items_tr:
+                        bulk_get_trend_for_items(sub_items_tr)
                 except Exception:
                     pass
         rest_missing_tr = list(seen_tr)[10:30]

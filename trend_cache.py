@@ -201,7 +201,7 @@ def bulk_get_trend_for_items(items: list) -> None:
         return
     chunks = list(wanted)
     cached_map = {}  # (pair, tf, open_ms) → trend
-    CHUNK = 500
+    CHUNK = 1000  # увеличил с 500 — меньше round-trips
     for i in range(0, len(chunks), CHUNK):
         conds = [{'pair': p, 'tf': t, 'open_ms': om}
                  for (p, t, om) in chunks[i:i+CHUNK]]
