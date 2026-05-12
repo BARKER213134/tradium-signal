@@ -117,6 +117,10 @@ def _tier_of(t: dict) -> str:
 
 SIZING_RULES = [
     # (predicate_fn, multiplier, label)
+    # STRICT-mode verdict-based sizing (приоритет — проверяем первым)
+    (lambda s, t: t.get('_verdict') == 'ELITE',           3.0, 'verdict_ELITE'),
+    (lambda s, t: t.get('_verdict') == 'STRONG',          2.0, 'verdict_STRONG'),
+    # Source-based fallback (legacy v1.x rules)
     (lambda s, t: s == 'cryptovizor' and (t.get('direction') == 'SHORT')
                   and _tier_of(t) == 'match',             3.0, 'cv_short_match'),
     (lambda s, t: s == 'cryptovizor' and (t.get('direction') == 'SHORT')
@@ -627,6 +631,13 @@ def should_enter(signal: dict) -> tuple[bool, str]:
                 remaining_h = (pu - int(_t.time())) / 3600
                 return False, (f'auto_pause: {pause_state.get("reason","?")} '
                                 f'(осталось {remaining_h:.1f}ч)')
+        # ── В STRICT mode: trust verdict, пропускаем source whitelist ──
+        # Verdict ELITE/STRONG = 2+ top edges (RSI/SMA/Trend/Anomaly).
+        # Backtest two_top/three_top: WR 83-99% на mixed sources. Источник
+        # не имеет значения если verdict качественный.
+        # Avoid sources (volume_surge/volcano/TC SHORT/vol_accum SHORT)
+        # → verdict=SKIP → уже отклонены выше через ALLOWED_VERDICTS.
+        return True, f'strict_{verdict}_{src or "?"}_{direction}'
 
     # ── Source-specific rules ──
     if src == 'cryptovizor':
@@ -1013,6 +1024,10 @@ def reason_to_human(reason: str, signal: dict) -> str:
     if reason.startswith('strict_skip_verdict'):
         v = reason.split('=')[1] if '=' in reason else '?'
         return f"❌ STRICT-mode: verdict={v} (нужно ELITE или STRONG)"
+    if reason.startswith('strict_ELITE') or reason.startswith('strict_STRONG'):
+        parts = reason.split('_')
+        verdict = parts[1] if len(parts) > 1 else '?'
+        return f"✅ STRICT accept · verdict={verdict} ({signal.get('source','?')} {signal.get('direction','?')})"
     if reason.startswith('auto_pause:'):
         return f"⏸ AUTO-PAUSE: {reason.split(':',1)[1]}"
     if reason.startswith('bad_hour'):
@@ -1050,6 +1065,13 @@ def evaluate(signal: dict, capital_state: Optional[dict] = None,
           'metadata': dict,
         }
     """
+    # Pre-compute verdict для sizing rules (verdict-based ELITE/STRONG)
+    if STRICT_MODE_ENABLED and not signal.get('_verdict'):
+        try:
+            v_info = compute_verdict(signal)
+            signal['_verdict'] = v_info.get('verdict')
+        except Exception:
+            pass
     accept, reason = should_enter(signal)
     base_metadata = {
         'source': signal.get('source'),
@@ -1057,6 +1079,7 @@ def evaluate(signal: dict, capital_state: Optional[dict] = None,
         'tier': signal.get('align_tier') or signal.get('_align'),
         'pair': signal.get('pair'),
         'q_score': signal.get('q_score'),
+        'verdict': signal.get('_verdict'),
     }
     if not accept:
         return {
