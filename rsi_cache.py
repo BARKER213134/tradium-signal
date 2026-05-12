@@ -47,8 +47,39 @@ def _ensure_indexes():
 _indexes_ready = False
 
 
+def _fetch_klines_fapi(sym: str, tf: str, limit: int = 1500) -> list:
+    """FAPI single-call fetcher. Возвращает list [open_ms, o, h, l, c, vol, close_ms].
+
+    В 10-50x быстрее CDN day-by-day fetch для warmup периодов >5 дней.
+    Use as primary в fill_pair_rsi — fallback на CDN если FAPI failed.
+    """
+    try:
+        import httpx
+        r = httpx.get("https://fapi.binance.com/fapi/v1/klines",
+                      params={'symbol': sym, 'interval': tf, 'limit': limit},
+                      timeout=10.0)
+        if r.status_code == 200:
+            out = []
+            for kr in r.json():
+                try:
+                    out.append([int(kr[0]), float(kr[1]), float(kr[2]),
+                                float(kr[3]), float(kr[4]),
+                                float(kr[5]), int(kr[6])])
+                except Exception:
+                    continue
+            return out
+    except Exception:
+        pass
+    return []
+
+
 def fill_pair_rsi(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> dict:
-    """Фетчит klines + считает RSI + пишет в Mongo. Возвращает {tf: n_written}."""
+    """Фетчит klines + считает RSI + пишет в Mongo. Возвращает {tf: n_written}.
+
+    Использует FAPI single-call (limit=1500) вместо CDN day-by-day fetch.
+    Это в 30x быстрее для warmup периодов: 1d 45 дней = 1 HTTP call вместо
+    45 zip-загрузок. Для CDN-only fallback использует fetch_klines_cdn.
+    """
     from delta_calculator import (fetch_klines_cdn, _normalize_symbol,
                                    _compute_rsi_for_closes)
     from database import _get_db
@@ -66,12 +97,20 @@ def fill_pair_rsi(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> dict:
     result = {}
     for tf in tfs:
         warmup_h = TF_WARMUP_HOURS.get(tf, 24)
-        start = now_ms - warmup_h * 3600 * 1000
-        end = now_ms + 60 * 1000
-        try:
-            kl = fetch_klines_cdn(sym, tf, start, end)
-        except Exception:
-            kl = []
+        # Compute needed bars: warmup_h * 60 / TF_minutes + 50 safety
+        tf_min = {'15m': 15, '1h': 60, '4h': 240, '1d': 1440}.get(tf, 60)
+        needed_bars = (warmup_h * 60) // tf_min + 50
+        limit = min(1500, max(100, needed_bars))
+        # Primary: FAPI single-call (fast, не throttled на CDN range)
+        kl = _fetch_klines_fapi(sym, tf, limit=limit)
+        # Fallback на CDN если FAPI failed (banned / network err)
+        if not kl or len(kl) < 16:
+            start = now_ms - warmup_h * 3600 * 1000
+            end = now_ms + 60 * 1000
+            try:
+                kl = fetch_klines_cdn(sym, tf, start, end)
+            except Exception:
+                kl = []
         if not kl or len(kl) < 16:
             result[tf] = 0
             continue

@@ -74,8 +74,31 @@ def _trend_from_emas(ema20: float, ema50: float, close: float) -> str:
     return 'UP' if ema20 > ema50 else 'DOWN'
 
 
+def _fetch_klines_fapi(sym: str, tf: str, limit: int = 1500) -> list:
+    """FAPI single-call. Аналог из rsi_cache. В 30x быстрее CDN day-by-day."""
+    try:
+        import httpx
+        r = httpx.get("https://fapi.binance.com/fapi/v1/klines",
+                      params={'symbol': sym, 'interval': tf, 'limit': limit},
+                      timeout=10.0)
+        if r.status_code == 200:
+            out = []
+            for kr in r.json():
+                try:
+                    out.append([int(kr[0]), float(kr[1]), float(kr[2]),
+                                float(kr[3]), float(kr[4]),
+                                float(kr[5]), int(kr[6])])
+                except Exception:
+                    continue
+            return out
+    except Exception:
+        pass
+    return []
+
+
 def fill_pair_trend(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> dict:
-    """Фетчит klines + считает EMA20/EMA50 + Trend + пишет в Mongo."""
+    """Фетчит klines + считает EMA20/EMA50 + Trend + пишет в Mongo.
+    Использует FAPI single-call (быстрее CDN в 30x)."""
     from delta_calculator import fetch_klines_cdn, _normalize_symbol
     from database import _get_db
     from pymongo import UpdateOne
@@ -92,12 +115,17 @@ def fill_pair_trend(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> dict:
     result = {}
     for tf in tfs:
         warmup_h = TF_WARMUP_HOURS.get(tf, 100)
-        start = now_ms - warmup_h * 3600 * 1000
-        end = now_ms + 60 * 1000
-        try:
-            kl = fetch_klines_cdn(sym, tf, start, end)
-        except Exception:
-            kl = []
+        tf_min = {'15m': 15, '1h': 60, '4h': 240, '1d': 1440}.get(tf, 60)
+        needed_bars = (warmup_h * 60) // tf_min + 50
+        limit = min(1500, max(100, needed_bars))
+        kl = _fetch_klines_fapi(sym, tf, limit=limit)
+        if not kl or len(kl) < 55:
+            start = now_ms - warmup_h * 3600 * 1000
+            end = now_ms + 60 * 1000
+            try:
+                kl = fetch_klines_cdn(sym, tf, start, end)
+            except Exception:
+                kl = []
         if not kl or len(kl) < 55:
             result[tf] = 0
             continue
