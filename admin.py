@@ -10743,7 +10743,7 @@ def _compute_journal_sync():
                 try:
                     with ThreadPoolExecutor(max_workers=12) as ex:
                         futs = [ex.submit(_fetch_one, p, ts) for (p, ts) in inline_list]
-                        for f in as_completed(futs, timeout=5.0):
+                        for f in as_completed(futs, timeout=2.0):
                             try:
                                 p, ts, snap = f.result()
                                 if snap:
@@ -10900,13 +10900,13 @@ def _compute_journal_sync():
         logging.getLogger(__name__).warning(f"[journal] q_score fail: {e}")
 
     # ─── RSI 15m/1h/4h/1d enrichment из Mongo (signal_rsi_cache) ───
-    # + INLINE FILL для miss'ов (за last 6h) c budget 3.5s
+    # Inline fill отменён — слишком медленно. Bulk read из cache (мгновенно)
+    # + fire-and-forget fill для miss'ов (данные появятся на след. рендере).
     try:
         from rsi_cache import bulk_get_rsi_for_items, fill_pair_rsi
         bulk_get_rsi_for_items(items)
-        # INLINE FILL: для items с пустыми RSI (любой TF из 1h/4h/1d) → fetch+cache+re-read
         import time as _t_rsi
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading as _th_rsi
         cutoff_6h = int(_t_rsi.time()) - 6 * 3600
         missing_pairs = set()
         for it in items:
@@ -10916,40 +10916,28 @@ def _compute_journal_sync():
             pair = it.get('pair') or ''
             if not pair:
                 continue
-            # Считаем missing если ANY of 1h/4h/1d пустой
             if (it.get('rsi_1h') is None or it.get('rsi_4h') is None
                     or it.get('rsi_1d') is None):
                 missing_pairs.add(pair)
         if missing_pairs:
-            to_fill = list(missing_pairs)[:20]  # cap 20 pairs/render
-            _t_start = _t_rsi.time()
-            try:
-                with ThreadPoolExecutor(max_workers=8) as ex:
-                    futs = {ex.submit(fill_pair_rsi, p): p for p in to_fill}
-                    for f in as_completed(futs, timeout=3.5):
-                        try:
-                            f.result(timeout=0.1)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-            # После fill — re-read cache для свежих данных
-            if _t_rsi.time() - _t_start < 4.0:
-                try:
-                    bulk_get_rsi_for_items(items)
-                except Exception:
-                    pass
+            to_fill = list(missing_pairs)[:20]
+            def _bg_fill_rsi():
+                for p in to_fill:
+                    try:
+                        fill_pair_rsi(p)
+                    except Exception:
+                        pass
+            _th_rsi.Thread(target=_bg_fill_rsi, daemon=True,
+                            name='rsi-bg-fill').start()
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] rsi enrich fail: {e}")
 
-    # ─── Trend 15m/1h/4h/1d enrichment из Mongo (signal_trend_cache) ───
-    # + INLINE FILL для miss'ов (за last 6h)
+    # ─── Trend enrichment — bulk read + fire-and-forget background fill ───
     try:
         from trend_cache import bulk_get_trend_for_items, fill_pair_trend
         bulk_get_trend_for_items(items)
-        # INLINE FILL для items с пустым trend на 1h/4h
         import time as _t_tr
-        from concurrent.futures import ThreadPoolExecutor as _TPE_tr, as_completed as _ac_tr
+        import threading as _th_tr
         cutoff_6h_tr = int(_t_tr.time()) - 6 * 3600
         missing_pairs_tr = set()
         for it in items:
@@ -10963,22 +10951,14 @@ def _compute_journal_sync():
                 missing_pairs_tr.add(pair)
         if missing_pairs_tr:
             to_fill_tr = list(missing_pairs_tr)[:20]
-            _t_start_tr = _t_tr.time()
-            try:
-                with _TPE_tr(max_workers=8) as ex:
-                    futs = {ex.submit(fill_pair_trend, p): p for p in to_fill_tr}
-                    for f in _ac_tr(futs, timeout=3.5):
-                        try:
-                            f.result(timeout=0.1)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-            if _t_tr.time() - _t_start_tr < 4.0:
-                try:
-                    bulk_get_trend_for_items(items)
-                except Exception:
-                    pass
+            def _bg_fill_trend():
+                for p in to_fill_tr:
+                    try:
+                        fill_pair_trend(p)
+                    except Exception:
+                        pass
+            _th_tr.Thread(target=_bg_fill_trend, daemon=True,
+                          name='trend-bg-fill').start()
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] trend enrich fail: {e}")
 
