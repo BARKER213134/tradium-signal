@@ -3903,11 +3903,18 @@ setInterval(_loadStrategyHeader, 30000);
       </div>
     </div>
     <div>
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;padding-bottom:4px;border-bottom:1px solid var(--border);flex-wrap:wrap;">
         <div style="font-family:var(--font-mono);font-size:10px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.1em;">Последние сделки</div>
         <div id="atHistoryStratBadge" style="font-family:var(--font-mono);font-size:9px;color:var(--muted);display:flex;gap:6px;align-items:center;" title="Версия активной стратегии">
           <span style="opacity:0.6;">strategy:</span>
           <span id="atHistoryStratName" style="background:rgba(178,139,255,0.12);border:1px solid rgba(178,139,255,0.35);color:#b28bff;padding:1px 8px;border-radius:10px;font-weight:700;letter-spacing:0.05em;">loading…</span>
+        </div>
+        <div id="atHistoryRegimeBadge" style="font-family:var(--font-mono);font-size:9px;color:var(--muted);display:none;gap:6px;align-items:center;">
+          <span style="opacity:0.6;">market:</span>
+          <span id="atHistoryRegimeName" style="padding:1px 8px;border-radius:10px;font-weight:700;letter-spacing:0.05em;">—</span>
+        </div>
+        <div id="atHistoryPauseBadge" style="font-family:var(--font-mono);font-size:9px;display:none;gap:6px;align-items:center;">
+          <span style="background:rgba(255,77,109,0.18);border:1px solid #ff4d6d;color:#ff4d6d;padding:1px 8px;border-radius:10px;font-weight:700;letter-spacing:0.05em;" id="atHistoryPauseText">⏸ PAUSED</span>
         </div>
       </div>
       <div id="atHistory" style="background:var(--dark-2);border:1px solid var(--border);border-radius:10px;min-height:100px;">
@@ -4486,6 +4493,35 @@ async function loadPaperStatus() {
           const desc = info.description || '';
           badge.title = `${desc}\n\nBacktest: WR ${wr}% · AvgR +${avgr}R · PF ${info.backtest && info.backtest.profit_factor}`;
           if (!info.enabled) badge.style.opacity = '0.55';
+        }
+        // v3.0: regime badge
+        const regimeWrap = document.getElementById('atHistoryRegimeBadge');
+        const regimeBadge = document.getElementById('atHistoryRegimeName');
+        if (regimeWrap && regimeBadge && info && info.current_regime) {
+          const regime = info.current_regime;
+          const styles = {
+            BULL:  {emoji:'🚀', bg:'rgba(0,229,160,0.12)', border:'rgba(0,229,160,0.45)', color:'#00e5a0', label:'BULL'},
+            BEAR:  {emoji:'📉', bg:'rgba(255,77,109,0.12)', border:'rgba(255,77,109,0.45)', color:'#ff4d6d', label:'BEAR'},
+            CHOP:  {emoji:'🌀', bg:'rgba(122,139,166,0.15)', border:'rgba(122,139,166,0.45)', color:'#a8b6c8', label:'CHOP'},
+          };
+          const st = styles[regime] || styles.CHOP;
+          regimeWrap.style.display = 'flex';
+          regimeBadge.textContent = `${st.emoji} ${st.label}`;
+          regimeBadge.style.background = st.bg;
+          regimeBadge.style.border = '1px solid ' + st.border;
+          regimeBadge.style.color = st.color;
+          const cfg = info.regime_config || {};
+          regimeBadge.title = `Текущий market regime: ${regime}\n${cfg.notes || ''}\n\nДопустимые направления: ${(cfg.directions || []).join(', ')}\nДопустимые verdict: ${(cfg.verdicts || []).join(', ')}\nExit: ${cfg.exit}\nSize mult: ${cfg.size_mult}×`;
+        }
+        // Pause badge
+        const pauseWrap = document.getElementById('atHistoryPauseBadge');
+        const pauseText = document.getElementById('atHistoryPauseText');
+        if (pauseWrap && pauseText && info && info.pause && info.pause.paused) {
+          pauseWrap.style.display = 'flex';
+          pauseText.textContent = `⏸ PAUSED ${info.pause.remaining_hours}ч`;
+          pauseText.title = info.pause.reason || '';
+        } else if (pauseWrap) {
+          pauseWrap.style.display = 'none';
         }
         window._atStratInfoCachedAt = Date.now();
       }).catch(() => {});

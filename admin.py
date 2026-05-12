@@ -11457,12 +11457,44 @@ async def api_auto_strategy_info():
             {"setup": "Second Flip",     "multiplier": 1.0, "base_pct": 1.0},
             {"setup": "Triple Confluence", "multiplier": 0.7, "base_pct": 1.0},
         ]
+        # v3.0: current market regime + pause state
+        current_regime = None
+        regime_config = None
+        try:
+            from auto_strategy import detect_regime, REGIME_CONFIG
+            current_regime = await asyncio.to_thread(detect_regime)
+            regime_config = REGIME_CONFIG.get(current_regime, {})
+        except Exception:
+            pass
+        pause_state = None
+        try:
+            from auto_strategy import is_paused_now
+            paused, p_state = await asyncio.to_thread(is_paused_now)
+            if paused:
+                import time as _t
+                pu = p_state.get('paused_until_ts') or 0
+                pause_state = {
+                    'paused': True,
+                    'remaining_hours': round((pu - int(_t.time())) / 3600, 1),
+                    'reason': p_state.get('reason', ''),
+                }
+        except Exception:
+            pass
         return {
             "name": STRATEGY_NAME,
             "version": STRATEGY_VERSION,
             "description": STRATEGY_DESCRIPTION,
             "enabled": enabled,
             "backtest": STRATEGY_BACKTEST_METRICS,
+            "current_regime": current_regime,  # BULL/BEAR/CHOP
+            "regime_config": {
+                "directions": list(regime_config.get('allowed_directions', ())),
+                "verdicts": list(regime_config.get('allowed_verdicts', ())),
+                "exit": regime_config.get('exit_label'),
+                "size_mult": regime_config.get('size_mult'),
+                "notes": regime_config.get('notes'),
+            } if regime_config else None,
+            "pause": pause_state,
             "rules": {
                 "entry_whitelist": [
                     f"cryptovizor + tier ∈ {list(CV_TIER_ALLOWED) + ['None (default mixed)']}",
