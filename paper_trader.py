@@ -591,7 +591,34 @@ def check_positions(prices: dict):
         new_sl = sl
         tp_hits_done = set(pos.get("tp_ladder_hits", []))
 
-        # ── 1. TP LADDER — частичные закрытия ──
+        # ── КРИТИЧЕСКИЙ FIX (12.05): ALPHA-CV сделки имеют СОБСТВЕННУЮ
+        # trail exit логику в watcher._alpha_cv_exit_monitor (trail_1R_0.5R).
+        # Поэтому здесь СКИПАЕМ rule-based TP_LADDER / BE+ / TRAILING — иначе
+        # paper закрывал в +1% partial / +2% trail, не давая ALPHA-CV trail
+        # (+1R) активироваться. Бэктест показал +1.5..+2.2R на trail_1R_0.5R,
+        # но реальные трейды закрывались на +0.5-1% paper-rule.
+        # Оставляем только SL/TP1-far и timeout логика дальше.
+        is_alpha_cv = bool(pos.get("auto_strategy_label"))
+        if is_alpha_cv:
+            # Только обновляем max_favorable_pct для UI, не двигаем SL
+            if max_fav != pos.get("max_favorable_pct", 0):
+                trades.update_one(
+                    {"trade_id": pos["trade_id"]},
+                    {"$set": {"max_favorable_pct": max_fav}}
+                )
+            # Pure SL check — без TP_LADDER/trail (ALPHA-CV trail монитор сам закроет)
+            sl_hit = False
+            if is_long and sl and price <= sl:
+                sl_hit = True
+            elif not is_long and sl and price >= sl:
+                sl_hit = True
+            if sl_hit:
+                logger.info(f"[paper] ALPHA-CV #{pos['trade_id']} SL hit @ {price}")
+                close_position(int(pos["trade_id"]), float(price), "SL")
+                closed.append({"trade_id": pos["trade_id"], "symbol": sym, "reason": "SL"})
+            continue  # ← skip остальные exit rules для ALPHA-CV
+
+        # ── 1. TP LADDER — частичные закрытия (для не-ALPHA-CV) ──
         for step in TP_LADDER:
             if step["name"] in tp_hits_done:
                 continue
