@@ -139,7 +139,10 @@ SIZING_RULES = [
 
 # ─── Risk limits ───────────────────────────────────────────────────
 MAX_CONCURRENT_POSITIONS = 10  # лимит 10 сделок (было 5)
-MAX_TOTAL_EXPOSURE_PCT = 20.0  # 10×base 1% × ~2× avg multiplier = до 20%
+# Total exposure cap — теперь scales автоматически с mode (cap = mode_max × 3 concurrent).
+# Установлен достаточно большой чтобы не блокировать sizing на turbo mode.
+# В turbo CHOP 35% × 3 trades = 105%. В aggressive CHOP 15% × 3 = 45%.
+MAX_TOTAL_EXPOSURE_PCT = 100.0
 DAILY_LOSS_LIMIT_PCT = 3.0
 DRAWDOWN_LIMIT_PCT = 10.0
 
@@ -364,29 +367,37 @@ MULTI_REGIME_ENABLED = True
 REGIME_CONFIG = {
     'BULL': {
         'allowed_directions': ('LONG',),
-        'allowed_verdicts': ('STRONG', 'ELITE'),    # strict only
-        'exit_label': 'signal_tpsl',                # legacy TP/SL
-        'size_mult': 1.5,                           # marginal edge — small size
+        'allowed_verdicts': ('STRONG', 'ELITE'),
+        'exit_label': 'signal_tpsl',
+        'size_fraction': 0.30,                       # 30% от mode_max — низкий edge
         'use_be_at_1R': False,
         'notes': 'BULL: LONG_STRICT (мизер edge +0.086R)',
     },
     'CHOP': {
         'allowed_directions': ('LONG', 'SHORT'),
-        'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),  # широко — каждый no-SKIP работает
+        'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),
         'exit_label': 'be_at_1R',
-        'size_mult': 4.0,                            # БОЛЬШЕ — лучший edge (+0.99R)
-        'use_be_at_1R': True,                        # move SL to BE после +1R
-        'notes': 'CHOP: both dirs no-SKIP, be_at_1R, AvgR +0.99R, size 4×',
+        'size_fraction': 1.00,                       # 100% от mode_max — лучший edge
+        'use_be_at_1R': True,
+        'notes': 'CHOP: both dirs no-SKIP, be_at_1R, AvgR +0.99R, full mode size',
     },
     'BEAR': {
         'allowed_directions': ('SHORT',),
         'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),
         'exit_label': 'be_at_1R',
-        'size_mult': 3.0,                           # mirror CHOP с небольшим dampening
+        'size_fraction': 0.75,                       # 75% от mode_max — mirror CHOP с dampening
         'use_be_at_1R': True,
-        'notes': 'BEAR: SHORT GOOD+, be_at_1R, size 3×',
+        'notes': 'BEAR: SHORT GOOD+, be_at_1R, 75% mode size',
     },
 }
+
+# Backward-compat alias для старых вызовов через position_size_pct/SIZING_RULES.
+# Это legacy fallback — реальный размер вычисляется в paper_trader через mode_max.
+def _legacy_size_mult(regime: str) -> float:
+    """Размер в %, если paper_trader не использует mode (старая логика)."""
+    cfg = REGIME_CONFIG.get(regime, REGIME_CONFIG['CHOP'])
+    # Для legacy: 4% (CHOP) / 3% (BEAR) / 1.5% (BULL)
+    return {'CHOP': 4.0, 'BEAR': 3.0, 'BULL': 1.5}.get(regime, 2.0)
 
 
 # Regime cache (5 min TTL — BTC trend меняется не быстро)

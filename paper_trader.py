@@ -1771,18 +1771,34 @@ async def on_signal(signal_data: dict):
                  f"{summary}{param_note}")
 
     # ── 5. Открытие ──
-    # ALPHA-CV sizing: ПЕРЕЗАПИСЫВАЕМ size_pct (не мультиплицируем mode-based)
-    # потому что mode по умолчанию даёт ~11% base, что × multiplier=3 даёт 33% —
-    # катастрофически большая позиция. Strategy size_pct уже включает base × mult.
+    # ALPHA-CV v3.0 sizing: mode_max × regime_fraction
+    #   conservative (max 5%):  BULL=1.5%, CHOP=5%, BEAR=3.75%
+    #   aggressive   (max 15%): BULL=4.5%, CHOP=15%, BEAR=11.25%
+    #   hyper        (max 25%): BULL=7.5%, CHOP=25%, BEAR=18.75%
+    #   turbo        (max 35%): BULL=10.5%, CHOP=35%, BEAR=26.25%
     alpha_mult = signal_data.get('_alpha_cv_size_mult')
+    alpha_regime = signal_data.get('_regime') or signal_data.get('_alpha_cv_regime')
     is_alpha_cv = bool(alpha_mult and alpha_mult > 0)
     if is_alpha_cv:
-        size_pct = round(alpha_mult, 2)
-        # Hard cap 5% per trade (safety guardrail)
-        if size_pct > 5.0:
-            logger.warning(f"[ALPHA-CV] capped size {size_pct}% → 5.0% (hard cap)")
-            size_pct = 5.0
-        logger.info(f"[ALPHA-CV] sizing OVERRIDE: {size_pct}% (mode-base ignored)")
+        # v3.0 mode-aware sizing
+        try:
+            import auto_strategy as _ast
+            cfg = _ast.REGIME_CONFIG.get(alpha_regime or 'CHOP', _ast.REGIME_CONFIG['CHOP'])
+            size_fraction = cfg.get('size_fraction', 1.0)
+            mode_max = mode_cfg.get('size_max', 5)
+            new_size = round(mode_max * size_fraction, 2)
+            logger.info(
+                f"[ALPHA-CV v3.0] sizing: mode={mode_cfg['name']} (max={mode_max}%) × "
+                f"regime={alpha_regime} ({size_fraction:.2f}) = {new_size}% "
+                f"(was alpha_mult={alpha_mult}%)"
+            )
+            size_pct = new_size
+        except Exception as _e:
+            # Fallback: использовать alpha_mult напрямую с cap 5%
+            logger.warning(f"[ALPHA-CV] mode-aware sizing fail: {_e} → fallback alpha_mult")
+            size_pct = round(alpha_mult, 2)
+            if size_pct > 5.0:
+                size_pct = 5.0
         # TP1 для ALPHA-CV — отодвигаем ОЧЕНЬ далеко чтобы не закрывалось рано.
         # Выход управляется через 1h SMA(RSI) crossover монитор (watcher).
         # SL остаётся как backstop.
