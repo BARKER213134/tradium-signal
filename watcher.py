@@ -3480,51 +3480,6 @@ async def _ui_prewarm_loop():
         await _asyncio.sleep(120)  # 2 минуты на Pro (было 5 на Hobby)
 
 
-async def _volume_explosion_loop():
-    """Volume Explosion scanner — каждые 5 мин ищет mid-cap (20M-500M 24h vol)
-    с резким всплеском positive delta volume (1h ≥ 1M USDT, 30m growth ≥ 1000%).
-    Сигналы пишутся в volume_explosion_signals + emit через _paper_on_signal."""
-    import asyncio as _asyncio
-    await _asyncio.sleep(200)
-    while True:
-        try:
-            import volume_explosion as vex
-            triggers = await _asyncio.wait_for(
-                _asyncio.to_thread(vex.scan), timeout=45.0,
-            )
-            for tr in triggers or []:
-                # Dedup-aware emit
-                emitted = await _asyncio.to_thread(vex.emit_signal, tr)
-                if not emitted:
-                    continue
-                # Route to paper trader (через стандартный pipeline)
-                try:
-                    pair = tr['pair']
-                    symbol = pair.replace('/', '').upper()
-                    payload = {
-                        'symbol': symbol,
-                        'pair': pair,
-                        'direction': 'LONG',  # vol explosion = buy pressure → LONG
-                        'entry': tr['price'],
-                        'source': 'vol_explosion',
-                        'pattern': (f"VolExp 1h+${tr['pos_delta_usdt_1h']/1e6:.1f}M "
-                                    f"30m+{tr['growth_30m_pct']:.0f}%"),
-                        'vol_24h_usdt': tr['vol_24h_usdt'],
-                        'pos_delta_usdt_1h': tr['pos_delta_usdt_1h'],
-                        'growth_30m_pct': tr['growth_30m_pct'],
-                    }
-                    await _paper_on_signal(payload)
-                except Exception as _pe:
-                    logger.debug(f"[vol-explosion] paper route fail: {_pe}")
-            if triggers:
-                logger.info(f"[vol-explosion] emitted {sum(1 for _ in triggers)} signals")
-        except _asyncio.TimeoutError:
-            logger.warning("[vol-explosion] scan TIMEOUT 45s")
-        except Exception:
-            logger.debug("[vol-explosion] error", exc_info=True)
-        await _asyncio.sleep(300)
-
-
 async def _new_strategies_updater_loop():
     """Каждые 5 минут проверяет WAITING сигналы из new_strategy_signals
     и закрывает их при достижении TP/SL/TIMEOUT (lookback 24h)."""
@@ -4318,13 +4273,6 @@ async def start_watcher():
         logger.info("[new-strategies] updater loop started")
     except Exception:
         logger.exception("[new-strategies] updater loop failed")
-    # Volume Explosion scanner — каждые 5 мин ищет mid-cap pairs с резким
-    # положительным delta volume spike (1h ≥ $1M, 30m growth ≥ 1000%)
-    try:
-        asyncio.create_task(_volume_explosion_loop())
-        logger.info("[vol-explosion] scanner loop started")
-    except Exception:
-        logger.exception("[vol-explosion] scanner loop failed")
     # [DISABLED] Cluster Delta auto-backfill — был источник 418 banов от
     # Binance fapi/klines. Теперь backfill только вручную через
     # POST /api/cluster-delta/backfill-cdn (статический CDN, без rate limit).

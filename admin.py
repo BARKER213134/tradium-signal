@@ -10733,35 +10733,6 @@ def _compute_journal_sync():
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] new_strategies fetch fail: {e}")
 
-    # ─── Volume Explosion signals ───
-    try:
-        from database import _get_db
-        col = _get_db().volume_explosion_signals
-        for ve in col.find({'detected_at': {'$gte': since_14d}},
-                           sort=[('detected_at', -1)], limit=500):
-            pair = ve.get('pair', '')
-            at_dt = ve.get('detected_at')
-            items.append({
-                'source': 'vol_explosion',
-                'symbol': pair.replace('/', '').upper(),
-                'pair': pair,
-                'direction': 'LONG',
-                'entry': ve.get('price'),
-                'tp1': None, 'sl': None,
-                'pattern': (f"VolExp 1h+${(ve.get('pos_delta_usdt_1h',0) or 0)/1e6:.1f}M "
-                            f"30m+{ve.get('growth_30m_pct',0):.0f}%"),
-                'score': None,
-                'st_passed': None, 'pump_score': 0,
-                'is_top_pick': False, 'top_pick_confirmations_count': 0,
-                'vol_24h_usdt': ve.get('vol_24h_usdt'),
-                'pos_delta_usdt_1h': ve.get('pos_delta_usdt_1h'),
-                'growth_30m_pct': ve.get('growth_30m_pct'),
-                'at': at_dt.isoformat() if hasattr(at_dt, 'isoformat') else str(at_dt or ''),
-                'at_ts': int(at_dt.timestamp()) if hasattr(at_dt, 'timestamp') else 0,
-            })
-    except Exception as e:
-        logging.getLogger(__name__).warning(f"[journal] vol_explosion fetch fail: {e}")
-
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
 
@@ -11801,64 +11772,6 @@ async def api_auto_strategy_close_all_and_start():
         "closed": close_result.get("closed", []),
         "strategy_enabled": enable_result.get("enabled"),
     }
-
-
-@app.get("/api/vol-explosion/config")
-async def api_vol_explosion_config():
-    """Текущие пороги Volume Explosion scanner'а."""
-    try:
-        import volume_explosion as vex
-        return {"ok": True, "config": vex.CONFIG}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@app.post("/api/vol-explosion/config")
-async def api_vol_explosion_config_update(payload: dict):
-    """Обновить пороги. Body: {min_24h_vol_usdt, max_24h_vol_usdt,
-    min_1h_pos_delta_usdt, min_30m_growth_pct, dedup_window_min}.
-    """
-    try:
-        import volume_explosion as vex
-        new_cfg = vex.update_config(**(payload or {}))
-        return {"ok": True, "config": new_cfg}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@app.get("/api/vol-explosion/recent")
-async def api_vol_explosion_recent(limit: int = 50, hours: int = 24):
-    """Последние Volume Explosion сигналы."""
-    try:
-        from database import _get_db
-        from datetime import datetime, timezone, timedelta
-        col = _get_db().volume_explosion_signals
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
-        docs = list(col.find({'detected_at': {'$gte': since}},
-                             sort=[('detected_at', -1)], limit=int(limit)))
-        for d in docs:
-            d['_id'] = str(d.get('_id', ''))
-            if hasattr(d.get('detected_at'), 'isoformat'):
-                d['detected_at'] = d['detected_at'].isoformat()
-        return {"ok": True, "count": len(docs), "signals": docs}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@app.post("/api/vol-explosion/scan-now")
-async def api_vol_explosion_scan_now():
-    """Запустить scan вручную (для отладки/тестов)."""
-    try:
-        import volume_explosion as vex
-        triggers = await asyncio.to_thread(vex.scan)
-        emitted = 0
-        for tr in triggers or []:
-            if await asyncio.to_thread(vex.emit_signal, tr):
-                emitted += 1
-        return {"ok": True, "scanned": True, "triggers": len(triggers or []),
-                "emitted": emitted, "samples": (triggers or [])[:10]}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
 
 
 @app.get("/api/auto-strategy/info")
