@@ -3221,54 +3221,57 @@ async def _paper_on_signal(signal_data: dict):
         # Если symbols registry глючит — НЕ блокируем сигнал, пропускаем дальше
         logger.debug(f"[paper-signal] symbol filter error: {_fe}")
 
-    # ── RSI cache fill IMMEDIATELY на каждый новый сигнал ──
-    # Чтобы данные RSI были в журнале к моменту когда пользователь его откроет.
-    # fire-and-forget, не блокирует основной поток.
+    # ── СИНХРОННЫЙ fill RSI + Trend + Delta IMMEDIATELY на каждый новый сигнал ──
+    # Юзер: "рсай сма не подгружается по приходу сигнала сразу".
+    # Раньше fire-and-forget create_task() — задача могла быть GC'd под нагрузкой,
+    # данные не попадали в кэш к моменту рендера журнала.
+    # Сейчас: parallel gather с 5s budget — все 3 fill'a бегут одновременно,
+    # ждём max 5s, возвращаемся. _paper_on_signal внутри 20s timeout — запас есть.
     try:
-        pair = signal_data.get("pair") or ""
-        if not pair and signal_data.get("symbol"):
-            sym = signal_data["symbol"]
-            pair = sym.replace("USDT", "/USDT") if "USDT" in sym else sym
-        if pair:
-            from rsi_cache import fill_pair_rsi_async
-            asyncio.create_task(fill_pair_rsi_async(pair))
-    except Exception as e:
-        logger.debug(f"[rsi-cache] schedule on signal fail: {e}")
-
-    # ── Trend cache fill (EMA20 vs EMA50, 4 TF) на каждый новый сигнал ──
-    try:
-        _pair_trend = signal_data.get("pair") or ""
-        if not _pair_trend and signal_data.get("symbol"):
+        _pair_fill = signal_data.get("pair") or ""
+        if not _pair_fill and signal_data.get("symbol"):
             _s = signal_data["symbol"]
-            _pair_trend = _s.replace("USDT", "/USDT") if "USDT" in _s else _s
-        if _pair_trend:
-            from trend_cache import fill_pair_trend_async
-            asyncio.create_task(fill_pair_trend_async(_pair_trend))
-    except Exception as e:
-        logger.debug(f"[trend-cache] schedule on signal fail: {e}")
+            _pair_fill = _s.replace("USDT", "/USDT") if "USDT" in _s else _s
+        if _pair_fill:
+            import time as _t_fill
+            _at_ms = int(_t_fill.time() * 1000)
 
-    # ── Cluster Delta + Resonance fill IMMEDIATELY на каждый новый сигнал ──
-    # Заполняет cluster_delta cache (15m + 1h свечи резонанса) сразу к моменту
-    # когда журнал будет открыт. Журнал API читает из cluster_delta через
-    # bulk $or — поэтому здесь только пишем кэш, без attach в signal doc.
-    # fire-and-forget — не блокирует основной поток.
-    try:
-        _pair_for_delta = signal_data.get("pair") or ""
-        if not _pair_for_delta and signal_data.get("symbol"):
-            _s = signal_data["symbol"]
-            _pair_for_delta = _s.replace("USDT", "/USDT") if "USDT" in _s else _s
-        if _pair_for_delta:
-            from delta_calculator import get_delta_snapshot_fast as _gdsf
-            import time as _t_delta
-            _at_ms = int(_t_delta.time() * 1000)
-            async def _fill_delta_now(_p, _ms):
+            async def _fill_rsi(_p):
                 try:
+                    from rsi_cache import fill_pair_rsi
+                    await asyncio.to_thread(fill_pair_rsi, _p)
+                except Exception as _e:
+                    logger.debug(f"[rsi-cache] on-signal fill {_p}: {_e}")
+
+            async def _fill_trend(_p):
+                try:
+                    from trend_cache import fill_pair_trend
+                    await asyncio.to_thread(fill_pair_trend, _p)
+                except Exception as _e:
+                    logger.debug(f"[trend-cache] on-signal fill {_p}: {_e}")
+
+            async def _fill_delta(_p, _ms):
+                try:
+                    from delta_calculator import get_delta_snapshot_fast as _gdsf
                     await asyncio.to_thread(_gdsf, _p, _ms)
                 except Exception as _e:
                     logger.debug(f"[cluster-delta] on-signal fill {_p}: {_e}")
-            asyncio.create_task(_fill_delta_now(_pair_for_delta, _at_ms))
+
+            # Parallel — max 5s total (3 fapi calls параллельно ~1-3s on Railway).
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        _fill_rsi(_pair_fill),
+                        _fill_trend(_pair_fill),
+                        _fill_delta(_pair_fill, _at_ms),
+                        return_exceptions=True,
+                    ),
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                logger.debug(f"[on-signal-fill] timeout 5s {_pair_fill}")
     except Exception as e:
-        logger.debug(f"[cluster-delta] schedule on signal fail: {e}")
+        logger.debug(f"[on-signal-fill] schedule fail: {e}")
 
     # [УБРАНО] Pump fallback — он был нужен когда использовался AI (Claude
     # отказывал при pump_vol=0). Теперь система rule-based, check_entry
