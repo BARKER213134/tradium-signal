@@ -7396,13 +7396,11 @@ async function _pollDeltaBackfill() {
         <th id="jSortSma" title="SMA(14) of RSI per TF. 🟢 = RSI выше SMA (bullish momentum), 🔴 = ниже (bearish)" style="text-align:center;padding:14px 6px;">SMA</th>
         <th id="jSortAnomaly" title="Аномалия дельты — z-score delta_pct сигнальной свечи vs последних 30 свечей до неё. 🔥 z>2.5 = экстремум (как SKYAI 26.04), ⚡ z>1.5 = повышенный приток, ⚪ норма" style="text-align:center;padding:14px 6px;">Аномалия</th>
         <th id="jSortTrend" title="Тренд по EMA20 vs EMA50 на close per TF. ▲ зелёный = UP, ▼ красный = DOWN, ◆ серый = FLAT" style="text-align:center;padding:14px 6px;">Тренд</th>
-        <th class="sortable" onclick="jSort('delta_15m')" id="jSortDelta" title="Cluster Delta 15m / 1h (buy vs sell volume на свече сигнала)" style="text-align:center;padding:14px 6px;">Δ%</th>
         <th class="sortable" onclick="jSort('stack_distinct')" id="jSortStack" title="Stack — кол-во distinct (source × direction) на паре в окне ±3h (6h всего). 4+ = MOONSHOT (multiple sources align — pre-pump signature). Squeeze score 0-100 — BB сжатие, 80+ = готовится breakout." style="text-align:center;padding:14px 6px;">Stack</th>
-        <th class="sortable" onclick="jSort('resonance_15m')" id="jSortResonance" title="Резонанс — N подряд свечей одного знака дельты (-5..+5). Положительное в LONG = попутный поток; отрицательное в LONG = поток против сделки" style="text-align:center;padding:14px 6px;">Резонанс</th>
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="14" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="12" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -8779,12 +8777,8 @@ function renderJournal(items, startIdx) {
     // Trend EMA20 vs EMA50 per TF
     const trendCell = window._renderTrendCell ? window._renderTrendCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
-    // Cluster Delta + Resonance (информативно, не влияет на сигналы)
-    const deltaCell = window._renderDeltaCell ? window._renderDeltaCell(s) :
-      '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    // Stack (Δ% и Резонанс удалены по запросу — оставили только Stack для MOONSHOT detection)
     const stackCell = window._renderStackCell ? window._renderStackCell(s) :
-      '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
-    const resonanceCell = window._renderResonanceCell ? window._renderResonanceCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
       <td class="mono text-muted" style="font-size:11px;">${time}</td>
@@ -8798,9 +8792,7 @@ function renderJournal(items, startIdx) {
       ${smaCell}
       ${anomalyCell}
       ${trendCell}
-      ${deltaCell}
       ${stackCell}
-      ${resonanceCell}
     </tr>`;
   }).join('');
 }
@@ -9675,8 +9667,8 @@ function jSort(field) {
     _jSortAsc = field === 'symbol' || field === 'source' || field === 'direction'; // alpha = asc default
   }
   // Update header arrows
-  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',delta_15m:'jSortDelta',stack_distinct:'jSortStack',resonance_15m:'jSortResonance'};
-  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',delta_15m:'Δ%',stack_distinct:'Stack',resonance_15m:'Резонанс'};
+  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',stack_distinct:'jSortStack'};
+  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',stack_distinct:'Stack'};
   for (const [f, id] of Object.entries(cols)) {
     const el = document.getElementById(id);
     if (el) el.textContent = labels[f] + (f === _jSortField ? (_jSortAsc ? ' ▲' : ' ▼') : '');
