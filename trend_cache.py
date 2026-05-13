@@ -119,14 +119,18 @@ def fill_pair_trend(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> dict:
         needed_bars = (warmup_h * 60) // tf_min + 50
         limit = min(1500, max(100, needed_bars))
         kl = _fetch_klines_fapi(sym, tf, limit=limit)
-        if not kl or len(kl) < 55:
+        # Раньше требовалось 55+ баров (EMA50 точная), но для новых пар
+        # (FOLKS, недавние листинги) это означает 0 данных в trend cache на
+        # 4h/1d — там просто меньше истории. Снижаем порог до 21 (EMA20 OK,
+        # EMA50 ещё warmup но всё равно вычислится через несколько баров).
+        if not kl or len(kl) < 21:
             start = now_ms - warmup_h * 3600 * 1000
             end = now_ms + 60 * 1000
             try:
                 kl = fetch_klines_cdn(sym, tf, start, end)
             except Exception:
                 kl = []
-        if not kl or len(kl) < 55:
+        if not kl or len(kl) < 21:
             result[tf] = 0
             continue
         closes = [float(k[4]) for k in kl]

@@ -3257,7 +3257,10 @@ async def _paper_on_signal(signal_data: dict):
                 except Exception as _e:
                     logger.debug(f"[cluster-delta] on-signal fill {_p}: {_e}")
 
-            # Parallel — max 5s total (3 fapi calls параллельно ~1-3s on Railway).
+            # Parallel — max 8s total. fill_pair_rsi/trend делают 4 sequential
+            # fapi calls each (~4s total на пару). С asyncio.gather все 3 fill'a
+            # бегут параллельно, плюс RSI/Trend параллельно тоже = max(4s, 4s, 3s)
+            # ~ 4-5s в норме, 8s buffer для slow network.
             try:
                 await asyncio.wait_for(
                     asyncio.gather(
@@ -3266,10 +3269,10 @@ async def _paper_on_signal(signal_data: dict):
                         _fill_delta(_pair_fill, _at_ms),
                         return_exceptions=True,
                     ),
-                    timeout=5.0,
+                    timeout=8.0,
                 )
             except asyncio.TimeoutError:
-                logger.debug(f"[on-signal-fill] timeout 5s {_pair_fill}")
+                logger.debug(f"[on-signal-fill] timeout 8s {_pair_fill}")
     except Exception as e:
         logger.debug(f"[on-signal-fill] schedule fail: {e}")
 
