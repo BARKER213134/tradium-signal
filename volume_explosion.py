@@ -206,51 +206,85 @@ def _check_pair(pair: str, vol_24h_usdt: float, current_price: float) -> Optiona
     return None
 
 
+def _fetch_fapi_24h_tickers() -> Optional[list]:
+    """Binance fapi /ticker/24hr — все perpetual USDT pairs c 24h метриками.
+    Это ОСНОВНОЙ источник (объёмы > BingX в 3-10×). Возвращает list of dicts:
+    [{'symbol': 'BTCUSDT', 'quoteVolume': ..., 'lastPrice': ...}, ...]
+    """
+    try:
+        r = _get_http().get('https://fapi.binance.com/fapi/v1/ticker/24hr', timeout=10)
+        if r.status_code != 200:
+            logger.warning(f'[vol-explosion] fapi tickers status {r.status_code}')
+            return None
+        return r.json()
+    except Exception as e:
+        logger.warning(f'[vol-explosion] fapi tickers fail: {e}')
+        return None
+
+
 def scan() -> list[dict]:
-    """Market-wide скан BingX swap pairs.
+    """Market-wide скан Binance Futures USDT-perpetual pairs.
 
     Шаги:
-      1. fetch_tickers() → 600+ pairs, фильтр по 24h vol → 20-50 mid-cap pairs
-      2. Параллельно (16 workers) — fetch_trades для каждого mid-cap pair
-      3. Compute delta-buckets 15m, проверка 4 условий, emit triggers
+      1. fapi /ticker/24hr → ~400 pairs, фильтр по 24h vol → 30-80 mid-cap pairs
+      2. Параллельно (16 workers) — fapi /klines per pair (8 баров 15m)
+      3. Compute USDT delta из taker_buy_quote_volume, проверка 4 условий
 
     Returns: list of trigger dicts.
     """
-    ex = _get_ex()
-    if ex is None:
-        return []
-    try:
-        t0 = time.time()
-        tickers = ex.fetch_tickers()
-    except Exception as e:
-        logger.warning(f'[vol-explosion] tickers fetch fail: {e}')
-        return []
+    t0 = time.time()
+    # ОСНОВНОЙ источник — Binance fapi tickers (объёмы > BingX)
+    tickers_data = _fetch_fapi_24h_tickers()
+    use_bingx_fallback = False
+    if tickers_data is None:
+        # Fallback на BingX если fapi banned (locally)
+        logger.warning('[vol-explosion] fapi tickers unavailable → fallback BingX')
+        use_bingx_fallback = True
+        ex = _get_ex()
+        if ex is None:
+            return []
+        try:
+            bx = ex.fetch_tickers()
+        except Exception as e:
+            logger.warning(f'[vol-explosion] BingX tickers also fail: {e}')
+            return []
+        tickers_data = []
+        for sym, t in (bx or {}).items():
+            if sym.endswith(':USDT'):
+                base = sym.split(':')[0]
+                if '/USDT' in base:
+                    tickers_data.append({
+                        'symbol': base.replace('/', ''),
+                        'quoteVolume': t.get('quoteVolume') or 0,
+                        'lastPrice': t.get('last') or 0,
+                    })
 
     # Filter mid-cap pairs FIRST (cheap), THEN parallel deep-check
-    candidates: list[tuple] = []  # (pair, vol_24h, price)
-    for sym, t in (tickers or {}).items():
-        if not sym.endswith(':USDT'):
-            continue
-        base = sym.split(':')[0]
-        if '/USDT' not in base:
-            continue
+    candidates: list[tuple] = []  # (pair_display, vol_24h, price)
+    for t in (tickers_data or []):
         try:
+            sym = str(t.get('symbol') or '')
+            if not sym.endswith('USDT') or len(sym) <= 4:
+                continue
+            base = sym[:-4]
+            pair_display = f'{base}/USDT'
             qvol = float(t.get('quoteVolume') or 0)
-            price = float(t.get('last') or 0)
+            price = float(t.get('lastPrice') or 0)
             if qvol <= 0 or price <= 0:
                 continue
             if not (CONFIG['min_24h_vol_usdt'] <= qvol < CONFIG['max_24h_vol_usdt']):
                 continue
-            candidates.append((base, qvol, price))
+            candidates.append((pair_display, qvol, price))
         except Exception:
             continue
 
-    logger.info(f'[vol-explosion] scan: {len(candidates)} mid-cap pairs to check '
-                f'(after 24h vol filter)')
+    source_lbl = 'BingX(fallback)' if use_bingx_fallback else 'Binance fapi'
+    logger.info(f'[vol-explosion] scan from {source_lbl}: '
+                f'{len(candidates)} mid-cap pairs to check')
     if not candidates:
         return []
 
-    # Parallel fetch_trades per pair
+    # Parallel deep-check (fapi klines per pair OR cluster_delta fallback)
     triggers: list = []
     n_workers = min(CONFIG.get('parallel_workers', 16), len(candidates))
     with ThreadPoolExecutor(max_workers=n_workers) as tp:
@@ -267,11 +301,11 @@ def scan() -> list[dict]:
     elapsed = time.time() - t0
     if triggers:
         logger.info(f'[vol-explosion] {len(triggers)} triggers '
-                    f'(scanned {len(candidates)} pairs in {elapsed:.1f}s): '
+                    f'(scanned {len(candidates)} pairs from {source_lbl} in {elapsed:.1f}s): '
                     f'{[t["pair"] for t in triggers[:10]]}')
     else:
         logger.info(f'[vol-explosion] 0 triggers ({len(candidates)} pairs '
-                    f'scanned in {elapsed:.1f}s)')
+                    f'from {source_lbl} scanned in {elapsed:.1f}s)')
     return triggers
 
 
