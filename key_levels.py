@@ -41,8 +41,12 @@ TOPIC_NAMES = {
     TOPIC_RESISTANCE: "RESISTANCE",
 }
 
-# Окно актуальности KL для обогащения сигнала (±часов от момента сигнала)
-ENRICH_WINDOW_H = 2
+# Окно актуальности KL для обогащения сигнала.
+# Раньше было 2h (слишком тесно — 50% сигналов теряли enrichment, т.к. KL канал
+# постит уровни нерегулярно — может быть за 6-48h до сигнала).
+# KL — это support/resistance зоны, валидны 1-7 дней до retest или breakout.
+# Окно 48h позволяет цеплять КЛ-уровни сформированные накануне сигнала.
+ENRICH_WINDOW_H = 48
 
 
 def parse_key_level(text: str, topic_id: int = None) -> Optional[dict]:
