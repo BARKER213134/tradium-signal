@@ -7263,6 +7263,32 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="SHORT">🔴 SHORT</option>
   </select>
   <input id="jFilterScore" type="number" placeholder="Min Score" min="0" step="1" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);width:80px;">
+  <select id="jFilterSma" onchange="filterJournal()" title="SMA(14) of RSI filter per TF. Bull = RSI выше SMA (momentum up); Bear = ниже. Multi-TF align = многотаймфреймное подтверждение тренда." style="background:linear-gradient(135deg, rgba(0,229,160,0.10), rgba(0,128,255,0.06));color:#88d8a3;border:1px solid rgba(0,229,160,0.45);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);font-weight:600;">
+    <option value="">SMA: все</option>
+    <optgroup label="── Multi-TF align ──">
+      <option value="all_bull">🟢🟢🟢🟢 ALL TF Bull (4 TF)</option>
+      <option value="all_bear">🔴🔴🔴🔴 ALL TF Bear (4 TF)</option>
+      <option value="d4h_bull">🟢🟢 1d+4h Bull</option>
+      <option value="d4h_bear">🔴🔴 1d+4h Bear</option>
+      <option value="d4h1h_bull">🟢🟢🟢 1d+4h+1h Bull</option>
+    </optgroup>
+    <optgroup label="── По дням (1d) ──">
+      <option value="1d_bull">🟢 1d Bull (RSI&gt;SMA)</option>
+      <option value="1d_bear">🔴 1d Bear (RSI&lt;SMA)</option>
+    </optgroup>
+    <optgroup label="── 4 часа ──">
+      <option value="4h_bull">🟢 4h Bull</option>
+      <option value="4h_bear">🔴 4h Bear</option>
+    </optgroup>
+    <optgroup label="── 1 час ──">
+      <option value="1h_bull">🟢 1h Bull</option>
+      <option value="1h_bear">🔴 1h Bear</option>
+    </optgroup>
+    <optgroup label="── 15 минут ──">
+      <option value="15m_bull">🟢 15m Bull</option>
+      <option value="15m_bear">🔴 15m Bear</option>
+    </optgroup>
+  </select>
   <!-- KC и Pump filter убраны из UI (колонки удалены из таблицы).
        Hidden inputs для совместимости с filterJournal() — всегда пустые. -->
   <select id="jFilterKC" style="display:none;"><option value=""></option></select>
@@ -8403,6 +8429,33 @@ function filterJournal() {
     // 🚀 Moonshot only — stack_distinct >= 4 (multiple sources align)
     if (window._journalMoonshot) {
       if ((s.stack_distinct || 0) < 4) return false;
+    }
+    // 🟢🔴 SMA filter: RSI vs SMA(14)RSI position per TF
+    // bull = RSI > SMA на этом TF, bear = RSI < SMA. Если данных нет — fail.
+    const smaFilter = document.getElementById('jFilterSma');
+    const smaF = smaFilter ? smaFilter.value : '';
+    if (smaF) {
+      const pos = (tf) => {
+        const r = s['rsi_'+tf]; const m = s['sma_rsi_'+tf];
+        if (r == null || m == null) return null;
+        return r > m ? 'bull' : 'bear';
+      };
+      const p15 = pos('15m'), p1 = pos('1h'), p4 = pos('4h'), pd = pos('1d');
+      // Single TF
+      if (smaF === '15m_bull')  { if (p15 !== 'bull') return false; }
+      else if (smaF === '15m_bear')  { if (p15 !== 'bear') return false; }
+      else if (smaF === '1h_bull')   { if (p1 !== 'bull') return false; }
+      else if (smaF === '1h_bear')   { if (p1 !== 'bear') return false; }
+      else if (smaF === '4h_bull')   { if (p4 !== 'bull') return false; }
+      else if (smaF === '4h_bear')   { if (p4 !== 'bear') return false; }
+      else if (smaF === '1d_bull')   { if (pd !== 'bull') return false; }
+      else if (smaF === '1d_bear')   { if (pd !== 'bear') return false; }
+      // Multi-TF align
+      else if (smaF === 'd4h_bull')  { if (pd !== 'bull' || p4 !== 'bull') return false; }
+      else if (smaF === 'd4h_bear')  { if (pd !== 'bear' || p4 !== 'bear') return false; }
+      else if (smaF === 'd4h1h_bull'){ if (pd !== 'bull' || p4 !== 'bull' || p1 !== 'bull') return false; }
+      else if (smaF === 'all_bull')  { if (p15 !== 'bull' || p1 !== 'bull' || p4 !== 'bull' || pd !== 'bull') return false; }
+      else if (smaF === 'all_bear')  { if (p15 !== 'bear' || p1 !== 'bear' || p4 !== 'bear' || pd !== 'bear') return false; }
     }
     // 🎯 Verdict filter (агрегат RSI/SMA/Trend/Anomaly tiers + v3.0 regime)
     const verdictFilter = document.getElementById('jFilterVerdict');
