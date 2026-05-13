@@ -792,3 +792,52 @@ def format_compact(snap: dict) -> str:
         r = s.get('resonance', 0)
         parts.append(f'{tf}: {d:+.1f}% / {r:+d} {resonance_emoji(r)}')
     return '  '.join(parts)
+
+
+# ─── Bollinger Squeeze score ────────────────────────────────────────
+# Cжатие волатильности перед breakout. Возвращает 0-100 где:
+#   90-100 — экстремальное сжатие (готовится взрыв)
+#   60-80  — повышенная компрессия
+#   30-50  — обычное
+#   0-20   — расширенное (после движения)
+# Метод: BB(20).width / mean(BB(20).width, 60). Меньше — компрессия.
+def compute_squeeze_score(pair: str, tf: str = '1h', bars: int = 80) -> Optional[int]:
+    """BB squeeze score 0-100. Returns None при ошибке."""
+    try:
+        from exchange import get_klines_any
+        kl = get_klines_any(pair, tf, bars)
+        if not kl or len(kl) < 21:
+            return None
+        closes = [float(k.get('c', 0) or 0) for k in kl if k.get('c')]
+        if len(closes) < 21:
+            return None
+        # BB(20, 2): mid = SMA20, upper/lower = mid ± 2*stddev20
+        widths: list[float] = []
+        for i in range(20, len(closes)):
+            window = closes[i-20:i]
+            mid = sum(window) / 20
+            var = sum((x - mid) ** 2 for x in window) / 20
+            std = var ** 0.5
+            width = (4 * std) / mid * 100 if mid > 0 else 0  # 2σ * 2 (upper-lower)
+            widths.append(width)
+        if not widths:
+            return None
+        current_w = widths[-1]
+        # Среднее за весь lookback (или 60 последних)
+        lookback = widths[-60:] if len(widths) >= 60 else widths
+        avg_w = sum(lookback) / len(lookback)
+        if avg_w <= 0:
+            return None
+        ratio = current_w / avg_w  # < 1 = compressed
+        # Convert to 0-100 score (lower ratio = higher score)
+        # ratio 0.3 -> 100, 0.5 -> 80, 0.7 -> 60, 1.0 -> 30, 1.5+ -> 0
+        if ratio <= 0.3: score = 100
+        elif ratio <= 0.5: score = 80 + (0.5 - ratio) / 0.2 * 20
+        elif ratio <= 0.7: score = 60 + (0.7 - ratio) / 0.2 * 20
+        elif ratio <= 1.0: score = 30 + (1.0 - ratio) / 0.3 * 30
+        elif ratio <= 1.5: score = max(0, 30 - (ratio - 1.0) / 0.5 * 30)
+        else: score = 0
+        return int(round(score))
+    except Exception as e:
+        logger.debug(f'[squeeze] {pair}/{tf}: {e}')
+        return None

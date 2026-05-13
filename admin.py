@@ -9687,6 +9687,78 @@ async def api_paper_set_balance(payload: dict):
     return {"ok": True, "balance": new_balance}
 
 
+@app.get("/api/journal/stacks")
+async def api_journal_stacks(window_h: int = 6, min_stack: int = 3, limit: int = 50):
+    """MOONSHOT detector: pairs с накоплением сигналов от разных источников.
+
+    Использует данные journal_cache (заполнено _compute_journal_sync). Группирует
+    items по pair, считает distinct (source, direction) в окне window_h hours,
+    возвращает топ pairs с stack >= min_stack.
+
+    Полезно для UI вкладки "🚀 Moonshot watch" — где пары на грани pump'а:
+    accumulation density > N source-confirmations.
+    """
+    from cache_utils import journal_cache
+    full = journal_cache.get("journal_all")
+    if not full:
+        # Compute если кэш пустой
+        full = await asyncio.to_thread(_compute_journal_sync)
+    items = (full or {}).get('items', [])
+    if not items:
+        return {"ok": True, "pairs": [], "window_h": window_h, "min_stack": min_stack}
+
+    import time as _t
+    from collections import defaultdict
+    now_s = int(_t.time())
+    cutoff = now_s - window_h * 3600
+    by_pair: dict = defaultdict(list)
+    for it in items:
+        p = it.get('pair') or ''
+        ts = it.get('at_ts') or 0
+        if not (p and ts) or ts < cutoff:
+            continue
+        by_pair[p].append(it)
+
+    results = []
+    for p, sigs in by_pair.items():
+        distinct = len(set((s.get('source'), (s.get('direction') or '').upper()) for s in sigs))
+        if distinct < min_stack:
+            continue
+        long_n = sum(1 for s in sigs if (s.get('direction') or '').upper() == 'LONG')
+        short_n = sum(1 for s in sigs if (s.get('direction') or '').upper() == 'SHORT')
+        sources = sorted({s.get('source') for s in sigs if s.get('source')})
+        last = max(sigs, key=lambda s: s.get('at_ts', 0))
+        results.append({
+            'pair': p,
+            'symbol': last.get('symbol'),
+            'stack_count': len(sigs),
+            'stack_distinct': distinct,
+            'long_count': long_n,
+            'short_count': short_n,
+            'sources': sources,
+            'is_top_mover': bool(last.get('is_top_mover')),
+            'change_24h': last.get('change_24h'),
+            'last_at': last.get('at'),
+            'last_at_ts': last.get('at_ts'),
+            'last_direction': last.get('direction'),
+            'last_source': last.get('source'),
+            'delta_15m': last.get('delta_15m'),
+            'delta_1h':  last.get('delta_1h'),
+            'resonance_15m': last.get('resonance_15m'),
+            'resonance_1h':  last.get('resonance_1h'),
+        })
+
+    # Sort: stack_distinct desc, потом stack_count desc
+    results.sort(key=lambda x: (-x['stack_distinct'], -x['stack_count']))
+    return {
+        'ok': True,
+        'window_h': window_h,
+        'min_stack': min_stack,
+        'count': len(results),
+        'pairs': results[:limit],
+    }
+
+
 @app.get("/api/journal")
 async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     """Все сигналы из 4 источников — для вкладки Журнал.
@@ -10663,6 +10735,214 @@ def _compute_journal_sync():
 
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
+
+    # ─── Stack count enrichment (MOONSHOT detection) ───
+    # Для каждого item считаем distinct (source, direction) на той же паре
+    # в окне ±3h (6h всего) — мера accumulation density.
+    # Высокий stack (4+) = multiple sources align = pre-pump pattern.
+    try:
+        import bisect
+        from collections import defaultdict
+        STACK_WINDOW_S = 3 * 3600  # ±3h = 6h window
+        pair_sigs: dict = defaultdict(list)  # pair -> [(at_ts, source, direction), ...]
+        for it in items:
+            p = it.get('pair') or ''
+            ts = it.get('at_ts') or 0
+            if p and ts:
+                pair_sigs[p].append((ts, it.get('source', '?'),
+                                     (it.get('direction', '') or '').upper()))
+        # Sort each pair's signals by ts ascending (для bisect)
+        for p in pair_sigs:
+            pair_sigs[p].sort(key=lambda x: x[0])
+        # Per-item stack_count + stack_distinct + stack_long/short split
+        for it in items:
+            p = it.get('pair') or ''
+            ts = it.get('at_ts') or 0
+            if not (p and ts):
+                it['stack_count'] = 0
+                it['stack_distinct'] = 0
+                continue
+            sigs = pair_sigs[p]
+            times = [s[0] for s in sigs]
+            lo = bisect.bisect_left(times, ts - STACK_WINDOW_S)
+            hi = bisect.bisect_right(times, ts + STACK_WINDOW_S)
+            window = sigs[lo:hi]
+            it['stack_count'] = len(window)
+            it['stack_distinct'] = len(set((s[1], s[2]) for s in window))
+            it['stack_long']  = sum(1 for s in window if s[2] == 'LONG')
+            it['stack_short'] = sum(1 for s in window if s[2] == 'SHORT')
+    except Exception as _se:
+        logging.getLogger(__name__).warning(f"[journal] stack_count enrich fail: {_se}")
+
+    # ─── Squeeze score для high-stack pairs ───
+    # BB(20)/SMA(60) compression — индикатор близкого breakout.
+    # Считаем ТОЛЬКО для pairs с stack_count >= 3 (moonshot candidates) — ~20-50 пар.
+    # Cache в _squeeze_cache (TTL 10min) — не recomputим каждый journal load.
+    try:
+        global _squeeze_cache
+    except NameError:
+        _squeeze_cache = {}
+    try:
+        from concurrent.futures import ThreadPoolExecutor as _SQExec, as_completed as _sq_as_completed
+        from delta_calculator import compute_squeeze_score
+        import time as _t_sq
+        if '_squeeze_cache' not in globals():
+            globals()['_squeeze_cache'] = {}
+        sq_cache = globals()['_squeeze_cache']
+        sq_now = int(_t_sq.time())
+        SQ_TTL = 600  # 10min
+        # Уникальные high-stack pairs
+        moonshot_pairs = set()
+        for it in items:
+            if (it.get('stack_distinct') or 0) >= 3:
+                p = it.get('pair') or ''
+                if p:
+                    moonshot_pairs.add(p)
+        # Filter pairs needing compute (no cache OR cache expired)
+        need_compute = [p for p in moonshot_pairs
+                        if sq_now - sq_cache.get(p, {}).get('ts', 0) > SQ_TTL]
+        need_compute = need_compute[:40]  # cap чтобы не блокировать journal надолго
+        if need_compute:
+            sq_ex = _SQExec(max_workers=8)
+            try:
+                futs = {sq_ex.submit(compute_squeeze_score, p, '1h', 80): p
+                        for p in need_compute}
+                try:
+                    for f in _sq_as_completed(futs, timeout=8.0):
+                        p = futs[f]
+                        try:
+                            score = f.result(timeout=0.1)
+                            sq_cache[p] = {'ts': sq_now, 'score': score}
+                        except Exception:
+                            sq_cache[p] = {'ts': sq_now, 'score': None}
+                except Exception:
+                    pass
+            finally:
+                sq_ex.shutdown(wait=False, cancel_futures=True)
+        # Apply squeeze_score to ALL items (для top-moonshot pairs)
+        for it in items:
+            p = it.get('pair') or ''
+            entry = sq_cache.get(p) if p else None
+            it['squeeze_score'] = entry.get('score') if entry else None
+    except Exception as _sqe:
+        logging.getLogger(__name__).debug(f"[journal] squeeze fail: {_sqe}")
+        for it in items:
+            it.setdefault('squeeze_score', None)
+
+    # ─── MOONSHOT alert dispatch ───
+    # Track pairs which JUST crossed stack >= 4 threshold (first detection).
+    # Send Telegram alert (BOT12) once per pair per 1h window.
+    try:
+        from database import _get_db as _gdb_m
+        import time as _t_m
+        db_m = _gdb_m()
+        moon_col = db_m.moonshot_alerts
+        try:
+            moon_col.create_index('pair', unique=False)
+            moon_col.create_index([('at', -1)])
+        except Exception:
+            pass
+        now_m = int(_t_m.time())
+        # Top 1 most recent item per pair (для detection)
+        pair_latest: dict = {}
+        for it in items:
+            p = it.get('pair') or ''
+            d = it.get('stack_distinct') or 0
+            if d < 4 or not p: continue
+            ts = it.get('at_ts') or 0
+            cur = pair_latest.get(p)
+            if not cur or ts > cur.get('at_ts', 0):
+                pair_latest[p] = it
+        # Filter: pair NOT alerted in last 1h
+        for p, it in pair_latest.items():
+            try:
+                last_alert = moon_col.find_one({'pair': p}, sort=[('at', -1)])
+                if last_alert and (now_m - int(last_alert.get('at_ts', 0)) < 3600):
+                    continue  # уже алертили <1h назад
+                # Mark as alerted (insert)
+                moon_col.insert_one({
+                    'pair': p,
+                    'at': datetime.now(timezone.utc),
+                    'at_ts': now_m,
+                    'stack_distinct': it.get('stack_distinct'),
+                    'stack_count': it.get('stack_count'),
+                    'long_count': it.get('stack_long'),
+                    'short_count': it.get('stack_short'),
+                    'last_source': it.get('source'),
+                    'last_direction': it.get('direction'),
+                    'squeeze_score': it.get('squeeze_score'),
+                    'change_24h': it.get('change_24h'),
+                    'is_top_mover': bool(it.get('is_top_mover')),
+                })
+                # Send Telegram alert (BOT12) — fire-and-forget
+                try:
+                    from config import BOT12_BOT_TOKEN, ADMIN_CHAT_ID
+                    if BOT12_BOT_TOKEN and ADMIN_CHAT_ID:
+                        import httpx as _hx
+                        dist = it.get('stack_distinct', 0)
+                        emoji = '💎' if dist >= 6 else '🚀'
+                        long_n = it.get('stack_long', 0)
+                        short_n = it.get('stack_short', 0)
+                        sq = it.get('squeeze_score')
+                        ch = it.get('change_24h')
+                        text = (
+                            f"{emoji} <b>MOONSHOT: {p}</b>\n\n"
+                            f"📊 Stack: <b>{dist}</b> distinct sources × direction "
+                            f"(<b>{it.get('stack_count',0)}</b> total signals в окне ±3h)\n"
+                            f"📈 Bias: <span>{long_n}× LONG</span> · <span>{short_n}× SHORT</span>\n"
+                        )
+                        if sq is not None:
+                            sq_emoji = '🔥' if sq >= 80 else '⚠' if sq >= 60 else ''
+                            text += f"💨 BB Squeeze: <b>{sq}/100</b> {sq_emoji}\n"
+                        if ch is not None:
+                            ch_emoji = '🔥' if ch > 15 else '📈' if ch > 5 else ''
+                            text += f"⏱ 24h change: <b>{ch:+.1f}%</b> {ch_emoji}\n"
+                        text += (
+                            f"\nLast: <b>{it.get('source','?')}</b> {it.get('direction','?')} "
+                            f"@ {it.get('entry','?')}\n"
+                            f"<i>Multiple sources align → pre-pump signature</i>"
+                        )
+                        _hx.post(
+                            f'https://api.telegram.org/bot{BOT12_BOT_TOKEN}/sendMessage',
+                            json={'chat_id': int(ADMIN_CHAT_ID), 'text': text,
+                                  'parse_mode': 'HTML', 'disable_web_page_preview': True},
+                            timeout=5.0,
+                        )
+                except Exception as _bt:
+                    logging.getLogger(__name__).debug(f"[moonshot] BOT12 send fail {p}: {_bt}")
+            except Exception:
+                pass
+    except Exception as _me:
+        logging.getLogger(__name__).debug(f"[moonshot] dispatch fail: {_me}")
+
+    # ─── Top movers enrichment (BingX 24h gainers) ───
+    # Опрашиваем BingX tickers, помечаем pairs которые сейчас в top 30
+    # по 24h price change. Helps catch pre/early pumps.
+    try:
+        import ccxt
+        ex_bx = ccxt.bingx({'options': {'defaultType': 'swap'},
+                            'enableRateLimit': True})
+        tickers = ex_bx.fetch_tickers()
+        # Sort by percentage change desc
+        pct_by_pair: dict = {}
+        for sym, t in (tickers or {}).items():
+            pct = (t or {}).get('percentage')
+            if pct is None: continue
+            # 'BTC/USDT:USDT' → 'BTC/USDT'
+            base = sym.split(':')[0] if ':' in sym else sym
+            pct_by_pair[base] = float(pct)
+        # Top 30 by % change (gainers)
+        top_gainers = sorted(pct_by_pair.items(), key=lambda x: -x[1])[:30]
+        top_set = set(p for p, _ in top_gainers if _ > 5.0)  # минимум +5%
+        for it in items:
+            p = it.get('pair') or ''
+            it['is_top_mover'] = p in top_set
+            it['change_24h'] = pct_by_pair.get(p)
+    except Exception as _te:
+        logging.getLogger(__name__).debug(f"[journal] top movers fail: {_te}")
+        for it in items:
+            it.setdefault('is_top_mover', False)
+            it.setdefault('change_24h', None)
 
     # ─── Cluster Delta + Resonance enrichment (для ВСЕХ источников) ───
     # Bulk-lookup cluster_delta cache по (pair, tf, candle_open_ms). Если
