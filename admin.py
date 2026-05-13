@@ -10783,18 +10783,15 @@ def _compute_journal_sync():
             inline_list = list(inline_keys)[:30]  # больше пар т.к. signal-only fast
             inline_results: dict = {}
             if inline_list:
-                # SIGNAL-ONLY (1 aggTrades call/TF): успевает в budget 5s.
-                # Klines забанен (HTTP 418) — fallback не работает быстро.
-                # Резонанс будет заполнен в bg fill для следующего рендера.
-                from delta_calculator import (get_signal_delta_only,
-                                                get_delta_snapshot_fast)
+                # SIGNAL-ONLY (1 aggTrades call/TF): ~0.5-1s/pair (fast).
+                # ВАЖНО: НЕ пробуем klines first — get_delta_snapshot_fast тянет 5
+                # свечей резонанса × 3 TF = ~11s, выпадает за budget 2s, futures
+                # не завершаются → данных нет. Идём прямо в aggTrades signal-only
+                # (0.6s/pair), резонанс посчитаем из cluster_delta prior candles
+                # (если в кэше уже есть) или пометим как None.
+                from delta_calculator import get_signal_delta_only
                 def _fetch_one(p, ts):
                     try:
-                        # Try klines fast first (если ban снят, всё успеет)
-                        snap = get_delta_snapshot_fast(p, ts * 1000)
-                        if snap and (snap.get('15m') or snap.get('1h')):
-                            return (p, ts, snap)
-                        # Fallback signal-only через aggTrades — быстрый
                         snap = get_signal_delta_only(p, ts * 1000)
                         return (p, ts, snap)
                     except Exception:
@@ -10802,11 +10799,13 @@ def _compute_journal_sync():
                 # FIX: with ThreadPoolExecutor блокирует на __exit__ ожидая
                 # все futures. Используем manual shutdown(wait=False, cancel_futures)
                 # чтобы не зависать на медленных fetch'ах.
-                ex_delta = ThreadPoolExecutor(max_workers=12)
+                ex_delta = ThreadPoolExecutor(max_workers=16)
                 try:
                     futs = [ex_delta.submit(_fetch_one, p, ts) for (p, ts) in inline_list]
                     try:
-                        for f in as_completed(futs, timeout=2.0):
+                        # budget 4s — даём reasonable окно для 16 параллельных
+                        # aggTrades fetches (~0.6-1s каждый)
+                        for f in as_completed(futs, timeout=4.0):
                             try:
                                 p, ts, snap = f.result(timeout=0.05)
                                 if snap:
