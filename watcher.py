@@ -3524,9 +3524,22 @@ async def _rsi_cache_loop():
                             pairs.add(s['pair'])
                 except Exception:
                     pass
+            # CV signals: фильтруем по pattern_triggered_at (когда паттерн сработал),
+            # НЕ по received_at — потому что receive_at = когда CV bot добавил пару
+            # (часто недели назад), а pattern fires сегодня. Раньше KAVA/SUN/etc
+            # не попадали в pool → 16h stale rsi_cache.
+            try:
+                for s in db.signals.find({'pattern_triggered': True,
+                                          'pattern_triggered_at': {'$gte': since}},
+                                          {'pair': 1}).limit(300):
+                    if s.get('pair'):
+                        pairs.add(s['pair'])
+            except Exception:
+                pass
+            # Legacy fallback: пары добавленные недавно (на всякий случай)
             try:
                 for s in db.signals.find({'received_at': {'$gte': since}},
-                                          {'pair': 1}).limit(300):
+                                          {'pair': 1}).limit(100):
                     if s.get('pair'):
                         pairs.add(s['pair'])
             except Exception:
@@ -3588,9 +3601,20 @@ async def _trend_cache_loop():
                             pairs.add(s['pair'])
                 except Exception:
                     pass
+            # Same fix как в _rsi_cache_loop: CV signals по pattern_triggered_at,
+            # а не по received_at (received_at = когда добавили пару, не свежий
+            # сигнал).
+            try:
+                for s in db.signals.find({'pattern_triggered': True,
+                                          'pattern_triggered_at': {'$gte': since}},
+                                          {'pair': 1}).limit(300):
+                    if s.get('pair'):
+                        pairs.add(s['pair'])
+            except Exception:
+                pass
             try:
                 for s in db.signals.find({'received_at': {'$gte': since}},
-                                          {'pair': 1}).limit(300):
+                                          {'pair': 1}).limit(100):
                     if s.get('pair'):
                         pairs.add(s['pair'])
             except Exception:
