@@ -149,12 +149,14 @@ DRAWDOWN_LIMIT_PCT = 10.0
 
 # ─── Strategy metadata (показывается на UI вкладке) ────────────────
 STRATEGY_NAME = "ALPHA-CV"
-STRATEGY_VERSION = "v3.0"
+STRATEGY_VERSION = "v3.1"
 STRATEGY_DESCRIPTION = (
-    "Multi-regime: разные правила для BULL/BEAR/CHOP. "
-    "BULL — LONG STRICT (мизер edge); CHOP — both dirs no-SKIP + be_at_1R (winner +0.99R!); "
-    "BEAR — SHORT GOOD+ + be_at_1R. Fresh 7d backtest на текущем market: "
-    "CHOP regime даёт +128R total за 7 дней (vs −20R на trail_1R_0.5R)."
+    "v3.1 на основе shadow-mode sim 48h (3002 signals): "
+    "BULL — LONG STRONG-only (ELITE removed: WR 25% AvgR -0.611R = broken), "
+    "TP1 floor 1.5R (fix +0.42R wins / -1.0R losses); "
+    "CHOP — cv LONG ужесточён до STRONG+ (был GOOD+, 98% biased LONG); "
+    "BULL TC SHORT override (verdict ≥ STRONG) — единственный SHORT exposure "
+    "в BULL trend для balanced risk. Все источники сохраняют GOOD+ кроме CV."
 )
 STRATEGY_BACKTEST_METRICS = {
     "backtest_period_days": 7,
@@ -366,28 +368,34 @@ MULTI_REGIME_ENABLED = True
 
 REGIME_CONFIG = {
     'BULL': {
+        # v3.1: убран ELITE — shadow sim 48h показал ELITE WR=25% AvgR=-0.611R
+        # (broken overfitted filter). STRONG: WR=66.7% AvgR=+0.022R (break-even).
         'allowed_directions': ('LONG',),
-        'allowed_verdicts': ('STRONG', 'ELITE'),     # strict — высокое качество для trend ride
+        'allowed_verdicts': ('STRONG',),
         'exit_label': 'signal_tpsl',
-        'size_fraction': 1.00,                       # FULL mode max — ride the trend
+        'size_fraction': 1.00,
         'use_be_at_1R': False,
-        'notes': 'BULL: LONG STRICT, full size — ride trend with quality signals only',
+        'notes': 'BULL v3.1: LONG STRONG-only (ELITE removed — broken in realtime)',
     },
     'CHOP': {
+        # v3.1: общий filter оставлен GOOD+. Source-specific override в should_enter:
+        # cryptovizor LONG требует STRONG+ (98% biased LONG, низкое quality в CHOP).
         'allowed_directions': ('LONG', 'SHORT'),
-        'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),  # широкий — оба direction
+        'allowed_verdicts': ('GOOD', 'STRONG', 'ELITE'),
         'exit_label': 'be_at_1R',
-        'size_fraction': 0.80,                       # 80% — high but not max (uncertainty)
+        'size_fraction': 0.80,
         'use_be_at_1R': True,
-        'notes': 'CHOP: both dirs GOOD+, be_at_1R, 80% mode size — uncertainty cap',
+        'notes': 'CHOP v3.1: both dirs GOOD+ (cv LONG tightened to STRONG)',
     },
     'BEAR': {
+        # v3.1: BEAR в realtime никогда не case — сохраняем STRONG+ELITE
+        # т.к. ELITE inversion наблюдалась только в BULL.
         'allowed_directions': ('SHORT',),
-        'allowed_verdicts': ('STRONG', 'ELITE'),     # strict — высокое качество для trend ride
+        'allowed_verdicts': ('STRONG', 'ELITE'),
         'exit_label': 'be_at_1R',
-        'size_fraction': 1.00,                       # FULL mode max — ride downtrend
+        'size_fraction': 1.00,
         'use_be_at_1R': True,
-        'notes': 'BEAR: SHORT STRICT, full size — ride trend with quality signals',
+        'notes': 'BEAR: SHORT STRICT, full size — STRONG+ELITE allowed (not enough data to invert)',
     },
 }
 
@@ -730,22 +738,48 @@ def should_enter(signal: dict) -> tuple[bool, str]:
         if qs is not None and qs < MIN_Q_SCORE:
             return False, f'q_score={qs}<{MIN_Q_SCORE}'
 
-    # ── v3.0 MULTI-REGIME gate ──
+    # ── v3.1 MULTI-REGIME gate ──
     # Регим определяется по BTC 4h+1d EMAs (cache 5min).
-    # Per-regime rules from REGIME_CONFIG (backtest 7d data).
+    # Per-regime rules from REGIME_CONFIG + source-specific overrides:
+    #   - BULL: TC SHORT с STRONG verdict разрешён (contrarian hedge, балансирует
+    #     LONG-bias других источников)
+    #   - CHOP: cryptovizor LONG требует STRONG+ (cv 98% LONG, мало edge на GOOD)
     if MULTI_REGIME_ENABLED:
         regime = detect_regime()
         signal['_regime'] = regime
         cfg = REGIME_CONFIG.get(regime, REGIME_CONFIG['CHOP'])
-        # Direction filter
-        if direction not in cfg['allowed_directions']:
-            return False, f'regime_{regime}_skip_direction={direction}'
-        # Verdict filter per regime
+
+        # Verdict вычисляем заранее — нужен для overrides перед direction filter
         v_info = compute_verdict(signal)
         verdict = v_info['verdict']
         signal['_verdict'] = verdict
-        if verdict not in cfg['allowed_verdicts']:
-            return False, f'regime_{regime}_skip_verdict={verdict}'
+
+        # P2 OVERRIDE: triple_confluence SHORT в BULL.
+        # Shadow sim показал: TC — единственный balanced source (52% LONG / 48% SHORT),
+        # в BULL все SHORTs отклоняются → реально 0 SHORT exposure. TC SHORT STRONG
+        # = contrarian hedge на overextended BULL trend.
+        tc_short_bull_override = (
+            regime == 'BULL'
+            and src == 'triple_confluence'
+            and direction == 'SHORT'
+            and verdict in ('STRONG', 'ELITE')
+        )
+
+        if not tc_short_bull_override:
+            # Direction filter
+            if direction not in cfg['allowed_directions']:
+                return False, f'regime_{regime}_skip_direction={direction}'
+            # Verdict filter per regime
+            if verdict not in cfg['allowed_verdicts']:
+                return False, f'regime_{regime}_skip_verdict={verdict}'
+
+        # P1 OVERRIDE: CHOP cryptovizor LONG требует STRONG+ (не GOOD).
+        # cryptovizor 98% LONG biased; в realtime CHOP накопил много losing
+        # GOOD-tier LONGs. Tightening = меньше волосня, более качественные entries.
+        if regime == 'CHOP' and src == 'cryptovizor' and direction == 'LONG':
+            if verdict not in ('STRONG', 'ELITE'):
+                return False, f'cv_long_chop_requires_STRONG_got_{verdict}'
+
         # Auto-pause gate
         paused, pause_state = is_paused_now()
         if paused:
@@ -755,7 +789,9 @@ def should_enter(signal: dict) -> tuple[bool, str]:
                 remaining_h = (pu - int(_t.time())) / 3600
                 return False, (f'auto_pause: {pause_state.get("reason","?")} '
                                 f'(осталось {remaining_h:.1f}ч)')
-        # Pass — return accept reason with regime
+        # Pass — return accept reason
+        if tc_short_bull_override:
+            return True, f'tc_short_bull_override_{verdict}'
         return True, f'regime_{regime}_{verdict}_{direction}'
 
     # ── LEGACY STRICT-MODE verdict gate (v2.x, отключено в v3.0) ──

@@ -1928,24 +1928,39 @@ async def on_signal(signal_data: dict):
             sl_method = f'SIGNAL_error_{type(_e).__name__}'
         signal_data['_alpha_cv_smart_sl_method'] = sl_method
         signal_data['_alpha_cv_smart_sl_original'] = float(original_sl_for_log)
-        # TP1 для ALPHA-CV v3.0 — зависит от regime:
-        #   CHOP/BEAR (be_at_1R exit) → пушим TP1 на 10R далеко (monitor закрывает на BE)
-        #   BULL (signal_tpsl exit)   → ОСТАВЛЯЕМ оригинальный signal TP1
-        # Это fix v3.0.3: в BULL signal_tpsl не работал т.к. TP был пушнут.
+        # TP1 для ALPHA-CV v3.1 — regime-aware с минимальным 1.5R в BULL:
+        #   BULL: max(signal_tp, entry ± 1.5R) — shadow sim показал что signal TP
+        #         слишком близко (avg winner +0.42R, loser -1.0R, net negative).
+        #         Floor 1.5R улучшает R:R до приемлемого, при этом сохраняет TP
+        #         сигнала если он дальше.
+        #   CHOP/BEAR: TP1 на 10R (be_at_1R monitor закрывает на BE)
         if tp1 and entry:
             try:
                 regime_for_tp = (alpha_regime or 'CHOP').upper()
+                sl_dist = abs(float(entry) - float(sl))
                 if regime_for_tp == 'BULL':
-                    # Signal TP1 как есть — exchange закроет позицию при достижении
-                    logger.info(f"[ALPHA-CV v3.0] BULL regime: TP1={tp1} (оригинальный signal TP)")
+                    # P1 v3.1: floor TP1 at entry + 1.5R / entry - 1.5R
+                    if direction == "LONG":
+                        min_tp = entry + 1.5 * sl_dist
+                        if tp1 < min_tp:
+                            logger.info(f"[ALPHA-CV v3.1] BULL TP1 floor: {tp1} → {min_tp} (was <1.5R)")
+                            tp1 = min_tp
+                        else:
+                            logger.info(f"[ALPHA-CV v3.1] BULL TP1={tp1} (signal TP further than 1.5R)")
+                    else:  # SHORT (TC override)
+                        min_tp = entry - 1.5 * sl_dist
+                        if tp1 > min_tp:
+                            logger.info(f"[ALPHA-CV v3.1] BULL SHORT TP1 floor: {tp1} → {min_tp} (was <1.5R)")
+                            tp1 = min_tp
+                        else:
+                            logger.info(f"[ALPHA-CV v3.1] BULL SHORT TP1={tp1}")
                 else:
                     # CHOP/BEAR — пушим TP1 на 10R (exit через be_at_1R monitor)
-                    sl_dist = abs(float(entry) - float(sl))
                     if direction == "LONG":
                         tp1 = entry + 10 * sl_dist
                     else:
                         tp1 = entry - 10 * sl_dist
-                    logger.info(f"[ALPHA-CV v3.0] {regime_for_tp} regime: TP1 → 10R far ({tp1}) (exit by be_at_1R monitor)")
+                    logger.info(f"[ALPHA-CV v3.1] {regime_for_tp} regime: TP1 → 10R far ({tp1})")
             except Exception:
                 pass
     # open_position() — sync function с counter+insert+balance update.
@@ -1987,7 +2002,7 @@ async def on_signal(signal_data: dict):
                     'auto_strategy_reason': signal_data.get('_alpha_cv_reason'),
                     'auto_strategy_exit_plan': signal_data.get('_alpha_cv_exit_plan') or {},
                     'auto_strategy_size_mult': alpha_mult,
-                    'auto_strategy_version': 'v3.0',
+                    'auto_strategy_version': 'v3.1',
                     'auto_strategy_regime': _regime,
                     'auto_strategy_verdict': _verdict,
                     'auto_strategy_smart_sl_method': signal_data.get('_alpha_cv_smart_sl_method'),
