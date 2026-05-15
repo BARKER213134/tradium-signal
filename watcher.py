@@ -3486,6 +3486,44 @@ async def _ui_prewarm_loop():
         await _asyncio.sleep(120)  # 2 минуты на Pro (было 5 на Hobby)
 
 
+async def _rsi_cross_scanner_loop():
+    """RSI/SMA(RSI) 12h crossover Scanner с Volume confirmation.
+    Backtest 14d: LONG vol≥2× → WR 62%, MFE +9.83%, Final +2.45%."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(260)
+    while True:
+        try:
+            import rsi_sma_cross_scanner as rcs
+            triggers = await _asyncio.wait_for(
+                _asyncio.to_thread(rcs.scan), timeout=120.0,
+            )
+            for tr in triggers or []:
+                emitted = await _asyncio.to_thread(rcs.emit_signal, tr)
+                if not emitted:
+                    continue
+                try:
+                    payload = {
+                        'symbol': tr['symbol'], 'pair': tr['pair'],
+                        'direction': tr['direction'],
+                        'entry': tr['entry'],
+                        'source': 'rsi_cross_12h',
+                        'pattern': (f"RSI/SMA cross {tr['cross_type']} "
+                                    f"rsi={tr['rsi']} vol={tr['vol_ratio']}×"),
+                        'rsi_at_cross': tr['rsi'],
+                        'vol_ratio': tr['vol_ratio'],
+                    }
+                    await _paper_on_signal(payload)
+                except Exception as _pe:
+                    logger.debug(f"[rsi-cross] paper route fail: {_pe}")
+            if triggers:
+                logger.info(f"[rsi-cross] emitted {sum(1 for _ in triggers)} signals")
+        except _asyncio.TimeoutError:
+            logger.warning("[rsi-cross] scan TIMEOUT 120s")
+        except Exception:
+            logger.debug("[rsi-cross] error", exc_info=True)
+        await _asyncio.sleep(rcs.CONFIG.get('scan_interval_s', 600) if 'rcs' in dir() else 600)
+
+
 async def _v_bottom_scanner_loop():
     """V-Bottom Scanner — каждые 5 мин ищет V-Bottom/V-Top setups market-wide
     (BingX swap mid-cap pairs, 10M-900M 24h vol). Triggers роутятся через
@@ -4354,6 +4392,12 @@ async def start_watcher():
         logger.info("[v-bottom] scanner loop started")
     except Exception:
         logger.exception("[v-bottom] scanner loop failed")
+    # RSI/SMA(RSI) 12h crossover Scanner с Volume confirmation
+    try:
+        asyncio.create_task(_rsi_cross_scanner_loop())
+        logger.info("[rsi-cross] 12h scanner loop started")
+    except Exception:
+        logger.exception("[rsi-cross] scanner loop failed")
     # [DISABLED] Cluster Delta auto-backfill — был источник 418 banов от
     # Binance fapi/klines. Теперь backfill только вручную через
     # POST /api/cluster-delta/backfill-cdn (статический CDN, без rate limit).

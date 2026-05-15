@@ -735,10 +735,11 @@
           volcano:'🌋',     // 🌋 Volcano Breakout (highest-edge, WR 38%)
           second_flip:'♻️',  // ♻️ Second Flip Confirmation (2nd LONG ≤12h)
           v_bottom:'▽',     // ▽ V-Bottom reversal (WR 98% backtest)
+          rsi_cross_12h:'⚡', // ⚡ RSI/SMA 12h crossover + vol≥2× (WR 62%, MFE +9.83%)
         })[src] || '•';
         return prefix + base;
       };
-      window.sigIcon._version = 'v8-v_bottom';
+      window.sigIcon._version = 'v9-rsi_cross';
       console.log('[sigIcon] loaded', window.sigIcon._version);
 
       // sigIconCompact — для маркеров НА ГРАФИКЕ (без 👑/⭐ префиксов,

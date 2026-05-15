@@ -10733,6 +10733,34 @@ def _compute_journal_sync():
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] new_strategies fetch fail: {e}")
 
+    # ─── RSI/SMA crossover 12h signals ───
+    try:
+        from database import _get_db
+        col = _get_db().rsi_sma_cross_signals
+        for rs in col.find({'detected_at': {'$gte': since_14d}},
+                           sort=[('detected_at', -1)], limit=500):
+            pair = rs.get('pair', '')
+            at_dt = rs.get('detected_at')
+            items.append({
+                'source': 'rsi_cross_12h',
+                'symbol': rs.get('symbol', pair.replace('/', '').upper()),
+                'pair': pair,
+                'direction': rs.get('direction', 'LONG'),
+                'entry': rs.get('entry'),
+                'tp1': None, 'sl': None,
+                'pattern': (f"{rs.get('cross_type','?')} cross "
+                            f"rsi={rs.get('rsi','?')} vol={rs.get('vol_ratio','?')}×"),
+                'score': None,
+                'is_top_pick': False,
+                'rsi_at_cross': rs.get('rsi'),
+                'vol_ratio_at_cross': rs.get('vol_ratio'),
+                'vol_24h_usdt': rs.get('vol_24h_usdt'),
+                'at': at_dt.isoformat() if hasattr(at_dt, 'isoformat') else str(at_dt or ''),
+                'at_ts': int(at_dt.timestamp()) if hasattr(at_dt, 'timestamp') else 0,
+            })
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] rsi_cross fetch fail: {e}")
+
     # ─── V-Bottom signals ───
     try:
         from database import _get_db
