@@ -1675,6 +1675,26 @@ async def on_signal(signal_data: dict):
         except Exception as e:
             logger.warning(f"[ALPHA-CV-GATE] error: {e}")
 
+    # ── 0y. RSI/SMA 12h STATE filter (P0 — universal +14-17 WR пп) ──
+    # Backtest 14d (10475 signals × all sources): RSI>SMA на 12h для LONG /
+    # RSI<SMA для SHORT даёт +14-17 WR пп. Применяем как HARD gate — если
+    # state против direction → reject.
+    # Pairs без 12h данных (fapi banned) пропускаются (avoid false rejects).
+    try:
+        import rsi12h_state as r12
+        match, state_info = await asyncio.to_thread(r12.check_direction_match, pair, direction)
+        if not match:
+            st = state_info.get('state', '?')
+            rv = state_info.get('rsi', '?')
+            sv = state_info.get('sma', '?')
+            reject_reason = (f"[12H-STATE] {direction} blocked: state={st} "
+                            f"(RSI={rv} vs SMA={sv}) — против тренда на 12h")
+            _log_rejection(signal_data, reject_reason)
+            logger.info(f"[12H-STATE] REJECT {pair} {direction}: state={st}")
+            return None
+    except Exception as _r12_e:
+        logger.debug(f"[12H-STATE] check fail (passing through): {_r12_e}")
+
     # ── 0. ONLY-NEW-STRATEGIES MODE (опционально, default OFF) ────
     # Если хочешь временно ставить на паузу всё кроме 3 новых стратегий —
     # set Railway env PAPER_ONLY_NEW_STRATEGIES=1. Default = "0" (все работают).
