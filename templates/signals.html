@@ -942,9 +942,6 @@ async function openChartModal(symbol, pair, direction, pnl) {
             const maxStack = Math.max(...g.items.map(it => it.stack_distinct || 0), 0);
             const isMoonshot = maxStack >= 4;
             const isDiamond = maxStack >= 6;
-            // V-Bottom/V-Top check for this cluster
-            const vBot = g.items.find(it => it.source === 'v_bottom' && it.direction === 'LONG');
-            const vTop = g.items.find(it => it.source === 'v_bottom' && it.direction === 'SHORT');
             markers.push({
               time: g.time,
               position: g.isLong ? 'belowBar' : 'aboveBar',
@@ -960,20 +957,7 @@ async function openChartModal(symbol, pair, direction, pnl) {
                 text: isDiamond ? `💎${maxStack}` : `🚀${maxStack}`, size: 0,
               });
             }
-            if (vBot) {
-              markers.push({
-                time: g.time, position: 'belowBar',
-                color: '#00e5a0', shape: 'arrowUp',
-                text: `▽ V-Bot ${(vBot.drop_pct||0).toFixed(1)}%`, size: 2,
-              });
-            }
-            if (vTop) {
-              markers.push({
-                time: g.time, position: 'aboveBar',
-                color: '#ff4d6d', shape: 'arrowDown',
-                text: `△ V-Top ${(vTop.drop_pct||0).toFixed(1)}%`, size: 2,
-              });
-            }
+            // V-Bottom/V-Top markers DISABLED по запросу юзера
           }
           if (markers.length) series.setMarkers(markers);
         })
@@ -7269,7 +7253,6 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="vol_accum">🔋 Vol Accumulation</option>
     <option value="volcano">🌋 Volcano Breakout ★</option>
     <option value="second_flip">♻️ Second Flip Confirmation</option>
-    <option value="v_bottom">▽ V-Bottom / △ V-Top (reversal)</option>
     <option value="rsi_cross_12h">⚡ RSI/SMA cross 12h + vol≥2×</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
@@ -8722,7 +8705,6 @@ window._isWorthSignal = function(s) {
   // TIER 1
   if ((s.confluence_score || 0) >= 70) return true;
   if ((s.stack_distinct || 0) >= 4) return true;
-  if (s.v_pattern && s.v_pattern.type === 'v_bottom' && s.direction === 'LONG') return true;
   if (s.is_top_pick) return true;
   // +12h state match = strong promotion (+14-17 WR per backtest)
   if (s.rsi12h_match === true && (s.source === 'second_flip' || s.source === 'cryptovizor' ||

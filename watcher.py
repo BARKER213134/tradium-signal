@@ -4386,12 +4386,14 @@ async def start_watcher():
         logger.info("[new-strategies] updater loop started")
     except Exception:
         logger.exception("[new-strategies] updater loop failed")
-    # V-Bottom Scanner — каждые 5 мин ищет V-Bottom/V-Top market-wide
-    try:
-        asyncio.create_task(_v_bottom_scanner_loop())
-        logger.info("[v-bottom] scanner loop started")
-    except Exception:
-        logger.exception("[v-bottom] scanner loop failed")
+    # V-Bottom Scanner — DISABLED по запросу юзера (15.05.26).
+    # Loop существует но не стартует. Module + collection сохранены на случай
+    # future revival. Чтобы вернуть — раскомментировать ниже.
+    # try:
+    #     asyncio.create_task(_v_bottom_scanner_loop())
+    #     logger.info("[v-bottom] scanner loop started")
+    # except Exception:
+    #     logger.exception("[v-bottom] scanner loop failed")
     # RSI/SMA(RSI) 12h crossover Scanner с Volume confirmation
     try:
         asyncio.create_task(_rsi_cross_scanner_loop())
