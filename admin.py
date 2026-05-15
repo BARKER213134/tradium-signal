@@ -11059,40 +11059,53 @@ def _compute_journal_sync():
     # ─── RSI/SMA 12h STATE filter enrichment ───
     # Используем shared module rsi12h_state — single cache, без duplicate code.
     # paper_trader.on_signal тоже использует same cache → consistency.
+    # HARD TIME BUDGET: total enrichment must finish < 12s (от 40s journal budget).
     try:
         from concurrent.futures import ThreadPoolExecutor as _RsiExec, as_completed as _rsi_done
         import time as _t_r12
         import rsi12h_state as _r12_mod
         rc_now = int(_t_r12.time())
-        # Get unique pairs for recent items (last 7d)
-        recent_cutoff = rc_now - 7 * 86400
+        r12_t0 = _t_r12.time()
+        R12_BUDGET_S = 10.0  # hard cap
+        # Get unique pairs for recent items (last 24h только — экономим compute)
+        recent_cutoff = rc_now - 24 * 3600
         recent_pairs: set = set()
         for it in items:
             if (it.get('at_ts') or 0) >= recent_cutoff:
                 p = it.get('pair') or ''
                 if p: recent_pairs.add(p)
-        # Fetch only pairs not in cache or expired (get_state делает это сам,
-        # но parallel pre-warm ускоряет cold start)
-        need_pairs = list(recent_pairs)[:60]
-        if need_pairs:
+        # Cold pairs (no cache) — pre-warm cap 20
+        cold_pairs = [p for p in recent_pairs
+                      if not _r12_mod._cache.get(p)
+                      or (rc_now - _r12_mod._cache[p].get('ts', 0))
+                         > (3600 if _r12_mod._cache[p].get('state') else 300)]
+        cold_pairs = cold_pairs[:20]
+        if cold_pairs and (_t_r12.time() - r12_t0) < R12_BUDGET_S:
             ex_rc = _RsiExec(max_workers=10)
             try:
-                futs = {ex_rc.submit(_r12_mod.get_state, p): p for p in need_pairs}
+                remaining = max(2.0, R12_BUDGET_S - (_t_r12.time() - r12_t0))
+                futs = {ex_rc.submit(_r12_mod.get_state, p): p for p in cold_pairs}
                 try:
-                    for f in _rsi_done(futs, timeout=15.0):
+                    for f in _rsi_done(futs, timeout=remaining):
                         try: f.result(timeout=0.2)
                         except Exception: pass
                 except Exception: pass
             finally:
                 ex_rc.shutdown(wait=False, cancel_futures=True)
-        # Apply per item: state match check from cache
+        # Apply per item from cache (instant, no fetch)
         for it in items:
             p = it.get('pair') or ''
             if not p:
                 it['rsi12h_state'] = None
                 it['rsi12h_match'] = None
                 continue
-            info = _r12_mod.get_state(p)  # cached, fast
+            # ONLY use cached data — не делаем fresh fetch здесь
+            entry = _r12_mod._cache.get(p)
+            if not entry:
+                it['rsi12h_state'] = None
+                it['rsi12h_match'] = None
+                continue
+            info = entry  # already has state/rsi/sma/ts
             state = info.get('state')
             it['rsi12h_state'] = state
             it['rsi12h_value'] = info.get('rsi')

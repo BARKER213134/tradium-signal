@@ -38,6 +38,11 @@ def _compute_rsi(closes: list[float], p: int = 14) -> list:
     return rsi
 
 
+# Если fapi banned/slow — пишем negative cache на короткое время чтобы не
+# повторно пытаться каждый journal load
+_NEGATIVE_TTL_S = 300  # 5 мин не пробуем после fail
+
+
 def get_state(pair: str) -> dict:
     """Returns {'state': 'bullish'|'bearish'|'neutral'|None,
                 'rsi': float|None, 'sma': float|None,
@@ -46,8 +51,10 @@ def get_state(pair: str) -> dict:
     """
     now = int(time.time())
     entry = _cache.get(pair)
-    if entry and (now - entry.get('ts', 0)) < _CACHE_TTL_S:
-        return {**entry, 'cached_age_s': now - entry['ts']}
+    if entry:
+        ttl = _NEGATIVE_TTL_S if entry.get('state') is None else _CACHE_TTL_S
+        if (now - entry.get('ts', 0)) < ttl:
+            return {**entry, 'cached_age_s': now - entry['ts']}
 
     # Fresh compute
     try:
