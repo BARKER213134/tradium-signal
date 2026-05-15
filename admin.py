@@ -10738,7 +10738,7 @@ def _compute_journal_sync():
         from database import _get_db
         col = _get_db().v_bottom_signals
         for vb in col.find({'detected_at': {'$gte': since_14d}},
-                           sort=[('detected_at', -1)], limit=500):
+                           sort=[('detected_at', -1)], limit=6000):
             pair = vb.get('pair', '')
             at_dt = vb.get('detected_at')
             pat_type = vb.get('pattern_type', 'v_bottom')
