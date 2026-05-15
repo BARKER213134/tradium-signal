@@ -7313,6 +7313,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jNearLevelBtn" onclick="_toggleNearLevel()" title="Только сигналы с entry визуально у уровня (🎯 in zone или ≤1.5%)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:120px;text-align:center;box-sizing:border-box;">🎯 У уровня · OFF</button>
   <button id="jHotOnlyBtn" onclick="_toggleHotOnly()" title="Только HOT setups (Quality Score ≥ 60)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">🔥 HOT ≥60 · OFF</button>
   <button id="jMoonshotBtn" onclick="_toggleMoonshot()" title="🚀 MOONSHOT: пары с stack ≥ 4 distinct sources в окне ±3h (multiple confirmations align — pre-pump signature)" style="background:linear-gradient(135deg, rgba(255,140,80,0.15), rgba(255,215,0,0.10));border:1px solid rgba(255,140,80,0.5);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ff8c50;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">🚀 Moonshot · OFF</button>
+  <button id="jHighScoreBtn" onclick="_toggleHighScore()" title="🎯 HIGH SCORE: confluence_score ≥ 70 (RSI Divergence + V-pattern + SMA align + KL + Stack + Anomaly)" style="background:linear-gradient(135deg, rgba(255,215,0,0.13), rgba(255,140,80,0.10));border:1px solid rgba(255,215,0,0.5);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ffd700;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">🎯 Score≥70 · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
   <button id="jDeltaBackfillBtn" onclick="_startDeltaBackfill()" title="Запустить массовый backfill cluster_delta для всех сигналов в БД (через klines, полная история)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:140px;text-align:center;">📊 Δ Backfill</button>
 </div>
@@ -7394,13 +7395,14 @@ async function _pollDeltaBackfill() {
       <col style="width:6%;">    <!-- Пара -->
       <col style="width:5%;">    <!-- Напр. -->
       <col style="width:6%;">    <!-- Entry -->
-      <col style="width:20%;">   <!-- Паттерн -->
+      <col style="width:18%;">   <!-- Паттерн -->
       <col style="width:7%;">    <!-- Вердикт -->
       <col style="width:9%;">    <!-- RSI 4 TF -->
-      <col style="width:6%;">    <!-- SMA vs RSI (circles) -->
-      <col style="width:8%;">    <!-- Аномалия (delta z-score) -->
-      <col style="width:8%;">    <!-- Trend (EMA20/50) -->
-      <col style="width:12%;">   <!-- Stack -->
+      <col style="width:6%;">    <!-- SMA vs RSI -->
+      <col style="width:7%;">    <!-- Аномалия -->
+      <col style="width:7%;">    <!-- Trend -->
+      <col style="width:7%;">    <!-- Confluence Score -->
+      <col style="width:9%;">    <!-- Stack -->
     </colgroup>
     <thead>
       <tr>
@@ -7421,11 +7423,12 @@ async function _pollDeltaBackfill() {
         <th id="jSortSma" title="SMA(14) of RSI per TF. 🟢 = RSI выше SMA (bullish momentum), 🔴 = ниже (bearish)" style="text-align:center;padding:14px 6px;">SMA</th>
         <th id="jSortAnomaly" title="Аномалия дельты — z-score delta_pct сигнальной свечи vs последних 30 свечей до неё. 🔥 z>2.5 = экстремум (как SKYAI 26.04), ⚡ z>1.5 = повышенный приток, ⚪ норма" style="text-align:center;padding:14px 6px;">Аномалия</th>
         <th id="jSortTrend" title="Тренд по EMA20 vs EMA50 на close per TF. ▲ зелёный = UP, ▼ красный = DOWN, ◆ серый = FLAT" style="text-align:center;padding:14px 6px;">Тренд</th>
+        <th class="sortable" onclick="jSort('confluence_score')" id="jSortConfluence" title="Confluence Score 0-100 — агрегат RSI Divergence + V-pattern + SMA align + KL bounce + Stack + Anomaly. ≥70 = high conviction setup." style="text-align:center;padding:14px 6px;">Score</th>
         <th class="sortable" onclick="jSort('stack_distinct')" id="jSortStack" title="Stack — кол-во distinct (source × direction) на паре в окне ±3h (6h всего). 4+ = MOONSHOT (multiple sources align — pre-pump signature). Squeeze score 0-100 — BB сжатие, 80+ = готовится breakout." style="text-align:center;padding:14px 6px;">Stack</th>
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="12" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="13" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -8434,6 +8437,10 @@ function filterJournal() {
     if (window._journalMoonshot) {
       if ((s.stack_distinct || 0) < 4) return false;
     }
+    // 🎯 High Score only — confluence_score >= 70 (high-conviction setups)
+    if (window._journalHighScore) {
+      if ((s.confluence_score || 0) < 70) return false;
+    }
     // 🟢🔴 SMA filter: RSI vs SMA(14)RSI position per TF
     // bull = RSI > SMA на этом TF, bear = RSI < SMA. Если данных нет — fail.
     const smaFilter = document.getElementById('jFilterSma');
@@ -8664,6 +8671,31 @@ function _toggleHotOnly() {
   requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
 }
 
+function _toggleHighScore() {
+  window._journalHighScore = !window._journalHighScore;
+  const btn = document.getElementById('jHighScoreBtn');
+  if (btn) {
+    if (window._journalHighScore) {
+      btn.style.background = 'linear-gradient(135deg, rgba(255,215,0,0.30), rgba(255,140,80,0.20))';
+      btn.style.borderColor = '#ffd700';
+      btn.style.color = '#ffd700';
+      btn.textContent = '🎯 Score≥70 · ON';
+    } else {
+      btn.style.background = 'linear-gradient(135deg, rgba(255,215,0,0.13), rgba(255,140,80,0.10))';
+      btn.style.borderColor = 'rgba(255,215,0,0.5)';
+      btn.style.color = '#ffd700';
+      btn.textContent = '🎯 Score≥70 · OFF';
+    }
+  }
+  if (window._journalHighScore && window._journalSort !== 'confluence_score') {
+    window._journalSort = 'confluence_score';
+    window._journalSortDir = 'desc';
+  }
+  const scrollY = window.scrollY;
+  filterJournal();
+  requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
+}
+
 function _toggleMoonshot() {
   window._journalMoonshot = !window._journalMoonshot;
   const btn = document.getElementById('jMoonshotBtn');
@@ -8833,6 +8865,8 @@ function renderJournal(items, startIdx) {
     // Trend EMA20 vs EMA50 per TF
     const trendCell = window._renderTrendCell ? window._renderTrendCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    const confluenceCell = window._renderConfluenceCell ? window._renderConfluenceCell(s) :
+      '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     // Stack (Δ% и Резонанс удалены по запросу — оставили только Stack для MOONSHOT detection)
     const stackCell = window._renderStackCell ? window._renderStackCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
@@ -8848,6 +8882,7 @@ function renderJournal(items, startIdx) {
       ${smaCell}
       ${anomalyCell}
       ${trendCell}
+      ${confluenceCell}
       ${stackCell}
     </tr>`;
   }).join('');
@@ -9631,6 +9666,42 @@ window._renderDeltaCell = function(s) {
   </td>`;
 };
 
+window._renderConfluenceCell = function(s) {
+  const sc = s.confluence_score;
+  if (sc == null || sc === 0) {
+    return '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+  }
+  // Direction emoji
+  const dir = s.confluence_direction;
+  const dirEmoji = dir === 'LONG' ? '🟢' : dir === 'SHORT' ? '🔴' : '⚪';
+  // Color by tier
+  let color = '#666', bg = '', border = '';
+  if (sc >= 80) { color = '#ffd700'; bg = 'background:rgba(255,215,0,0.18);'; border = 'border-left:2px solid #ffd700;'; }
+  else if (sc >= 70) { color = '#ff8c50'; bg = 'background:rgba(255,140,80,0.13);'; border = 'border-left:2px solid #ff8c50;'; }
+  else if (sc >= 50) { color = '#88d8a3'; bg = 'background:rgba(136,216,163,0.08);'; }
+  else if (sc >= 30) { color = '#88c5ff'; }
+  // Divergence + V-pattern badges
+  const div = s.divergence;
+  const vp = s.v_pattern;
+  let extras = [];
+  if (div) {
+    const d = div.type === 'bullish' ? '🔼' : '🔽';
+    extras.push(`<span title="RSI ${div.type} divergence (strength ${div.strength})" style="font-size:11px;">${d}</span>`);
+  }
+  if (vp) {
+    const v = vp.type === 'v_bottom' ? '▽' : '△';
+    extras.push(`<span title="${vp.type} (drop ${vp.drop_pct || vp.rise_pct}%)" style="font-size:11px;color:${vp.type==='v_bottom' ? '#00e5a0' : '#ff4d6d'};">${v}</span>`);
+  }
+  // Components tooltip
+  const comp = s.confluence_components || {};
+  const tip = `Score ${sc}/100 — ${dir || 'N/A'}\n` +
+              Object.entries(comp).map(([k,v]) => `  ${k}: ${v}`).join('\n');
+  return `<td class="mono" style="text-align:center;line-height:1.3;padding:4px 6px !important;${bg}${border}" title="${tip}">
+    <div style="font-weight:700;color:${color};font-size:13px;">${dirEmoji}<b>${sc}</b></div>
+    ${extras.length ? `<div style="font-size:9px;">${extras.join(' ')}</div>` : ''}
+  </td>`;
+};
+
 window._renderStackCell = function(s) {
   const cnt = s.stack_count || 0;
   const dist = s.stack_distinct || 0;
@@ -9723,8 +9794,8 @@ function jSort(field) {
     _jSortAsc = field === 'symbol' || field === 'source' || field === 'direction'; // alpha = asc default
   }
   // Update header arrows
-  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',stack_distinct:'jSortStack'};
-  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',stack_distinct:'Stack'};
+  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',confluence_score:'jSortConfluence',stack_distinct:'jSortStack'};
+  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',confluence_score:'Confluence',stack_distinct:'Stack'};
   for (const [f, id] of Object.entries(cols)) {
     const el = document.getElementById(id);
     if (el) el.textContent = labels[f] + (f === _jSortField ? (_jSortAsc ? ' ▲' : ' ▼') : '');

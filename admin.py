@@ -10915,6 +10915,84 @@ def _compute_journal_sync():
     except Exception as _me:
         logging.getLogger(__name__).debug(f"[moonshot] dispatch fail: {_me}")
 
+    # ─── Divergence + V-pattern + Confluence Score enrichment ───
+    # Для recent items (last 12h) computе RSI divergence + V-pattern,
+    # потом combine с уже-computed stack/sma/anomaly через confluence_score.
+    # Cache divergence per (pair, hour_bucket) — TTL 10min, не пересчитываем
+    # каждый journal load одни и те же swings.
+    try:
+        global _div_cache, _vp_cache
+    except NameError:
+        _div_cache = {}
+        _vp_cache = {}
+    try:
+        import time as _t_cs
+        if '_div_cache' not in globals(): globals()['_div_cache'] = {}
+        if '_vp_cache' not in globals(): globals()['_vp_cache'] = {}
+        div_cache = globals()['_div_cache']
+        vp_cache  = globals()['_vp_cache']
+        cs_now = int(_t_cs.time())
+        CS_TTL = 600  # 10min
+        from divergence import detect_divergence
+        from v_pattern import detect_v_pattern
+        from confluence_score import compute_score
+        # Recent items only (last 12h) → limit compute load
+        recent_cutoff = cs_now - 12 * 3600
+        recent_pairs: set = set()
+        for it in items:
+            if (it.get('at_ts') or 0) >= recent_cutoff:
+                p = it.get('pair') or ''
+                if p:
+                    recent_pairs.add(p)
+        # Compute divergence + v_pattern for unique pairs (cap 30 per render)
+        need_compute = [p for p in recent_pairs
+                        if cs_now - div_cache.get(p, {}).get('ts', 0) > CS_TTL]
+        need_compute = need_compute[:30]
+        if need_compute:
+            from concurrent.futures import ThreadPoolExecutor as _CSExec, as_completed as _cs_done
+            def _compute_one(p):
+                try:
+                    div = detect_divergence(p, '1h', 100)
+                    vp = detect_v_pattern(p, '15m', 50, 3.0)
+                    return (p, div, vp)
+                except Exception:
+                    return (p, None, None)
+            cs_ex = _CSExec(max_workers=8)
+            try:
+                futs = {cs_ex.submit(_compute_one, p): p for p in need_compute}
+                try:
+                    for f in _cs_done(futs, timeout=12.0):
+                        try:
+                            p, d, v = f.result(timeout=0.2)
+                            div_cache[p] = {'ts': cs_now, 'val': d}
+                            vp_cache[p]  = {'ts': cs_now, 'val': v}
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            finally:
+                cs_ex.shutdown(wait=False, cancel_futures=True)
+        # Apply divergence/vp/score per item
+        for it in items:
+            p = it.get('pair') or ''
+            if p:
+                d_entry = div_cache.get(p)
+                v_entry = vp_cache.get(p)
+                it['divergence'] = (d_entry.get('val') if d_entry else None)
+                it['v_pattern'] = (v_entry.get('val') if v_entry else None)
+            # Compute confluence score using already-enriched fields
+            try:
+                cs = compute_score(it)
+                it['confluence_score'] = cs['score']
+                it['confluence_direction'] = cs['direction']
+                it['confluence_components'] = cs['components']
+            except Exception:
+                it['confluence_score'] = 0
+                it['confluence_direction'] = None
+                it['confluence_components'] = {}
+    except Exception as _cse:
+        logging.getLogger(__name__).debug(f"[journal] confluence enrich fail: {_cse}")
+
     # ─── Top movers enrichment (BingX 24h gainers) ───
     # Опрашиваем BingX tickers, помечаем pairs которые сейчас в top 30
     # по 24h price change. Helps catch pre/early pumps.
