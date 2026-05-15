@@ -8373,9 +8373,13 @@ function filterJournal() {
   const minTs = timeH > 0 ? nowTs - timeH * 3600 : 0;
 
   let filtered = _journalData.filter(s => {
-    // Tradium и Cluster сигналы показываем всегда независимо от временного окна
-    // (их мало, они ценные — не прячем за фильтром "24ч")
-    if (minTs && !['tradium','cluster'].includes(s.source) && (s.at_ts || 0) < minTs) return false;
+    // Time filter: применяем ТОЛЬКО если источник НЕ выбран явно.
+    // Юзер: "когда выбираешь CV — не все сигналы внутри" — потому что
+    // default time = 24h отрезал старые. Явный выбор источника = "хочу всё
+    // по этому источнику", time filter перекрываем.
+    // Tradium и Cluster всегда показываем (их мало, они ценные).
+    const sourceExplicit = !!src;
+    if (minTs && !sourceExplicit && !['tradium','cluster'].includes(s.source) && (s.at_ts || 0) < minTs) return false;
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
       if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip'].includes(s.source)) return false;
