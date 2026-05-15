@@ -77,35 +77,53 @@ def _check_pair(pair: str, vol_24h: float, price: float) -> Optional[dict]:
         return None
 
 
+def _fetch_tickers() -> list:
+    """Binance fapi tickers с BingX fallback."""
+    try:
+        import httpx
+        r = httpx.get('https://fapi.binance.com/fapi/v1/ticker/24hr', timeout=10)
+        if r.status_code == 200:
+            out = []
+            for t in r.json():
+                sym = str(t.get('symbol',''))
+                if sym.endswith('USDT'):
+                    out.append({
+                        'symbol': sym,
+                        'quoteVolume': t.get('quoteVolume',0),
+                        'lastPrice': t.get('lastPrice',0),
+                        'priceChangePercent': t.get('priceChangePercent'),
+                    })
+            return out
+    except Exception:
+        pass
+    # BingX fallback
+    try:
+        import ccxt
+        ex = ccxt.bingx({'options':{'defaultType':'swap'},'enableRateLimit':True})
+        bx = ex.fetch_tickers()
+        out = []
+        for sym, t in (bx or {}).items():
+            if sym.endswith(':USDT'):
+                base = sym.split(':')[0]
+                if '/USDT' in base:
+                    out.append({
+                        'symbol': base.replace('/',''),
+                        'quoteVolume': t.get('quoteVolume') or 0,
+                        'lastPrice': t.get('last') or 0,
+                        'priceChangePercent': t.get('percentage'),
+                    })
+        return out
+    except Exception as e:
+        logger.warning(f'[v-bottom] all tickers sources failed: {e}')
+        return []
+
+
 def scan() -> list[dict]:
     """Market-wide scan. Returns list of trigger dicts."""
     triggers: list = []
     t0 = time.time()
-    # Get 24h tickers from Binance fapi (or BingX fallback)
-    try:
-        from volume_explosion import _fetch_fapi_24h_tickers, _get_ex
-        tickers_data = _fetch_fapi_24h_tickers()
-        use_bingx = False
-        if tickers_data is None:
-            ex = _get_ex()
-            if ex:
-                bx = ex.fetch_tickers()
-                tickers_data = []
-                for sym, t in (bx or {}).items():
-                    if sym.endswith(':USDT'):
-                        base = sym.split(':')[0]
-                        if '/USDT' in base:
-                            tickers_data.append({
-                                'symbol': base.replace('/', ''),
-                                'quoteVolume': t.get('quoteVolume') or 0,
-                                'lastPrice': t.get('last') or 0,
-                                'priceChangePercent': t.get('percentage'),
-                            })
-                use_bingx = True
-            else:
-                return []
-    except Exception as e:
-        logger.warning(f'[v-bottom] tickers fail: {e}')
+    tickers_data = _fetch_tickers()
+    if not tickers_data:
         return []
 
     # Filter mid-cap candidates

@@ -127,27 +127,47 @@ def _check_pair(pair: str, vol_24h: float) -> Optional[dict]:
     }
 
 
+def _fetch_fapi_tickers() -> Optional[list]:
+    """Binance fapi /ticker/24hr — all USDT-perp pairs."""
+    try:
+        import httpx
+        r = httpx.get('https://fapi.binance.com/fapi/v1/ticker/24hr',
+                      timeout=10.0)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception as e:
+        logger.warning(f'[rsi-cross] fapi tickers fail: {e}')
+        return None
+
+
+def _fetch_bingx_tickers() -> Optional[list]:
+    """Fallback: BingX swap tickers."""
+    try:
+        import ccxt
+        ex = ccxt.bingx({'options':{'defaultType':'swap'},'enableRateLimit':True})
+        bx = ex.fetch_tickers()
+        out = []
+        for sym, t in (bx or {}).items():
+            if sym.endswith(':USDT'):
+                base = sym.split(':')[0]
+                if '/USDT' in base:
+                    out.append({'symbol': base.replace('/',''),
+                                'quoteVolume': t.get('quoteVolume') or 0})
+        return out
+    except Exception as e:
+        logger.debug(f'[rsi-cross] bingx tickers fail: {e}')
+        return None
+
+
 def scan() -> list[dict]:
     """Market-wide scan для текущего 12h close."""
     t0 = time.time()
-    # Tickers from Binance fapi
-    try:
-        from volume_explosion import _fetch_fapi_24h_tickers
-        tickers = _fetch_fapi_24h_tickers()
-        if tickers is None:
-            from volume_explosion import _get_ex
-            ex = _get_ex()
-            if not ex: return []
-            bx = ex.fetch_tickers()
-            tickers = []
-            for sym, t in (bx or {}).items():
-                if sym.endswith(':USDT'):
-                    base = sym.split(':')[0]
-                    if '/USDT' in base:
-                        tickers.append({'symbol': base.replace('/',''),
-                                        'quoteVolume': t.get('quoteVolume') or 0})
-    except Exception as e:
-        logger.warning(f'[rsi-cross] tickers fail: {e}')
+    tickers = _fetch_fapi_tickers()
+    if tickers is None:
+        tickers = _fetch_bingx_tickers()
+    if not tickers:
+        logger.warning('[rsi-cross] both fapi and bingx tickers failed')
         return []
 
     candidates = []
