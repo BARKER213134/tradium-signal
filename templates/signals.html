@@ -7314,6 +7314,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jHotOnlyBtn" onclick="_toggleHotOnly()" title="Только HOT setups (Quality Score ≥ 60)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;">🔥 HOT ≥60 · OFF</button>
   <button id="jMoonshotBtn" onclick="_toggleMoonshot()" title="🚀 MOONSHOT: пары с stack ≥ 4 distinct sources в окне ±3h (multiple confirmations align — pre-pump signature)" style="background:linear-gradient(135deg, rgba(255,140,80,0.15), rgba(255,215,0,0.10));border:1px solid rgba(255,140,80,0.5);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ff8c50;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">🚀 Moonshot · OFF</button>
   <button id="jHighScoreBtn" onclick="_toggleHighScore()" title="🎯 HIGH SCORE: confluence_score ≥ 70 (RSI Divergence + V-pattern + SMA align + KL + Stack + Anomaly)" style="background:linear-gradient(135deg, rgba(255,215,0,0.13), rgba(255,140,80,0.10));border:1px solid rgba(255,215,0,0.5);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ffd700;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">🎯 Score≥70 · OFF</button>
+  <button id="jWorthBtn" onclick="_toggleWorth()" title="⭐ ДОСТОЙНЫЕ ВНИМАНИЯ: TIER 1 (Score≥70 OR Stack≥4 OR V-Bottom LONG OR Top Pick) + TIER 2 (second_flip match OR CV STRONG+ OR supertrend VIP OR RSI Divergence OR Top 24h mover). Скрывает 80% шума." style="background:linear-gradient(135deg, rgba(0,229,160,0.18), rgba(255,215,0,0.12));border:1.5px solid #00e5a0;border-radius:6px;padding:4px 12px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:170px;text-align:center;box-sizing:border-box;font-weight:700;letter-spacing:0.02em;">⭐ Достойные · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
   <button id="jDeltaBackfillBtn" onclick="_startDeltaBackfill()" title="Запустить массовый backfill cluster_delta для всех сигналов в БД (через klines, полная история)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:140px;text-align:center;">📊 Δ Backfill</button>
 </div>
@@ -8441,6 +8442,10 @@ function filterJournal() {
     if (window._journalHighScore) {
       if ((s.confluence_score || 0) < 70) return false;
     }
+    // ⭐ "Достойные внимания" — TIER 1 + TIER 2 (filter noise out)
+    if (window._journalWorth) {
+      if (!window._isWorthSignal || !window._isWorthSignal(s)) return false;
+    }
     // 🟢🔴 SMA filter: RSI vs SMA(14)RSI position per TF
     // bull = RSI > SMA на этом TF, bear = RSI < SMA. Если данных нет — fail.
     const smaFilter = document.getElementById('jFilterSma');
@@ -8670,6 +8675,47 @@ function _toggleHotOnly() {
   filterJournal();
   requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
 }
+
+function _toggleWorth() {
+  window._journalWorth = !window._journalWorth;
+  const btn = document.getElementById('jWorthBtn');
+  if (btn) {
+    if (window._journalWorth) {
+      btn.style.background = 'linear-gradient(135deg, rgba(0,229,160,0.35), rgba(255,215,0,0.20))';
+      btn.style.color = '#00e5a0';
+      btn.textContent = '⭐ Достойные · ON';
+    } else {
+      btn.style.background = 'linear-gradient(135deg, rgba(0,229,160,0.18), rgba(255,215,0,0.12))';
+      btn.textContent = '⭐ Достойные · OFF';
+    }
+  }
+  const scrollY = window.scrollY;
+  filterJournal();
+  requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
+}
+
+// Helper: проверка является ли сигнал WORTH (TIER 1 + TIER 2)
+window._isWorthSignal = function(s) {
+  // TIER 1
+  if ((s.confluence_score || 0) >= 70) return true;
+  if ((s.stack_distinct || 0) >= 4) return true;
+  if (s.v_pattern && s.v_pattern.type === 'v_bottom' && s.direction === 'LONG') return true;
+  if (s.is_top_pick) return true;
+  // TIER 2
+  if (s.source === 'second_flip' && (s.align_tier === 'match' || s._align === 'match')) return true;
+  if (s.source === 'cryptovizor') {
+    // verdict via window._verdictInfo
+    if (window._verdictInfo) {
+      const info = window._verdictInfo(s);
+      const v = (info.original_tier || info.tier || '').toUpperCase();
+      if (v === 'STRONG' || v === 'ELITE') return true;
+    }
+  }
+  if (s.source === 'supertrend' && s.st_tier === 'vip') return true;
+  if (s.divergence && s.divergence.strength >= 40) return true;
+  if (s.is_top_mover && (s.change_24h || 0) > 8) return true;
+  return false;
+};
 
 function _toggleHighScore() {
   window._journalHighScore = !window._journalHighScore;
