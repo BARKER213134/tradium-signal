@@ -12491,7 +12491,7 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100,
         response.headers["Cache-Control"] = f"public, max-age={browser_cache_s}"
 
     async def _bg_prefetch_other_tfs():
-        for other_tf in ["15m", "30m", "1h", "4h", "1d"]:
+        for other_tf in ["15m", "30m", "1h", "4h", "12h", "1d"]:
             if other_tf == (tf or "").lower():
                 continue
             try:
