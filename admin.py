@@ -11056,6 +11056,100 @@ def _compute_journal_sync():
     except Exception as _cse:
         logging.getLogger(__name__).debug(f"[journal] confluence enrich fail: {_cse}")
 
+    # ─── RSI/SMA 12h STATE filter enrichment ───
+    # Backtest 14d: LONG + state RSI>SMA на 12h даёт +14-17 WR pп,
+    # SHORT + cross_bear даёт +15-27 WR. Юзер хочет показать ✓/✗
+    # на каждом сигнале + фильтр-кнопку.
+    # Кэш per pair TTL 1h (12h candle slow-changing).
+    try:
+        global _rsi12h_cache
+    except NameError:
+        _rsi12h_cache = {}
+    try:
+        from concurrent.futures import ThreadPoolExecutor as _RsiExec, as_completed as _rsi_done
+        import time as _t_r12
+        if '_rsi12h_cache' not in globals(): globals()['_rsi12h_cache'] = {}
+        rc = globals()['_rsi12h_cache']
+        rc_now = int(_t_r12.time())
+        RC_TTL = 3600  # 1h cache
+
+        def _compute_rsi12h_state(pair):
+            """Returns ('bullish' | 'bearish' | None, rsi_val, sma_val)"""
+            try:
+                from divergence import _fetch_klines_fapi, _compute_rsi
+                kl = _fetch_klines_fapi(pair, '12h', 50)
+                if not kl or len(kl) < 30:
+                    return (None, None, None)
+                closes = [float(k[4]) for k in kl]
+                rsi = _compute_rsi(closes, 14)
+                # SMA(14) of RSI
+                if rsi[-1] is None: return (None, None, None)
+                # Use last 14 non-None rsi values
+                vals = [v for v in rsi[-14:] if v is not None]
+                if len(vals) < 14: return (None, None, None)
+                sma_last = sum(vals) / len(vals)
+                r_last = rsi[-1]
+                if r_last > sma_last: return ('bullish', round(r_last, 1), round(sma_last, 1))
+                if r_last < sma_last: return ('bearish', round(r_last, 1), round(sma_last, 1))
+                return ('neutral', round(r_last, 1), round(sma_last, 1))
+            except Exception as e:
+                logging.getLogger(__name__).debug(f'[rsi12h] {pair}: {e}')
+                return (None, None, None)
+
+        # Get unique pairs for recent items (last 7d)
+        recent_cutoff = rc_now - 7 * 86400
+        recent_pairs: set = set()
+        for it in items:
+            if (it.get('at_ts') or 0) >= recent_cutoff:
+                p = it.get('pair') or ''
+                if p: recent_pairs.add(p)
+        # Need-compute = pairs not in cache or expired
+        need_compute = [p for p in recent_pairs
+                        if rc_now - rc.get(p, {}).get('ts', 0) > RC_TTL]
+        need_compute = need_compute[:60]  # cap чтобы не блокировать journal надолго
+        if need_compute:
+            ex_rc = _RsiExec(max_workers=10)
+            try:
+                futs = {ex_rc.submit(_compute_rsi12h_state, p): p for p in need_compute}
+                try:
+                    for f in _rsi_done(futs, timeout=15.0):
+                        try:
+                            p = futs[f]
+                            state, rsi_v, sma_v = f.result(timeout=0.2)
+                            rc[p] = {'ts': rc_now, 'state': state,
+                                     'rsi': rsi_v, 'sma': sma_v}
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            finally:
+                ex_rc.shutdown(wait=False, cancel_futures=True)
+
+        # Apply per item: state match check
+        for it in items:
+            p = it.get('pair') or ''
+            entry = rc.get(p) if p else None
+            if entry:
+                state = entry.get('state')
+                it['rsi12h_state'] = state
+                it['rsi12h_value'] = entry.get('rsi')
+                it['rsi12h_sma'] = entry.get('sma')
+                d = (it.get('direction') or '').upper()
+                # Match check
+                if state == 'bullish' and d == 'LONG':
+                    it['rsi12h_match'] = True
+                elif state == 'bearish' and d == 'SHORT':
+                    it['rsi12h_match'] = True
+                elif state is None:
+                    it['rsi12h_match'] = None  # no data
+                else:
+                    it['rsi12h_match'] = False
+            else:
+                it['rsi12h_state'] = None
+                it['rsi12h_match'] = None
+    except Exception as _r12e:
+        logging.getLogger(__name__).debug(f"[journal] rsi12h enrich fail: {_r12e}")
+
     # ─── Top movers enrichment (BingX 24h gainers) ───
     # Опрашиваем BingX tickers, помечаем pairs которые сейчас в top 30
     # по 24h price change. Helps catch pre/early pumps.
