@@ -825,6 +825,7 @@ async function openChartModal(symbol, pair, direction, pnl) {
             <option value="30m">30m</option>
             <option value="1h" selected>1h</option>
             <option value="4h">4h</option>
+            <option value="12h">12h</option>
             <option value="1d">1d</option>
           </select>
           <button onclick="document.getElementById('chartModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;padding:0 6px;">×</button>
@@ -7220,6 +7221,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <button class="tf-btn" onclick="_setCoinTF('30m')">30m</button>
     <button class="tf-btn active" onclick="_setCoinTF('1h')">1h</button>
     <button class="tf-btn" onclick="_setCoinTF('4h')">4h</button>
+    <button class="tf-btn" onclick="_setCoinTF('12h')">12h</button>
     <button class="tf-btn" onclick="_setCoinTF('1d')">1D</button>
   </div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px;font-size:10px;color:var(--muted);font-family:var(--font-mono);">
