@@ -10733,6 +10733,41 @@ def _compute_journal_sync():
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] new_strategies fetch fail: {e}")
 
+    # ─── V-Bottom signals ───
+    try:
+        from database import _get_db
+        col = _get_db().v_bottom_signals
+        for vb in col.find({'detected_at': {'$gte': since_14d}},
+                           sort=[('detected_at', -1)], limit=500):
+            pair = vb.get('pair', '')
+            at_dt = vb.get('detected_at')
+            pat_type = vb.get('pattern_type', 'v_bottom')
+            items.append({
+                'source': 'v_bottom',
+                'symbol': vb.get('symbol', pair.replace('/', '').upper()),
+                'pair': pair,
+                'direction': vb.get('direction', 'LONG'),
+                'entry': vb.get('entry'),
+                'tp1': None, 'sl': None,
+                'pattern': (f"{pat_type} drop={vb.get('drop_pct',0):.1f}% "
+                            f"rev={vb.get('reversal_pct',0):.1f}%"),
+                'score': None,
+                'st_passed': None, 'pump_score': 0,
+                'is_top_pick': False, 'top_pick_confirmations_count': 0,
+                'v_pattern': {
+                    'type': pat_type,
+                    'drop_pct': vb.get('drop_pct'),
+                    'reversal_pct': vb.get('reversal_pct'),
+                },
+                'drop_pct': vb.get('drop_pct'),
+                'reversal_pct': vb.get('reversal_pct'),
+                'vol_24h_usdt': vb.get('vol_24h_usdt'),
+                'at': at_dt.isoformat() if hasattr(at_dt, 'isoformat') else str(at_dt or ''),
+                'at_ts': int(at_dt.timestamp()) if hasattr(at_dt, 'timestamp') else 0,
+            })
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] v_bottom fetch fail: {e}")
+
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
 

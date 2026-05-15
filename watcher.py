@@ -3486,6 +3486,51 @@ async def _ui_prewarm_loop():
         await _asyncio.sleep(120)  # 2 минуты на Pro (было 5 на Hobby)
 
 
+async def _v_bottom_scanner_loop():
+    """V-Bottom Scanner — каждые 5 мин ищет V-Bottom/V-Top setups market-wide
+    (BingX swap mid-cap pairs, 10M-900M 24h vol). Triggers роутятся через
+    _paper_on_signal с source='v_bottom'.
+
+    Backtest 7d: V-Bottom = WR 98%, MFE +4.37% median, +12.24% p75."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(220)
+    while True:
+        try:
+            import v_bottom_scanner as vbs
+            triggers = await _asyncio.wait_for(
+                _asyncio.to_thread(vbs.scan), timeout=60.0,
+            )
+            for tr in triggers or []:
+                emitted = await _asyncio.to_thread(vbs.emit_signal, tr)
+                if not emitted:
+                    continue
+                try:
+                    payload = {
+                        'symbol': tr['symbol'],
+                        'pair': tr['pair'],
+                        'direction': tr['direction'],
+                        'entry': tr['entry'],
+                        'source': 'v_bottom',
+                        'pattern': (f"{tr['pattern_type']} drop={tr.get('drop_pct',0):.1f}% "
+                                    f"rev={tr.get('reversal_pct',0):.1f}%"),
+                        'v_pattern': {
+                            'type': tr['pattern_type'],
+                            'drop_pct': tr.get('drop_pct'),
+                            'reversal_pct': tr.get('reversal_pct'),
+                        },
+                    }
+                    await _paper_on_signal(payload)
+                except Exception as _pe:
+                    logger.debug(f"[v-bottom] paper route fail: {_pe}")
+            if triggers:
+                logger.info(f"[v-bottom] cycle emitted {sum(1 for _ in triggers)} signals")
+        except _asyncio.TimeoutError:
+            logger.warning("[v-bottom] scan TIMEOUT 60s")
+        except Exception:
+            logger.debug("[v-bottom] error", exc_info=True)
+        await _asyncio.sleep(300)
+
+
 async def _new_strategies_updater_loop():
     """Каждые 5 минут проверяет WAITING сигналы из new_strategy_signals
     и закрывает их при достижении TP/SL/TIMEOUT (lookback 24h)."""
@@ -4303,6 +4348,12 @@ async def start_watcher():
         logger.info("[new-strategies] updater loop started")
     except Exception:
         logger.exception("[new-strategies] updater loop failed")
+    # V-Bottom Scanner — каждые 5 мин ищет V-Bottom/V-Top market-wide
+    try:
+        asyncio.create_task(_v_bottom_scanner_loop())
+        logger.info("[v-bottom] scanner loop started")
+    except Exception:
+        logger.exception("[v-bottom] scanner loop failed")
     # [DISABLED] Cluster Delta auto-backfill — был источник 418 banов от
     # Binance fapi/klines. Теперь backfill только вручную через
     # POST /api/cluster-delta/backfill-cdn (статический CDN, без rate limit).

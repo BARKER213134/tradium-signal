@@ -734,10 +734,11 @@
           volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋',
           volcano:'🌋',     // 🌋 Volcano Breakout (highest-edge, WR 38%)
           second_flip:'♻️',  // ♻️ Second Flip Confirmation (2nd LONG ≤12h)
+          v_bottom:'▽',     // ▽ V-Bottom reversal (WR 98% backtest)
         })[src] || '•';
         return prefix + base;
       };
-      window.sigIcon._version = 'v7-second_flip';
+      window.sigIcon._version = 'v8-v_bottom';
       console.log('[sigIcon] loaded', window.sigIcon._version);
 
       // sigIconCompact — для маркеров НА ГРАФИКЕ (без 👑/⭐ префиксов,
@@ -752,6 +753,7 @@
         if (src === 'vol_accum') return '🔋';
         if (src === 'volcano') return '🌋';
         if (src === 'second_flip') return '♻️';
+        if (src === 'v_bottom') return '▽';
         return ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
       };
 

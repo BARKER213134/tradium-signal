@@ -133,9 +133,11 @@ def _get_klines(pair: str, tf: str = '1h', limit: int = 200) -> Optional[list]:
 
 
 # ─── Divergence detection ──────────────────────────────────────────
-PIVOT_WINDOW = 3            # bars around pivot for local extreme
-MAX_LOOKBACK_BARS = 60      # max distance between 2 pivots
-MIN_PIVOT_DISTANCE = 5      # min bars between 2 pivots
+# v2 tuning (после backtest 7d: 5/8297 div detected при PIVOT_WINDOW=3,
+# MIN_DIST=5). Релаксируем для крипты — swings короче чем у equities.
+PIVOT_WINDOW = 2            # 3→2: pivot если value < neighbors в ±2 барах
+MAX_LOOKBACK_BARS = 50      # 60→50: фокус на recent action
+MIN_PIVOT_DISTANCE = 3      # 5→3: разрешаем более частые swings
 
 
 def detect_divergence(pair: str, tf: str = '1h', limit: int = 100) -> Optional[dict]:
