@@ -11025,6 +11025,59 @@ def _compute_journal_sync():
     except Exception as _cse:
         logging.getLogger(__name__).debug(f"[journal] confluence enrich fail: {_cse}")
 
+    # ─── RSI/SMA 4h STATE filter enrichment ───
+    # Parallel to 12h logic. Shorter TF = faster reaction signal.
+    try:
+        from concurrent.futures import ThreadPoolExecutor as _4hExec, as_completed as _4h_done
+        import time as _t_r4
+        import rsi4h_state as _r4_mod
+        rc_now_4 = int(_t_r4.time())
+        r4_t0 = _t_r4.time()
+        R4_BUDGET_S = 12.0
+        recent_cutoff_4 = rc_now_4 - 24 * 3600
+        recent_pairs_4: set = set()
+        for it in items:
+            if (it.get('at_ts') or 0) >= recent_cutoff_4:
+                p = it.get('pair') or ''
+                if p: recent_pairs_4.add(p)
+        cold_pairs_4 = [p for p in recent_pairs_4
+                        if not _r4_mod._cache.get(p)
+                        or (rc_now_4 - _r4_mod._cache[p].get('ts', 0))
+                           > (1800 if _r4_mod._cache[p].get('state') else 300)]
+        cold_pairs_4 = cold_pairs_4[:40]
+        if cold_pairs_4 and (_t_r4.time() - r4_t0) < R4_BUDGET_S:
+            ex_r4 = _4hExec(max_workers=10)
+            try:
+                remaining = max(2.0, R4_BUDGET_S - (_t_r4.time() - r4_t0))
+                futs = {ex_r4.submit(_r4_mod.get_state, p): p for p in cold_pairs_4}
+                try:
+                    for f in _4h_done(futs, timeout=remaining):
+                        try: f.result(timeout=0.2)
+                        except Exception: pass
+                except Exception: pass
+            finally:
+                ex_r4.shutdown(wait=False, cancel_futures=True)
+        for it in items:
+            p = it.get('pair') or ''
+            if not p:
+                it['rsi4h_state'] = None; it['rsi4h_match'] = None
+                continue
+            entry = _r4_mod._cache.get(p)
+            if not entry:
+                it['rsi4h_state'] = None; it['rsi4h_match'] = None
+                continue
+            state = entry.get('state')
+            it['rsi4h_state'] = state
+            it['rsi4h_value'] = entry.get('rsi')
+            it['rsi4h_sma'] = entry.get('sma')
+            d = (it.get('direction') or '').upper()
+            if state == 'bullish' and d == 'LONG': it['rsi4h_match'] = True
+            elif state == 'bearish' and d == 'SHORT': it['rsi4h_match'] = True
+            elif state is None: it['rsi4h_match'] = None
+            else: it['rsi4h_match'] = False
+    except Exception as _r4e:
+        logging.getLogger(__name__).debug(f"[journal] rsi4h enrich fail: {_r4e}")
+
     # ─── RSI/SMA 12h STATE filter enrichment ───
     # Используем shared module rsi12h_state — single cache, без duplicate code.
     # paper_trader.on_signal тоже использует same cache → consistency.

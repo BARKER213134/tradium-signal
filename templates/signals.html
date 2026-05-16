@@ -7313,6 +7313,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jHotOnlyBtn" style="display:none;"></button>
   <button id="jMoonshotBtn" onclick="_toggleMoonshot()" title="🚀 MOONSHOT: пары с stack ≥ 4 distinct sources в окне ±3h (multiple confirmations align — pre-pump signature)" style="background:linear-gradient(135deg, rgba(255,140,80,0.15), rgba(255,215,0,0.10));border:1px solid rgba(255,140,80,0.5);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ff8c50;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">🚀 Moonshot · OFF</button>
   <button id="jHighScoreBtn" style="display:none;"></button>
+  <button id="j4hStateBtn" onclick="_toggle4hState()" title="⚡ 4h State filter: RSI>SMA на 4h для LONG, RSI<SMA для SHORT. Faster reaction than 12h." style="background:linear-gradient(135deg, rgba(0,229,160,0.10), rgba(0,128,255,0.06));border:1px solid rgba(0,229,160,0.4);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#88d8a3;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">⚡ +4h state · OFF</button>
   <button id="j12hStateBtn" onclick="_toggle12hState()" title="⚡ 12h State filter: RSI>SMA на 12h для LONG, RSI<SMA для SHORT. По backtest 14d: +14-17 WR пп для всех источников. Скрывает signals где state против direction." style="background:linear-gradient(135deg, rgba(0,229,160,0.12), rgba(0,128,255,0.08));border:1px solid rgba(0,229,160,0.5);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:700;">⚡ +12h state · OFF</button>
   <button id="jWorthBtn" onclick="_toggleWorth()" title="⭐ ДОСТОЙНЫЕ ВНИМАНИЯ: TIER 1 (Score≥70 OR Stack≥4 OR V-Bottom LONG OR Top Pick) + TIER 2 (second_flip match OR CV STRONG+ OR supertrend VIP OR RSI Divergence OR Top 24h mover). Скрывает 80% шума." style="background:linear-gradient(135deg, rgba(0,229,160,0.18), rgba(255,215,0,0.12));border:1.5px solid #00e5a0;border-radius:6px;padding:4px 12px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:170px;text-align:center;box-sizing:border-box;font-weight:700;letter-spacing:0.02em;">⭐ Достойные · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
@@ -7392,16 +7393,17 @@ async function _pollDeltaBackfill() {
   <table style="table-layout:fixed;width:100%;">
     <colgroup>
       <col style="width:6%;">    <!-- Время -->
-      <col style="width:8%;">    <!-- Источник -->
-      <col style="width:7%;">    <!-- Пара -->
+      <col style="width:7%;">    <!-- Источник -->
+      <col style="width:6%;">    <!-- Пара -->
       <col style="width:5%;">    <!-- Напр. -->
       <col style="width:6%;">    <!-- Entry -->
-      <col style="width:19%;">   <!-- Паттерн -->
+      <col style="width:17%;">   <!-- Паттерн -->
       <col style="width:7%;">    <!-- Вердикт -->
-      <col style="width:10%;">   <!-- RSI 4 TF -->
+      <col style="width:9%;">    <!-- RSI 4 TF -->
       <col style="width:6%;">    <!-- SMA vs RSI -->
       <col style="width:8%;">    <!-- Аномалия -->
       <col style="width:7%;">    <!-- Trend -->
+      <col style="width:5%;">    <!-- 4h state -->
       <col style="width:6%;">    <!-- 12h state -->
       <col style="width:5%;">    <!-- Stack -->
     </colgroup>
@@ -7424,12 +7426,13 @@ async function _pollDeltaBackfill() {
         <th id="jSortSma" title="SMA(14) of RSI per TF. 🟢 = RSI выше SMA (bullish momentum), 🔴 = ниже (bearish)" style="text-align:center;padding:14px 6px;">SMA</th>
         <th id="jSortAnomaly" title="Аномалия дельты — z-score delta_pct сигнальной свечи vs последних 30 свечей до неё. 🔥 z>2.5 = экстремум (как SKYAI 26.04), ⚡ z>1.5 = повышенный приток, ⚪ норма" style="text-align:center;padding:14px 6px;">Аномалия</th>
         <th id="jSortTrend" title="Тренд по EMA20 vs EMA50 на close per TF. ▲ зелёный = UP, ▼ красный = DOWN, ◆ серый = FLAT" style="text-align:center;padding:14px 6px;">Тренд</th>
+        <th class="sortable" onclick="jSort('rsi4h_match')" id="jSort4h" title="RSI/SMA(RSI) на 4h: ✓ = state в направлении сделки. Faster reaction than 12h." style="text-align:center;padding:14px 6px;">4h</th>
         <th class="sortable" onclick="jSort('rsi12h_match')" id="jSort12h" title="RSI/SMA(RSI) на 12h: ✓ = RSI>SMA для LONG или RSI<SMA для SHORT (state в направлении сделки). По backtest 14d: +14-17 WR пп. Click для sort." style="text-align:center;padding:14px 6px;">12h</th>
         <th class="sortable" onclick="jSort('stack_distinct')" id="jSortStack" title="Stack — кол-во distinct (source × direction) на паре в окне ±3h (6h всего). 4+ = MOONSHOT (multiple sources align — pre-pump signature). Squeeze score 0-100 — BB сжатие, 80+ = готовится breakout." style="text-align:center;padding:14px 6px;">Stack</th>
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="13" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="14" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -8443,6 +8446,10 @@ function filterJournal() {
     if (window._journalHighScore) {
       if ((s.confluence_score || 0) < 70) return false;
     }
+    // ⚡ 4h State filter
+    if (window._journal4hState) {
+      if (s.rsi4h_match !== true) return false;
+    }
     // ⚡ 12h State filter: RSI>SMA для LONG / RSI<SMA для SHORT
     // По backtest 14d: +14-17 WR пп. Скрывает signals где state против direction.
     if (window._journal12hState) {
@@ -8727,6 +8734,24 @@ window._isWorthSignal = function(s) {
   return false;
 };
 
+function _toggle4hState() {
+  window._journal4hState = !window._journal4hState;
+  const btn = document.getElementById('j4hStateBtn');
+  if (btn) {
+    if (window._journal4hState) {
+      btn.style.background = 'linear-gradient(135deg, rgba(0,229,160,0.30), rgba(0,128,255,0.15))';
+      btn.style.color = '#00e5a0';
+      btn.textContent = '⚡ +4h state · ON';
+    } else {
+      btn.style.background = 'linear-gradient(135deg, rgba(0,229,160,0.10), rgba(0,128,255,0.06))';
+      btn.textContent = '⚡ +4h state · OFF';
+    }
+  }
+  const scrollY = window.scrollY;
+  filterJournal();
+  requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
+}
+
 function _toggle12hState() {
   window._journal12hState = !window._journal12hState;
   const btn = document.getElementById('j12hStateBtn');
@@ -8939,6 +8964,8 @@ function renderJournal(items, startIdx) {
     // Trend EMA20 vs EMA50 per TF
     const trendCell = window._renderTrendCell ? window._renderTrendCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    const rsi4hCell = window._render4hCell ? window._render4hCell(s) :
+      '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     const rsi12hCell = window._render12hCell ? window._render12hCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     // Stack (Δ% и Резонанс удалены по запросу — оставили только Stack для MOONSHOT detection)
@@ -8956,6 +8983,7 @@ function renderJournal(items, startIdx) {
       ${smaCell}
       ${anomalyCell}
       ${trendCell}
+      ${rsi4hCell}
       ${rsi12hCell}
       ${stackCell}
     </tr>`;
@@ -9740,6 +9768,32 @@ window._renderDeltaCell = function(s) {
   </td>`;
 };
 
+window._render4hCell = function(s) {
+  const state = s.rsi4h_state;
+  const match = s.rsi4h_match;
+  const dir = (s.direction || '').toUpperCase();
+  const r = s.rsi4h_value;
+  const sma = s.rsi4h_sma;
+  if (state == null) {
+    return '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+  }
+  let icon, color, bg = '';
+  if (match === true) {
+    icon = '✓'; color = '#00e5a0'; bg = 'background:rgba(0,229,160,0.10);';
+  } else if (match === false) {
+    icon = '✗'; color = '#ff4d6d'; bg = 'background:rgba(255,77,109,0.08);';
+  } else {
+    icon = '·'; color = '#888';
+  }
+  const dirHint = (state === 'bullish') ? '🟢' : (state === 'bearish' ? '🔴' : '⚪');
+  const tip = `4h RSI=${r||'?'} SMA=${sma||'?'} → ${state || '?'}\n` +
+              `Signal direction: ${dir} → match=${match === true ? 'YES' : (match === false ? 'NO' : '?')}`;
+  return `<td class="mono" style="text-align:center;line-height:1.2;padding:4px 6px !important;${bg}" title="${tip}">
+    <div style="font-size:16px;color:${color};font-weight:700;">${icon}</div>
+    <div style="font-size:9px;color:#666;">${dirHint}${r||''}</div>
+  </td>`;
+};
+
 window._render12hCell = function(s) {
   const state = s.rsi12h_state;
   const match = s.rsi12h_match;
@@ -9895,8 +9949,8 @@ function jSort(field) {
     _jSortAsc = field === 'symbol' || field === 'source' || field === 'direction'; // alpha = asc default
   }
   // Update header arrows
-  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',rsi12h_match:'jSort12h',stack_distinct:'jSortStack'};
-  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',rsi12h_match:'12h',stack_distinct:'Stack'};
+  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',rsi4h_match:'jSort4h',rsi12h_match:'jSort12h',stack_distinct:'jSortStack'};
+  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',rsi4h_match:'4h',rsi12h_match:'12h',stack_distinct:'Stack'};
   for (const [f, id] of Object.entries(cols)) {
     const el = document.getElementById(id);
     if (el) el.textContent = labels[f] + (f === _jSortField ? (_jSortAsc ? ' ▲' : ' ▼') : '');
