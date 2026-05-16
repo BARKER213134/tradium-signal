@@ -8307,48 +8307,12 @@ setTimeout(loadJournalRegime, 800);
 safeInterval(loadJournalRegime, 60000);
 
 async function loadJournal() {
-  // ⚡ DRASTIC SPLIT: сначала fast endpoint (~2s, только Mongo + stack_count)
-  // → таблица отрисовывается мгновенно. Параллельно — full endpoint с enrichments
-  // (rsi4h/12h, divergence, delta, resonance, top_movers, rsi, trend, squeeze).
-  // Когда придёт full — merge'им enrichment-поля в _journalData и re-render.
   try {
-    // Phase 1: fast fetch → instant render
-    const fastP = fetch('/api/journal/fast').then(r => r.json()).catch(() => null);
-    // Phase 2: full fetch → merge enrichments позже (10-30s typically)
-    const fullP = fetch('/api/journal').then(r => r.json()).catch(() => null);
+    const r = await fetch('/api/journal');
+    const d = await r.json();
+    const items = d.items || [];
 
-    const fastD = await fastP;
-    const items = (fastD && fastD.items) || [];
-
-    // ⚡ PRESERVE enrichments из предыдущего polling-цикла. Без этого fast
-    // replace стирал 4h/12h/divergence/delta/resonance каждые 30с (poll
-    // interval), и они "мигали" пока full не доходил.
-    const ENRICH_FIELDS = [
-      'rsi4h_state','rsi4h_match','rsi4h_value','rsi4h_sma',
-      'rsi12h_state','rsi12h_match','rsi12h_value','rsi12h_sma',
-      'divergence','v_pattern','confluence_score','confluence_direction',
-      'confluence_components','squeeze_score',
-      'is_top_mover','change_24h',
-      'delta_15m','delta_1h','delta_4h',
-      'resonance_15m','resonance_1h','resonance_4h',
-      'delta_zscore_15m','delta_zscore_1h','delta_zscore_4h',
-      'q_score','rsi_15m','rsi_1h','rsi_4h','rsi_1d',
-      'trend_15m','trend_1h','trend_4h',
-      '_kl','_stFlags',  // KL + ST enrich
-    ];
-    if (_journalData && _journalData.length) {
-      const prevByKey = new Map();
-      for (const it of _journalData) prevByKey.set(_signalKey(it), it);
-      for (const s of items) {
-        const prev = prevByKey.get(_signalKey(s));
-        if (!prev) continue;
-        for (const k of ENRICH_FIELDS) {
-          if (prev[k] !== undefined && s[k] === undefined) s[k] = prev[k];
-        }
-      }
-    }
-
-    // Detect new signals (на основе fast — обычно достаточно, full даст те же)
+    // Detect new signals
     if (!_journalFirstLoad && items.length) {
       const newSignals = items.filter(s => !_journalPrevIds.has(_signalKey(s)));
       const newForSound = newSignals.filter(s =>
@@ -8368,65 +8332,33 @@ async function loadJournal() {
     _journalPrevIds = new Set(items.map(_signalKey));
     _journalFirstLoad = false;
     _journalData = items;
-    filterJournal();  // первая перерисовка (сразу с preserved enrich-полями)
+    filterJournal();
 
-    // Phase 2 async: ждём full + KL/ST enrich параллельно
-    (async () => {
-      try {
-        const batch = items.slice(0, 300).map((s, i) => ({
-          id: `j_${i}`, pair: s.pair || s.symbol, direction: s.direction, at: s.at,
-          entry: s.entry,
-        }));
-        const payload = JSON.stringify({signals: batch});
-        const jopt = { method: 'POST', headers: {'Content-Type': 'application/json'}, body: payload };
-
-        const [fullD, er, sr] = await Promise.all([
-          fullP,
-          fetch('/api/key-levels/enrich', jopt).catch(() => null),
-          fetch('/api/st-enrich', jopt).catch(() => null),
-        ]);
-
-        // Merge full enrichments если пришли (full = вся таблица с rsi4h/12h/...)
-        if (fullD && fullD.items && fullD.items.length) {
-          // Build key map для быстрого merge'а
-          const fullByKey = new Map();
-          for (const it of fullD.items) fullByKey.set(_signalKey(it), it);
-          for (const s of _journalData) {
-            const f = fullByKey.get(_signalKey(s));
-            if (!f) continue;
-            // Скопируем enrichment-поля (которых нет в fast)
-            const enrichFields = [
-              'rsi4h_state','rsi4h_match','rsi4h_value','rsi4h_sma',
-              'rsi12h_state','rsi12h_match','rsi12h_value','rsi12h_sma',
-              'divergence','v_pattern','confluence_score','confluence_direction',
-              'confluence_components','squeeze_score',
-              'is_top_mover','change_24h',
-              'delta_15m','delta_1h','delta_4h',
-              'resonance_15m','resonance_1h','resonance_4h',
-              'delta_zscore_15m','delta_zscore_1h','delta_zscore_4h',
-              'q_score','rsi_15m','rsi_1h','rsi_4h','rsi_1d',
-              'trend_15m','trend_1h','trend_4h',
-            ];
-            for (const k of enrichFields) {
-              if (f[k] !== undefined) s[k] = f[k];
-            }
-          }
-        }
-
-        const ed = er ? await er.json().catch(() => ({})) : {};
-        const sd = sr ? await sr.json().catch(() => ({})) : {};
-        const klEnrich = ed.enrich || {};
-        const stEnrich = sd.enrich || {};
-        _journalData.forEach((s, i) => {
-          s._kl = klEnrich[`j_${i}`] || null;
-          const e = stEnrich[`j_${i}`];
-          s._stFlags = (e && e.flags) ? e.flags : [];
-        });
-        filterJournal();  // финальная перерисовка с enrichments
-      } catch (e) {
-        console.warn('[journal] full enrich fail:', e);
-      }
-    })();
+    // Key Levels + SuperTrend enrich — параллельно, перерисовка один раз после.
+    const batch = items.slice(0, 300).map((s, i) => ({
+      id: `j_${i}`, pair: s.pair || s.symbol, direction: s.direction, at: s.at,
+      entry: s.entry,
+    }));
+    const payload = JSON.stringify({signals: batch});
+    const jopt = { method: 'POST', headers: {'Content-Type': 'application/json'}, body: payload };
+    try {
+      const [er, sr] = await Promise.all([
+        fetch('/api/key-levels/enrich', jopt).catch(() => null),
+        fetch('/api/st-enrich', jopt).catch(() => null),
+      ]);
+      const ed = er ? await er.json().catch(() => ({})) : {};
+      const sd = sr ? await sr.json().catch(() => ({})) : {};
+      const klEnrich = ed.enrich || {};
+      const stEnrich = sd.enrich || {};
+      items.forEach((s, i) => {
+        s._kl = klEnrich[`j_${i}`] || null;
+        const e = stEnrich[`j_${i}`];
+        s._stFlags = (e && e.flags) ? e.flags : [];
+      });
+      filterJournal();
+    } catch (e) {
+      console.warn('[journal] enrich fail:', e);
+    }
   } catch {}
 }
 
