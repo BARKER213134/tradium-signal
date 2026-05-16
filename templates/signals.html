@@ -8320,6 +8320,34 @@ async function loadJournal() {
     const fastD = await fastP;
     const items = (fastD && fastD.items) || [];
 
+    // ⚡ PRESERVE enrichments из предыдущего polling-цикла. Без этого fast
+    // replace стирал 4h/12h/divergence/delta/resonance каждые 30с (poll
+    // interval), и они "мигали" пока full не доходил.
+    const ENRICH_FIELDS = [
+      'rsi4h_state','rsi4h_match','rsi4h_value','rsi4h_sma',
+      'rsi12h_state','rsi12h_match','rsi12h_value','rsi12h_sma',
+      'divergence','v_pattern','confluence_score','confluence_direction',
+      'confluence_components','squeeze_score',
+      'is_top_mover','change_24h',
+      'delta_15m','delta_1h','delta_4h',
+      'resonance_15m','resonance_1h','resonance_4h',
+      'delta_zscore_15m','delta_zscore_1h','delta_zscore_4h',
+      'q_score','rsi_15m','rsi_1h','rsi_4h','rsi_1d',
+      'trend_15m','trend_1h','trend_4h',
+      '_kl','_stFlags',  // KL + ST enrich
+    ];
+    if (_journalData && _journalData.length) {
+      const prevByKey = new Map();
+      for (const it of _journalData) prevByKey.set(_signalKey(it), it);
+      for (const s of items) {
+        const prev = prevByKey.get(_signalKey(s));
+        if (!prev) continue;
+        for (const k of ENRICH_FIELDS) {
+          if (prev[k] !== undefined && s[k] === undefined) s[k] = prev[k];
+        }
+      }
+    }
+
     // Detect new signals (на основе fast — обычно достаточно, full даст те же)
     if (!_journalFirstLoad && items.length) {
       const newSignals = items.filter(s => !_journalPrevIds.has(_signalKey(s)));
@@ -8340,7 +8368,7 @@ async function loadJournal() {
     _journalPrevIds = new Set(items.map(_signalKey));
     _journalFirstLoad = false;
     _journalData = items;
-    filterJournal();  // первая перерисовка (быстрая, без enrich-полей)
+    filterJournal();  // первая перерисовка (сразу с preserved enrich-полями)
 
     // Phase 2 async: ждём full + KL/ST enrich параллельно
     (async () => {
