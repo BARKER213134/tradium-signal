@@ -3257,22 +3257,30 @@ async def _paper_on_signal(signal_data: dict):
                 except Exception as _e:
                     logger.debug(f"[cluster-delta] on-signal fill {_p}: {_e}")
 
+            async def _fill_rsi12h(_p):
+                """Fill 12h state cache для UI колонки + paper_trader gate."""
+                try:
+                    import rsi12h_state as _r12
+                    await asyncio.to_thread(_r12.get_state, _p)
+                except Exception as _e:
+                    logger.debug(f"[rsi12h] on-signal fill {_p}: {_e}")
+
             # Parallel — max 8s total. fill_pair_rsi/trend делают 4 sequential
-            # fapi calls each (~4s total на пару). С asyncio.gather все 3 fill'a
-            # бегут параллельно, плюс RSI/Trend параллельно тоже = max(4s, 4s, 3s)
-            # ~ 4-5s в норме, 8s buffer для slow network.
+            # fapi calls each (~4s total на пару). С asyncio.gather все 4 fill'a
+            # бегут параллельно (RSI, Trend, Delta, 12h-state).
             try:
                 await asyncio.wait_for(
                     asyncio.gather(
                         _fill_rsi(_pair_fill),
                         _fill_trend(_pair_fill),
                         _fill_delta(_pair_fill, _at_ms),
+                        _fill_rsi12h(_pair_fill),
                         return_exceptions=True,
                     ),
-                    timeout=8.0,
+                    timeout=10.0,
                 )
             except asyncio.TimeoutError:
-                logger.debug(f"[on-signal-fill] timeout 8s {_pair_fill}")
+                logger.debug(f"[on-signal-fill] timeout 10s {_pair_fill}")
     except Exception as e:
         logger.debug(f"[on-signal-fill] schedule fail: {e}")
 
@@ -3484,6 +3492,54 @@ async def _ui_prewarm_loop():
         except Exception:
             logger.debug("[ui-prewarm] loop error", exc_info=True)
         await _asyncio.sleep(120)  # 2 минуты на Pro (было 5 на Hobby)
+
+
+async def _rsi12h_warmer_loop():
+    """Background warmer для RSI/SMA 12h state cache.
+
+    Каждые 5 мин:
+    1. Берём все пары которые в недавних signals (last 24h)
+    2. Для каждой пары прогреваем 12h state cache
+    3. Этим обеспечиваем что 12h колонка в журнале не пустая
+
+    Cache TTL 1h в rsi12h_state — этот warmer держит данные fresh.
+    """
+    import asyncio as _asyncio
+    await _asyncio.sleep(180)
+    while True:
+        try:
+            from database import _get_db
+            from datetime import datetime, timezone, timedelta
+            import rsi12h_state as r12
+            db = _get_db()
+            since = datetime.now(timezone.utc) - timedelta(hours=24)
+            # Get unique pairs from recent signals (all sources)
+            pairs = set()
+            for col_name, time_field in [('signals','pattern_triggered_at'),
+                                         ('new_strategy_signals','created_at'),
+                                         ('supertrend_signals','flip_at')]:
+                try:
+                    for s in db[col_name].find({time_field:{'$gte':since}}, {'pair':1}).limit(500):
+                        if s.get('pair'): pairs.add(s['pair'])
+                except Exception:
+                    pass
+            pair_list = list(pairs)[:60]  # cap
+            from concurrent.futures import ThreadPoolExecutor as _Exec, as_completed as _done
+            if pair_list:
+                ex = _Exec(max_workers=10)
+                try:
+                    futs = [ex.submit(r12.get_state, p) for p in pair_list]
+                    try:
+                        for f in _done(futs, timeout=30.0):
+                            try: f.result(timeout=0.2)
+                            except Exception: pass
+                    except Exception: pass
+                finally:
+                    ex.shutdown(wait=False, cancel_futures=True)
+                logger.info(f"[rsi12h-warm] cached {len(pair_list)} pairs")
+        except Exception:
+            logger.debug("[rsi12h-warm] error", exc_info=True)
+        await _asyncio.sleep(300)
 
 
 async def _rsi_cross_scanner_loop():
@@ -4400,6 +4456,12 @@ async def start_watcher():
         logger.info("[rsi-cross] 12h scanner loop started")
     except Exception:
         logger.exception("[rsi-cross] scanner loop failed")
+    # RSI/SMA 12h state cache warmer — заполняет cache для активных pairs
+    try:
+        asyncio.create_task(_rsi12h_warmer_loop())
+        logger.info("[rsi12h-warm] cache warmer loop started")
+    except Exception:
+        logger.exception("[rsi12h-warm] warmer loop failed")
     # [DISABLED] Cluster Delta auto-backfill — был источник 418 banов от
     # Binance fapi/klines. Теперь backfill только вручную через
     # POST /api/cluster-delta/backfill-cdn (статический CDN, без rate limit).

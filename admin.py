@@ -11035,7 +11035,7 @@ def _compute_journal_sync():
         import rsi12h_state as _r12_mod
         rc_now = int(_t_r12.time())
         r12_t0 = _t_r12.time()
-        R12_BUDGET_S = 10.0  # hard cap
+        R12_BUDGET_S = 15.0  # hard cap
         # Get unique pairs for recent items (last 24h только — экономим compute)
         recent_cutoff = rc_now - 24 * 3600
         recent_pairs: set = set()
@@ -11048,7 +11048,7 @@ def _compute_journal_sync():
                       if not _r12_mod._cache.get(p)
                       or (rc_now - _r12_mod._cache[p].get('ts', 0))
                          > (3600 if _r12_mod._cache[p].get('state') else 300)]
-        cold_pairs = cold_pairs[:20]
+        cold_pairs = cold_pairs[:40]
         if cold_pairs and (_t_r12.time() - r12_t0) < R12_BUDGET_S:
             ex_rc = _RsiExec(max_workers=10)
             try:
