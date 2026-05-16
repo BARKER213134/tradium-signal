@@ -3555,6 +3555,37 @@ async def _rsi12h_warmer_loop():
         await _asyncio.sleep(300)
 
 
+async def _journal_cache_warmer_loop():
+    """Background warmer для /api/journal — каждые 60с пересчитывает full
+    compute и кладёт результат в journal_cache. Endpoint всегда читает из
+    готового кэша и отвечает <100ms (вместо 30-60с cold compute).
+
+    Запускается с задержкой 90с после старта (чтобы Mongo + warmer'ы успели
+    наполнить state caches, иначе первый прогон даст пустые enrichments).
+    """
+    import asyncio as _asyncio
+    import time as _time
+    await _asyncio.sleep(90)
+    iteration = 0
+    while True:
+        try:
+            from cache_utils import journal_cache
+            from admin import _compute_journal_sync
+            t0 = _time.time()
+            result = await _asyncio.to_thread(_compute_journal_sync)
+            elapsed = _time.time() - t0
+            # TTL 180s — больше чем 60с интервал warmer'а, чтобы между циклами
+            # кэш не успевал инвалидироваться (особенно если compute >60с)
+            journal_cache.set("journal_all", result, ttl=180.0)
+            iteration += 1
+            n_items = len((result or {}).get("items", []))
+            if iteration <= 3 or iteration % 10 == 0:
+                logger.info(f"[journal-warm] iter={iteration} items={n_items} compute={elapsed:.1f}s")
+        except Exception:
+            logger.debug("[journal-warm] error", exc_info=True)
+        await _asyncio.sleep(60)
+
+
 async def _rsi_cross_scanner_loop():
     """RSI/SMA(RSI) 12h crossover Scanner с Volume confirmation.
     Backtest 14d: LONG vol≥2× → WR 62%, MFE +9.83%, Final +2.45%."""
@@ -4475,6 +4506,13 @@ async def start_watcher():
         logger.info("[rsi12h-warm] cache warmer loop started")
     except Exception:
         logger.exception("[rsi12h-warm] warmer loop failed")
+    # Journal full compute warmer — каждые 60с фоном пересчитывает /api/journal
+    # cache. Endpoint читает из готового кэша → отвечает <100ms.
+    try:
+        asyncio.create_task(_journal_cache_warmer_loop())
+        logger.info("[journal-warm] background loop started")
+    except Exception:
+        logger.exception("[journal-warm] warmer loop failed")
     # [DISABLED] Cluster Delta auto-backfill — был источник 418 banов от
     # Binance fapi/klines. Теперь backfill только вручную через
     # POST /api/cluster-delta/backfill-cdn (статический CDN, без rate limit).
