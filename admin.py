@@ -9828,6 +9828,41 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     return {"items": items, "total": total, "returned": len(items)}
 
 
+@app.get("/api/journal/fast")
+async def api_journal_fast(limit: int = 1500, refresh: int = 0):
+    """⚡ Быстрый журнал — только Mongo fetches + stack_count, без enrichments.
+    Latency ~2-3s vs 30-40s для /api/journal. UI делает оба запроса параллельно
+    и мерджит enrichment-поля (4h/12h state, divergence, top_movers, delta,
+    resonance, rsi, trend, quality_score, squeeze) после загрузки full.
+
+    Cache: 30s (короче чем 60s у full — fast endpoint обновляется чаще для свежих
+    сигналов; full всё равно подтянет enrich при следующем poll).
+    """
+    from cache_utils import journal_fast_cache
+
+    if refresh:
+        journal_fast_cache.invalidate("journal_fast")
+
+    async def _compute_in_thread():
+        return await asyncio.to_thread(_compute_journal_fast_sync)
+
+    try:
+        full = await asyncio.wait_for(
+            journal_fast_cache.get_or_compute("journal_fast", _compute_in_thread),
+            timeout=15.0,
+        )
+    except asyncio.TimeoutError:
+        full = journal_fast_cache.get("journal_fast") or {"items": []}
+        logging.getLogger(__name__).warning(
+            "[api/journal/fast] compute timeout 15s — returning stale/empty"
+        )
+    items = full.get("items", []) if isinstance(full, dict) else []
+    total = len(items)
+    if limit and limit > 0 and total > limit:
+        items = items[:limit]
+    return {"items": items, "total": total, "returned": len(items), "fast": True}
+
+
 @app.get("/api/backtest/today")
 async def api_backtest_today(hours: int = 24, tp_pct: float = 3.0, sl_pct: float = 2.0, hold_h: int = 48):
     """Бэктест всех сегодняшних сигналов (или за N часов).
@@ -10305,9 +10340,26 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
     return {"items": items, "symbol": sym_clean, "days": days, "count": len(items)}
 
 
-def _compute_journal_sync():
+def _compute_journal_fast_sync():
+    """⚡ FAST journal compute — только Mongo fetches + stack count enrichment.
+    Без divergence/squeeze/rsi4h/rsi12h/top_movers/cluster_delta/RSI/trend enrichments.
+
+    Используется в /api/journal/fast endpoint для мгновенного рендера UI (~2-3с).
+    UI делает второй параллельный запрос на /api/journal (full) и мерджит
+    enrichments на лету.
+
+    Reuses _compute_journal_sync() но обрезает на этапе stack_count enrichment.
+    """
+    full = _compute_journal_sync(_fast_only=True)
+    return full
+
+
+def _compute_journal_sync(_fast_only: bool = False):
     """Синхронная версия — вызывается через asyncio.to_thread из api_journal,
-    чтоб блокирующие Mongo-курсоры не тормозили весь event loop."""
+    чтоб блокирующие Mongo-курсоры не тормозили весь event loop.
+
+    _fast_only=True: выход после Mongo fetches + sort + stack_count enrich
+    (используется в /api/journal/fast endpoint для UI первичной отрисовки)."""
     from database import _signals, _anomalies, _confluence
     from datetime import datetime, timedelta
     from database import utcnow as _utcnow
@@ -10805,6 +10857,12 @@ def _compute_journal_sync():
             it['stack_short'] = sum(1 for s in window if s[2] == 'SHORT')
     except Exception as _se:
         logging.getLogger(__name__).warning(f"[journal] stack_count enrich fail: {_se}")
+
+    # ⚡ FAST EXIT: для /api/journal/fast endpoint — UI получает данные мгновенно,
+    # все enrichments ниже (squeeze/divergence/rsi4h/rsi12h/top_movers/delta/rsi/trend)
+    # выполняются только в полном compute через /api/journal.
+    if _fast_only:
+        return {"items": items}
 
     # ─── Squeeze score для high-stack pairs ───
     # BB(20)/SMA(60) compression — индикатор близкого breakout.

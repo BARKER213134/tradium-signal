@@ -76,6 +76,7 @@ class AsyncTTLCache:
 # TTL увеличены для разгрузки Atlas Free Tier M0 (30.04.2026 throttle issue).
 # UI обновляется реже, но платформа стабильнее. После upgrade Atlas можно вернуть.
 journal_cache = AsyncTTLCache(ttl=60)       # /api/journal — 60с (было 20)
+journal_fast_cache = AsyncTTLCache(ttl=30)  # /api/journal/fast — только Mongo + stack_count, 30с
 kl_enrich_cache = AsyncTTLCache(ttl=120)    # /api/key-levels/enrich
 journal_by_symbol_cache = AsyncTTLCache(ttl=180)  # /api/journal/by-symbol — 3 мин
 top_picks_cache = AsyncTTLCache(ttl=120)    # /api/top-picks

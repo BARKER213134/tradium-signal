@@ -8307,19 +8307,22 @@ setTimeout(loadJournalRegime, 800);
 safeInterval(loadJournalRegime, 60000);
 
 async function loadJournal() {
+  // ⚡ DRASTIC SPLIT: сначала fast endpoint (~2s, только Mongo + stack_count)
+  // → таблица отрисовывается мгновенно. Параллельно — full endpoint с enrichments
+  // (rsi4h/12h, divergence, delta, resonance, top_movers, rsi, trend, squeeze).
+  // Когда придёт full — merge'им enrichment-поля в _journalData и re-render.
   try {
-    const r = await fetch('/api/journal');
-    const d = await r.json();
-    const items = d.items || [];
+    // Phase 1: fast fetch → instant render
+    const fastP = fetch('/api/journal/fast').then(r => r.json()).catch(() => null);
+    // Phase 2: full fetch → merge enrichments позже (10-30s typically)
+    const fullP = fetch('/api/journal').then(r => r.json()).catch(() => null);
 
-    // Detect new signals
+    const fastD = await fastP;
+    const items = (fastD && fastD.items) || [];
+
+    // Detect new signals (на основе fast — обычно достаточно, full даст те же)
     if (!_journalFirstLoad && items.length) {
-      const currentIds = new Set(items.map(_signalKey));
       const newSignals = items.filter(s => !_journalPrevIds.has(_signalKey(s)));
-      // cv_flip — observation канал (+ Telegram-алерт), не звоним на него
-      // и не учитываем в anti-spam лимите (50+ после backfill глушили beep)
-      // Sound только на HOT signals (q_score >= 60). Меньше шума.
-      // Toast — все новые (информационно), но звук тревожит только при качественных.
       const newForSound = newSignals.filter(s =>
         s.source !== 'cv_flip' && (s.q_score || 0) >= 60
       );
@@ -8329,44 +8332,73 @@ async function loadJournal() {
       }
       if (newForToast.length > 0 && newForToast.length < 50) {
         _showJournalToast(newForToast);
-        // Mark new signal keys for row highlighting (все новые, включая cv_flip)
         window._newSignalKeys = new Set(newSignals.map(_signalKey));
         setTimeout(() => { window._newSignalKeys = null; }, 4000);
       }
     }
 
-    // Update prev IDs
     _journalPrevIds = new Set(items.map(_signalKey));
     _journalFirstLoad = false;
     _journalData = items;
-    filterJournal();  // первая перерисовка (без badge)
+    filterJournal();  // первая перерисовка (быстрая, без enrich-полей)
 
-    // Key Levels + SuperTrend enrich — идут ПАРАЛЛЕЛЬНО, перерисовка один раз после обоих.
-    // Раньше было 3 последовательных filterJournal() → 3× innerHTML tbody (до 3400 строк).
-    const batch = items.slice(0, 300).map((s, i) => ({
-      id: `j_${i}`, pair: s.pair || s.symbol, direction: s.direction, at: s.at,
-      entry: s.entry,  // для price-proximity check в KL enrich
-    }));
-    const payload = JSON.stringify({signals: batch});
-    const jopt = { method: 'POST', headers: {'Content-Type': 'application/json'}, body: payload };
-    try {
-      const [er, sr] = await Promise.all([
-        fetch('/api/key-levels/enrich', jopt).catch(() => null),
-        fetch('/api/st-enrich', jopt).catch(() => null),
-      ]);
-      const ed = er ? await er.json().catch(() => ({})) : {};
-      const sd = sr ? await sr.json().catch(() => ({})) : {};
-      const klEnrich = ed.enrich || {};
-      const stEnrich = sd.enrich || {};
-      items.forEach((s, i) => {
-        s._kl = klEnrich[`j_${i}`] || null;
-        const e = stEnrich[`j_${i}`];
-        s._stFlags = (e && e.flags) ? e.flags : [];
-      });
-      filterJournal();  // ЕДИНАЯ перерисовка с badge'ами
-    } catch (e) {
-      console.warn('[journal] enrich fail:', e);
-    }
+    // Phase 2 async: ждём full + KL/ST enrich параллельно
+    (async () => {
+      try {
+        const batch = items.slice(0, 300).map((s, i) => ({
+          id: `j_${i}`, pair: s.pair || s.symbol, direction: s.direction, at: s.at,
+          entry: s.entry,
+        }));
+        const payload = JSON.stringify({signals: batch});
+        const jopt = { method: 'POST', headers: {'Content-Type': 'application/json'}, body: payload };
+
+        const [fullD, er, sr] = await Promise.all([
+          fullP,
+          fetch('/api/key-levels/enrich', jopt).catch(() => null),
+          fetch('/api/st-enrich', jopt).catch(() => null),
+        ]);
+
+        // Merge full enrichments если пришли (full = вся таблица с rsi4h/12h/...)
+        if (fullD && fullD.items && fullD.items.length) {
+          // Build key map для быстрого merge'а
+          const fullByKey = new Map();
+          for (const it of fullD.items) fullByKey.set(_signalKey(it), it);
+          for (const s of _journalData) {
+            const f = fullByKey.get(_signalKey(s));
+            if (!f) continue;
+            // Скопируем enrichment-поля (которых нет в fast)
+            const enrichFields = [
+              'rsi4h_state','rsi4h_match','rsi4h_value','rsi4h_sma',
+              'rsi12h_state','rsi12h_match','rsi12h_value','rsi12h_sma',
+              'divergence','v_pattern','confluence_score','confluence_direction',
+              'confluence_components','squeeze_score',
+              'is_top_mover','change_24h',
+              'delta_15m','delta_1h','delta_4h',
+              'resonance_15m','resonance_1h','resonance_4h',
+              'delta_zscore_15m','delta_zscore_1h','delta_zscore_4h',
+              'q_score','rsi_15m','rsi_1h','rsi_4h','rsi_1d',
+              'trend_15m','trend_1h','trend_4h',
+            ];
+            for (const k of enrichFields) {
+              if (f[k] !== undefined) s[k] = f[k];
+            }
+          }
+        }
+
+        const ed = er ? await er.json().catch(() => ({})) : {};
+        const sd = sr ? await sr.json().catch(() => ({})) : {};
+        const klEnrich = ed.enrich || {};
+        const stEnrich = sd.enrich || {};
+        _journalData.forEach((s, i) => {
+          s._kl = klEnrich[`j_${i}`] || null;
+          const e = stEnrich[`j_${i}`];
+          s._stFlags = (e && e.flags) ? e.flags : [];
+        });
+        filterJournal();  // финальная перерисовка с enrichments
+      } catch (e) {
+        console.warn('[journal] full enrich fail:', e);
+      }
+    })();
   } catch {}
 }
 
