@@ -11102,7 +11102,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         if not _r4_mod._cache.get(p)
                         or (rc_now_4 - _r4_mod._cache[p].get('ts', 0))
                            > (1800 if _r4_mod._cache[p].get('state') else 300)]
-        cold_pairs_4 = cold_pairs_4[:40]
+        cold_pairs_4 = cold_pairs_4[:80]
         if cold_pairs_4 and (_t_r4.time() - r4_t0) < R4_BUDGET_S:
             ex_r4 = _4hExec(max_workers=10)
             try:
@@ -11159,7 +11159,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                       if not _r12_mod._cache.get(p)
                       or (rc_now - _r12_mod._cache[p].get('ts', 0))
                          > (3600 if _r12_mod._cache[p].get('state') else 300)]
-        cold_pairs = cold_pairs[:40]
+        cold_pairs = cold_pairs[:80]
         if cold_pairs and (_t_r12.time() - r12_t0) < R12_BUDGET_S:
             ex_rc = _RsiExec(max_workers=10)
             try:

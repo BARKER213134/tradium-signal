@@ -3517,15 +3517,18 @@ async def _ui_prewarm_loop():
 async def _rsi12h_warmer_loop():
     """Background warmer для RSI/SMA 4h + 12h state cache.
 
-    Каждые 5 мин:
+    Каждые 3 мин:
     1. Берём все пары которые в недавних signals (last 24h)
     2. Для каждой пары прогреваем 4h И 12h state cache (parallel)
     3. Этим обеспечиваем что 4h и 12h колонки в журнале не пустые
 
     Cache TTL 30min (4h) / 1h (12h) — warmer держит данные fresh.
+
+    Bumped 60→150 pairs cap, 5min→3min interval, 30s startup (was 180s)
+    — юзер видел "4/12 сма нет данных" слишком долго после деплоя.
     """
     import asyncio as _asyncio
-    await _asyncio.sleep(180)
+    await _asyncio.sleep(30)
     while True:
         try:
             from database import _get_db
@@ -3539,14 +3542,14 @@ async def _rsi12h_warmer_loop():
                                          ('new_strategy_signals','created_at'),
                                          ('supertrend_signals','flip_at')]:
                 try:
-                    for s in db[col_name].find({time_field:{'$gte':since}}, {'pair':1}).limit(500):
+                    for s in db[col_name].find({time_field:{'$gte':since}}, {'pair':1}).limit(800):
                         if s.get('pair'): pairs.add(s['pair'])
                 except Exception:
                     pass
-            pair_list = list(pairs)[:60]
+            pair_list = list(pairs)[:150]
             from concurrent.futures import ThreadPoolExecutor as _Exec, as_completed as _done
             if pair_list:
-                ex = _Exec(max_workers=12)
+                ex = _Exec(max_workers=15)
                 try:
                     # Parallel fill for BOTH 4h and 12h per pair
                     futs = []
@@ -3554,7 +3557,7 @@ async def _rsi12h_warmer_loop():
                         futs.append(ex.submit(r12.get_state, p))
                         futs.append(ex.submit(r4.get_state, p))
                     try:
-                        for f in _done(futs, timeout=45.0):
+                        for f in _done(futs, timeout=90.0):
                             try: f.result(timeout=0.2)
                             except Exception: pass
                     except Exception: pass
@@ -3563,7 +3566,7 @@ async def _rsi12h_warmer_loop():
                 logger.info(f"[rsi-state-warm] cached 4h+12h × {len(pair_list)} pairs")
         except Exception:
             logger.debug("[rsi-state-warm] error", exc_info=True)
-        await _asyncio.sleep(300)
+        await _asyncio.sleep(180)
 
 
 async def _journal_cache_warmer_loop():
