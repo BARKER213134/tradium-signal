@@ -1319,6 +1319,7 @@
         const closes = candles.map(c => c.close != null ? c.close : c.c);
         const ema20 = window._calcEMA(closes, 20);
         const ema50 = window._calcEMA(closes, 50);
+        const ema200 = candles.length >= 200 ? window._calcEMA(closes, 200) : [];
         if (!ema20.length || !ema50.length) return null;
         try {
           const s20 = chart.addLineSeries({
@@ -1335,7 +1336,19 @@
           });
           s50.setData(ema50.map((v, i) =>
             v == null ? null : { time: candles[i].time, value: v }).filter(Boolean));
-          // Маркеры crossover (golden/death cross)
+          // EMA200 — длинная медленная линия (для EMA50/200 cross detection,
+          // соответствует колонке "EMA Cross" в журнале)
+          let s200 = null;
+          if (ema200.length) {
+            s200 = chart.addLineSeries({
+              color: '#ffd23e', lineWidth: 2,
+              priceLineVisible: false, lastValueVisible: false,
+              crosshairMarkerVisible: false, title: 'EMA200',
+            });
+            s200.setData(ema200.map((v, i) =>
+              v == null ? null : { time: candles[i].time, value: v }).filter(Boolean));
+          }
+          // Маркеры EMA20/50 crossover (короткий тренд, частые crosses)
           const crossMarkers = [];
           for (let i = 51; i < candles.length; i++) {
             if (ema20[i] == null || ema50[i] == null || ema20[i-1] == null || ema50[i-1] == null) continue;
@@ -1357,6 +1370,30 @@
               });
             }
           }
+          // Маркеры EMA50/200 crossover — БОЛЬШИЕ круги (это про колонку
+          // "EMA Cross" в журнале — длинный тренд, редкие но мощные сигналы)
+          if (ema200.length) {
+            for (let i = 201; i < candles.length; i++) {
+              if (ema50[i] == null || ema200[i] == null || ema50[i-1] == null || ema200[i-1] == null) continue;
+              const wasBelow = ema50[i-1] < ema200[i-1];
+              const isAbove = ema50[i] > ema200[i];
+              const wasAbove = ema50[i-1] > ema200[i-1];
+              const isBelow = ema50[i] < ema200[i];
+              if (wasBelow && isAbove) {
+                crossMarkers.push({
+                  time: candles[i].time, position: 'belowBar',
+                  color: '#ffd23e', shape: 'circle',
+                  text: '🟢 GOLDEN', size: 2,
+                });
+              } else if (wasAbove && isBelow) {
+                crossMarkers.push({
+                  time: candles[i].time, position: 'aboveBar',
+                  color: '#ff8c50', shape: 'circle',
+                  text: '🔴 DEATH', size: 2,
+                });
+              }
+            }
+          }
           // Бадж в углу
           let badgeEl = null;
           const anchor = opts.anchor;
@@ -1366,20 +1403,27 @@
             if (getComputedStyle(anchor).position === 'static') {
               anchor.style.position = 'relative';
             }
-            // Состояние на последней свече
+            // Состояние на последней свече: показываем оба тренда
             const lastIdx = candles.length - 1;
             const e20 = ema20[lastIdx];
             const e50 = ema50[lastIdx];
+            const e200 = ema200.length ? ema200[lastIdx] : null;
             let txt = 'EMA';
             let col = '#aaa';
             if (e20 != null && e50 != null) {
-              if (e20 > e50) { txt = 'EMA ▲ UP'; col = '#00e5a0'; }
-              else if (e20 < e50) { txt = 'EMA ▼ DOWN'; col = '#ff4d6d'; }
-              else { txt = 'EMA ◆ FLAT'; col = '#aaa'; }
+              if (e20 > e50) { txt = 'EMA20▲50'; col = '#00e5a0'; }
+              else if (e20 < e50) { txt = 'EMA20▼50'; col = '#ff4d6d'; }
+              else { txt = 'EMA20◆50'; col = '#aaa'; }
+            }
+            if (e50 != null && e200 != null) {
+              const longTrend = e50 > e200 ? ' · 50▲200' : e50 < e200 ? ' · 50▼200' : ' · 50◆200';
+              txt += longTrend;
             }
             badgeEl = document.createElement('div');
             badgeEl.className = 'trend-ema-badge';
-            badgeEl.title = 'EMA20 (cyan) / EMA50 (magenta). UP = EMA20>EMA50, DOWN наоборот. Маркеры на пересечениях.';
+            badgeEl.title = 'EMA20 (cyan) / EMA50 (magenta) / EMA200 (gold).\n' +
+                            'Малые круги ⭡⭣ — EMA20×50 cross (короткий тренд).\n' +
+                            'Большие круги 🟢🔴 GOLDEN/DEATH — EMA50×200 cross (это про колонку EMA Cross в журнале).';
             badgeEl.style.cssText = `
               position:absolute;top:8px;left:8px;z-index:5;
               background:rgba(10,14,20,0.75);border:1px solid ${col}55;
@@ -1396,7 +1440,7 @@
             }
             anchor.appendChild(badgeEl);
           }
-          return { s20, s50, badge: badgeEl, crossMarkers };
+          return { s20, s50, s200, badge: badgeEl, crossMarkers };
         } catch (e) {
           console.warn('[trend-ema] add fail:', e);
           return null;
