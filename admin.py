@@ -9805,13 +9805,13 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     try:
         full = await asyncio.wait_for(
             journal_cache.get_or_compute("journal_all", _compute_in_thread),
-            timeout=90.0,
+            timeout=150.0,  # было 90s, бампнули после добавления ema_cross блока
         )
     except asyncio.TimeoutError:
         # Возвращаем stale cache если есть, иначе пустой
         full = journal_cache.get("journal_all") or {"items": []}
         logging.getLogger(__name__).warning(
-            "[api/journal] compute timeout 90s — returning stale/empty"
+            "[api/journal] compute timeout 150s — returning stale/empty"
         )
     items = full.get("items", []) if isinstance(full, dict) else []
     total = len(items)
@@ -11288,7 +11288,8 @@ def _compute_journal_sync(_fast_only: bool = False):
     try:
         import ccxt
         ex_bx = ccxt.bingx({'options': {'defaultType': 'swap'},
-                            'enableRateLimit': True})
+                            'enableRateLimit': True,
+                            'timeout': 5000})  # 5s timeout — был unlimited
         tickers = ex_bx.fetch_tickers()
         # Sort by percentage change desc
         pct_by_pair: dict = {}
