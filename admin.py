@@ -605,6 +605,22 @@ def _health_sync() -> dict:
                 status["checks"][f"{name}_last_age_min"] = int(age_min)
                 if age_min > 240:
                     status["checks"][f"{name}_warning"] = "stale (>4h no new data)"
+        # Per-source breakdown: tradium / cryptovizor отдельно
+        for src in ("tradium", "cryptovizor"):
+            last_src = _signals().find_one({"source": src},
+                                            sort=[("received_at", DESCENDING)])
+            if last_src and last_src.get("received_at"):
+                age_min = (now - last_src["received_at"]).total_seconds() / 60
+                status["checks"][f"{src}_last_age_min"] = int(age_min)
+            else:
+                status["checks"][f"{src}_last_age_min"] = None
+        # Counts last 24h
+        from datetime import timedelta
+        since_24h = now - timedelta(hours=24)
+        for src in ("tradium", "cryptovizor"):
+            cnt = _signals().count_documents({"source": src,
+                                                "received_at": {"$gte": since_24h}})
+            status["checks"][f"{src}_count_24h"] = cnt
     except Exception as e:
         status["checks"]["activity"] = f"fail: {str(e)[:80]}"
     return status
