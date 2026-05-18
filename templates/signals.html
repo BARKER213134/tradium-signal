@@ -9789,9 +9789,9 @@ window._render4hCell = function(s) {
   const dirHint = (state === 'bullish') ? '🟢' : (state === 'bearish' ? '🔴' : '⚪');
   const tip = `4h RSI=${r||'?'} SMA=${sma||'?'} → ${state || '?'}\n` +
               `Signal direction: ${dir} → match=${match === true ? 'YES' : (match === false ? 'NO' : '?')}`;
-  return `<td class="mono" style="text-align:center;line-height:1.2;padding:4px 6px !important;${bg}" title="${tip}">
+  return `<td class="mono" style="text-align:center;line-height:1.25;padding:4px 6px !important;${bg}" title="${tip}">
     <div style="font-size:16px;color:${color};font-weight:700;">${icon}</div>
-    <div style="font-size:9px;color:#666;">${dirHint}${r||''}</div>
+    <div style="font-size:11px;color:#bbb;font-weight:600;">${dirHint}${r||''}</div>
   </td>`;
 };
 
@@ -9816,9 +9816,9 @@ window._render12hCell = function(s) {
   const dirHint = (state === 'bullish') ? '🟢' : (state === 'bearish' ? '🔴' : '⚪');
   const tip = `12h RSI=${r||'?'} SMA=${sma||'?'} → ${state || '?'}\n` +
               `Signal direction: ${dir} → match=${match === true ? 'YES' : (match === false ? 'NO' : '?')}`;
-  return `<td class="mono" style="text-align:center;line-height:1.2;padding:4px 6px !important;${bg}" title="${tip}">
+  return `<td class="mono" style="text-align:center;line-height:1.25;padding:4px 6px !important;${bg}" title="${tip}">
     <div style="font-size:16px;color:${color};font-weight:700;">${icon}</div>
-    <div style="font-size:9px;color:#666;">${dirHint}${r||''}</div>
+    <div style="font-size:11px;color:#bbb;font-weight:600;">${dirHint}${r||''}</div>
   </td>`;
 };
 
@@ -9829,35 +9829,52 @@ window._renderEmaCrossCell = function(s) {
   const barsAgo = s.ema_cross_bars_ago;
   const match = s.ema_cross_match;
   const dir = (s.direction || '').toUpperCase();
+  const crossT = s.ema_cross_t;  // ms epoch
   if (cross == null) {
     return '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
   }
   // Icon + color
   const isGolden = cross === 'GOLDEN';
   const emoji = isGolden ? '🟢' : '🔴';
-  const label = isGolden ? 'GOLD' : 'DEATH';
+  const label = isGolden ? 'GOLDEN' : 'DEATH';
   let bg = '';
   let matchIcon = '';
   if (match === true) {
     bg = 'background:rgba(0,229,160,0.10);';
-    matchIcon = '<span style="color:#00e5a0;font-size:9px;margin-left:2px;">✓</span>';
+    matchIcon = '<span style="color:#00e5a0;font-size:11px;margin-left:3px;font-weight:700;">✓</span>';
   } else if (match === false) {
     bg = 'background:rgba(255,77,109,0.06);';
-    matchIcon = '<span style="color:#ff4d6d;font-size:9px;margin-left:2px;">✗</span>';
+    matchIcon = '<span style="color:#ff4d6d;font-size:11px;margin-left:3px;font-weight:700;">✗</span>';
   }
   const color = isGolden ? '#00e5a0' : '#ff4d6d';
-  // Bars ago hint — на 1h, конвертируем в часы/дни если много
+
+  // Bars ago — компактный формат "Nd Nh" (например "4d 6h")
   let agoStr = '';
   if (barsAgo != null) {
-    if (barsAgo < 24) agoStr = `${barsAgo}h`;
-    else agoStr = `${Math.floor(barsAgo / 24)}d`;
+    if (barsAgo < 1) agoStr = '<1h';
+    else if (barsAgo < 24) agoStr = `${barsAgo}h`;
+    else {
+      const d = Math.floor(barsAgo / 24);
+      const h = barsAgo % 24;
+      agoStr = h > 0 ? `${d}d ${h}h` : `${d}d`;
+    }
   }
+
+  // Дата/время cross'а — "DD.MM HH:MM" (например "11.05 14:00")
+  let dateStr = '';
+  if (crossT) {
+    const dt = new Date(crossT);
+    const pad = (n) => String(n).padStart(2, '0');
+    dateStr = `${pad(dt.getDate())}.${pad(dt.getMonth()+1)} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+  }
+
   const tip = `Last EMA50×EMA200 cross на 1h ДО сигнала: ${label}\n` +
-              `Bars ago: ${barsAgo != null ? barsAgo + ' (1h)' : '?'}\n` +
+              `Когда: ${dateStr || '?'} (${agoStr} назад)\n` +
               `Signal direction: ${dir} → match=${match === true ? 'YES (regime align)' : (match === false ? 'NO (against regime)' : '?')}`;
-  return `<td class="mono" style="text-align:center;line-height:1.2;padding:4px 6px !important;${bg}" title="${tip}">
-    <div style="font-size:13px;color:${color};font-weight:700;">${emoji}${matchIcon}</div>
-    <div style="font-size:9px;color:#666;">${agoStr}</div>
+  return `<td class="mono" style="text-align:center;line-height:1.25;padding:4px 6px !important;${bg}" title="${tip}">
+    <div style="font-size:14px;color:${color};font-weight:700;">${emoji}${matchIcon}</div>
+    <div style="font-size:10px;color:#bbb;font-weight:600;margin-top:1px;">${agoStr}</div>
+    <div style="font-size:9px;color:#777;margin-top:1px;">${dateStr}</div>
   </td>`;
 };
 
