@@ -11202,6 +11202,70 @@ def _compute_journal_sync(_fast_only: bool = False):
     except Exception as _r12e:
         logging.getLogger(__name__).debug(f"[journal] rsi12h enrich fail: {_r12e}")
 
+    # ─── EMA50/EMA200 cross state на 1h (за время сигнала) ───
+    # Возвращает last cross GOLDEN/DEATH ДО at_ts сигнала + bars_ago.
+    # По бэктесту 7d: 80% WR на death cross SHORT в bear-week — ценный
+    # фильтр для определения regime ПРИ приходе сигнала.
+    try:
+        from concurrent.futures import ThreadPoolExecutor as _ECExec, as_completed as _ec_done
+        import time as _t_ec
+        import ema_cross_state as _ec_mod
+        ec_now = int(_t_ec.time())
+        ec_t0 = _t_ec.time()
+        EC_BUDGET_S = 12.0
+        # Recent items (24h) — для каждого считаем cross на момент at_ts
+        recent_items_ec = [it for it in items if (it.get('at_ts') or 0) >= ec_now - 24 * 3600
+                            and (it.get('pair') or '')]
+        # Уникальные (pair, at_ts_bucket_1h) — чтоб не дублировать одинаковые
+        unique_keys: set = set()
+        ec_tasks: list = []
+        for it in recent_items_ec:
+            p = it['pair']; ats = it['at_ts']
+            key = (p, ats // 3600)
+            if key in unique_keys: continue
+            unique_keys.add(key)
+            cache_key = f"{p}|{ats // 3600}"
+            if not _ec_mod._cache.get(cache_key):
+                ec_tasks.append((p, ats))
+        ec_tasks = ec_tasks[:40]
+        if ec_tasks and (_t_ec.time() - ec_t0) < EC_BUDGET_S:
+            ex_ec = _ECExec(max_workers=10)
+            try:
+                remaining = max(2.0, EC_BUDGET_S - (_t_ec.time() - ec_t0))
+                futs = {ex_ec.submit(_ec_mod.get_state, p, ats): (p, ats) for p, ats in ec_tasks}
+                try:
+                    for f in _ec_done(futs, timeout=remaining):
+                        try: f.result(timeout=0.2)
+                        except Exception: pass
+                except Exception: pass
+            finally:
+                ex_ec.shutdown(wait=False, cancel_futures=True)
+        # Apply per item from cache
+        for it in items:
+            p = it.get('pair') or ''
+            ats = it.get('at_ts') or 0
+            if not (p and ats):
+                it['ema_cross'] = None; it['ema_cross_bars_ago'] = None
+                it['ema_cross_match'] = None
+                continue
+            cache_key = f"{p}|{ats // 3600}"
+            entry = _ec_mod._cache.get(cache_key)
+            if not entry:
+                it['ema_cross'] = None; it['ema_cross_bars_ago'] = None
+                it['ema_cross_match'] = None
+                continue
+            cross = entry.get('last_cross')
+            it['ema_cross'] = cross
+            it['ema_cross_bars_ago'] = entry.get('bars_ago')
+            it['ema_cross_t'] = entry.get('cross_t')
+            d = (it.get('direction') or '').upper()
+            if cross == 'GOLDEN' and d == 'LONG': it['ema_cross_match'] = True
+            elif cross == 'DEATH' and d == 'SHORT': it['ema_cross_match'] = True
+            elif cross is None: it['ema_cross_match'] = None
+            else: it['ema_cross_match'] = False
+    except Exception as _ece:
+        logging.getLogger(__name__).debug(f"[journal] ema_cross enrich fail: {_ece}")
+
     # ─── Top movers enrichment (BingX 24h gainers) ───
     # Опрашиваем BingX tickers, помечаем pairs которые сейчас в top 30
     # по 24h price change. Helps catch pre/early pumps.

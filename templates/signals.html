@@ -7400,7 +7400,7 @@ async function _pollDeltaBackfill() {
       <col style="width:6%;">    <!-- Пара -->
       <col style="width:5%;">    <!-- Напр. -->
       <col style="width:6%;">    <!-- Entry -->
-      <col style="width:17%;">   <!-- Паттерн -->
+      <col style="width:13%;">   <!-- Паттерн -->
       <col style="width:7%;">    <!-- Вердикт -->
       <col style="width:9%;">    <!-- RSI 4 TF -->
       <col style="width:6%;">    <!-- SMA vs RSI -->
@@ -7408,7 +7408,8 @@ async function _pollDeltaBackfill() {
       <col style="width:7%;">    <!-- Trend -->
       <col style="width:5%;">    <!-- 4h state -->
       <col style="width:6%;">    <!-- 12h state -->
-      <col style="width:5%;">    <!-- Stack -->
+      <col style="width:5%;">    <!-- EMA Cross 1h -->
+      <col style="width:4%;">    <!-- Stack -->
     </colgroup>
     <thead>
       <tr>
@@ -7431,11 +7432,12 @@ async function _pollDeltaBackfill() {
         <th id="jSortTrend" title="Тренд по EMA20 vs EMA50 на close per TF. ▲ зелёный = UP, ▼ красный = DOWN, ◆ серый = FLAT" style="text-align:center;padding:14px 6px;">Тренд</th>
         <th class="sortable" onclick="jSort('rsi4h_match')" id="jSort4h" title="RSI/SMA(RSI) на 4h: ✓ = state в направлении сделки. Faster reaction than 12h." style="text-align:center;padding:14px 6px;">4h</th>
         <th class="sortable" onclick="jSort('rsi12h_match')" id="jSort12h" title="RSI/SMA(RSI) на 12h: ✓ = RSI>SMA для LONG или RSI<SMA для SHORT (state в направлении сделки). По backtest 14d: +14-17 WR пп. Click для sort." style="text-align:center;padding:14px 6px;">12h</th>
+        <th class="sortable" onclick="jSort('ema_cross_match')" id="jSortEmaCross" title="EMA50/EMA200 cross на 1h ДО прихода сигнала. 🟢 GOLDEN (EMA50>EMA200, bull regime) / 🔴 DEATH (EMA50<EMA200, bear regime). Bars ago — сколько 1h-баров назад был cross. По бэктесту 7d: 80% WR на DEATH SHORT в bear-неделе." style="text-align:center;padding:14px 6px;">EMA×</th>
         <th class="sortable" onclick="jSort('stack_distinct')" id="jSortStack" title="Stack — кол-во distinct (source × direction) на паре в окне ±3h (6h всего). 4+ = MOONSHOT (multiple sources align — pre-pump signature). Squeeze score 0-100 — BB сжатие, 80+ = готовится breakout." style="text-align:center;padding:14px 6px;">Stack</th>
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="14" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="15" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -8964,6 +8966,8 @@ function renderJournal(items, startIdx) {
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     const rsi12hCell = window._render12hCell ? window._render12hCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    const emaCrossCell = window._renderEmaCrossCell ? window._renderEmaCrossCell(s) :
+      '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     // Stack (Δ% и Резонанс удалены по запросу — оставили только Stack для MOONSHOT detection)
     const stackCell = window._renderStackCell ? window._renderStackCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
@@ -8981,6 +8985,7 @@ function renderJournal(items, startIdx) {
       ${trendCell}
       ${rsi4hCell}
       ${rsi12hCell}
+      ${emaCrossCell}
       ${stackCell}
     </tr>`;
   }).join('');
@@ -9814,6 +9819,45 @@ window._render12hCell = function(s) {
   return `<td class="mono" style="text-align:center;line-height:1.2;padding:4px 6px !important;${bg}" title="${tip}">
     <div style="font-size:16px;color:${color};font-weight:700;">${icon}</div>
     <div style="font-size:9px;color:#666;">${dirHint}${r||''}</div>
+  </td>`;
+};
+
+window._renderEmaCrossCell = function(s) {
+  // EMA50/EMA200 cross на 1h ДО прихода сигнала.
+  // GOLDEN (EMA50>EMA200, bull regime) / DEATH (EMA50<EMA200, bear regime).
+  const cross = s.ema_cross;
+  const barsAgo = s.ema_cross_bars_ago;
+  const match = s.ema_cross_match;
+  const dir = (s.direction || '').toUpperCase();
+  if (cross == null) {
+    return '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+  }
+  // Icon + color
+  const isGolden = cross === 'GOLDEN';
+  const emoji = isGolden ? '🟢' : '🔴';
+  const label = isGolden ? 'GOLD' : 'DEATH';
+  let bg = '';
+  let matchIcon = '';
+  if (match === true) {
+    bg = 'background:rgba(0,229,160,0.10);';
+    matchIcon = '<span style="color:#00e5a0;font-size:9px;margin-left:2px;">✓</span>';
+  } else if (match === false) {
+    bg = 'background:rgba(255,77,109,0.06);';
+    matchIcon = '<span style="color:#ff4d6d;font-size:9px;margin-left:2px;">✗</span>';
+  }
+  const color = isGolden ? '#00e5a0' : '#ff4d6d';
+  // Bars ago hint — на 1h, конвертируем в часы/дни если много
+  let agoStr = '';
+  if (barsAgo != null) {
+    if (barsAgo < 24) agoStr = `${barsAgo}h`;
+    else agoStr = `${Math.floor(barsAgo / 24)}d`;
+  }
+  const tip = `Last EMA50×EMA200 cross на 1h ДО сигнала: ${label}\n` +
+              `Bars ago: ${barsAgo != null ? barsAgo + ' (1h)' : '?'}\n` +
+              `Signal direction: ${dir} → match=${match === true ? 'YES (regime align)' : (match === false ? 'NO (against regime)' : '?')}`;
+  return `<td class="mono" style="text-align:center;line-height:1.2;padding:4px 6px !important;${bg}" title="${tip}">
+    <div style="font-size:13px;color:${color};font-weight:700;">${emoji}${matchIcon}</div>
+    <div style="font-size:9px;color:#666;">${agoStr}</div>
   </td>`;
 };
 
