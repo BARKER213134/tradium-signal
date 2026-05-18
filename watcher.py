@@ -3273,9 +3273,19 @@ async def _paper_on_signal(signal_data: dict):
                 except Exception as _e:
                     logger.debug(f"[rsi4h] on-signal fill {_p}: {_e}")
 
-            # Parallel — max 8s total. fill_pair_rsi/trend делают 4 sequential
-            # fapi calls each (~4s total на пару). С asyncio.gather все 4 fill'a
-            # бегут параллельно (RSI, Trend, Delta, 12h-state).
+            async def _fill_ema_cross(_p, _ts_s):
+                """Fill EMA50/200 cross state cache для UI колонки EMA×.
+                _ts_s — момент сигнала в unix sec (определяет какой cross был ДО)."""
+                try:
+                    import ema_cross_state as _ec
+                    await asyncio.to_thread(_ec.get_state, _p, _ts_s)
+                except Exception as _e:
+                    logger.debug(f"[ema-cross] on-signal fill {_p}: {_e}")
+
+            _at_ts_s = int(_at_ms / 1000)
+            # Parallel — max 10s total. fill_pair_rsi/trend делают 4 sequential
+            # fapi calls each (~4s total на пару). С asyncio.gather все 6 fill'a
+            # бегут параллельно (RSI, Trend, Delta, 12h-state, 4h-state, EMA-cross).
             try:
                 await asyncio.wait_for(
                     asyncio.gather(
@@ -3284,6 +3294,7 @@ async def _paper_on_signal(signal_data: dict):
                         _fill_delta(_pair_fill, _at_ms),
                         _fill_rsi12h(_pair_fill),
                         _fill_rsi4h(_pair_fill),
+                        _fill_ema_cross(_pair_fill, _at_ts_s),
                         return_exceptions=True,
                     ),
                     timeout=10.0,
