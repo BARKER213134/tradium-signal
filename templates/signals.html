@@ -7400,7 +7400,7 @@ async function _pollDeltaBackfill() {
       <col style="width:6%;">    <!-- Пара -->
       <col style="width:5%;">    <!-- Напр. -->
       <col style="width:6%;">    <!-- Entry -->
-      <col style="width:13%;">   <!-- Паттерн -->
+      <col style="width:11%;">   <!-- Паттерн -->
       <col style="width:7%;">    <!-- Вердикт -->
       <col style="width:9%;">    <!-- RSI 4 TF -->
       <col style="width:6%;">    <!-- SMA vs RSI -->
@@ -7408,7 +7408,7 @@ async function _pollDeltaBackfill() {
       <col style="width:7%;">    <!-- Trend -->
       <col style="width:5%;">    <!-- 4h state -->
       <col style="width:6%;">    <!-- 12h state -->
-      <col style="width:5%;">    <!-- EMA Cross 1h -->
+      <col style="width:7%;">    <!-- EMA Cross 1h -->
       <col style="width:4%;">    <!-- Stack -->
     </colgroup>
     <thead>
@@ -7432,7 +7432,7 @@ async function _pollDeltaBackfill() {
         <th id="jSortTrend" title="Тренд по EMA20 vs EMA50 на close per TF. ▲ зелёный = UP, ▼ красный = DOWN, ◆ серый = FLAT" style="text-align:center;padding:14px 6px;">Тренд</th>
         <th class="sortable" onclick="jSort('rsi4h_match')" id="jSort4h" title="RSI/SMA(RSI) на 4h: ✓ = state в направлении сделки. Faster reaction than 12h." style="text-align:center;padding:14px 6px;">4h</th>
         <th class="sortable" onclick="jSort('rsi12h_match')" id="jSort12h" title="RSI/SMA(RSI) на 12h: ✓ = RSI>SMA для LONG или RSI<SMA для SHORT (state в направлении сделки). По backtest 14d: +14-17 WR пп. Click для sort." style="text-align:center;padding:14px 6px;">12h</th>
-        <th class="sortable" onclick="jSort('ema_cross_match')" id="jSortEmaCross" title="EMA50/EMA200 cross на 1h ДО прихода сигнала. 🟢 GOLDEN (EMA50>EMA200, bull regime) / 🔴 DEATH (EMA50<EMA200, bear regime). Bars ago — сколько 1h-баров назад был cross. По бэктесту 7d: 80% WR на DEATH SHORT в bear-неделе." style="text-align:center;padding:14px 6px;">EMA×</th>
+        <th class="sortable" onclick="jSort('ema_cross_match')" id="jSortEmaCross" title="EMA50/EMA200 cross на 1h ДО прихода сигнала. 🟢 GOLDEN (EMA50>EMA200, bull regime) / 🔴 DEATH (EMA50<EMA200, bear regime). Bars ago — сколько 1h-баров назад был cross. По бэктесту 7d: 80% WR на DEATH SHORT в bear-неделе." style="text-align:center;padding:14px 6px;">EMA Cross</th>
         <th class="sortable" onclick="jSort('stack_distinct')" id="jSortStack" title="Stack — кол-во distinct (source × direction) на паре в окне ±3h (6h всего). 4+ = MOONSHOT (multiple sources align — pre-pump signature). Squeeze score 0-100 — BB сжатие, 80+ = готовится breakout." style="text-align:center;padding:14px 6px;">Stack</th>
       </tr>
     </thead>
