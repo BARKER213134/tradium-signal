@@ -859,8 +859,10 @@ async function openChartModal(symbol, pair, direction, pnl) {
       return;
     }
 
-    const limitByTF = { '1h': 200, '4h': 150, '1d': 60, '30m': 200, '15m': 250 };
-    const candleLimit = limitByTF[tf] || 200;
+    // Larger candle counts: EMA200 нужно минимум 200 свечей + ещё ~50-100
+    // для отображения cross-маркеров (иначе EMA50/200 cross не видно на чарте).
+    const limitByTF = { '1h': 500, '4h': 300, '1d': 250, '30m': 400, '15m': 500 };
+    const candleLimit = limitByTF[tf] || 400;
 
     try {
       // Свечи — критичный путь, рендерим как только готовы.
@@ -4671,7 +4673,7 @@ async function _drawPaperHistChart(idx) {
   // 1h уменьшено 720→300 (12 дней истории) — first-load 2x быстрее.
   // Если нужна более длинная история — переключи на 4h/1d.
   const limitByTF = { '1h': 200, '4h': 150, '1d': 60, '30m': 200, '15m': 250 };
-  const candleLimit = limitByTF[tf] || 200;
+  const candleLimit = limitByTF[tf] || 400;
   try {
     const [candleR, sigR] = await Promise.all([
       fetch(`/api/journal-candles?symbol=${sym}&tf=${tf}&limit=${candleLimit}`),
@@ -8026,7 +8028,7 @@ async function loadCoinChart(coin) {
   // Свечи — динамический limit под TF, чтобы покрыть ≥30 дней сигналов
   // 1h × 720 = 30д, 4h × 180 = 30д, 1d × 60 = 60д, 15m/30m оставляем 200
   const limitByTF = { '1h': 200, '4h': 150, '1d': 60, '30m': 200, '15m': 250 };
-  const candleLimit = limitByTF[_coinTF] || 200;
+  const candleLimit = limitByTF[_coinTF] || 400;
   try {
     const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=${_coinTF}&limit=${candleLimit}`);
     const d = await r.json();
