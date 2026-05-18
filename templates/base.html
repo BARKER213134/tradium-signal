@@ -1291,6 +1291,118 @@
         }
       };
 
+      // ─── Trend EMA20 / EMA50 — линии тренда на свечах ───
+      // Эти EMA = основа колонки "Тренд" в журнале (▲ EMA20>EMA50, ▼ EMA20<EMA50).
+      // Цвета: EMA20 cyan (#00d4ff), EMA50 magenta (#ff6ec7).
+      // Toggle через window._trendEmaEnabled (localStorage tradium_trend_ema_enabled).
+      window._trendEmaEnabled = (function(){
+        try { return localStorage.getItem('tradium_trend_ema_enabled') !== '0'; }
+        catch { return true; }
+      })();
+      window._calcEMA = window._calcEMA || function(values, period) {
+        if (!values || values.length < period) return [];
+        const k = 2 / (period + 1);
+        const out = new Array(values.length).fill(null);
+        // Seed = SMA первых period значений
+        let sum = 0;
+        for (let i = 0; i < period; i++) sum += values[i];
+        out[period - 1] = sum / period;
+        for (let i = period; i < values.length; i++) {
+          out[i] = values[i] * k + out[i - 1] * (1 - k);
+        }
+        return out;
+      };
+      window._addTrendEMA = function(chart, candles, opts) {
+        opts = opts || {};
+        if (!chart || !candles || candles.length < 50) return null;
+        if (!window._trendEmaEnabled) return null;
+        const closes = candles.map(c => c.close != null ? c.close : c.c);
+        const ema20 = window._calcEMA(closes, 20);
+        const ema50 = window._calcEMA(closes, 50);
+        if (!ema20.length || !ema50.length) return null;
+        try {
+          const s20 = chart.addLineSeries({
+            color: '#00d4ff', lineWidth: 2,
+            priceLineVisible: false, lastValueVisible: false,
+            crosshairMarkerVisible: false, title: 'EMA20',
+          });
+          s20.setData(ema20.map((v, i) =>
+            v == null ? null : { time: candles[i].time, value: v }).filter(Boolean));
+          const s50 = chart.addLineSeries({
+            color: '#ff6ec7', lineWidth: 2,
+            priceLineVisible: false, lastValueVisible: false,
+            crosshairMarkerVisible: false, title: 'EMA50',
+          });
+          s50.setData(ema50.map((v, i) =>
+            v == null ? null : { time: candles[i].time, value: v }).filter(Boolean));
+          // Маркеры crossover (golden/death cross)
+          const crossMarkers = [];
+          for (let i = 51; i < candles.length; i++) {
+            if (ema20[i] == null || ema50[i] == null || ema20[i-1] == null || ema50[i-1] == null) continue;
+            const wasBelow = ema20[i-1] < ema50[i-1];
+            const isAbove = ema20[i] > ema50[i];
+            const wasAbove = ema20[i-1] > ema50[i-1];
+            const isBelow = ema20[i] < ema50[i];
+            if (wasBelow && isAbove) {
+              crossMarkers.push({
+                time: candles[i].time, position: 'belowBar',
+                color: '#00e5a0', shape: 'circle',
+                text: '⭡', size: 0,
+              });
+            } else if (wasAbove && isBelow) {
+              crossMarkers.push({
+                time: candles[i].time, position: 'aboveBar',
+                color: '#ff4d6d', shape: 'circle',
+                text: '⭣', size: 0,
+              });
+            }
+          }
+          // Бадж в углу
+          let badgeEl = null;
+          const anchor = opts.anchor;
+          if (anchor && anchor.nodeType === 1) {
+            const old = anchor.querySelector('.trend-ema-badge');
+            if (old) old.remove();
+            if (getComputedStyle(anchor).position === 'static') {
+              anchor.style.position = 'relative';
+            }
+            // Состояние на последней свече
+            const lastIdx = candles.length - 1;
+            const e20 = ema20[lastIdx];
+            const e50 = ema50[lastIdx];
+            let txt = 'EMA';
+            let col = '#aaa';
+            if (e20 != null && e50 != null) {
+              if (e20 > e50) { txt = 'EMA ▲ UP'; col = '#00e5a0'; }
+              else if (e20 < e50) { txt = 'EMA ▼ DOWN'; col = '#ff4d6d'; }
+              else { txt = 'EMA ◆ FLAT'; col = '#aaa'; }
+            }
+            badgeEl = document.createElement('div');
+            badgeEl.className = 'trend-ema-badge';
+            badgeEl.title = 'EMA20 (cyan) / EMA50 (magenta). UP = EMA20>EMA50, DOWN наоборот. Маркеры на пересечениях.';
+            badgeEl.style.cssText = `
+              position:absolute;top:8px;left:8px;z-index:5;
+              background:rgba(10,14,20,0.75);border:1px solid ${col}55;
+              color:${col};padding:2px 6px;border-radius:4px;
+              font-family:var(--font-mono,monospace);font-size:10px;
+              font-weight:700;letter-spacing:0.02em;pointer-events:none;
+            `;
+            badgeEl.textContent = txt;
+            // Если уже есть st-badge → смещаем trend badge ниже
+            const stBadge = anchor.querySelector('.st-badge');
+            if (stBadge) {
+              const stRect = stBadge.getBoundingClientRect();
+              badgeEl.style.top = (stRect.height + 12) + 'px';
+            }
+            anchor.appendChild(badgeEl);
+          }
+          return { s20, s50, badge: badgeEl, crossMarkers };
+        } catch (e) {
+          console.warn('[trend-ema] add fail:', e);
+          return null;
+        }
+      };
+
       // ─── SMA14 of RSI — сглаженная линия RSI на rsi panel ───
       // Toggle через window._rsiSmaEnabled (localStorage tradium_rsi_sma_enabled).
       // Backward-compat: window._addSMA14 → noop (старая sma на цене отключена).
@@ -3772,6 +3884,7 @@ async function _renderLwcSignalChart(containerId, opts) {
   if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
   // SuperTrend (клиентский расчёт, бадж в левом верхнем углу chartDiv)
   const _stResult = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
+  if (window._addTrendEMA) window._addTrendEMA(chart, d.candles, { anchor: chartDiv });
   if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
   if (window._addTSI) window._addTSI(chart, d.candles, { anchor: chartDiv });
@@ -4194,6 +4307,7 @@ async function _renderFvgChart(area, sig, tf) {
   if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
   if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
   const _stResFvg = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
+  if (window._addTrendEMA) window._addTrendEMA(chart, d.candles, { anchor: chartDiv });
   if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
   if (window._addTSI) window._addTSI(chart, d.candles, { anchor: chartDiv });
