@@ -9879,6 +9879,84 @@ async def api_journal_fast(limit: int = 1500, refresh: int = 0):
     return {"items": items, "total": total, "returned": len(items), "fast": True}
 
 
+@app.get("/api/prepump/candidates")
+async def api_prepump_candidates(tier: str = "", limit: int = 200, hours: int = 24):
+    """Pre-Pump candidates за последние N часов. Filter by tier.
+    Returns list of {pair, tier, composite_score, components, sectors, ...}."""
+    from datetime import datetime, timezone, timedelta
+    from database import _get_db
+    db = _get_db()
+    col = db.pre_pump_candidates
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    q = {'detected_at': {'$gte': cutoff}}
+    if tier:
+        q['tier'] = tier.upper()
+
+    def _query():
+        items = []
+        for d in col.find(q).sort('detected_at', -1).limit(limit):
+            items.append({
+                'pair': d.get('pair'),
+                'tier': d.get('tier'),
+                'composite_score': d.get('composite_score'),
+                'direction': d.get('direction', 'LONG'),
+                'components': d.get('components', {}),
+                'volume_data': d.get('volume_data', {}),
+                'oi_data': d.get('oi_data', {}),
+                'funding_data': d.get('funding_data', {}),
+                'sectors': d.get('sectors', []),
+                'sector_active': d.get('sector_active', False),
+                'detected_at': d.get('detected_at').isoformat() if d.get('detected_at') else None,
+                'detected_at_ts': d.get('detected_at_ts'),
+                'is_new_prime': d.get('is_new_prime', False),
+            })
+        return items
+
+    items = await asyncio.to_thread(_query)
+    # Dedup by pair — оставляем самый свежий
+    seen = {}
+    for it in items:
+        p = it['pair']
+        if p not in seen or it['detected_at_ts'] > seen[p]['detected_at_ts']:
+            seen[p] = it
+    deduped = sorted(seen.values(),
+                      key=lambda x: (-(x.get('composite_score') or 0),
+                                      -(x.get('detected_at_ts') or 0)))
+    return {'items': deduped, 'count': len(deduped)}
+
+
+@app.get("/api/prepump/active-sectors")
+async def api_prepump_active_sectors(hours: int = 24):
+    """Возвращает активные секторы (rotation) последние N часов."""
+    from datetime import datetime, timezone, timedelta
+    from database import _get_db
+    from collections import Counter
+    db = _get_db()
+    col = db.pre_pump_candidates
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    def _query():
+        sector_pairs = {}
+        sector_scores = {}
+        for d in col.find({'detected_at': {'$gte': cutoff},
+                            'sector_active': True}):
+            for s in (d.get('sectors') or []):
+                sector_pairs.setdefault(s, set()).add(d.get('pair', ''))
+                sector_scores.setdefault(s, []).append(d.get('composite_score', 0))
+        result = []
+        for sect, pairs in sector_pairs.items():
+            scores = sector_scores.get(sect, [])
+            result.append({
+                'sector': sect, 'pair_count': len(pairs),
+                'pairs': sorted(pairs),
+                'avg_score': sum(scores) / len(scores) if scores else 0,
+            })
+        result.sort(key=lambda x: (-x['pair_count'], -x['avg_score']))
+        return result
+
+    return {'sectors': await asyncio.to_thread(_query)}
+
+
 @app.get("/api/backtest/today")
 async def api_backtest_today(hours: int = 24, tp_pct: float = 3.0, sl_pct: float = 2.0, hold_h: int = 48):
     """Бэктест всех сегодняшних сигналов (или за N часов).

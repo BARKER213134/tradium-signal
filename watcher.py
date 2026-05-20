@@ -3569,6 +3569,158 @@ async def _rsi12h_warmer_loop():
         await _asyncio.sleep(180)
 
 
+async def _pre_pump_predictor_loop():
+    """Pre-Pump Predictor scanner — каждые 30 мин.
+
+    1. Получаем list of BingX USDT-perp pairs (filter)
+    2. Detect active sectors (через volume scores)
+    3. Compute predictive_score для каждой пары parallel
+    4. Если PRIME (≥75) — записываем в pre_pump_candidates collection
+    5. Если впервые qualified в 4h окне — sendalert через BOT13
+
+    Tiers: PRIME ≥ 75, STRONG 60-74, WATCH 45-59
+    Auto-trade DISABLED по умолчанию (variant B).
+    """
+    import asyncio as _asyncio
+    import time as _time
+    from concurrent.futures import ThreadPoolExecutor as _Exec, as_completed as _done
+    await _asyncio.sleep(120)
+    iteration = 0
+    while True:
+        try:
+            from bingx_pairs import get_bingx_usdt_perp_pairs
+            from volume_profile import get_volume_metrics
+            from pre_pump_predictor import predict_pair
+            from sectors_coingecko import detect_sector_rotation, get_sectors
+            from database import _get_db, utcnow
+
+            t_start = _time.time()
+            pairs = list(get_bingx_usdt_perp_pairs())
+            if not pairs:
+                logger.debug("[pre-pump] no BingX pairs, skip cycle")
+                await _asyncio.sleep(300)
+                continue
+            # Cap для не утопить ratelimit'ы
+            pairs = pairs[:200]  # top 200 by alphabetic, можно sort by volume позже
+
+            # Phase 1: Volume metrics для всех (parallel) — этого хватает для sector rotation
+            vol_scores: dict = {}
+            ex = _Exec(max_workers=15)
+            try:
+                futs = {ex.submit(get_volume_metrics, p): p for p in pairs}
+                for f in _done(futs, timeout=60.0):
+                    try:
+                        p = futs[f]
+                        m = f.result(timeout=0.2)
+                        vol_scores[p] = m.get('volume_score', 0)
+                    except Exception:
+                        pass
+            finally:
+                ex.shutdown(wait=False, cancel_futures=True)
+
+            # Phase 2: Sector classification (cached, fast for repeats)
+            # Только для пар с volume_score >= 1.5 (экономия CoinGecko quota)
+            interesting = [p for p, s in vol_scores.items() if s >= 1.5]
+            pair_sectors: dict = {}
+            for p in interesting[:50]:  # cap для quota
+                try:
+                    pair_sectors[p] = get_sectors(p)
+                except Exception:
+                    pair_sectors[p] = []
+
+            # Phase 3: Sector rotation detect
+            sector_active = detect_sector_rotation(vol_scores, pair_sectors,
+                                                     min_pairs=2, min_vol_score=1.5)
+            active_pair_set: set = set()
+            for sect, info in sector_active.items():
+                for p in info['pairs']:
+                    active_pair_set.add(p)
+
+            # Phase 4: Predict per pair (только interesting + active)
+            scan_pairs = list(set(interesting) | active_pair_set)
+            results: list = []
+            ex2 = _Exec(max_workers=10)
+            try:
+                futs2 = {ex2.submit(predict_pair, p, p in active_pair_set): p for p in scan_pairs}
+                for f in _done(futs2, timeout=120.0):
+                    try:
+                        res = f.result(timeout=0.3)
+                        if res and res.get('composite_score', 0) >= 45:
+                            results.append(res)
+                    except Exception:
+                        pass
+            finally:
+                ex2.shutdown(wait=False, cancel_futures=True)
+
+            # Phase 5: Store в Mongo + alert новых PRIME
+            if results:
+                db = _get_db()
+                col = db.pre_pump_candidates
+                try:
+                    col.create_index('pair')
+                    col.create_index([('detected_at', -1)])
+                    col.create_index('tier')
+                except Exception:
+                    pass
+
+                new_primes = []
+                for r in results:
+                    p = r['pair']; tier = r['tier']
+                    # Проверяем — alert pop'ался ли last 4h
+                    cutoff = utcnow().timestamp() - 4 * 3600
+                    last = col.find_one(
+                        {'pair': p, 'detected_at_ts': {'$gte': cutoff}, 'tier': 'PRIME'},
+                        sort=[('detected_at_ts', -1)]
+                    )
+                    is_new_prime = (tier == 'PRIME' and not last)
+
+                    doc = {
+                        'pair': p, 'tier': tier,
+                        'composite_score': r['composite_score'],
+                        'direction': r['direction'],
+                        'components': r['components'],
+                        'volume_data': r.get('volume_data', {}),
+                        'oi_data': r.get('oi_data', {}),
+                        'funding_data': r.get('funding_data', {}),
+                        'sector_active': p in active_pair_set,
+                        'sectors': pair_sectors.get(p, []),
+                        'detected_at': utcnow(),
+                        'detected_at_ts': int(_time.time()),
+                        'is_new_prime': is_new_prime,
+                    }
+                    try:
+                        col.insert_one(doc)
+                    except Exception:
+                        pass
+                    if is_new_prime:
+                        new_primes.append(doc)
+
+                # Alert новых PRIME через BOT13
+                if new_primes:
+                    try:
+                        from prepump_bot import send_prepump_alert
+                        for doc in new_primes:
+                            try:
+                                await _asyncio.to_thread(send_prepump_alert, doc)
+                            except Exception as _be:
+                                logger.debug(f"[pre-pump] alert {doc['pair']}: {_be}")
+                    except ImportError:
+                        pass  # prepump_bot not yet implemented
+
+            elapsed = _time.time() - t_start
+            iteration += 1
+            if iteration <= 3 or iteration % 5 == 0:
+                primes = sum(1 for r in results if r['tier'] == 'PRIME')
+                strong = sum(1 for r in results if r['tier'] == 'STRONG')
+                watch = sum(1 for r in results if r['tier'] == 'WATCH')
+                logger.info(f"[pre-pump] iter={iteration} scanned={len(scan_pairs)} "
+                             f"PRIME={primes} STRONG={strong} WATCH={watch} "
+                             f"sectors={len(sector_active)} took={elapsed:.0f}s")
+        except Exception:
+            logger.exception("[pre-pump] cycle error")
+        await _asyncio.sleep(1800)  # 30 min
+
+
 async def _journal_cache_warmer_loop():
     """Background warmer для /api/journal — каждые 60с пересчитывает full
     compute и кладёт результат в journal_cache. Endpoint всегда читает из
@@ -4527,6 +4679,13 @@ async def start_watcher():
         logger.info("[journal-warm] background loop started")
     except Exception:
         logger.exception("[journal-warm] warmer loop failed")
+    # Pre-Pump Predictor scanner — leading indicators (volume/OI/funding/BB)
+    # Detects pre-pump candidates via composite score 0-100
+    try:
+        asyncio.create_task(_pre_pump_predictor_loop())
+        logger.info("[pre-pump] predictor loop started")
+    except Exception:
+        logger.exception("[pre-pump] predictor loop failed")
     # [DISABLED] Cluster Delta auto-backfill — был источник 418 banов от
     # Binance fapi/klines. Теперь backfill только вручную через
     # POST /api/cluster-delta/backfill-cdn (статический CDN, без rate limit).

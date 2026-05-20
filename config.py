@@ -87,6 +87,17 @@ _cv_flip_chat = os.getenv("CV_FLIP_CHAT_ID", "").strip()
 CV_FLIP_CHAT_ID = (int(_cv_flip_chat) if _cv_flip_chat.lstrip("-").isdigit()
                    else ADMIN_CHAT_ID)
 
+# 13-й бот — Pre-Pump Predictor (leading indicators: volume/OI/funding/BB squeeze).
+# Алерты только PRIME tier (composite_score >= 75) — редкие но качественные.
+# Rate limit 4h per pair. Если не задан — alerts не шлются, scanner работает.
+BOT13_BOT_TOKEN = os.getenv("BOT13_BOT_TOKEN", "")
+_pp_chat = os.getenv("PREPUMP_CHAT_ID", "").strip()
+PREPUMP_CHAT_ID = (int(_pp_chat) if _pp_chat.lstrip("-").isdigit()
+                   else ADMIN_CHAT_ID)
+# Quiet hours для BOT13 alerts (МСК часы, range "HH-HH")
+_pp_qh = os.getenv("PREPUMP_QUIET_HOURS", "").strip()
+PREPUMP_QUIET_HOURS = _pp_qh  # пример: "02-08" = 02:00-08:00 МСК молчим
+
 # BOT13 — New Strategy alerts (🌊 Volume Surge / 🐉 Triple Confluence /
 # 🔋 Volume Accumulation). Triggered after each ST flip.
 # Backtest validated 14d, 11.5k signals, OOS holdout: WR 67-72%.
@@ -146,6 +157,7 @@ BOTS = [
     # anti_cluster_detector. Включить обратно: раскомментировать строку.
     {"id": "entry_checker", "label": "🎯 Entry Checker", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
+    {"id": "prepump", "label": "🔥 Pre-Pump", "category": "crypto"},
     {"id": "hot_now", "label": "🔥 HOT NOW", "category": "crypto"},
     {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
     {"id": "forex_fvg", "label": "Forex FVG 1H", "category": "stocks"},
