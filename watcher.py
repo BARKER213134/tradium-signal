@@ -3601,14 +3601,14 @@ async def _pre_pump_predictor_loop():
                 await _asyncio.sleep(300)
                 continue
             # Cap для не утопить ratelimit'ы
-            pairs = pairs[:200]  # top 200 by alphabetic, можно sort by volume позже
+            pairs = pairs[:300]  # bump до 300 для большего coverage
 
             # Phase 1: Volume metrics для всех (parallel) — этого хватает для sector rotation
             vol_scores: dict = {}
-            ex = _Exec(max_workers=15)
+            ex = _Exec(max_workers=20)
             try:
                 futs = {ex.submit(get_volume_metrics, p): p for p in pairs}
-                for f in _done(futs, timeout=60.0):
+                for f in _done(futs, timeout=90.0):
                     try:
                         p = futs[f]
                         m = f.result(timeout=0.2)
@@ -3619,10 +3619,10 @@ async def _pre_pump_predictor_loop():
                 ex.shutdown(wait=False, cancel_futures=True)
 
             # Phase 2: Sector classification (cached, fast for repeats)
-            # Только для пар с volume_score >= 1.5 (экономия CoinGecko quota)
-            interesting = [p for p, s in vol_scores.items() if s >= 1.5]
+            # Только для пар с volume_score >= 1.2 (lower threshold для больше coverage)
+            interesting = [p for p, s in vol_scores.items() if s >= 1.2]
             pair_sectors: dict = {}
-            for p in interesting[:50]:  # cap для quota
+            for p in interesting[:80]:  # bump 50→80
                 try:
                     pair_sectors[p] = get_sectors(p)
                 except Exception:
@@ -3642,10 +3642,11 @@ async def _pre_pump_predictor_loop():
             ex2 = _Exec(max_workers=10)
             try:
                 futs2 = {ex2.submit(predict_pair, p, p in active_pair_set): p for p in scan_pairs}
-                for f in _done(futs2, timeout=120.0):
+                for f in _done(futs2, timeout=180.0):
                     try:
                         res = f.result(timeout=0.3)
-                        if res and res.get('composite_score', 0) >= 45:
+                        # Save threshold 40 (WATCH tier после lowering) — больше candidates
+                        if res and res.get('composite_score', 0) >= 40:
                             results.append(res)
                     except Exception:
                         pass
