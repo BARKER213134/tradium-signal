@@ -168,6 +168,7 @@ BOTS = [
     # anti_cluster_detector. Включить обратно: раскомментировать строку.
     {"id": "entry_checker", "label": "🎯 Entry Checker", "category": "crypto"},
     {"id": "whale", "label": "🐋 WHALE", "category": "crypto"},
+    {"id": "shark", "label": "🦈 SHARK", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     # Pre-Pump удалён — backtest показал что edge только в triple_confluence
     # и st_vip которые уже есть в журнале. Заменён на 🧠 COMBO signal.

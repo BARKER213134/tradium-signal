@@ -10027,6 +10027,60 @@ async def api_whale_scan_now(lookback_hours: int = 6):
     return stats
 
 
+@app.post("/api/shark/backtest/start")
+async def api_shark_backtest_start(payload: dict | None = None):
+    """🦈 Запускает SHARK 30-day backtest (mirror WHALE)."""
+    import shark_backtest as sb
+    state = sb.get_state()
+    if state.get('running'):
+        return {'started': False, 'state': state}
+    pair_limit = int((payload or {}).get('pair_limit', 600))
+    asyncio.create_task(asyncio.to_thread(sb.run_shark_backtest, pair_limit))
+    return {'started': True, 'pair_limit': pair_limit}
+
+
+@app.get("/api/shark/backtest/status")
+async def api_shark_backtest_status():
+    import shark_backtest as sb
+    from database import _get_db
+    state = sb.get_state()
+    out = {'state': state}
+    try:
+        db = _get_db()
+        report = db.shark_backtest_report.find_one({}, {'_id': 0})
+        if report:
+            for k in ['started_at', 'finished_at']:
+                v = report.get(k)
+                if hasattr(v, 'isoformat'):
+                    report[k] = v.isoformat()
+            out['report'] = report
+    except Exception:
+        pass
+    return out
+
+
+@app.post("/api/shark/backfill")
+async def api_shark_backfill(days: int = 14):
+    """🦈 Backfill SHARK сигналов за N дней."""
+    import shark_backtest as sb
+    state = sb.get_state()
+    if state.get('running'):
+        return {'started': False, 'state': state}
+    sb.LOOKBACK_DAYS = int(days)
+    sb.KLINES_15M_DAYS = int(days) + 3
+    asyncio.create_task(asyncio.to_thread(sb.run_shark_backtest, 600))
+    return {'started': True, 'days': days}
+
+
+@app.post("/api/shark/scan-now")
+async def api_shark_scan_now(lookback_hours: int = 6):
+    """🦈 Manual safety-net scan."""
+    import shark_detector as sd
+    stats = await asyncio.to_thread(
+        sd.scan_recent_flips_for_shark, None, lookback_hours)
+    return stats
+
+
 @app.get("/api/market-bias")
 async def api_market_bias(force: bool = False):
     """TOTAL2 SuperTrend → LONG/SHORT/WAIT bias для шапки журнала."""
@@ -11079,11 +11133,12 @@ def _compute_journal_sync(_fast_only: bool = False):
         nss_since = _ns_utcnow() - _td(hours=168)  # last 7d
         STRAT_EMOJI = {"volume_surge": "🌊", "triple_confluence": "🐉",
                         "vol_accum": "🔋", "volcano": "🌋",
-                        "second_flip": "♻️", "combo": "🧠", "whale": "🐋"}
+                        "second_flip": "♻️", "combo": "🧠", "whale": "🐋",
+                        "shark": "🦈"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
-                       "whale": "WHALE"}
+                       "whale": "WHALE", "shark": "SHARK"}
         for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(2000):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -11141,6 +11196,27 @@ def _compute_journal_sync(_fast_only: bool = False):
                 if ind.get('capitulation_wick'): parts.append("cap_wick")
                 if ind.get('rsi_cross'): parts.append("rsi×")
                 extra = " · " + " · ".join(parts) if parts else ""
+            elif strat == "shark":
+                # SHARK: backtest 30d STANDARD WR 60.4% MFE 4.96% — top SHORT signal
+                parts = []
+                tier = n.get('shark_tier')
+                if tier: parts.append(f"tier {tier}")
+                sc = n.get('shark_score')
+                if sc is not None: parts.append(f"score {sc}")
+                ind = n.get('shark_indicators') or {}
+                if ind.get('multi_top_count'):
+                    parts.append(f"multi-top×{ind['multi_top_count']}")
+                if ind.get('distribution_days'):
+                    parts.append(f"distrib {ind['distribution_days']}d")
+                if ind.get('vol_ratio_max'):
+                    parts.append(f"vol {ind['vol_ratio_max']}×")
+                if ind.get('prior_uptrend_pct'):
+                    parts.append(f"UT {ind['prior_uptrend_pct']}%")
+                if ind.get('blow_off_max_move_pct', 0) >= 20:
+                    parts.append(f"blow-off {ind['blow_off_max_move_pct']}%")
+                if ind.get('failed_breakout_wick'): parts.append("upper_wick")
+                if ind.get('rsi_cross_below_sma'): parts.append("rsi×")
+                extra = " · " + " · ".join(parts) if parts else ""
             pattern_txt = f"{em} {label}{extra}"
             items.append({
                 "source": strat,  # 'volume_surge' / 'triple_confluence' / 'vol_accum'
@@ -11163,6 +11239,9 @@ def _compute_journal_sync(_fast_only: bool = False):
                 # WHALE tier (используется в TOP-7 filter в журнале)
                 "whale_tier": n.get("whale_tier"),
                 "whale_score": n.get("whale_score"),
+                # SHARK tier (тот же mechanism — для filtering и UI tooltip)
+                "shark_tier": n.get("shark_tier"),
+                "shark_score": n.get("shark_score"),
                 "tp_R": n.get("tp_R"),
                 "rr": n.get("tp_R"),
                 "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),

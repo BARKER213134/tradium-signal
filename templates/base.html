@@ -736,11 +736,12 @@
           second_flip:'♻️',  // ♻️ Second Flip Confirmation (2nd LONG ≤12h)
           rsi_cross_12h:'⚡', // ⚡ RSI/SMA 12h crossover + vol≥2× (WR 62%, MFE +9.83%)
           combo:'🧠',        // 🧠 COMBO (st_vip / TC + precondition positives)
-          whale:'🐋',        // 🐋 WHALE (ST flip 2H + vol spike + amplifiers, WR 53.8%)
+          whale:'🐋',        // 🐋 WHALE (ST flip 2H UP + vol spike + amplifiers, WR 53.8%)
+          shark:'🦈',        // 🦈 SHARK (ST flip 2H DOWN + distribution top + multi-top, WR 60.4%)
         })[src] || '•';
         return prefix + base;
       };
-      window.sigIcon._version = 'v11-whale';
+      window.sigIcon._version = 'v12-shark';
       console.log('[sigIcon] loaded', window.sigIcon._version);
 
       // sigIconCompact — для маркеров НА ГРАФИКЕ (без 👑/⭐ префиксов,
@@ -757,6 +758,7 @@
         if (src === 'second_flip') return '♻️';
         if (src === 'combo') return '🧠';
         if (src === 'whale') return '🐋';
+        if (src === 'shark') return '🦈';
         return ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
       };
 

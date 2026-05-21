@@ -79,46 +79,61 @@ async def _st_tracker_loop():
 
 
 async def _whale_scanner_loop():
-    """🐋 WHALE safety-net scanner — каждые 30 мин сканирует топ пары
-    на ПРОПУЩЕННЫЕ WHALE flips (real-time hook может пропустить если
-    watcher был down во время flip-свечи).
-
-    Insert'ит signals с state='SCANNED' (vs real-time='NEW'). Dedupe по
-    (pair, created_at=flip_time). Анализирует только последние 6h окно.
-    """
+    """🐋 WHALE safety-net scanner — каждые 30 мин."""
     import asyncio as _asyncio
-    await _asyncio.sleep(60)  # дать watcher'у разогреться
+    await _asyncio.sleep(60)
     while True:
         try:
             from whale_detector import scan_recent_flips_for_whale
-            stats = await _asyncio.to_thread(
-                scan_recent_flips_for_whale,
-                None,  # default: top-volume pairs from supertrend_signals 7d
-                6,     # lookback hours
-            )
+            stats = await _asyncio.to_thread(scan_recent_flips_for_whale, None, 6)
             if stats.get('fired', 0) > 0:
                 logger.info(f'[whale-scan-loop] fired {stats["fired"]} '
                              f'(tiers={stats["by_tier"]})')
-                # Также шлём Telegram алерты для каждого fired signal
                 try:
                     from datetime import datetime, timezone, timedelta
                     from database import _get_db
                     db = _get_db()
-                    # Берём последние SCANNED whale signals что только что вставились
                     cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
                     for doc in db.new_strategy_signals.find({
                         'strategy': 'whale', 'state': 'SCANNED',
                         'created_at': {'$gte': cutoff},
                     }).sort('created_at', -1).limit(10):
-                        try:
-                            await _whale_send_telegram(doc)
-                        except Exception as _se:
-                            logger.debug(f'[whale-scan-loop] tg send: {_se}')
+                        try: await _whale_send_telegram(doc)
+                        except Exception: pass
                 except Exception:
                     logger.debug('[whale-scan-loop] tg notify fail', exc_info=True)
         except Exception:
-            logger.exception('[whale-scan-loop] crashed, retry in 30 min')
-        await _asyncio.sleep(30 * 60)  # каждые 30 мин
+            logger.exception('[whale-scan-loop] crashed')
+        await _asyncio.sleep(30 * 60)
+
+
+async def _shark_scanner_loop():
+    """🦈 SHARK safety-net scanner — каждые 30 мин (mirror WHALE)."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(90)  # offset 30s от WHALE чтоб не конкурировать за CPU
+    while True:
+        try:
+            from shark_detector import scan_recent_flips_for_shark
+            stats = await _asyncio.to_thread(scan_recent_flips_for_shark, None, 6)
+            if stats.get('fired', 0) > 0:
+                logger.info(f'[shark-scan-loop] fired {stats["fired"]} '
+                             f'(tiers={stats["by_tier"]})')
+                try:
+                    from datetime import datetime, timezone, timedelta
+                    from database import _get_db
+                    db = _get_db()
+                    cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+                    for doc in db.new_strategy_signals.find({
+                        'strategy': 'shark', 'state': 'SCANNED',
+                        'created_at': {'$gte': cutoff},
+                    }).sort('created_at', -1).limit(10):
+                        try: await _shark_send_telegram(doc)
+                        except Exception: pass
+                except Exception:
+                    logger.debug('[shark-scan-loop] tg notify fail', exc_info=True)
+        except Exception:
+            logger.exception('[shark-scan-loop] crashed')
+        await _asyncio.sleep(30 * 60)
 
 
 # [ОТКЛЮЧЕНО] _paper_position_ai_review_loop и _ai_memory_refresh_loop
@@ -2531,6 +2546,45 @@ async def _whale_send_telegram(doc: dict):
         logger.warning(f'[whale] send fail: {e}')
 
 
+async def _shark_send_telegram(doc: dict):
+    """Шлёт SHARK alert в BOT16 (общий с WHALE — same token, send-only mode).
+    Использует тот же WHALE_CHAT_ID и WHALE_MIN_TIER threshold."""
+    global _bot16
+    from config import WHALE_CHAT_ID, WHALE_MIN_TIER
+    tier = doc.get('shark_tier', '?')
+    if WHALE_MIN_TIER == 'PREMIUM' and tier != 'PREMIUM':
+        return
+    tier_emoji = '👑' if tier == 'PREMIUM' else ('🥈' if tier == 'STANDARD' else '?')
+    pair = doc.get('pair', '?')
+    entry = doc.get('entry', '?')
+    score = doc.get('shark_score', 0)
+    ind = doc.get('shark_indicators') or {}
+    brk = doc.get('shark_breakdown') or {}
+    amps = [k for k in brk if not k.startswith('core_') and brk[k] > 0]
+
+    txt = (f"🦈 <b>SHARK {tier_emoji} {tier}</b>\n"
+           f"━━━━━━━━━━━━━━━━━━\n"
+           f"<b>{pair}</b> · SHORT 🔴\n"
+           f"<b>Entry:</b> {entry}\n"
+           f"<b>Score:</b> {score}\n"
+           f"<b>Amplifiers:</b> {', '.join(amps) if amps else '—'}\n"
+           f"━━━━━━━━━━━━━━━━━━\n"
+           f"📊 distrib {ind.get('distribution_days', 0)}d · "
+           f"multi-top×{ind.get('multi_top_count', 0)} · "
+           f"vol {ind.get('vol_ratio_max', 0)}× · "
+           f"UT {ind.get('prior_uptrend_pct', 0)}%\n"
+           f"💡 Distribution Top breakdown (backtest WR 60.4% / MFE 4.96%)\n"
+           f"<a href='https://www.binance.com/en/futures/{pair.replace('/', '')}'>📈 Chart</a>")
+    target_bot = _bot16 or _bot
+    if not target_bot:
+        return
+    try:
+        await target_bot.send_message(chat_id=WHALE_CHAT_ID, text=txt,
+                                       disable_web_page_preview=True)
+    except Exception as e:
+        logger.warning(f'[shark] send fail: {e}')
+
+
 
 
 def _fmt_price(v):
@@ -3494,11 +3548,9 @@ async def _paper_on_signal(signal_data: dict):
     except Exception as _ce:
         logger.debug(f"[combo] schedule fail: {_ce}")
 
-    # ── 🐋 WHALE detector ──
+    # ── 🐋 WHALE detector (LONG) ──
     # Range Breakout pattern на основе 20-chart manual analysis.
-    # Triggered при ST flip (vip/mtf) LONG. Считает amplifiers (base, downtrend,
-    # capitulation, vol_spike, rsi cross), фильтрует STANDARD+PREMIUM tier.
-    # Backtest 30d: STANDARD WR 53.8% MFE 5.56% — топ LONG signal.
+    # Triggered при ST flip (vip/mtf) LONG. Backtest 30d STANDARD WR 53.8%.
     try:
         from whale_detector import maybe_fire_whale
         async def _whale_post():
@@ -3511,6 +3563,23 @@ async def _paper_on_signal(signal_data: dict):
         asyncio.create_task(_whale_post())
     except Exception as _we2:
         logger.debug(f"[whale] schedule fail: {_we2}")
+
+    # ── 🦈 SHARK detector (SHORT) ──
+    # Distribution Top Breakdown / Blow-Off Climax / Lower-High Continuation.
+    # Mirror WHALE для SHORT direction. Backtest 30d STANDARD WR 60.4% MFE 4.96%.
+    # Triggered при ST flip (vip/mtf) SHORT. Telegram alerts через BOT16 (общий с WHALE).
+    try:
+        from shark_detector import maybe_fire_shark
+        async def _shark_post():
+            doc = await asyncio.to_thread(maybe_fire_shark, signal_data)
+            if doc:
+                try:
+                    await _shark_send_telegram(doc)
+                except Exception as _se:
+                    logger.debug(f"[shark] telegram fail: {_se}")
+        asyncio.create_task(_shark_post())
+    except Exception as _se2:
+        logger.debug(f"[shark] schedule fail: {_se2}")
 
     # [УБРАНО] Pump fallback — он был нужен когда использовался AI (Claude
     # отказывал при pump_vol=0). Теперь система rule-based, check_entry
@@ -4856,6 +4925,12 @@ async def start_watcher():
         logger.info("[whale-scanner] background loop started")
     except Exception:
         logger.exception("[whale-scanner] failed to start loop")
+    # 🦈 SHARK safety-net scanner — каждые 30 мин на пропущенные SHORT flips
+    try:
+        asyncio.create_task(_shark_scanner_loop())
+        logger.info("[shark-scanner] background loop started")
+    except Exception:
+        logger.exception("[shark-scanner] failed to start loop")
     # [DISABLED — Atlas Free M0 throttle protection]
     # Background prewarm loops отключены чтобы НЕ дополнительно нагружать
     # перегруженный Atlas Free Tier. UI справится через user-driven cache —
