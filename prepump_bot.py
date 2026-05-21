@@ -110,6 +110,67 @@ def _format_alert(doc: dict) -> str:
     return msg
 
 
+def send_early_entry_alert(doc: dict) -> bool:
+    """🎯 EARLY ENTRY — pair была в pre-pump WATCH, прилетел новый signal.
+    Это РАННИЙ entry до того как composite PRIME сработает (composite поздно).
+    """
+    try:
+        from config import BOT13_BOT_TOKEN, PREPUMP_CHAT_ID
+        if not BOT13_BOT_TOKEN or not PREPUMP_CHAT_ID:
+            logger.debug("[bot13-ee] not configured")
+            return False
+        if _in_quiet_hours():
+            return False
+
+        pair = doc.get('pair', '?')
+        direction = doc.get('direction', '?')
+        source = doc.get('source', '?')
+        pattern = doc.get('pattern', '')[:80]
+        entry = doc.get('entry_price') or '?'
+        tier = doc.get('prepump_tier', '?')
+        score = doc.get('prepump_score', 0)
+        sectors = doc.get('sectors', [])
+        sector_active = doc.get('sector_active', False)
+
+        src_emoji = {
+            'cryptovizor': '🚀', 'supertrend': '🌀', 'anomaly': '⚠',
+            'confluence': '🎯', 'cluster': '💠', 'volume_surge': '🌊',
+            'triple_confluence': '🐉', 'vol_accum': '🔋', 'volcano': '🌋',
+            'second_flip': '♻️',
+        }.get(source, '•')
+        dir_emoji = '🟢 LONG' if direction == 'LONG' else '🔴 SHORT'
+
+        msg = f"🎯 <b>EARLY ENTRY</b> · {pair}\n"
+        msg += f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        msg += f"{dir_emoji} · Entry: <code>{entry}</code>\n\n"
+        msg += f"📊 <b>Trigger:</b> {src_emoji} {source}"
+        if pattern: msg += f" — <i>{pattern}</i>"
+        msg += "\n\n"
+        msg += f"💎 Pre-Pump state: <b>{tier}</b> (score {score:.0f}/100)\n"
+        if sectors:
+            msg += f"🏷 Sectors: <i>{', '.join(sectors[:3])}</i>"
+            if sector_active: msg += " · 🔥 ROTATION ACTIVE"
+            msg += "\n"
+        msg += "\n<i>Раньше чем composite PRIME — accumulation уже была + сейчас catalyst.</i>"
+
+        import httpx
+        r = httpx.post(
+            f'https://api.telegram.org/bot{BOT13_BOT_TOKEN}/sendMessage',
+            json={'chat_id': PREPUMP_CHAT_ID, 'text': msg,
+                   'parse_mode': 'HTML', 'disable_web_page_preview': True},
+            timeout=8.0,
+        )
+        if r.status_code == 200:
+            logger.info(f"[bot13-ee] alert sent for {pair}")
+            return True
+        else:
+            logger.warning(f"[bot13-ee] send fail {r.status_code}: {r.text[:200]}")
+            return False
+    except Exception as e:
+        logger.exception(f"[bot13-ee] error: {e}")
+        return False
+
+
 def send_prepump_alert(doc: dict) -> bool:
     """Отправляет alert для PRIME candidate через BOT13 в PREPUMP_CHAT_ID.
     Returns True если успешно отправлено.

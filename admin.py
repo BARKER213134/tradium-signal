@@ -9925,6 +9925,29 @@ async def api_prepump_candidates(tier: str = "", limit: int = 200, hours: int = 
     return {'items': deduped, 'count': len(deduped)}
 
 
+@app.get("/api/prepump/early-entries")
+async def api_prepump_early_entries(pair: str = "", hours: int = 168, limit: int = 200):
+    """Early entry triggers — pair was в pre_pump WATCH+ tier И прилетел свежий signal.
+    Это раннее раннее entry до того как composite PRIME сработает поздно."""
+    from datetime import datetime, timezone, timedelta
+    from database import _get_db
+    db = _get_db()
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    q = {'at': {'$gte': cutoff}}
+    if pair:
+        q['pair'] = pair
+
+    def _query():
+        items = []
+        for d in db.pre_pump_early_entries.find(q, {'_id': 0}).sort('at', -1).limit(limit):
+            if hasattr(d.get('at'), 'isoformat'):
+                d['at'] = d['at'].isoformat()
+            items.append(d)
+        return items
+
+    return {'items': await asyncio.to_thread(_query)}
+
+
 @app.get("/api/prepump/scanner-status")
 async def api_prepump_scanner_status():
     """Returns scanner state — для UI countdown до следующего скана."""

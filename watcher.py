@@ -3304,6 +3304,86 @@ async def _paper_on_signal(signal_data: dict):
     except Exception as e:
         logger.debug(f"[on-signal-fill] schedule fail: {e}")
 
+    # ── EARLY ENTRY trigger ──
+    # Если пара уже в pre_pump WATCH/STRONG/PRIME state (накопление detected)
+    # И прилетает новый сигнал — это РАННИЙ entry, до того как PRIME composite
+    # окончательно сработает (которое уже слишком поздно — после breakout).
+    # Идея: pre_pump WATCH = "взвели курок", new signal = "спуск курка".
+    try:
+        _pair_ee = signal_data.get("pair") or ""
+        if not _pair_ee and signal_data.get("symbol"):
+            _s_ee = signal_data["symbol"]
+            _pair_ee = _s_ee.replace("USDT", "/USDT") if "USDT" in _s_ee else _s_ee
+        _src_ee = signal_data.get("source", "")
+        _dir_ee = (signal_data.get("direction", "") or "").upper()
+        # Только для информативных источников (CV/ST/anomaly/confluence + new strategies)
+        _ee_eligible = _src_ee in ('cryptovizor', 'supertrend', 'anomaly', 'confluence',
+                                    'vol_accum', 'triple_confluence', 'volume_surge',
+                                    'second_flip', 'volcano', 'cluster')
+        if _pair_ee and _ee_eligible:
+            async def _check_early_entry():
+                try:
+                    from database import _get_db, utcnow
+                    from datetime import timedelta
+                    db_ee = _get_db()
+                    # Pair recently в pre_pump_candidates (last 48h)?
+                    cutoff_ee = utcnow() - timedelta(hours=48)
+                    cand = db_ee.pre_pump_candidates.find_one(
+                        {'pair': _pair_ee, 'detected_at': {'$gte': cutoff_ee},
+                          'tier': {'$in': ['WATCH', 'STRONG', 'PRIME']}},
+                        sort=[('detected_at', -1)]
+                    )
+                    if not cand:
+                        return  # пара не в WATCH — early entry не применим
+                    # Rate-limit: не более 1 early_entry per pair per 4h
+                    last_ee = db_ee.pre_pump_early_entries.find_one(
+                        {'pair': _pair_ee},
+                        sort=[('at', -1)]
+                    )
+                    now_dt = utcnow()
+                    if last_ee:
+                        age_s = (now_dt - last_ee.get('at', now_dt)).total_seconds()
+                        if age_s < 4 * 3600:
+                            return  # rate limit
+                    # Insert early entry
+                    doc_ee = {
+                        'pair': _pair_ee,
+                        'direction': _dir_ee,
+                        'source': _src_ee,
+                        'pattern': signal_data.get('pattern', ''),
+                        'entry_price': signal_data.get('entry') or signal_data.get('price'),
+                        'at': now_dt,
+                        'at_ts': int(now_dt.timestamp()),
+                        # Snapshot pre_pump state at moment of trigger
+                        'prepump_tier': cand.get('tier'),
+                        'prepump_score': cand.get('composite_score'),
+                        'prepump_components': cand.get('components', {}),
+                        'sectors': cand.get('sectors', []),
+                        'sector_active': cand.get('sector_active', False),
+                    }
+                    try:
+                        db_ee.pre_pump_early_entries.insert_one(doc_ee)
+                        try:
+                            db_ee.pre_pump_early_entries.create_index('pair')
+                            db_ee.pre_pump_early_entries.create_index([('at', -1)])
+                        except Exception: pass
+                    except Exception:
+                        pass
+                    # Send BOT13 alert
+                    try:
+                        from prepump_bot import send_early_entry_alert
+                        await asyncio.to_thread(send_early_entry_alert, doc_ee)
+                    except Exception as _bea:
+                        logger.debug(f"[early-entry] bot13 send {_pair_ee}: {_bea}")
+                    logger.info(f"[early-entry] 🎯 {_pair_ee} {_dir_ee} via {_src_ee} "
+                                 f"(prepump {cand.get('tier')} score={cand.get('composite_score')})")
+                except Exception as _ee_err:
+                    logger.debug(f"[early-entry] {_pair_ee}: {_ee_err}")
+            # Fire-and-forget (не блокируем _paper_on_signal)
+            asyncio.create_task(_check_early_entry())
+    except Exception as _ee_top:
+        logger.debug(f"[early-entry] outer fail: {_ee_top}")
+
     # [УБРАНО] Pump fallback — он был нужен когда использовался AI (Claude
     # отказывал при pump_vol=0). Теперь система rule-based, check_entry
     # сам делает Vol/OI fallback через check_pump_potential (с кешем 120с).

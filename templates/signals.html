@@ -7500,23 +7500,33 @@ async function _pollDeltaBackfill() {
   </div>
 
   <!-- Stats dashboard -->
-  <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;margin-bottom:18px;">
+  <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px;margin-bottom:18px;">
+    <div style="background:rgba(255,210,62,0.10);border:1.5px solid #ffd23e;border-radius:8px;padding:12px;text-align:center;">
+      <div style="font-size:10px;color:#ffd23e;font-weight:700;">🎯 EARLY ENTRIES</div>
+      <div id="ppEarlyCount" style="font-size:22px;font-weight:800;color:#ffd23e;">—</div>
+    </div>
     <div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center;">
-      <div style="font-size:10px;color:var(--muted);">PRIME (24h)</div>
+      <div style="font-size:10px;color:var(--muted);">🔥 PRIME (24h)</div>
       <div id="ppPrimeCount" style="font-size:22px;font-weight:800;color:#ff8c50;">—</div>
     </div>
     <div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center;">
-      <div style="font-size:10px;color:var(--muted);">STRONG (24h)</div>
+      <div style="font-size:10px;color:var(--muted);">🟡 STRONG</div>
       <div id="ppStrongCount" style="font-size:22px;font-weight:800;color:#ffd23e;">—</div>
     </div>
     <div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center;">
-      <div style="font-size:10px;color:var(--muted);">WATCH (24h)</div>
+      <div style="font-size:10px;color:var(--muted);">🟢 WATCH</div>
       <div id="ppWatchCount" style="font-size:22px;font-weight:800;color:#88d8a3;">—</div>
     </div>
     <div style="background:var(--dark-2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center;">
       <div style="font-size:10px;color:var(--muted);">Sectors active</div>
       <div id="ppSectorsCount" style="font-size:22px;font-weight:800;color:#7b5cff;">—</div>
     </div>
+  </div>
+
+  <!-- 🎯 Early Entries section -->
+  <div id="ppEarlySection" style="display:none;margin-bottom:18px;padding:14px;background:rgba(255,210,62,0.06);border:1.5px solid #ffd23e;border-radius:10px;">
+    <div style="font-size:13px;color:#ffd23e;font-weight:800;margin-bottom:10px;">🎯 EARLY ENTRIES (раннее срабатывание = pre-pump WATCH + новый сигнал)</div>
+    <div id="ppEarlyList" style="display:grid;gap:8px;"></div>
   </div>
 
   <!-- Cards grid -->
@@ -7535,17 +7545,53 @@ async function _loadPrepump() {
   const tier = document.getElementById('ppTierFilter').value;
   const hours = document.getElementById('ppHoursFilter').value;
   try {
-    const [rC, rS] = await Promise.all([
+    const [rC, rS, rEE] = await Promise.all([
       fetch(`/api/prepump/candidates?tier=${tier}&hours=${hours}&limit=200`).then(r => r.json()),
       fetch(`/api/prepump/active-sectors?hours=${hours}`).then(r => r.json()),
+      fetch(`/api/prepump/early-entries?hours=${hours}&limit=50`).then(r => r.json()),
     ]);
     _ppData = rC.items || [];
+    _ppEarlyData = rEE.items || [];
     _renderSectors(rS.sectors || []);
     _renderCards();
+    _renderEarlyEntries();
     _updateCounts();
   } catch (e) {
     console.warn('[prepump] load fail:', e);
   }
+}
+
+let _ppEarlyData = [];
+
+function _renderEarlyEntries() {
+  const section = document.getElementById('ppEarlySection');
+  const list = document.getElementById('ppEarlyList');
+  document.getElementById('ppEarlyCount').textContent = _ppEarlyData.length;
+  if (!_ppEarlyData.length) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  list.innerHTML = _ppEarlyData.slice(0, 10).map(ee => {
+    const dt = new Date(ee.at).toLocaleString('ru-RU', {dateStyle:'short', timeStyle:'short'});
+    const dirEmoji = ee.direction === 'LONG' ? '🟢' : '🔴';
+    const sources = {'cryptovizor':'🚀', 'supertrend':'🌀', 'anomaly':'⚠', 'confluence':'🎯',
+      'cluster':'💠', 'vol_accum':'🔋', 'triple_confluence':'🐉', 'volume_surge':'🌊',
+      'second_flip':'♻️', 'volcano':'🌋'};
+    const srcE = sources[ee.source] || '•';
+    return `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:rgba(0,0,0,0.2);border-left:3px solid #ffd23e;border-radius:6px;font-size:11px;cursor:pointer;" onclick="window.openPrepumpChart('${ee.pair}')">
+      <div style="display:flex;gap:14px;align-items:center;">
+        <span style="color:var(--muted);font-family:var(--font-mono);">${dt}</span>
+        <span style="font-weight:800;color:var(--electric);font-size:13px;">${ee.pair}</span>
+        <span>${dirEmoji} ${ee.direction}</span>
+        <span>${srcE} ${ee.source}</span>
+        <span style="color:var(--muted);font-style:italic;">${(ee.pattern || '').slice(0,40)}</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span style="background:rgba(255,210,62,0.15);color:#ffd23e;padding:2px 8px;border-radius:4px;font-weight:700;">${ee.prepump_tier}</span>
+        <span style="color:#ffd23e;font-weight:800;">${(ee.prepump_score||0).toFixed(0)}/100</span>
+        <span style="color:var(--muted);">entry: ${ee.entry_price || '?'}</span>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function _updateCounts() {
@@ -7759,15 +7805,17 @@ window.openPrepumpChart = async function(pair) {
       chart.timeScale().fitContent();
       if (loading) loading.style.display = 'none';
 
-      // ─── НАШИ СИГНАЛЫ из journal/by-symbol + Pre-Pump entry trigger ───
+      // ─── НАШИ СИГНАЛЫ + Pre-Pump candidates + 🎯 EARLY ENTRIES ───
       try {
         const sigsR = await fetch(`/api/journal/by-symbol?symbol=${pair}&days=14`).catch(()=>null);
         const sigsD = sigsR ? await sigsR.json().catch(()=>({})) : {};
         const allSigs = (sigsD || {}).items || [];
-        // Также pre-pump candidates for this pair
         const ppR = await fetch(`/api/prepump/candidates?hours=168&limit=50`).catch(()=>null);
         const ppD = ppR ? await ppR.json().catch(()=>({})) : {};
         const ppItems = ((ppD || {}).items || []).filter(c => c.pair === pair);
+        const eeR = await fetch(`/api/prepump/early-entries?pair=${encodeURIComponent(pair)}&hours=336`).catch(()=>null);
+        const eeD = eeR ? await eeR.json().catch(()=>({})) : {};
+        const eeItems = (eeD || {}).items || [];
 
         const markers = [];
         const tfSec = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '12h': 43200, '1d': 86400 }[tf] || 3600;
@@ -7815,8 +7863,24 @@ window.openPrepumpChart = async function(pair) {
           });
         }
 
-        // Pre-Pump entry triggers — все tier'ы (PRIME/STRONG/WATCH)
-        // PRIME = большие оранжевые, STRONG = жёлтые, WATCH = зелёные средние
+        // 🎯 EARLY ENTRY markers — БОЛЬШИЕ жёлтые arrowUp (точка реального входа)
+        for (const ee of eeItems) {
+          const ts = ee.at_ts;
+          if (!ts || !inRange(ts)) continue;
+          const mc = nearest(ts);
+          if (!mc) continue;
+          const isL = ee.direction === 'LONG';
+          markers.push({
+            time: mc.time,
+            position: isL ? 'belowBar' : 'aboveBar',
+            color: '#ffd23e',
+            shape: isL ? 'arrowUp' : 'arrowDown',
+            text: `🎯 EARLY (${ee.prepump_tier || ''})`,
+            size: 2,
+          });
+        }
+
+        // Pre-Pump composite triggers (PRIME/STRONG/WATCH) — менее приоритетные
         for (const c of ppItems) {
           const ts = c.detected_at_ts;
           if (!ts || !inRange(ts)) continue;
