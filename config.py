@@ -158,7 +158,8 @@ BOTS = [
     {"id": "entry_checker", "label": "🎯 Entry Checker", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     {"id": "prepump", "label": "🔥 Pre-Pump", "category": "crypto"},
-    {"id": "hot_now", "label": "🔥 HOT NOW", "category": "crypto"},
+    # HOT NOW убран — не работает нормально. Template остаётся для direct URL access.
+    # {"id": "hot_now", "label": "🔥 HOT NOW", "category": "crypto"},
     {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
     {"id": "forex_fvg", "label": "Forex FVG 1H", "category": "stocks"},
     {"id": "forex_journal", "label": "Forex Журнал", "category": "stocks"},
