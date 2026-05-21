@@ -9925,6 +9925,36 @@ async def api_prepump_candidates(tier: str = "", limit: int = 200, hours: int = 
     return {'items': deduped, 'count': len(deduped)}
 
 
+@app.post("/api/precondition-analysis/start")
+async def api_precondition_analysis_start():
+    import precondition_analysis as pa
+    state = pa._get_state()
+    if state.get('running'):
+        return {'started': False, 'state': state}
+    asyncio.create_task(asyncio.to_thread(pa.run_precondition_analysis))
+    return {'started': True}
+
+
+@app.get("/api/precondition-analysis/status")
+async def api_precondition_analysis_status():
+    import precondition_analysis as pa
+    from database import _get_db
+    state = pa._get_state()
+    out = {'state': state}
+    try:
+        db = _get_db()
+        report = db.precondition_analysis_report.find_one({}, {'_id': 0})
+        if report:
+            for k in ['started_at', 'finished_at']:
+                v = report.get(k)
+                if hasattr(v, 'isoformat'):
+                    report[k] = v.isoformat()
+            out['report'] = report
+    except Exception:
+        pass
+    return out
+
+
 @app.post("/api/signal-quality/backtest/start")
 async def api_signal_quality_backtest_start():
     """Запускает backtest качества каждого источника signals (14d)."""
