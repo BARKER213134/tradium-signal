@@ -20,8 +20,11 @@ Status через GET /api/prepump/backtest/status.
 """
 from __future__ import annotations
 import asyncio
+import io
 import logging
 import time
+import zipfile
+import csv
 import statistics
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict, Counter
@@ -60,16 +63,56 @@ def _get_state():
 
 
 def fapi_klines(symbol: str, tf: str, limit: int = 500, end_ms=None) -> list:
+    """Fapi /klines с fallback на Binance Vision CDN при rate-limit (418)."""
     params = {'symbol': symbol, 'interval': tf, 'limit': limit}
     if end_ms: params['endTime'] = end_ms
     try:
         r = http_client.get(f'{FAPI}/fapi/v1/klines', params=params)
-        if r.status_code != 200: return []
-        return [{'t': int(k[0]), 'o': float(k[1]), 'h': float(k[2]),
-                 'l': float(k[3]), 'c': float(k[4]), 'v': float(k[5])}
-                for k in r.json()]
+        if r.status_code == 200:
+            return [{'t': int(k[0]), 'o': float(k[1]), 'h': float(k[2]),
+                     'l': float(k[3]), 'c': float(k[4]), 'v': float(k[5])}
+                    for k in r.json()]
+        # Fallback: Vision CDN (static, no rate limit)
+        if r.status_code in (418, 451, 429, 403):
+            return _vision_klines(symbol, tf, limit)
     except Exception:
-        return []
+        return _vision_klines(symbol, tf, limit)
+    return []
+
+
+def _vision_klines(symbol: str, tf: str, limit: int = 500) -> list:
+    """Binance Vision CDN — статика, без rate limit. Возвращает последние ~limit
+    свечей через day-by-day fetch (last N days enough for limit bars)."""
+    # Compute days needed: bars per day per TF
+    bars_per_day = {'1m': 1440, '3m': 480, '5m': 288, '15m': 96, '30m': 48,
+                     '1h': 24, '2h': 12, '4h': 6, '6h': 4, '8h': 3, '12h': 2,
+                     '1d': 1, '3d': 1, '1w': 1}.get(tf, 24)
+    days_needed = max(2, (limit // bars_per_day) + 2)
+    now = datetime.now(timezone.utc)
+    out = []
+    for d in range(1, days_needed + 1):
+        ds = (now - timedelta(days=d)).strftime('%Y-%m-%d')
+        url = f'https://data.binance.vision/data/futures/um/daily/klines/{symbol}/{tf}/{symbol}-{tf}-{ds}.zip'
+        try:
+            r = http_client.get(url)
+            if r.status_code != 200: continue
+            zf = zipfile.ZipFile(io.BytesIO(r.content))
+            rows = csv.reader(zf.read(zf.namelist()[0]).decode().splitlines())
+            for row in rows:
+                try:
+                    out.append({'t': int(row[0]), 'o': float(row[1]),
+                                 'h': float(row[2]), 'l': float(row[3]),
+                                 'c': float(row[4]), 'v': float(row[5])})
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    seen = set(); uniq = []
+    for k in out:
+        if k['t'] in seen: continue
+        seen.add(k['t']); uniq.append(k)
+    uniq.sort(key=lambda x: x['t'])
+    return uniq[-limit:] if len(uniq) > limit else uniq
 
 
 def fapi_oi_hist(symbol: str, period: str = '1h', limit: int = 500) -> list:
