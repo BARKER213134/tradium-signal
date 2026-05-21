@@ -7258,6 +7258,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="vol_accum">🔋 Vol Accumulation</option>
     <option value="volcano">🌋 Volcano Breakout ★</option>
     <option value="second_flip">♻️ Second Flip Confirmation</option>
+    <option value="combo">🧠 COMBO (st_vip / TC + good preceding)</option>
     <option value="rsi_cross_12h">⚡ RSI/SMA cross 12h + vol≥2×</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
@@ -9055,7 +9056,7 @@ function filterJournal() {
     if (minTs && !sourceExplicit && !['tradium','cluster'].includes(s.source) && (s.at_ts || 0) < minTs) return false;
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
-      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip'].includes(s.source)) return false;
+      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','combo'].includes(s.source)) return false;
     } else if (src && s.source !== src) return false;
     if (dir && s.direction !== dir) return false;
     if (kc === 'pass' && s.st_passed !== true) return false;
@@ -9092,7 +9093,7 @@ function filterJournal() {
       const isPaper = s.source === 'paper';
       const isAnomaly = s.source === 'anomaly';
       const isVerified = s.source === 'verified';
-      const isNewStrategy = ['volume_surge','triple_confluence','vol_accum','volcano','second_flip'].includes(s.source);
+      const isNewStrategy = ['volume_surge','triple_confluence','vol_accum','volcano','second_flip','combo'].includes(s.source);
       if (!(isStrong || isTopPick || isStAllTiers || isCluster || isPaper || isAnomaly || isVerified || isNewStrategy)) return false;
     }
     // 🎯 Только у уровня — фильтр по price-proximity к KL зоне

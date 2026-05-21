@@ -3384,6 +3384,17 @@ async def _paper_on_signal(signal_data: dict):
     except Exception as _ee_top:
         logger.debug(f"[early-entry] outer fail: {_ee_top}")
 
+    # ── 🧠 COMBO detector ──
+    # Composite signal — основан на backtest precondition analysis 14d.
+    # Fired когда target (st_vip / triple_confluence) приходит И в 24h preceding
+    # window есть достаточно "win markers" минус "anti markers" (см. combo_detector.WEIGHTS).
+    # Threshold 30. Storage в new_strategy_signals с strategy='combo' (emoji 🧠).
+    try:
+        from combo_detector import maybe_fire_combo
+        asyncio.create_task(asyncio.to_thread(maybe_fire_combo, signal_data))
+    except Exception as _ce:
+        logger.debug(f"[combo] schedule fail: {_ce}")
+
     # [УБРАНО] Pump fallback — он был нужен когда использовался AI (Claude
     # отказывал при pump_vol=0). Теперь система rule-based, check_entry
     # сам делает Vol/OI fallback через check_pump_potential (с кешем 120с).

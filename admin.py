@@ -9925,6 +9925,17 @@ async def api_prepump_candidates(tier: str = "", limit: int = 200, hours: int = 
     return {'items': deduped, 'count': len(deduped)}
 
 
+@app.post("/api/combo/backfill")
+async def api_combo_backfill(payload: dict | None = None):
+    """Backfill COMBO signals за N дней (default 30).
+    Scans st_vip + triple_confluence signals, computes combo score retroactively,
+    inserts qualified в new_strategy_signals."""
+    days = int((payload or {}).get('days', 30))
+    import combo_detector as cd
+    result = await asyncio.to_thread(cd.backfill_combo, days)
+    return result
+
+
 @app.post("/api/precondition-analysis/start")
 async def api_precondition_analysis_start():
     import precondition_analysis as pa
@@ -10995,10 +11006,10 @@ def _compute_journal_sync(_fast_only: bool = False):
         nss_since = _ns_utcnow() - _td(hours=168)  # last 7d
         STRAT_EMOJI = {"volume_surge": "🌊", "triple_confluence": "🐉",
                         "vol_accum": "🔋", "volcano": "🌋",
-                        "second_flip": "♻️"}
+                        "second_flip": "♻️", "combo": "🧠"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
-                       "second_flip": "Second Flip"}
+                       "second_flip": "Second Flip", "combo": "COMBO"}
         for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(2000):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -11019,6 +11030,18 @@ def _compute_journal_sync(_fast_only: bool = False):
                 if n.get("vol_ratio"): parts.append(f"vol {n['vol_ratio']}×")
                 if n.get("body_atr"): parts.append(f"body {n['body_atr']}×ATR")
                 if n.get("rsi") is not None: parts.append(f"RSI {n['rsi']}")
+                extra = " · " + " · ".join(parts) if parts else ""
+            elif strat == "combo":
+                # COMBO: composite score из preconditions analysis 14d backtest
+                # Win markers: st_vip, triple_confluence, confluence
+                # Anti markers: st_mtf, cv_flip, cryptovizor, vol_accum, st_daily
+                parts = []
+                sc = n.get('combo_score')
+                if sc is not None: parts.append(f"score {sc}")
+                trig = n.get('trigger_source')
+                if trig: parts.append(f"via {trig}")
+                ps = n.get('preceding_sources') or []
+                if ps: parts.append(f"prec: {','.join(ps[:4])}")
                 extra = " · " + " · ".join(parts) if parts else ""
             elif strat == "second_flip":
                 # Confirmation flip: WR 28%, AvgRet +0.83% (45%/+1.83% strict)
