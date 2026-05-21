@@ -9925,6 +9925,16 @@ async def api_prepump_candidates(tier: str = "", limit: int = 200, hours: int = 
     return {'items': deduped, 'count': len(deduped)}
 
 
+@app.get("/api/prepump/scanner-status")
+async def api_prepump_scanner_status():
+    """Returns scanner state — для UI countdown до следующего скана."""
+    try:
+        from watcher import get_prepump_scanner_state
+        return get_prepump_scanner_state()
+    except Exception as e:
+        return {'error': str(e)}
+
+
 @app.post("/api/prepump/backtest/start")
 async def api_prepump_backtest_start():
     """Запускает 30d backtest на Railway (async, в фоне).

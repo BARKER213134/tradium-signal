@@ -3569,6 +3569,29 @@ async def _rsi12h_warmer_loop():
         await _asyncio.sleep(180)
 
 
+_PREPUMP_SCANNER_STATE = {
+    'last_run_at': 0,
+    'last_run_duration_s': 0,
+    'next_run_at': 0,
+    'cycle_interval_s': 1800,  # 30 min
+    'last_cycle_pairs': 0,
+    'last_cycle_results': 0,
+    'last_cycle_active_sectors': 0,
+    'total_cycles': 0,
+}
+
+
+def get_prepump_scanner_state() -> dict:
+    """Returns текущее состояние scanner (для UI countdown)."""
+    import time as _t
+    s = dict(_PREPUMP_SCANNER_STATE)
+    now = int(_t.time())
+    s['now'] = now
+    s['next_run_in_s'] = max(0, s['next_run_at'] - now) if s['next_run_at'] else 0
+    s['last_run_ago_s'] = (now - s['last_run_at']) if s['last_run_at'] else None
+    return s
+
+
 async def _pre_pump_predictor_loop():
     """Pre-Pump Predictor scanner — каждые 30 мин.
 
@@ -3710,6 +3733,15 @@ async def _pre_pump_predictor_loop():
 
             elapsed = _time.time() - t_start
             iteration += 1
+            # Update scanner state для UI countdown
+            now_int = int(_time.time())
+            _PREPUMP_SCANNER_STATE['last_run_at'] = now_int
+            _PREPUMP_SCANNER_STATE['last_run_duration_s'] = round(elapsed, 1)
+            _PREPUMP_SCANNER_STATE['next_run_at'] = now_int + 1800
+            _PREPUMP_SCANNER_STATE['last_cycle_pairs'] = len(scan_pairs)
+            _PREPUMP_SCANNER_STATE['last_cycle_results'] = len(results)
+            _PREPUMP_SCANNER_STATE['last_cycle_active_sectors'] = len(sector_active)
+            _PREPUMP_SCANNER_STATE['total_cycles'] = iteration
             if iteration <= 3 or iteration % 5 == 0:
                 primes = sum(1 for r in results if r['tier'] == 'PRIME')
                 strong = sum(1 for r in results if r['tier'] == 'STRONG')

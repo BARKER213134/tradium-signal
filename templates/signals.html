@@ -7478,6 +7478,21 @@ async function _pollDeltaBackfill() {
     <div id="ppBtContent" style="font-family:var(--font-mono);font-size:11px;color:var(--text);line-height:1.6;"></div>
   </div>
 
+  <!-- Scanner status bar -->
+  <div id="ppScannerBar" style="margin-bottom:14px;padding:10px 14px;background:rgba(0,229,160,0.06);border:1px solid rgba(0,229,160,0.25);border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;font-size:11px;">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+      <span style="color:var(--muted);">⚙ Scanner:</span>
+      <span><span style="color:var(--muted);">Cycles:</span> <b id="ppCyclesCount" style="color:#00e5a0;">—</b></span>
+      <span><span style="color:var(--muted);">Last scan:</span> <b id="ppLastScanAgo" style="color:var(--text);">—</b></span>
+      <span><span style="color:var(--muted);">Took:</span> <b id="ppLastDuration" style="color:var(--text);">—</b></span>
+      <span><span style="color:var(--muted);">Pairs:</span> <b id="ppLastPairs" style="color:var(--text);">—</b></span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="color:var(--muted);">Next scan in:</span>
+      <b id="ppNextScan" style="color:#ff8c50;font-size:13px;font-weight:800;font-family:var(--font-mono);min-width:60px;text-align:right;">—</b>
+    </div>
+  </div>
+
   <!-- Active sectors strip -->
   <div id="ppSectors" style="margin-bottom:16px;padding:12px;background:rgba(255,140,80,0.05);border:1px solid rgba(255,140,80,0.2);border-radius:8px;display:none;">
     <div style="font-size:11px;color:#ff8c50;font-weight:700;margin-bottom:6px;letter-spacing:0.1em;">🔥 ACTIVE SECTORS (rotation)</div>
@@ -7876,11 +7891,63 @@ async function _pollPrepumpBacktest() {
   }
 }
 
+// Scanner countdown
+let _ppScannerState = null;
+async function _loadScannerStatus() {
+  try {
+    const r = await fetch('/api/prepump/scanner-status').then(r => r.json());
+    _ppScannerState = r;
+    _updateScannerUI();
+  } catch (e) { console.warn('[prepump scanner status]', e); }
+}
+
+function _fmtAgo(s) {
+  if (s == null || s < 0) return '—';
+  if (s < 60) return s + 's';
+  const m = Math.floor(s/60);
+  if (m < 60) return m + 'm ' + (s%60) + 's';
+  const h = Math.floor(m/60);
+  return h + 'h ' + (m%60) + 'm';
+}
+
+function _fmtCountdown(s) {
+  if (s == null || s < 0) return '—';
+  const m = Math.floor(s/60);
+  const sec = s % 60;
+  return `${m}:${String(sec).padStart(2,'0')}`;
+}
+
+function _updateScannerUI() {
+  if (!_ppScannerState) return;
+  const cycles = document.getElementById('ppCyclesCount');
+  const lastAgo = document.getElementById('ppLastScanAgo');
+  const duration = document.getElementById('ppLastDuration');
+  const lastPairs = document.getElementById('ppLastPairs');
+  const next = document.getElementById('ppNextScan');
+  if (!next) return;
+  cycles.textContent = _ppScannerState.total_cycles || 0;
+  lastAgo.textContent = _fmtAgo(_ppScannerState.last_run_ago_s);
+  duration.textContent = (_ppScannerState.last_run_duration_s || 0).toFixed(0) + 's';
+  lastPairs.textContent = _ppScannerState.last_cycle_pairs || 0;
+  next.textContent = _fmtCountdown(_ppScannerState.next_run_in_s);
+}
+
+// Каждую секунду уменьшаем countdown локально (без запроса), полный обновляем каждую минуту
+setInterval(() => {
+  if (_ppScannerState && _ppScannerState.next_run_in_s > 0) {
+    _ppScannerState.next_run_in_s -= 1;
+    if (_ppScannerState.last_run_ago_s != null) _ppScannerState.last_run_ago_s += 1;
+    _updateScannerUI();
+  }
+}, 1000);
+
 // Auto-refresh every 60s
 document.getElementById('ppTierFilter')?.addEventListener('change', _loadPrepump);
 document.getElementById('ppHoursFilter')?.addEventListener('change', _loadPrepump);
 _loadPrepump();
+_loadScannerStatus();
 setInterval(_loadPrepump, 60000);
+setInterval(_loadScannerStatus, 60000);
 // Check if backtest report exists on load
 _pollPrepumpBacktest();
 </script>

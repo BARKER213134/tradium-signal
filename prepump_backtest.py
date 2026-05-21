@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 FAPI = 'https://fapi.binance.com'
 http_client = httpx.Client(timeout=15.0, limits=httpx.Limits(max_connections=30, max_keepalive_connections=15))
 
-LOOKBACK_DAYS = 20         # OI history limited to 500 bars 1h ≈ 20.8 days
-KLINES_1H_DAYS = 30        # +10d warmup для EMA200
-KLINES_15M_DAYS = 23       # 20d signals + 3d forward
+LOOKBACK_DAYS = 7          # 7 дней — свежее и быстрее
+KLINES_1H_DAYS = 20        # +13d warmup для EMA200
+KLINES_15M_DAYS = 10       # 7d signals + 3d forward
 FORWARD_BARS_15M = 288     # 72h × 4
-SCAN_PAIRS_CAP = 150       # топ N пар для backtest
-SCAN_HOUR_STEP = 4         # сканируем каждый 4-й час
+SCAN_PAIRS_CAP = 200       # топ N пар (bump 150→200)
+SCAN_HOUR_STEP = 2         # сканируем каждый 2-й час (больше ticks)
 MIN_SCORE_FOR_RECORD = 30  # снижено до 30 чтобы захватить и WATCH-edge cases
 
 # In-memory progress state (опрашивается через GET endpoint)
