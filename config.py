@@ -117,6 +117,17 @@ HOT_SIGNALS_CHAT_ID = (int(_hot_chat) if _hot_chat.lstrip("-").isdigit()
                        else ADMIN_CHAT_ID)
 HOT_SIGNALS_MIN_SCORE = int(os.getenv("HOT_SIGNALS_MIN_SCORE", "60"))
 
+# BOT16 — 🐋 WHALE signals (Range Breakout pattern из 20-chart analysis).
+# Тиры: PREMIUM (≥80) → "lottery moonshot", STANDARD (60-79) → workhorse.
+# MARGINAL отрезан (40-59) — WR < baseline.
+# Trigger: ST flip 2H UP + vol spike ≥2x + amplifiers.
+# Backtest 30d: STANDARD WR 53.8%, MFE 5.56% — лучше всех LONG signals.
+BOT16_BOT_TOKEN = os.getenv("BOT16_BOT_TOKEN", "")
+_whale_chat = os.getenv("WHALE_CHAT_ID", "").strip()
+WHALE_CHAT_ID = (int(_whale_chat) if _whale_chat.lstrip("-").isdigit()
+                 else ADMIN_CHAT_ID)
+WHALE_MIN_TIER = os.getenv("WHALE_MIN_TIER", "STANDARD")  # STANDARD or PREMIUM
+
 # ═════ Binance Futures API для реальной торговли ═════
 # API keys — создавать с минимальными правами (только futures trade, без withdraw)
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
@@ -156,6 +167,7 @@ BOTS = [
     # /signals?bot=conflicts работает, данные детектируются в фоне через
     # anti_cluster_detector. Включить обратно: раскомментировать строку.
     {"id": "entry_checker", "label": "🎯 Entry Checker", "category": "crypto"},
+    {"id": "whale", "label": "🐋 WHALE", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     # Pre-Pump удалён — backtest показал что edge только в triple_confluence
     # и st_vip которые уже есть в журнале. Заменён на 🧠 COMBO signal.

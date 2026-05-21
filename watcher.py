@@ -43,6 +43,7 @@ _bot = None
 _bot2 = None
 _bot4 = None
 _bot10 = None   # SuperTrend signals (VIP/MTF/Daily)
+_bot16 = None   # 🐋 WHALE signals (Range Breakout)
 _admin_chat_id = None
 
 
@@ -63,6 +64,10 @@ async def _st_tracker_loop():
     # Ленивая инициализация BOT10
     if not _bot10:
         try: _setup_bot10()
+        except Exception: pass
+    # Ленивая инициализация BOT16 (WHALE)
+    if not _bot16:
+        try: _setup_bot16()
         except Exception: pass
     while True:
         try:
@@ -2429,6 +2434,60 @@ def _setup_bot10():
         logger.error(f"BOT10 init fail: {e}")
 
 
+def _setup_bot16():
+    """BOT16 — 🐋 WHALE Range Breakout signals."""
+    global _bot16
+    from config import BOT16_BOT_TOKEN
+    if not BOT16_BOT_TOKEN:
+        logger.info("BOT16_BOT_TOKEN не задан — WHALE alerts отключены")
+        return
+    try:
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+        _bot16 = Bot(token=BOT16_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        logger.info("BOT16 (🐋 WHALE) initialized")
+    except Exception as e:
+        logger.error(f"BOT16 init fail: {e}")
+
+
+async def _whale_send_telegram(doc: dict):
+    """Шлёт WHALE alert в BOT16. Fallback на основной BOT если BOT16 нет."""
+    global _bot16
+    from config import WHALE_CHAT_ID, WHALE_MIN_TIER
+    tier = doc.get('whale_tier', '?')
+    # Filter by min_tier (default STANDARD)
+    if WHALE_MIN_TIER == 'PREMIUM' and tier != 'PREMIUM':
+        return
+    tier_emoji = '👑' if tier == 'PREMIUM' else ('🥈' if tier == 'STANDARD' else '?')
+    pair = doc.get('pair', '?')
+    entry = doc.get('entry', '?')
+    score = doc.get('whale_score', 0)
+    ind = doc.get('whale_indicators') or {}
+    brk = doc.get('whale_breakdown') or {}
+    amps = [k for k in brk if not k.startswith('core_') and brk[k] > 0]
+
+    txt = (f"🐋 <b>WHALE {tier_emoji} {tier}</b>\n"
+           f"━━━━━━━━━━━━━━━━━━\n"
+           f"<b>{pair}</b> · LONG\n"
+           f"<b>Entry:</b> {entry}\n"
+           f"<b>Score:</b> {score}\n"
+           f"<b>Amplifiers:</b> {', '.join(amps) if amps else '—'}\n"
+           f"━━━━━━━━━━━━━━━━━━\n"
+           f"📊 base {ind.get('base_days', 0)}d · vol {ind.get('vol_ratio_max', 0)}× · "
+           f"DT {ind.get('prior_downtrend_pct', 0)}%\n"
+           f"💡 Range Breakout setup (backtest WR 53.8% / MFE 5.56%)\n"
+           f"<a href='https://www.binance.com/en/futures/{pair.replace('/', '')}'>📈 Chart</a>")
+    target_bot = _bot16 or _bot
+    if not target_bot:
+        return
+    try:
+        await target_bot.send_message(chat_id=WHALE_CHAT_ID, text=txt,
+                                       disable_web_page_preview=True)
+    except Exception as e:
+        logger.warning(f'[whale] send fail: {e}')
+
+
 
 
 def _fmt_price(v):
@@ -3391,6 +3450,24 @@ async def _paper_on_signal(signal_data: dict):
         asyncio.create_task(asyncio.to_thread(maybe_fire_combo, signal_data))
     except Exception as _ce:
         logger.debug(f"[combo] schedule fail: {_ce}")
+
+    # ── 🐋 WHALE detector ──
+    # Range Breakout pattern на основе 20-chart manual analysis.
+    # Triggered при ST flip (vip/mtf) LONG. Считает amplifiers (base, downtrend,
+    # capitulation, vol_spike, rsi cross), фильтрует STANDARD+PREMIUM tier.
+    # Backtest 30d: STANDARD WR 53.8% MFE 5.56% — топ LONG signal.
+    try:
+        from whale_detector import maybe_fire_whale
+        async def _whale_post():
+            doc = await asyncio.to_thread(maybe_fire_whale, signal_data)
+            if doc:
+                try:
+                    await _whale_send_telegram(doc)
+                except Exception as _we:
+                    logger.debug(f"[whale] telegram fail: {_we}")
+        asyncio.create_task(_whale_post())
+    except Exception as _we2:
+        logger.debug(f"[whale] schedule fail: {_we2}")
 
     # [УБРАНО] Pump fallback — он был нужен когда использовался AI (Claude
     # отказывал при pump_vol=0). Теперь система rule-based, check_entry

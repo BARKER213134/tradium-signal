@@ -10005,6 +10005,54 @@ async def api_signal_quality_backtest_status():
     return out
 
 
+@app.post("/api/whale/backtest/start")
+async def api_whale_backtest_start(payload: dict | None = None):
+    """Запускает WHALE 30-day backtest + сравнение с COMBO/ST_VIP/TC."""
+    import whale_backtest as wb
+    state = wb.get_state()
+    if state.get('running'):
+        return {'started': False, 'state': state}
+    pair_limit = int((payload or {}).get('pair_limit', 150))
+    asyncio.create_task(asyncio.to_thread(wb.run_whale_backtest, pair_limit))
+    return {'started': True, 'pair_limit': pair_limit}
+
+
+@app.post("/api/whale/backfill")
+async def api_whale_backfill(days: int = 14):
+    """Backfill WHALE сигналов за N дней (default 14). Журнал получит whale signals."""
+    import whale_backtest as wb
+    state = wb.get_state()
+    if state.get('running'):
+        return {'started': False, 'state': state}
+    # Backfill использует тот же run_whale_backtest — он сам делает journal_inserted
+    # Универс берёт ВСЕ pairs из supertrend_signals + cryptovizor
+    # LOOKBACK_DAYS меняем через ENV-style — проще запустить с patched constant
+    wb.LOOKBACK_DAYS = int(days)
+    wb.KLINES_15M_DAYS = int(days) + 3
+    asyncio.create_task(asyncio.to_thread(wb.run_whale_backtest, 600))
+    return {'started': True, 'days': days}
+
+
+@app.get("/api/whale/backtest/status")
+async def api_whale_backtest_status():
+    import whale_backtest as wb
+    from database import _get_db
+    state = wb.get_state()
+    out = {'state': state}
+    try:
+        db = _get_db()
+        report = db.whale_backtest_report.find_one({}, {'_id': 0})
+        if report:
+            for k in ['started_at', 'finished_at']:
+                v = report.get(k)
+                if hasattr(v, 'isoformat'):
+                    report[k] = v.isoformat()
+            out['report'] = report
+    except Exception:
+        pass
+    return out
+
+
 @app.post("/api/prepump/early-backtest/start")
 async def api_prepump_early_backtest_start():
     """Запускает EARLY_ENTRY backtest на исторических signals (без composite)."""
@@ -11014,10 +11062,11 @@ def _compute_journal_sync(_fast_only: bool = False):
         nss_since = _ns_utcnow() - _td(hours=168)  # last 7d
         STRAT_EMOJI = {"volume_surge": "🌊", "triple_confluence": "🐉",
                         "vol_accum": "🔋", "volcano": "🌋",
-                        "second_flip": "♻️", "combo": "🧠"}
+                        "second_flip": "♻️", "combo": "🧠", "whale": "🐋"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
-                       "second_flip": "Second Flip", "combo": "COMBO"}
+                       "second_flip": "Second Flip", "combo": "COMBO",
+                       "whale": "WHALE"}
         for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(2000):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -11059,6 +11108,21 @@ def _compute_journal_sync(_fast_only: bool = False):
                     parts.append("strict L→S→L")
                 else:
                     parts.append("consecutive")
+                extra = " · " + " · ".join(parts) if parts else ""
+            elif strat == "whale":
+                # WHALE: backtest 30d STANDARD WR 53.8% MFE 5.56% — top LONG signal
+                parts = []
+                tier = n.get('whale_tier')
+                if tier: parts.append(f"tier {tier}")
+                sc = n.get('whale_score')
+                if sc is not None: parts.append(f"score {sc}")
+                ind = n.get('whale_indicators') or {}
+                if ind.get('base_days'): parts.append(f"base {ind['base_days']}d")
+                if ind.get('vol_ratio_max'): parts.append(f"vol {ind['vol_ratio_max']}×")
+                if ind.get('prior_downtrend_pct'):
+                    parts.append(f"DT {ind['prior_downtrend_pct']}%")
+                if ind.get('capitulation_wick'): parts.append("cap_wick")
+                if ind.get('rsi_cross'): parts.append("rsi×")
                 extra = " · " + " · ".join(parts) if parts else ""
             pattern_txt = f"{em} {label}{extra}"
             items.append({
