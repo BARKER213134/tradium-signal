@@ -348,6 +348,162 @@ def compute_whale_score(candles_2h: list[dict], flip_idx: int,
 WHALE_COOLDOWN_S_LIVE = 12 * 3600  # 12h per pair
 
 
+def scan_recent_flips_for_whale(pairs: list[str] | None = None,
+                                  lookback_hours: int = 6) -> dict:
+    """Safety net: периодически сканирует топ пары на ПРОПУЩЕННЫЕ WHALE
+    сигналы (real-time hook может пропустить если watcher был down /
+    реcтартилcя / Binance API завис).
+
+    Для каждой пары:
+      1. Fetch 2H klines (~350 баров через get_klines_any)
+      2. Найти последний flip UP within `lookback_hours`
+      3. Если найден — посчитать WHALE score
+      4. Insert если STANDARD+/PREMIUM и нет cooldown
+
+    Returns dict с stats {scanned, flips_found, fired, by_tier, errors}.
+    """
+    from database import _get_db, utcnow
+    from datetime import datetime, timezone, timedelta
+    from exchange import get_klines_any
+
+    db = _get_db()
+    # Default: top-volume USDT пары из supertrend signals last 7d
+    if pairs is None:
+        since = datetime.now(timezone.utc) - timedelta(days=7)
+        pairs = sorted({s['pair'] for s in db.supertrend_signals.find(
+            {'flip_at': {'$gte': since}, 'tier': {'$in': ['vip', 'mtf']}},
+            {'pair': 1}) if s.get('pair')})
+    if not pairs:
+        return {'scanned': 0, 'flips_found': 0, 'fired': 0,
+                'by_tier': {}, 'errors': 0}
+
+    stats = {'scanned': 0, 'flips_found': 0, 'fired': 0,
+             'by_tier': {'PREMIUM': 0, 'STANDARD': 0, 'MARGINAL': 0},
+             'errors': 0, 'examples': []}
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    cutoff_ms = (now_ts - lookback_hours * 3600) * 1000
+    cooldown_dt = datetime.now(timezone.utc) - timedelta(seconds=WHALE_COOLDOWN_S_LIVE)
+
+    for pair in pairs:
+        stats['scanned'] += 1
+        try:
+            candles = get_klines_any(pair, '2h', 350)
+            if not candles or len(candles) < 100:
+                continue
+
+            # Compute SuperTrend trend array to find recent UP flips
+            n = len(candles)
+            closes = [c['c'] for c in candles]
+            highs = [c['h'] for c in candles]
+            lows = [c['l'] for c in candles]
+            period, mult = 10, 3.0
+            tr = [highs[0] - lows[0]]
+            for i in range(1, n):
+                tr.append(max(highs[i] - lows[i],
+                              abs(highs[i] - closes[i-1]),
+                              abs(lows[i] - closes[i-1])))
+            atr = [None] * n
+            atr[period - 1] = sum(tr[:period]) / period
+            for i in range(period, n):
+                atr[i] = (atr[i-1] * (period - 1) + tr[i]) / period
+            hl2 = [(highs[i] + lows[i]) / 2 for i in range(n)]
+            final_upper = [0.0] * n
+            final_lower = [0.0] * n
+            trend = [0] * n
+            for i in range(n):
+                if atr[i] is None: continue
+                bu = hl2[i] + mult * atr[i]
+                bl = hl2[i] - mult * atr[i]
+                if i == 0 or atr[i-1] is None:
+                    final_upper[i] = bu; final_lower[i] = bl; trend[i] = 1
+                    continue
+                final_upper[i] = bu if (bu < final_upper[i-1] or
+                                         closes[i-1] > final_upper[i-1]) else final_upper[i-1]
+                final_lower[i] = bl if (bl > final_lower[i-1] or
+                                         closes[i-1] < final_lower[i-1]) else final_lower[i-1]
+                if trend[i-1] == 1 and closes[i] < final_lower[i-1]: trend[i] = -1
+                elif trend[i-1] == -1 and closes[i] > final_upper[i-1]: trend[i] = 1
+                else: trend[i] = trend[i-1] if trend[i-1] != 0 else 1
+
+            # Найти последний DOWN→UP flip в окне lookback
+            flip_idx = None
+            for i in range(n - 1, 0, -1):
+                if candles[i]['t'] < cutoff_ms:
+                    break
+                if trend[i] == 1 and trend[i-1] == -1:
+                    flip_idx = i
+                    break
+            if flip_idx is None:
+                continue
+            stats['flips_found'] += 1
+
+            # Cooldown check
+            recent = db.new_strategy_signals.find_one({
+                'pair': pair, 'strategy': 'whale',
+                'created_at': {'$gte': cooldown_dt},
+            })
+            if recent:
+                continue
+
+            # Score
+            anti_flags = check_anti_markers(db, pair, int(candles[flip_idx]['t'] / 1000),
+                                              'LONG')
+            score_res = compute_whale_score(candles, flip_idx, anti_flags)
+            if not score_res['passes_core']:
+                continue
+            tier = score_res.get('tier')
+            if not tier or tier == 'MARGINAL':
+                continue
+
+            # Fire!
+            entry = candles[flip_idx]['c']
+            flip_dt = datetime.fromtimestamp(candles[flip_idx]['t'] / 1000,
+                                              tz=timezone.utc)
+            doc = {
+                'pair': pair,
+                'symbol': pair.replace('/', '').upper(),
+                'direction': 'LONG',
+                'entry': entry,
+                'strategy': 'whale',
+                'whale_score': score_res['score'],
+                'whale_tier': tier,
+                'whale_breakdown': score_res['breakdown'],
+                'whale_indicators': score_res['indicators'],
+                'created_at': flip_dt,
+                'state': 'SCANNED',  # SCANNED = safety-net pickup
+                'tp_R': 2.0,
+            }
+            try:
+                # Avoid duplicate insert (same flip_dt)
+                if db.new_strategy_signals.find_one({
+                    'pair': pair, 'strategy': 'whale',
+                    'created_at': flip_dt,
+                }):
+                    continue
+                db.new_strategy_signals.insert_one(doc)
+                stats['fired'] += 1
+                stats['by_tier'][tier] += 1
+                stats['examples'].append({
+                    'pair': pair, 'tier': tier,
+                    'score': score_res['score'],
+                    'flip_at': flip_dt.isoformat(),
+                })
+                logger.info(f'[whale-scan] 🐋 SCANNED {pair} {tier} '
+                             f'score={score_res["score"]} '
+                             f'flip_at={flip_dt.strftime("%H:%M")}')
+            except Exception as e:
+                logger.warning(f'[whale-scan] insert {pair}: {e}')
+                stats['errors'] += 1
+        except Exception:
+            stats['errors'] += 1
+            logger.debug(f'[whale-scan] {pair} error', exc_info=True)
+
+    logger.info(f'[whale-scan] DONE scanned={stats["scanned"]} '
+                 f'flips={stats["flips_found"]} fired={stats["fired"]} '
+                 f'by_tier={stats["by_tier"]}')
+    return stats
+
+
 def maybe_fire_whale(signal_data: dict) -> dict | None:
     """Triggered when supertrend signal arrives in watcher.py.
     Real-time: считаем WHALE score на ПОСЛЕДНЕМ ЗАКРЫТОМ 2H баре (свече флипа).

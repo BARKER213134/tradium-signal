@@ -78,6 +78,49 @@ async def _st_tracker_loop():
         await _asyncio.sleep(300)
 
 
+async def _whale_scanner_loop():
+    """🐋 WHALE safety-net scanner — каждые 30 мин сканирует топ пары
+    на ПРОПУЩЕННЫЕ WHALE flips (real-time hook может пропустить если
+    watcher был down во время flip-свечи).
+
+    Insert'ит signals с state='SCANNED' (vs real-time='NEW'). Dedupe по
+    (pair, created_at=flip_time). Анализирует только последние 6h окно.
+    """
+    import asyncio as _asyncio
+    await _asyncio.sleep(60)  # дать watcher'у разогреться
+    while True:
+        try:
+            from whale_detector import scan_recent_flips_for_whale
+            stats = await _asyncio.to_thread(
+                scan_recent_flips_for_whale,
+                None,  # default: top-volume pairs from supertrend_signals 7d
+                6,     # lookback hours
+            )
+            if stats.get('fired', 0) > 0:
+                logger.info(f'[whale-scan-loop] fired {stats["fired"]} '
+                             f'(tiers={stats["by_tier"]})')
+                # Также шлём Telegram алерты для каждого fired signal
+                try:
+                    from datetime import datetime, timezone, timedelta
+                    from database import _get_db
+                    db = _get_db()
+                    # Берём последние SCANNED whale signals что только что вставились
+                    cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+                    for doc in db.new_strategy_signals.find({
+                        'strategy': 'whale', 'state': 'SCANNED',
+                        'created_at': {'$gte': cutoff},
+                    }).sort('created_at', -1).limit(10):
+                        try:
+                            await _whale_send_telegram(doc)
+                        except Exception as _se:
+                            logger.debug(f'[whale-scan-loop] tg send: {_se}')
+                except Exception:
+                    logger.debug('[whale-scan-loop] tg notify fail', exc_info=True)
+        except Exception:
+            logger.exception('[whale-scan-loop] crashed, retry in 30 min')
+        await _asyncio.sleep(30 * 60)  # каждые 30 мин
+
+
 # [ОТКЛЮЧЕНО] _paper_position_ai_review_loop и _ai_memory_refresh_loop
 # удалены в рамках перехода на rule-based систему. Exit management работает
 # через TP ladder (paper_trader.check_positions), решения о входе — через
@@ -4807,6 +4850,12 @@ async def start_watcher():
         logger.info("[st-tracker] background loop started")
     except Exception:
         logger.exception("[st-tracker] failed to start loop")
+    # 🐋 WHALE safety-net scanner — каждые 30 мин на пропущенные flips
+    try:
+        asyncio.create_task(_whale_scanner_loop())
+        logger.info("[whale-scanner] background loop started")
+    except Exception:
+        logger.exception("[whale-scanner] failed to start loop")
     # [DISABLED — Atlas Free M0 throttle protection]
     # Background prewarm loops отключены чтобы НЕ дополнительно нагружать
     # перегруженный Atlas Free Tier. UI справится через user-driven cache —

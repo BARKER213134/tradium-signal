@@ -10017,6 +10017,16 @@ async def api_whale_backtest_start(payload: dict | None = None):
     return {'started': True, 'pair_limit': pair_limit}
 
 
+@app.post("/api/whale/scan-now")
+async def api_whale_scan_now(lookback_hours: int = 6):
+    """🐋 Manual safety-net scan: проверяет всё что пропустилось real-time'ом.
+    Возвращает stats о fired сигналах. Можно дёргать из UI кнопкой."""
+    import whale_detector as wd
+    stats = await asyncio.to_thread(
+        wd.scan_recent_flips_for_whale, None, lookback_hours)
+    return stats
+
+
 @app.get("/api/market-bias")
 async def api_market_bias(force: bool = False):
     """TOTAL2 SuperTrend → LONG/SHORT/WAIT bias для шапки журнала."""
