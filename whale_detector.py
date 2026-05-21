@@ -104,18 +104,23 @@ def _sma(vals: list[float], period: int) -> list[float]:
 
 def check_vol_spike(candles_2h: list[dict], flip_idx: int,
                     window_bars: int = 3) -> tuple[bool, float]:
-    """Vol spike ≥2x in window of [flip_idx-1 .. flip_idx+window_bars].
-    SMA9 baseline computed over the 30 bars before flip.
+    """Vol spike ≥2x в окне [flip_idx-1 .. flip_idx+window_bars].
+    SMA9 baseline = 30 баров ДО flip.
+    Real-time-friendly: если window выходит за конец массива — берём
+    то что доступно (минимум flip_idx сам).
     Returns (passed, max_ratio).
     """
-    if flip_idx < 30 or flip_idx + window_bars >= len(candles_2h):
+    if flip_idx < 30 or flip_idx >= len(candles_2h):
         return (False, 0.0)
     baseline = [c['v'] for c in candles_2h[flip_idx - 30: flip_idx]]
     sma9 = statistics.mean(baseline) if baseline else 0
     if sma9 <= 0:
         return (False, 0.0)
+    # Window: [flip_idx-1, flip_idx+window_bars] clamped к границам массива
+    start = max(0, flip_idx - 1)
+    end = min(len(candles_2h), flip_idx + window_bars + 1)
     max_ratio = 0.0
-    for i in range(max(0, flip_idx - 1), min(len(candles_2h), flip_idx + window_bars + 1)):
+    for i in range(start, end):
         r = candles_2h[i]['v'] / sma9
         if r > max_ratio:
             max_ratio = r
@@ -345,23 +350,24 @@ WHALE_COOLDOWN_S_LIVE = 12 * 3600  # 12h per pair
 
 def maybe_fire_whale(signal_data: dict) -> dict | None:
     """Triggered when supertrend signal arrives in watcher.py.
-    Re-builds 2H klines around now, checks if a recent ST flip on 2H
-    matches WHALE conditions. Fires only LONG, only STANDARD+PREMIUM tier.
+    Real-time: считаем WHALE score на ПОСЛЕДНЕМ ЗАКРЫТОМ 2H баре (свече флипа).
+    Fires только LONG, только STANDARD+PREMIUM tier.
     """
+    pair = signal_data.get('pair', '?')
     try:
         source = signal_data.get('source', '')
         if source != 'supertrend':
             return None  # only ST events trigger WHALE
         tier = signal_data.get('st_tier', '')
-        # Only 2H-related tiers (vip & mtf both compute on 2H+ TFs)
         if tier not in ('vip', 'mtf'):
+            logger.debug(f'[whale-live] {pair} skip — tier={tier}')
             return None
         direction = (signal_data.get('direction', '') or '').upper()
         if direction != 'LONG':
+            logger.debug(f'[whale-live] {pair} skip — direction={direction}')
             return None
 
-        pair = signal_data.get('pair', '')
-        if not pair:
+        if not pair or pair == '?':
             return None
 
         # Per-pair cooldown via Mongo
@@ -374,38 +380,44 @@ def maybe_fire_whale(signal_data: dict) -> dict | None:
             'created_at': {'$gte': cutoff},
         })
         if recent:
-            logger.debug(f'[whale-live] {pair} cooldown active')
+            logger.info(f'[whale-live] {pair} cooldown — last whale {recent.get("created_at")}')
             return None
 
-        # Fetch 2H klines via exchange module
+        # Fetch 2H klines — нужно ≥ 100 баров для индикаторов
         from exchange import get_klines_any
         candles = get_klines_any(pair, '2h', 350)
         if not candles or len(candles) < 100:
-            logger.debug(f'[whale-live] {pair} no 2H klines')
+            logger.warning(f'[whale-live] {pair} no/few 2H klines: {len(candles) if candles else 0}')
             return None
 
-        # Find latest ST flip UP in last 6 bars (12h window)
-        # ST already given by source='supertrend', so assume flip occurred recently.
-        # We use index = last bar (latest) as the flip reference.
-        flip_idx = len(candles) - 1
-        # But check that last few bars actually showed a flip.
-        # If not, scan back up to 6 bars.
-        score_res = None
-        anti_flags = _check_anti_markers_sync(db, pair, int(candles[flip_idx]['t'] / 1000),
-                                                'LONG')
+        # Используем ПРЕДпоследний бар как flip-reference (последний может быть
+        # ещё формирующимся — его volume неполный).
+        # candles[-1] = текущий формирующийся, candles[-2] = последний закрытый.
+        flip_idx = len(candles) - 2
+        flip_bar_ts = candles[flip_idx]['t']
+
+        # Anti-markers из Mongo
+        anti_flags = check_anti_markers(db, pair, int(flip_bar_ts / 1000), 'LONG')
+
+        # Compute score
         score_res = compute_whale_score(candles, flip_idx, anti_flags)
+        ind = score_res.get('indicators', {})
         if not score_res['passes_core']:
-            logger.debug(f'[whale-live] {pair} no vol spike')
+            logger.info(f'[whale-live] {pair} no_core — vol_ratio={ind.get("vol_ratio_max", 0)} (need ≥2.0)')
             return None
-        if not score_res['tier']:
+        tier = score_res.get('tier')
+        if not tier:
+            logger.info(f'[whale-live] {pair} no_tier — score={score_res["score"]} (need ≥40)')
             return None
-        # Only STANDARD+PREMIUM live (skip MARGINAL — too noisy)
-        if score_res['tier'] == 'MARGINAL':
+        if tier == 'MARGINAL':
+            logger.info(f'[whale-live] {pair} MARGINAL skip — score={score_res["score"]}')
             return None
 
         entry = signal_data.get('entry') or candles[flip_idx]['c']
         try: entry = float(entry)
-        except Exception: return None
+        except Exception:
+            logger.warning(f'[whale-live] {pair} bad entry: {entry}')
+            return None
 
         doc = {
             'pair': pair,
@@ -414,25 +426,25 @@ def maybe_fire_whale(signal_data: dict) -> dict | None:
             'entry': entry,
             'strategy': 'whale',
             'whale_score': score_res['score'],
-            'whale_tier': score_res['tier'],
+            'whale_tier': tier,
             'whale_breakdown': score_res['breakdown'],
-            'whale_indicators': score_res['indicators'],
+            'whale_indicators': ind,
             'created_at': utcnow(),
             'state': 'NEW',
             'tp_R': 2.0,
         }
         try:
             db.new_strategy_signals.insert_one(doc)
-            logger.info(f'[whale-live] 🐋 FIRED {pair} {score_res["tier"]} '
+            logger.info(f'[whale-live] 🐋 FIRED {pair} {tier} '
                          f'score={score_res["score"]} '
+                         f'vol={ind.get("vol_ratio_max")}× '
+                         f'base={ind.get("base_days")}d '
                          f'amp={list(score_res["breakdown"].keys())}')
         except Exception as e:
-            logger.warning(f'[whale-live] insert fail: {e}')
+            logger.warning(f'[whale-live] {pair} insert fail: {e}')
         return doc
     except Exception:
-        logger.exception('[whale-live] maybe_fire fail')
+        logger.exception(f'[whale-live] {pair} maybe_fire fail')
         return None
 
 
-def _check_anti_markers_sync(db, pair, flip_ts, direction='LONG'):
-    return check_anti_markers(db, pair, flip_ts, direction)
