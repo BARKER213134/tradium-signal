@@ -5348,7 +5348,7 @@ async def signals_list(
     direction: str = "",
     has_chart: str = "",
     tab: str = "tradium",
-    bot: str = "journal",  # default tab: Journal (был "tradium" — убрали из меню)
+    bot: str = "tradium",
 ):
     return await asyncio.to_thread(
         _signals_list_sync, request, db, page, pair, direction, has_chart, tab, bot,
