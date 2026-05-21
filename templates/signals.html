@@ -7495,7 +7495,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jAllSpecialBtn" style="display:none;"></button>
   <button id="jNearLevelBtn" style="display:none;"></button>
   <button id="jHotOnlyBtn" style="display:none;"></button>
-  <button id="jMoonshotBtn" onclick="_toggleMoonshot()" title="🚀 MOONSHOT: пары с stack ≥ 4 distinct sources в окне ±3h (multiple confirmations align — pre-pump signature)" style="background:linear-gradient(135deg, rgba(255,140,80,0.15), rgba(255,215,0,0.10));border:1px solid rgba(255,140,80,0.5);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ff8c50;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">🚀 Moonshot · OFF</button>
+  <button id="jTopBestBtn" onclick="_toggleTopBest()" title="🏆 TOP-7 BEST: фильтр по 7 лучшим источникам по backtest (triple_confluence 61% / st_vip 60% / confluence 55% / 🐋 WHALE 53.8% / 🧠 combo 52.5% / 🐋 WHALE PREMIUM 47% high-MFE / cv_flip 43%). Скрывает остальные источники." style="background:linear-gradient(135deg, rgba(255,215,0,0.18), rgba(0,229,160,0.10));border:1.5px solid rgba(255,215,0,0.6);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ffd23e;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">🏆 TOP-7 · OFF</button>
   <button id="jHighScoreBtn" style="display:none;"></button>
   <button id="j4hStateBtn" onclick="_toggle4hState()" title="⚡ 4h State filter: RSI>SMA на 4h для LONG, RSI<SMA для SHORT. Faster reaction than 12h." style="background:linear-gradient(135deg, rgba(0,229,160,0.10), rgba(0,128,255,0.06));border:1px solid rgba(0,229,160,0.4);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#88d8a3;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">⚡ +4h state · OFF</button>
   <button id="j12hStateBtn" onclick="_toggle12hState()" title="⚡ 12h State filter: RSI>SMA на 12h для LONG, RSI<SMA для SHORT. По backtest 14d: +14-17 WR пп для всех источников. Скрывает signals где state против direction." style="background:linear-gradient(135deg, rgba(0,229,160,0.12), rgba(0,128,255,0.08));border:1px solid rgba(0,229,160,0.5);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:700;">⚡ +12h state · OFF</button>
@@ -9282,9 +9282,18 @@ function filterJournal() {
     if (window._journalHotOnly) {
       if ((s.q_score || 0) < 60) return false;
     }
-    // 🚀 Moonshot only — stack_distinct >= 4 (multiple sources align)
-    if (window._journalMoonshot) {
-      if ((s.stack_distinct || 0) < 4) return false;
+    // 🏆 TOP-7 BEST only — фильтр по 7 лучшим backtest-validated источникам.
+    // Ranking (по WR×MFE×N): triple_confluence > st_vip > confluence > WHALE >
+    // combo > cv_flip. WHALE MARGINAL отрезан (он < baseline).
+    if (window._journalTopBest) {
+      const isTC = s.source === 'triple_confluence';
+      const isVIP = s.source === 'supertrend' && s.st_tier === 'vip';
+      const isConf = s.source === 'confluence';
+      const isWhale = s.source === 'whale' &&
+        (s.whale_tier === 'STANDARD' || s.whale_tier === 'PREMIUM' || !s.whale_tier);
+      const isCombo = s.source === 'combo';
+      const isCvFlip = s.source === 'cv_flip';
+      if (!(isTC || isVIP || isConf || isWhale || isCombo || isCvFlip)) return false;
     }
     // 🎯 High Score only — confluence_score >= 70 (high-conviction setups)
     if (window._journalHighScore) {
@@ -9639,26 +9648,21 @@ function _toggleHighScore() {
   requestAnimationFrame(() => window.scrollTo({top: scrollY, behavior: 'instant'}));
 }
 
-function _toggleMoonshot() {
-  window._journalMoonshot = !window._journalMoonshot;
-  const btn = document.getElementById('jMoonshotBtn');
+function _toggleTopBest() {
+  window._journalTopBest = !window._journalTopBest;
+  const btn = document.getElementById('jTopBestBtn');
   if (btn) {
-    if (window._journalMoonshot) {
-      btn.style.background = 'linear-gradient(135deg, rgba(255,140,80,0.30), rgba(255,215,0,0.20))';
-      btn.style.borderColor = '#ff8c50';
-      btn.style.color = '#ff8c50';
-      btn.textContent = '🚀 Moonshot · ON';
+    if (window._journalTopBest) {
+      btn.style.background = 'linear-gradient(135deg, rgba(255,215,0,0.35), rgba(0,229,160,0.20))';
+      btn.style.borderColor = '#ffd23e';
+      btn.style.color = '#ffd23e';
+      btn.textContent = '🏆 TOP-7 · ON';
     } else {
-      btn.style.background = 'linear-gradient(135deg, rgba(255,140,80,0.15), rgba(255,215,0,0.10))';
-      btn.style.borderColor = 'rgba(255,140,80,0.5)';
-      btn.style.color = '#ff8c50';
-      btn.textContent = '🚀 Moonshot · OFF';
+      btn.style.background = 'linear-gradient(135deg, rgba(255,215,0,0.18), rgba(0,229,160,0.10))';
+      btn.style.borderColor = 'rgba(255,215,0,0.6)';
+      btn.style.color = '#ffd23e';
+      btn.textContent = '🏆 TOP-7 · OFF';
     }
-  }
-  // Auto-sort by stack_distinct desc when enabling
-  if (window._journalMoonshot && window._journalSort !== 'stack_distinct') {
-    window._journalSort = 'stack_distinct';
-    window._journalSortDir = 'desc';
   }
   const scrollY = window.scrollY;
   filterJournal();

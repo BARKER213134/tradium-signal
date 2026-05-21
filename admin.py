@@ -11143,6 +11143,9 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "ns_state": n.get("state", "WAITING"),
                 "ns_vol_ratio": n.get("vol_ratio"),
                 "ns_sources": n.get("sources"),
+                # WHALE tier (используется в TOP-7 filter в журнале)
+                "whale_tier": n.get("whale_tier"),
+                "whale_score": n.get("whale_score"),
                 "tp_R": n.get("tp_R"),
                 "rr": n.get("tp_R"),
                 "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
