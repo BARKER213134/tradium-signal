@@ -142,7 +142,10 @@ TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET", "tv_f9c3a8b2d4e7f6a1b8c5d9e2f
 # Список ботов для UI
 # category: 'crypto' | 'stocks' (forex/metals/indices/energy через FVG)
 BOTS = [
-    {"id": "tradium", "label": "Tradium", "category": "crypto"},
+    # Tradium tab убран из меню (commit removes from nav).
+    # Journal showing all sources (incl Tradium). Template остаётся для
+    # прямого URL access /signals?bot=tradium если понадобится.
+    # {"id": "tradium", "label": "Tradium", "category": "crypto"},
     {"id": BOT2_NAME, "label": BOT2_LABEL, "category": "crypto"},
     {"id": "anomaly", "label": "Аномалии", "category": "crypto"},
     {"id": "confluence", "label": "Confluence", "category": "crypto"},
