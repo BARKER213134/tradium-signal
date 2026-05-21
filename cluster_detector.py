@@ -166,6 +166,44 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
                          "is_top_pick": bool(cl.get("is_top_pick"))},
             })
 
+        # New Strategy Signals — whale/shark/combo/volume_surge/triple_confluence/
+        # vol_accum/volcano/second_flip. Для chart markers в журнале (без этого
+        # на графике не было 🐋/🦈/🧠/🌊 etc эмодзи на pair-signals fallback path).
+        try:
+            from database import _get_db
+            nss = _get_db().new_strategy_signals
+            for s in nss.find({
+                "created_at": {"$gte": start, "$lte": end_at},
+                "direction": direction,
+                "$or": [{"symbol": norm.replace("/", "")}, {"pair": norm}],
+            }):
+                strat = s.get("strategy", "?")
+                # Meta — стратегия-специфичная info для tooltip
+                meta = {}
+                if strat == "whale":
+                    meta = {"tier": s.get("whale_tier"),
+                            "score": s.get("whale_score"),
+                            "indicators": s.get("whale_indicators")}
+                elif strat == "shark":
+                    meta = {"tier": s.get("shark_tier"),
+                            "score": s.get("shark_score"),
+                            "indicators": s.get("shark_indicators")}
+                elif strat == "combo":
+                    meta = {"score": s.get("combo_score"),
+                            "trigger": s.get("trigger_source"),
+                            "preceding": s.get("preceding_sources")}
+                else:
+                    meta = {"vol_ratio": s.get("vol_ratio"),
+                            "source_count": s.get("source_count")}
+                out.append({
+                    "source": strat,
+                    "at": s["created_at"],
+                    "price": s.get("entry"),
+                    "meta": meta,
+                })
+        except Exception:
+            pass  # mongo unavailable / коллекция отсутствует — не блокируем основной flow
+
     out.sort(key=lambda x: x["at"])
     return out
 

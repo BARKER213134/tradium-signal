@@ -11130,7 +11130,7 @@ def _compute_journal_sync(_fast_only: bool = False):
         from database import _get_db, utcnow as _ns_utcnow
         from datetime import timedelta as _td
         nss_col = _get_db().new_strategy_signals
-        nss_since = _ns_utcnow() - _td(hours=168)  # last 7d
+        nss_since = _ns_utcnow() - _td(hours=336)  # last 14d (раньше 7d)
         STRAT_EMOJI = {"volume_surge": "🌊", "triple_confluence": "🐉",
                         "vol_accum": "🔋", "volcano": "🌋",
                         "second_flip": "♻️", "combo": "🧠", "whale": "🐋",

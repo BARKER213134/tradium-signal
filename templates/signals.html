@@ -5392,7 +5392,7 @@ async function _renderPaperChart(idx, tf) {
       for (const c of d.candles) { const diff = Math.abs(c.time - ts); if (diff < minD) { minD = diff; mc = c; } }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳'};
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️'};
     const entryTs = p.opened_at ? Math.floor(new Date(p.opened_at).getTime()/1000) : 0;
     const mainMc = nearestP(entryTs);
     const isLong = p.direction === 'LONG';
@@ -11291,7 +11291,7 @@ async function openJournalChart(idx, forceTF) {
       }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳'};
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️'};
     const modalMarkerMap = new Map();
 
     // Базовая строка для сопоставления символа: нормализуем к "BTCUSDT"
