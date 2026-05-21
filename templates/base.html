@@ -269,6 +269,46 @@
             border-color: rgba(0,255,255,0.35);
         }
 
+        /* ━━━ 🐋 WHALE (LONG) — production star — синий glow ━━━ */
+        .bot-switch[data-bot="whale"] {
+            background: linear-gradient(135deg, rgba(0,140,255,0.18), rgba(0,200,255,0.10));
+            color: #00c8ff;
+            border-color: rgba(0,140,255,0.55);
+            font-weight: 800;
+            box-shadow: 0 0 8px rgba(0,140,255,0.25), inset 0 0 4px rgba(0,200,255,0.15);
+        }
+        .bot-switch[data-bot="whale"]:hover {
+            background: linear-gradient(135deg, rgba(0,140,255,0.28), rgba(0,200,255,0.18));
+            color: #5fdfff;
+            box-shadow: 0 0 14px rgba(0,140,255,0.45), inset 0 0 6px rgba(0,200,255,0.25);
+        }
+        .bot-switch[data-bot="whale"].active {
+            background: linear-gradient(135deg, rgba(0,140,255,0.38), rgba(0,200,255,0.22));
+            color: #fff;
+            border-color: #00c8ff;
+            box-shadow: 0 0 18px rgba(0,140,255,0.7), inset 0 0 10px rgba(0,200,255,0.35);
+        }
+
+        /* ━━━ 🦈 SHARK (SHORT) — production star — красный glow ━━━ */
+        .bot-switch[data-bot="shark"] {
+            background: linear-gradient(135deg, rgba(255,77,109,0.18), rgba(255,140,80,0.10));
+            color: #ff4d6d;
+            border-color: rgba(255,77,109,0.55);
+            font-weight: 800;
+            box-shadow: 0 0 8px rgba(255,77,109,0.25), inset 0 0 4px rgba(255,140,80,0.15);
+        }
+        .bot-switch[data-bot="shark"]:hover {
+            background: linear-gradient(135deg, rgba(255,77,109,0.28), rgba(255,140,80,0.18));
+            color: #ff7d96;
+            box-shadow: 0 0 14px rgba(255,77,109,0.45), inset 0 0 6px rgba(255,140,80,0.25);
+        }
+        .bot-switch[data-bot="shark"].active {
+            background: linear-gradient(135deg, rgba(255,77,109,0.38), rgba(255,140,80,0.22));
+            color: #fff;
+            border-color: #ff4d6d;
+            box-shadow: 0 0 18px rgba(255,77,109,0.7), inset 0 0 10px rgba(255,140,80,0.35);
+        }
+
         /* ── Key Level badges ── */
         .kl-badge {
             display: inline-block;
