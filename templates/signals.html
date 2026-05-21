@@ -7048,7 +7048,7 @@ loadForexJournal();
 safeInterval(loadForexJournal, 30000);
 </script>
 
-{% elif bot == 'journal' or bot == 'hot_now' %}
+{% elif bot == 'journal' or bot == 'hot_now' or bot == 'prepump' %}
 {% if bot == 'journal' %}
 <style>
 /* Компактная разметка ячеек журнала */
@@ -11373,7 +11373,7 @@ async function clearProcessed() {
 </div>
 {% endif %}
 
-{% if cv_tab not in ('backtest', 'ai_settings') %}
+{% if bot == 'tradium' and cv_tab not in ('backtest', 'ai_settings') %}
 <div class="select-all">
   <label><input type="checkbox" id="selectAll"> Выбрать все ({{ total }})</label>
   <button id="deleteBtn" class="delete-btn" onclick="deleteSelected()" style="display:none;">
