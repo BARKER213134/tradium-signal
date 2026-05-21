@@ -379,7 +379,8 @@ def scan_recent_flips_for_whale(pairs: list[str] | None = None,
 
     stats = {'scanned': 0, 'flips_found': 0, 'fired': 0,
              'by_tier': {'PREMIUM': 0, 'STANDARD': 0, 'MARGINAL': 0},
-             'errors': 0, 'examples': []}
+             'errors': 0, 'examples': [],
+             'fired_docs': []}  # full docs for TG dispatch by caller
     now_ts = int(datetime.now(timezone.utc).timestamp())
     cutoff_ms = (now_ts - lookback_hours * 3600) * 1000
     cooldown_dt = datetime.now(timezone.utc) - timedelta(seconds=WHALE_COOLDOWN_S_LIVE)
@@ -488,6 +489,8 @@ def scan_recent_flips_for_whale(pairs: list[str] | None = None,
                     'score': score_res['score'],
                     'flip_at': flip_dt.isoformat(),
                 })
+                # Полный doc для TG dispatch (caller хочет передать в _whale_send_telegram)
+                stats['fired_docs'].append(dict(doc))
                 logger.info(f'[whale-scan] 🐋 SCANNED {pair} {tier} '
                              f'score={score_res["score"]} '
                              f'flip_at={flip_dt.strftime("%H:%M")}')

@@ -648,7 +648,8 @@ def scan_recent_flips_for_shark(pairs: list[str] | None = None,
 
     stats = {'scanned': 0, 'flips_found': 0, 'fired': 0,
              'by_tier': {'PREMIUM': 0, 'STANDARD': 0, 'MARGINAL': 0},
-             'errors': 0, 'examples': []}
+             'errors': 0, 'examples': [],
+             'fired_docs': []}
     now_ts = int(datetime.now(timezone.utc).timestamp())
     cutoff_ms = (now_ts - lookback_hours * 3600) * 1000
     cooldown_dt = datetime.now(timezone.utc) - timedelta(seconds=SHARK_COOLDOWN_S_LIVE)
@@ -755,6 +756,7 @@ def scan_recent_flips_for_shark(pairs: list[str] | None = None,
                     'score': score_res['score'],
                     'flip_at': flip_dt.isoformat(),
                 })
+                stats['fired_docs'].append(dict(doc))
                 logger.info(f'[shark-scan] 🦈 SCANNED {pair} {tier} '
                              f'score={score_res["score"]}')
             except Exception as e:

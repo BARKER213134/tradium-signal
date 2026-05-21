@@ -79,7 +79,9 @@ async def _st_tracker_loop():
 
 
 async def _whale_scanner_loop():
-    """🐋 WHALE safety-net scanner — каждые 30 мин."""
+    """🐋 WHALE safety-net scanner — каждые 30 мин. TG dispatch напрямую
+    из fired_docs (раньше был баг: query по created_at brought 0 because
+    scanner uses flip_time как created_at, а cutoff искал 2-min window)."""
     import asyncio as _asyncio
     await _asyncio.sleep(60)
     while True:
@@ -88,49 +90,35 @@ async def _whale_scanner_loop():
             stats = await _asyncio.to_thread(scan_recent_flips_for_whale, None, 6)
             if stats.get('fired', 0) > 0:
                 logger.info(f'[whale-scan-loop] fired {stats["fired"]} '
-                             f'(tiers={stats["by_tier"]})')
-                try:
-                    from datetime import datetime, timezone, timedelta
-                    from database import _get_db
-                    db = _get_db()
-                    cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
-                    for doc in db.new_strategy_signals.find({
-                        'strategy': 'whale', 'state': 'SCANNED',
-                        'created_at': {'$gte': cutoff},
-                    }).sort('created_at', -1).limit(10):
-                        try: await _whale_send_telegram(doc)
-                        except Exception: pass
-                except Exception:
-                    logger.debug('[whale-scan-loop] tg notify fail', exc_info=True)
+                             f'(tiers={stats["by_tier"]}) — sending TG')
+                # FIX: шлём из fired_docs напрямую, не запрашиваем DB по дате.
+                for doc in stats.get('fired_docs', []):
+                    try:
+                        await _whale_send_telegram(doc)
+                    except Exception as _e:
+                        logger.debug(f'[whale-scan-loop] tg send {doc.get("pair")}: {_e}')
         except Exception:
             logger.exception('[whale-scan-loop] crashed')
         await _asyncio.sleep(30 * 60)
 
 
 async def _shark_scanner_loop():
-    """🦈 SHARK safety-net scanner — каждые 30 мин (mirror WHALE)."""
+    """🦈 SHARK safety-net scanner — каждые 30 мин (mirror WHALE).
+    TG dispatch напрямую из fired_docs."""
     import asyncio as _asyncio
-    await _asyncio.sleep(90)  # offset 30s от WHALE чтоб не конкурировать за CPU
+    await _asyncio.sleep(90)  # offset от WHALE
     while True:
         try:
             from shark_detector import scan_recent_flips_for_shark
             stats = await _asyncio.to_thread(scan_recent_flips_for_shark, None, 6)
             if stats.get('fired', 0) > 0:
                 logger.info(f'[shark-scan-loop] fired {stats["fired"]} '
-                             f'(tiers={stats["by_tier"]})')
-                try:
-                    from datetime import datetime, timezone, timedelta
-                    from database import _get_db
-                    db = _get_db()
-                    cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
-                    for doc in db.new_strategy_signals.find({
-                        'strategy': 'shark', 'state': 'SCANNED',
-                        'created_at': {'$gte': cutoff},
-                    }).sort('created_at', -1).limit(10):
-                        try: await _shark_send_telegram(doc)
-                        except Exception: pass
-                except Exception:
-                    logger.debug('[shark-scan-loop] tg notify fail', exc_info=True)
+                             f'(tiers={stats["by_tier"]}) — sending TG')
+                for doc in stats.get('fired_docs', []):
+                    try:
+                        await _shark_send_telegram(doc)
+                    except Exception as _e:
+                        logger.debug(f'[shark-scan-loop] tg send {doc.get("pair")}: {_e}')
         except Exception:
             logger.exception('[shark-scan-loop] crashed')
         await _asyncio.sleep(30 * 60)
@@ -2510,12 +2498,15 @@ def _setup_bot16():
 
 
 async def _whale_send_telegram(doc: dict):
-    """Шлёт WHALE alert в BOT16. Fallback на основной BOT если BOT16 нет."""
+    """Шлёт WHALE alert в BOT16. Fallback на основной BOT если BOT16 нет.
+    Шлёт BOTH STANDARD + PREMIUM (MARGINAL уже отрезан в maybe_fire_whale)."""
     global _bot16
     from config import WHALE_CHAT_ID, WHALE_MIN_TIER
     tier = doc.get('whale_tier', '?')
-    # Filter by min_tier (default STANDARD)
+    # WHALE_MIN_TIER='PREMIUM' блокирует STANDARD (опциональный strict mode).
+    # По умолчанию STANDARD — пропускаем всё что прошло maybe_fire (STANDARD+PREMIUM).
     if WHALE_MIN_TIER == 'PREMIUM' and tier != 'PREMIUM':
+        logger.debug(f'[whale-tg] skip {tier} (WHALE_MIN_TIER=PREMIUM)')
         return
     tier_emoji = '👑' if tier == 'PREMIUM' else ('🥈' if tier == 'STANDARD' else '?')
     pair = doc.get('pair', '?')
