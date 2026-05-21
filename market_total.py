@@ -53,6 +53,32 @@ TOP_ALTS = [
     ("HBARUSDT", "hedera-hashgraph"),
 ]
 
+# Hardcoded fallback supplies (circulating supply, рефреш ~раз в квартал).
+# Используется если CoinGecko API недоступен/rate-limited.
+# Snapshot от мая 2026:
+FALLBACK_SUPPLIES = {
+    "ethereum":          120_400_000,
+    "binancecoin":       140_000_000,
+    "solana":            540_000_000,
+    "ripple":            59_300_000_000,
+    "dogecoin":          150_500_000_000,
+    "cardano":           36_000_000_000,
+    "avalanche-2":       418_000_000,
+    "tron":              94_900_000_000,
+    "chainlink":         657_000_000,
+    "polkadot":          1_500_000_000,
+    "litecoin":          76_000_000,
+    "near":              1_200_000_000,
+    "cosmos":            400_000_000,
+    "arbitrum":          5_000_000_000,
+    "optimism":          1_700_000_000,
+    "the-open-network":  3_400_000_000,
+    "shiba-inu":         589_000_000_000_000,
+    "pepe":              420_690_000_000_000,
+    "fetch-ai":          2_700_000_000,
+    "hedera-hashgraph":  42_000_000_000,
+}
+
 _cache: dict = {}
 _CACHE_TTL = 300.0  # 5 min
 _SUPPLY_CACHE_TTL = 6 * 3600.0  # supplies change slowly, cache 6h
@@ -61,7 +87,9 @@ _http = httpx.Client(timeout=15.0)
 
 
 def _fetch_supplies() -> dict[str, float]:
-    """Returns {coingecko_id: circulating_supply}. Cached 6h."""
+    """Returns {coingecko_id: circulating_supply}. Cached 6h.
+    Fallback: hardcoded FALLBACK_SUPPLIES если CoinGecko rate-limited/down.
+    """
     now = time.time()
     cached = _cache.get("supplies")
     if cached and (now - cached[0]) < _SUPPLY_CACHE_TTL:
@@ -70,35 +98,48 @@ def _fetch_supplies() -> dict[str, float]:
     try:
         r = _http.get(
             "https://api.coingecko.com/api/v3/coins/markets",
-            params={"vs_currency": "usd", "ids": ids, "per_page": 100, "page": 1}
+            params={"vs_currency": "usd", "ids": ids, "per_page": 100, "page": 1},
+            timeout=10.0,
         )
-        if r.status_code != 200:
-            logger.warning(f"[total2] supplies fetch HTTP {r.status_code}")
-            return cached[1] if cached else {}
-        data = r.json()
-        out = {}
-        for item in data:
-            cg_id = item.get("id")
-            supply = item.get("circulating_supply") or 0
-            if cg_id and supply > 0:
-                out[cg_id] = float(supply)
-        _cache["supplies"] = (now, out)
-        logger.info(f"[total2] fetched supplies for {len(out)} coins")
-        return out
-    except Exception:
-        logger.exception("[total2] supplies fetch fail")
-        return cached[1] if cached else {}
+        if r.status_code == 200:
+            data = r.json()
+            out = {}
+            for item in data:
+                cg_id = item.get("id")
+                supply = item.get("circulating_supply") or 0
+                if cg_id and supply > 0:
+                    out[cg_id] = float(supply)
+            if len(out) >= 15:  # at least 15 of 20 must succeed
+                _cache["supplies"] = (now, out)
+                logger.info(f"[total2] fetched supplies from CoinGecko: {len(out)} coins")
+                return out
+        logger.warning(f"[total2] CoinGecko HTTP {r.status_code} — using fallback supplies")
+    except Exception as e:
+        logger.warning(f"[total2] CoinGecko fail ({e}) — using fallback supplies")
+    # Fallback to hardcoded supplies
+    if cached:
+        return cached[1]
+    out = dict(FALLBACK_SUPPLIES)
+    _cache["supplies"] = (now, out)
+    logger.info(f"[total2] using FALLBACK_SUPPLIES: {len(out)} coins")
+    return out
 
 
 def _fetch_klines_binance(symbol: str, interval: str = "4h",
                           limit: int = 360) -> list[dict]:
-    """Fetch klines. Primary: Binance Futures live API. Fallback: Vision CDN
-    (для случаев когда IP заблокирован Binance — HTTP 451)."""
-    # 1. Try live API
+    """Fetch klines. Primary: Vision CDN (всегда работает).
+    Если хочется свежее данные (today), будет fallback на fapi — но Vision
+    хватает для bias (1-2h lag некритично)."""
+    # Vision CDN — primary path (works on any IP, no rate limits)
+    out = _fetch_klines_vision(symbol, interval, days=60)
+    if out and len(out) >= 50:
+        return out
+    # Fallback: try fapi (might work on some IPs)
     try:
         r = _http.get(
             "https://fapi.binance.com/fapi/v1/klines",
-            params={"symbol": symbol, "interval": interval, "limit": limit}
+            params={"symbol": symbol, "interval": interval, "limit": limit},
+            timeout=5.0,  # don't hang on blocked IPs
         )
         if r.status_code == 200:
             rows = r.json()
@@ -108,8 +149,7 @@ def _fetch_klines_binance(symbol: str, interval: str = "4h",
             } for row in rows]
     except Exception:
         pass
-    # 2. Fallback: Vision CDN — статические дневные zip-файлы
-    return _fetch_klines_vision(symbol, interval, days=60)
+    return out  # may be empty
 
 
 def _fetch_klines_vision(symbol: str, interval: str = "4h",
@@ -155,6 +195,7 @@ def _compute_total2_series(interval: str = "4h") -> list[dict]:
     """
     supplies = _fetch_supplies()
     if not supplies:
+        logger.error("[total2] no supplies — abort series build")
         return []
 
     # Fetch klines in parallel
@@ -167,6 +208,13 @@ def _compute_total2_series(interval: str = "4h") -> list[dict]:
         for sym, cg_id, klines in tp.map(_fetch, TOP_ALTS):
             klines_by_symbol[(sym, cg_id)] = klines
 
+    # Diagnostic — count which alts gave us klines
+    coins_with_data = sum(1 for kl in klines_by_symbol.values() if kl)
+    coins_empty = [s for (s, _), kl in klines_by_symbol.items() if not kl]
+    logger.info(f"[total2] coins with klines: {coins_with_data}/{len(TOP_ALTS)}")
+    if coins_empty:
+        logger.warning(f"[total2] coins with NO klines: {coins_empty}")
+
     # Aggregate per timestamp
     by_ts: dict[int, float] = {}
     for (sym, cg_id), klines in klines_by_symbol.items():
@@ -178,6 +226,7 @@ def _compute_total2_series(interval: str = "4h") -> list[dict]:
             by_ts[k["t"]] = by_ts.get(k["t"], 0) + mcap
 
     series = [{"t": t, "c": v} for t, v in sorted(by_ts.items())]
+    logger.info(f"[total2] series built: {len(series)} 4H bars")
     return series
 
 
