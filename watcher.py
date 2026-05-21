@@ -3304,12 +3304,11 @@ async def _paper_on_signal(signal_data: dict):
     except Exception as e:
         logger.debug(f"[on-signal-fill] schedule fail: {e}")
 
-    # ── EARLY ENTRY trigger ──
-    # Если пара уже в pre_pump WATCH/STRONG/PRIME state (накопление detected)
-    # И прилетает новый сигнал — это РАННИЙ entry, до того как PRIME composite
-    # окончательно сработает (которое уже слишком поздно — после breakout).
-    # Идея: pre_pump WATCH = "взвели курок", new signal = "спуск курка".
-    try:
+    # ── EARLY ENTRY trigger — DISABLED ──
+    # Замена: 🧠 COMBO signal (combo_detector.maybe_fire_combo) который
+    # использует weighted scoring и более узкие триггеры (st_vip + TC).
+    _DISABLED_EARLY_ENTRY = True
+    if False and _DISABLED_EARLY_ENTRY:  # blocker — execution to skip block
         _pair_ee = signal_data.get("pair") or ""
         if not _pair_ee and signal_data.get("symbol"):
             _s_ee = signal_data["symbol"]
@@ -3381,8 +3380,6 @@ async def _paper_on_signal(signal_data: dict):
                     logger.debug(f"[early-entry] {_pair_ee}: {_ee_err}")
             # Fire-and-forget (не блокируем _paper_on_signal)
             asyncio.create_task(_check_early_entry())
-    except Exception as _ee_top:
-        logger.debug(f"[early-entry] outer fail: {_ee_top}")
 
     # ── 🧠 COMBO detector ──
     # Composite signal — основан на backtest precondition analysis 14d.
@@ -4803,13 +4800,13 @@ async def start_watcher():
         logger.info("[journal-warm] background loop started")
     except Exception:
         logger.exception("[journal-warm] warmer loop failed")
-    # Pre-Pump Predictor scanner — leading indicators (volume/OI/funding/BB)
-    # Detects pre-pump candidates via composite score 0-100
-    try:
-        asyncio.create_task(_pre_pump_predictor_loop())
-        logger.info("[pre-pump] predictor loop started")
-    except Exception:
-        logger.exception("[pre-pump] predictor loop failed")
+    # Pre-Pump Predictor scanner — DISABLED (backtest показал что edge
+    # только в triple_confluence/st_vip которые уже есть. Заменён на 🧠 COMBO.)
+    # try:
+    #     asyncio.create_task(_pre_pump_predictor_loop())
+    #     logger.info("[pre-pump] predictor loop started")
+    # except Exception:
+    #     logger.exception("[pre-pump] predictor loop failed")
     # [DISABLED] Cluster Delta auto-backfill — был источник 418 banов от
     # Binance fapi/klines. Теперь backfill только вручную через
     # POST /api/cluster-delta/backfill-cdn (статический CDN, без rate limit).

@@ -157,7 +157,9 @@ BOTS = [
     # anti_cluster_detector. Включить обратно: раскомментировать строку.
     {"id": "entry_checker", "label": "🎯 Entry Checker", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
-    {"id": "prepump", "label": "🔥 Pre-Pump", "category": "crypto"},
+    # Pre-Pump удалён — backtest показал что edge только в triple_confluence
+    # и st_vip которые уже есть в журнале. Заменён на 🧠 COMBO signal.
+    # {"id": "prepump", "label": "🔥 Pre-Pump", "category": "crypto"},
     # HOT NOW убран — не работает нормально. Template остаётся для direct URL access.
     # {"id": "hot_now", "label": "🔥 HOT NOW", "category": "crypto"},
     {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
