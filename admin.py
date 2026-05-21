@@ -9925,6 +9925,37 @@ async def api_prepump_candidates(tier: str = "", limit: int = 200, hours: int = 
     return {'items': deduped, 'count': len(deduped)}
 
 
+@app.post("/api/prepump/early-backtest/start")
+async def api_prepump_early_backtest_start():
+    """Запускает EARLY_ENTRY backtest на исторических signals (без composite)."""
+    import prepump_early_entry_backtest as eb
+    state = eb._get_state()
+    if state.get('running'):
+        return {'started': False, 'reason': 'already running', 'state': state}
+    asyncio.create_task(asyncio.to_thread(eb.run_early_entry_backtest))
+    return {'started': True}
+
+
+@app.get("/api/prepump/early-backtest/status")
+async def api_prepump_early_backtest_status():
+    import prepump_early_entry_backtest as eb
+    from database import _get_db
+    state = eb._get_state()
+    out = {'state': state}
+    try:
+        db = _get_db()
+        report = db.prepump_early_backtest_report.find_one({}, {'_id': 0})
+        if report:
+            for k in ['started_at', 'finished_at']:
+                v = report.get(k)
+                if hasattr(v, 'isoformat'):
+                    report[k] = v.isoformat()
+            out['report'] = report
+    except Exception:
+        pass
+    return out
+
+
 @app.get("/api/prepump/early-entries")
 async def api_prepump_early_entries(pair: str = "", hours: int = 168, limit: int = 200):
     """Early entry triggers — pair was в pre_pump WATCH+ tier И прилетел свежий signal.
