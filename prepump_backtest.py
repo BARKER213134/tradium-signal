@@ -262,9 +262,10 @@ def compute_score_at(k1h: list, oi_hist: list, funding_hist: list,
     score += components['rsi_comp']
 
     score = round(score, 1)
-    if score >= 75: tier = 'PRIME'
-    elif score >= 60: tier = 'STRONG'
-    elif score >= 45: tier = 'WATCH'
+    # NEW thresholds (after backtest 20d showed score≥60 = WR 100%)
+    if score >= 60: tier = 'PRIME'
+    elif score >= 50: tier = 'STRONG'
+    elif score >= 40: tier = 'WATCH'
     else: tier = 'norm'
 
     return {'composite_score': score, 'tier': tier,
@@ -348,7 +349,25 @@ def run_backtest_sync() -> dict:
                      f'(fapi top×BingX intersect, fapi_top={len(fapi_top)}, '
                      f'bingx={len(bingx_pairs)})')
 
-        # Step 2: For each pair fetch full historical data
+        # Step 2: Pre-fetch sectors для всех пар (для sector rotation detection)
+        try:
+            from sectors_coingecko import get_sectors
+            pair_sectors_map = {}
+            for p in pairs:
+                try:
+                    cats = get_sectors(p)
+                    if cats: pair_sectors_map[p] = cats
+                except Exception:
+                    pass
+            logger.info(f'[bt-prepump] fetched sectors for {len(pair_sectors_map)} pairs')
+        except Exception as e:
+            logger.warning(f'[bt-prepump] sector fetch fail: {e}')
+            pair_sectors_map = {}
+
+        # Step 3: For each pair fetch full historical data
+        # Будем также собирать pair_hourly_vol_scores для последующего sector activity check
+        pair_hourly_vol_scores: dict = {}  # pair -> {hour_ms: vol_score}
+        pair_data_cache: dict = {}  # pair -> (k1h_raw, oi_hist, fr_hist, uniq15)
         all_triggers = []
         for pi, pair in enumerate(pairs, 1):
             _state['last_pair'] = pair
@@ -378,27 +397,77 @@ def run_backtest_sync() -> dict:
 
                 if len(uniq15) < 100: continue
 
-                # Step 3: Scan hourly bars от last 30d backward
+                # Cache full data per pair for second pass (sector detection)
+                pair_data_cache[pair] = (k1h_raw, oi_hist, fr_hist, uniq15)
+
+                # Compute vol_score per hour для sector activity detection
+                hourly_vol_scores = {}
+                for hidx in range(168, len(k1h_raw), SCAN_HOUR_STEP):
+                    closes_w = [k['c'] for k in k1h_raw[:hidx+1]]
+                    usd_vols = [k1h_raw[i]['c'] * k1h_raw[i]['v'] for i in range(hidx+1)]
+                    vol_24h = sum(usd_vols[-24:])
+                    vol_7d_total = sum(usd_vols[-168:])
+                    vol_avg_7d = vol_7d_total / 7.0
+                    vol_score_h = (vol_24h / vol_avg_7d) if vol_avg_7d > 0 else 0
+                    hourly_vol_scores[k1h_raw[hidx]['t']] = vol_score_h
+                pair_hourly_vol_scores[pair] = hourly_vol_scores
+            except Exception as e:
+                logger.debug(f'[bt-prepump] pair {pair} fetch: {e}')
+
+        # === SECTOR ACTIVITY DETECTION (per hour, retroactively) ===
+        logger.info('[bt-prepump] computing sector activity per hour...')
+        # active_sectors_at_hour: {hour_ms: set(active_sector_slugs)}
+        active_sectors_at_hour: dict = {}
+        # Collect all unique hours
+        all_hours = set()
+        for p, hs in pair_hourly_vol_scores.items():
+            for h in hs: all_hours.add(h)
+        for h in all_hours:
+            # Count pairs per sector with vol_score >= 1.5 at this hour
+            sector_counts = defaultdict(int)
+            for p, hs in pair_hourly_vol_scores.items():
+                vs = hs.get(h, 0)
+                if vs < 1.5: continue
+                for sect in pair_sectors_map.get(p, []):
+                    sector_counts[sect] += 1
+            active = set(s for s, c in sector_counts.items() if c >= 2)
+            if active:
+                active_sectors_at_hour[h] = active
+
+        active_hours_count = len(active_sectors_at_hour)
+        logger.info(f'[bt-prepump] {active_hours_count} hours with active sectors '
+                     f'(из {len(all_hours)} total)')
+
+        # === SECOND PASS: compute triggers WITH sector_active ===
+        _state['triggers_found'] = 0
+        all_triggers = []
+        for pi, pair in enumerate(pairs, 1):
+            data = pair_data_cache.get(pair)
+            if not data: continue
+            k1h_raw, oi_hist, fr_hist, uniq15 = data
+            try:
                 now_ms = int(time.time() * 1000)
                 cutoff_ms = now_ms - LOOKBACK_DAYS * 86400 * 1000
-                # last_trigger_ts чтобы не спамить (rate limit 4h per pair)
                 last_trigger_ts = 0
+                pair_secs = pair_sectors_map.get(pair, [])
 
                 for idx in range(200, len(k1h_raw), SCAN_HOUR_STEP):
                     bar_ts_ms = k1h_raw[idx]['t']
                     if bar_ts_ms < cutoff_ms: continue
-                    # Skip если less than 72h forward данных
                     if bar_ts_ms + 72 * 3600 * 1000 > now_ms - 60000: break
 
-                    res = compute_score_at(k1h_raw, oi_hist, fr_hist, idx, sector_active=False)
+                    # Sector active flag для этого часа
+                    active_secs_now = active_sectors_at_hour.get(bar_ts_ms, set())
+                    is_sector_active = any(s in active_secs_now for s in pair_secs)
+
+                    res = compute_score_at(k1h_raw, oi_hist, fr_hist, idx,
+                                              sector_active=is_sector_active)
                     if res['composite_score'] < MIN_SCORE_FOR_RECORD: continue
 
-                    # Rate limit per pair (4h between same-pair triggers)
                     if bar_ts_ms - last_trigger_ts < 4 * 3600 * 1000:
                         continue
                     last_trigger_ts = bar_ts_ms
 
-                    # Forward sim
                     entry_price = k1h_raw[idx]['c']
                     outcome = sim_forward_15m(uniq15, bar_ts_ms, entry_price, res['direction'])
                     if not outcome: continue
@@ -414,12 +483,14 @@ def run_backtest_sync() -> dict:
                         'vol_score': res.get('vol_score', 0),
                         'oi_growth': res.get('oi_growth', 0),
                         'funding_avg': res.get('funding_avg', 0),
+                        'sector_active': is_sector_active,
+                        'sectors': pair_secs,
                         **outcome,
                     }
                     all_triggers.append(trig)
                     _state['triggers_found'] = len(all_triggers)
             except Exception as e:
-                logger.debug(f'[bt-prepump] pair {pair}: {e}')
+                logger.debug(f'[bt-prepump] pair {pair} score: {e}')
 
         _state['pairs_done'] = len(pairs)
         logger.info(f'[bt-prepump] total triggers={len(all_triggers)}, analyzing...')

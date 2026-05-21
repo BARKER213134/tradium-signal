@@ -207,11 +207,11 @@ def predict_pair(pair: str, sector_active: bool = False) -> dict:
     components['sector'] = 10 if sector_active else 0
     score += components['sector']
 
-    # Determine tier
+    # Determine tier (thresholds lowered after backtest 20d showed STRONG@60 = WR 100%)
     score = round(score, 1)
-    if score >= 75: tier = 'PRIME'
-    elif score >= 60: tier = 'STRONG'
-    elif score >= 45: tier = 'WATCH'
+    if score >= 60: tier = 'PRIME'      # было 75 — backtest showed 60+ = WR 100%
+    elif score >= 50: tier = 'STRONG'   # было 60-74
+    elif score >= 40: tier = 'WATCH'    # было 45-59
     else: tier = 'norm'
 
     return {
