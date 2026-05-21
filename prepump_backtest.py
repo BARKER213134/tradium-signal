@@ -317,37 +317,48 @@ def run_backtest_sync() -> dict:
         db = _get_db()
         col_results = db.prepump_backtest_results
 
-        # Step 1: Get TOP fapi pairs by 24h volume (ensures Binance data exists),
-        # затем INTERSECT с BingX (где торгуем live)
+        # Step 1: Get TOP fapi pairs by 24h volume
+        fapi_top = []
+        fapi_status = None
+        fapi_err = None
         try:
             r = http_client.get(f'{FAPI}/fapi/v1/ticker/24hr')
-            fapi_pairs_data = r.json() if r.status_code == 200 else []
-            # Top by quoteVolume USD
-            usdt_pairs = [t for t in fapi_pairs_data
-                           if t.get('symbol', '').endswith('USDT')
-                           and float(t.get('quoteVolume', 0)) > 1_000_000]
-            usdt_pairs.sort(key=lambda t: -float(t.get('quoteVolume', 0)))
-            fapi_top = []
-            for t in usdt_pairs[:500]:  # top 500 by volume
-                sym = t['symbol']
-                base = sym[:-4]  # remove USDT
-                fapi_top.append(f'{base}/USDT')
+            fapi_status = r.status_code
+            if r.status_code == 200:
+                fapi_pairs_data = r.json()
+                usdt_pairs = [t for t in fapi_pairs_data
+                               if t.get('symbol', '').endswith('USDT')
+                               and float(t.get('quoteVolume', 0)) > 1_000_000]
+                usdt_pairs.sort(key=lambda t: -float(t.get('quoteVolume', 0)))
+                for t in usdt_pairs[:500]:
+                    sym = t['symbol']
+                    base = sym[:-4]
+                    fapi_top.append(f'{base}/USDT')
+            else:
+                fapi_err = f'status={r.status_code} body={r.text[:200]}'
         except Exception as e:
+            fapi_err = f'exception: {type(e).__name__}: {str(e)[:200]}'
             logger.warning(f'[bt-prepump] fapi ticker fetch fail: {e}')
-            fapi_top = []
 
-        # Intersect с BingX
         bingx_pairs = get_bingx_usdt_perp_pairs() or set()
         if bingx_pairs and fapi_top:
             pairs = [p for p in fapi_top if p in bingx_pairs][:SCAN_PAIRS_CAP]
         else:
-            # Fallback: just use fapi top (lose BingX filter но backtest валиден)
             pairs = fapi_top[:SCAN_PAIRS_CAP]
 
+        diag = (f'fapi_status={fapi_status} fapi_top={len(fapi_top)} '
+                 f'bingx={len(bingx_pairs)} pairs={len(pairs)}')
+        if fapi_err: diag += f' fapi_err="{fapi_err}"'
+
+        if not pairs:
+            _state['error'] = f'no pairs to scan: {diag}'
+            _state['running'] = False
+            _state['finished_at'] = datetime.now(timezone.utc).isoformat()
+            logger.error(f'[bt-prepump] NO PAIRS — {diag}')
+            return {'error': _state['error']}
+
         _state['pairs_total'] = len(pairs)
-        logger.info(f'[bt-prepump] starting backtest, {len(pairs)} pairs '
-                     f'(fapi top×BingX intersect, fapi_top={len(fapi_top)}, '
-                     f'bingx={len(bingx_pairs)})')
+        logger.info(f'[bt-prepump] starting backtest — {diag}')
 
         # Step 2: Pre-fetch sectors для всех пар (для sector rotation detection)
         try:
