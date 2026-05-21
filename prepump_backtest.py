@@ -34,13 +34,13 @@ logger = logging.getLogger(__name__)
 FAPI = 'https://fapi.binance.com'
 http_client = httpx.Client(timeout=15.0, limits=httpx.Limits(max_connections=30, max_keepalive_connections=15))
 
-LOOKBACK_DAYS = 30
-KLINES_1H_DAYS = 40        # +10d warmup для EMA200
-KLINES_15M_DAYS = 33       # 30d signals + 3d forward
+LOOKBACK_DAYS = 20         # OI history limited to 500 bars 1h ≈ 20.8 days
+KLINES_1H_DAYS = 30        # +10d warmup для EMA200
+KLINES_15M_DAYS = 23       # 20d signals + 3d forward
 FORWARD_BARS_15M = 288     # 72h × 4
 SCAN_PAIRS_CAP = 150       # топ N пар для backtest
-SCAN_HOUR_STEP = 4         # сканируем каждый 4-й час (180 ticks/pair = 720 hours / 4)
-MIN_SCORE_FOR_RECORD = 45  # WATCH+
+SCAN_HOUR_STEP = 4         # сканируем каждый 4-й час
+MIN_SCORE_FOR_RECORD = 30  # снижено до 30 чтобы захватить и WATCH-edge cases
 
 # In-memory progress state (опрашивается через GET endpoint)
 _state = {
@@ -316,10 +316,37 @@ def run_backtest_sync() -> dict:
         db = _get_db()
         col_results = db.prepump_backtest_results
 
-        # Step 1: Get pairs (BingX filter)
-        pairs = list(get_bingx_usdt_perp_pairs())[:SCAN_PAIRS_CAP]
+        # Step 1: Get TOP fapi pairs by 24h volume (ensures Binance data exists),
+        # затем INTERSECT с BingX (где торгуем live)
+        try:
+            r = http_client.get(f'{FAPI}/fapi/v1/ticker/24hr')
+            fapi_pairs_data = r.json() if r.status_code == 200 else []
+            # Top by quoteVolume USD
+            usdt_pairs = [t for t in fapi_pairs_data
+                           if t.get('symbol', '').endswith('USDT')
+                           and float(t.get('quoteVolume', 0)) > 1_000_000]
+            usdt_pairs.sort(key=lambda t: -float(t.get('quoteVolume', 0)))
+            fapi_top = []
+            for t in usdt_pairs[:500]:  # top 500 by volume
+                sym = t['symbol']
+                base = sym[:-4]  # remove USDT
+                fapi_top.append(f'{base}/USDT')
+        except Exception as e:
+            logger.warning(f'[bt-prepump] fapi ticker fetch fail: {e}')
+            fapi_top = []
+
+        # Intersect с BingX
+        bingx_pairs = get_bingx_usdt_perp_pairs() or set()
+        if bingx_pairs and fapi_top:
+            pairs = [p for p in fapi_top if p in bingx_pairs][:SCAN_PAIRS_CAP]
+        else:
+            # Fallback: just use fapi top (lose BingX filter но backtest валиден)
+            pairs = fapi_top[:SCAN_PAIRS_CAP]
+
         _state['pairs_total'] = len(pairs)
-        logger.info(f'[bt-prepump] starting backtest, {len(pairs)} pairs')
+        logger.info(f'[bt-prepump] starting backtest, {len(pairs)} pairs '
+                     f'(fapi top×BingX intersect, fapi_top={len(fapi_top)}, '
+                     f'bingx={len(bingx_pairs)})')
 
         # Step 2: For each pair fetch full historical data
         all_triggers = []
