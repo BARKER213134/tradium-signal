@@ -380,14 +380,23 @@ def run_backtest_sync() -> dict:
         pair_hourly_vol_scores: dict = {}  # pair -> {hour_ms: vol_score}
         pair_data_cache: dict = {}  # pair -> (k1h_raw, oi_hist, fr_hist, uniq15)
         all_triggers = []
+        # Diag counters
+        diag_counts = {
+            'attempted': 0, 'k1h_ok': 0, 'k1h_fail': 0, 'k15_ok': 0,
+            'k15_fail': 0, 'cached': 0,
+        }
         for pi, pair in enumerate(pairs, 1):
             _state['last_pair'] = pair
             _state['pairs_done'] = pi - 1
             sym = _to_fapi_symbol(pair)
+            diag_counts['attempted'] += 1
             try:
                 # 1h klines: 40 дней = 960 bars (max fapi limit 1500)
                 k1h_raw = fapi_klines(sym, '1h', 1000)
-                if not k1h_raw or len(k1h_raw) < 200: continue
+                if not k1h_raw or len(k1h_raw) < 200:
+                    diag_counts['k1h_fail'] += 1
+                    continue
+                diag_counts['k1h_ok'] += 1
 
                 # OI history: 1h × 30d = 720 bars (но limit fapi 500, fetch последние 500)
                 oi_hist = fapi_oi_hist(sym, '1h', 500)
@@ -406,10 +415,14 @@ def run_backtest_sync() -> dict:
                     seen.add(k['t']); uniq15.append(k)
                 uniq15.sort(key=lambda k: k['t'])
 
-                if len(uniq15) < 100: continue
+                if len(uniq15) < 100:
+                    diag_counts['k15_fail'] += 1
+                    continue
+                diag_counts['k15_ok'] += 1
 
                 # Cache full data per pair for second pass (sector detection)
                 pair_data_cache[pair] = (k1h_raw, oi_hist, fr_hist, uniq15)
+                diag_counts['cached'] += 1
 
                 # Compute vol_score per hour для sector activity detection
                 hourly_vol_scores = {}
@@ -447,7 +460,9 @@ def run_backtest_sync() -> dict:
 
         active_hours_count = len(active_sectors_at_hour)
         logger.info(f'[bt-prepump] {active_hours_count} hours with active sectors '
-                     f'(из {len(all_hours)} total)')
+                     f'(из {len(all_hours)} total). Diag: {diag_counts}')
+        _state['diag_counts'] = diag_counts
+        _state['active_hours'] = active_hours_count
 
         # === SECOND PASS: compute triggers WITH sector_active ===
         _state['triggers_found'] = 0
