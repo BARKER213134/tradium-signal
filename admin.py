@@ -9927,13 +9927,21 @@ async def api_prepump_candidates(tier: str = "", limit: int = 200, hours: int = 
 
 @app.post("/api/combo/backfill")
 async def api_combo_backfill(payload: dict | None = None):
-    """Backfill COMBO signals за N дней (default 30).
-    Scans st_vip + triple_confluence signals, computes combo score retroactively,
-    inserts qualified в new_strategy_signals."""
+    """Backfill COMBO signals за N дней (default 30). Запускается async.
+    Status через GET /api/combo/backfill/status."""
     days = int((payload or {}).get('days', 30))
     import combo_detector as cd
-    result = await asyncio.to_thread(cd.backfill_combo, days)
-    return result
+    state = cd.get_backfill_state()
+    if state.get('running'):
+        return {'started': False, 'state': state}
+    asyncio.create_task(asyncio.to_thread(cd.backfill_combo, days))
+    return {'started': True, 'days': days}
+
+
+@app.get("/api/combo/backfill/status")
+async def api_combo_backfill_status():
+    import combo_detector as cd
+    return cd.get_backfill_state()
 
 
 @app.post("/api/precondition-analysis/start")

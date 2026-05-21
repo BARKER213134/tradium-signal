@@ -230,12 +230,30 @@ def maybe_fire_combo(signal_data: dict) -> dict | None:
         return None
 
 
+_BACKFILL_STATE = {
+    'running': False, 'days': 0, 'targets_total': 0, 'targets_done': 0,
+    'fired': 0, 'skipped_score': 0, 'skipped_cooldown': 0,
+    'started_at': None, 'finished_at': None, 'error': None,
+}
+
+
+def get_backfill_state():
+    return dict(_BACKFILL_STATE)
+
+
 # ─── BACKFILL за N дней ─────────────────────────────────────────────────
 def backfill_combo(days: int = 30) -> dict:
     """Сканит исторические target signals (st_vip + triple_confluence)
     за last N days. Для каждого считает combo score и инсертит quallified
     в new_strategy_signals.
     """
+    global _BACKFILL_STATE
+    _BACKFILL_STATE = {
+        'running': True, 'days': days, 'targets_total': 0, 'targets_done': 0,
+        'fired': 0, 'skipped_score': 0, 'skipped_cooldown': 0,
+        'started_at': datetime.now(timezone.utc).isoformat(),
+        'finished_at': None, 'error': None,
+    }
     from database import _get_db
     db = _get_db()
     since = datetime.now(timezone.utc) - timedelta(days=days)
@@ -271,6 +289,7 @@ def backfill_combo(days: int = 30) -> dict:
 
     # Sort by time (для применения cooldown chronologically)
     targets.sort(key=lambda x: x['at_ts'])
+    _BACKFILL_STATE['targets_total'] = len(targets)
     logger.info(f'[combo-backfill] {len(targets)} target signals за {days}d')
 
     fired = 0
@@ -278,48 +297,58 @@ def backfill_combo(days: int = 30) -> dict:
     skipped_cooldown = 0
     last_combo_per_pair: dict = {}  # in-memory cooldown tracker
 
-    for tgt in targets:
-        # Cooldown check (in-memory)
-        last_ts = last_combo_per_pair.get(tgt['pair'], 0)
-        if tgt['at_ts'] - last_ts < COMBO_COOLDOWN_S:
-            skipped_cooldown += 1
-            continue
-        preceding = collect_preceding_signals(db, tgt['pair'], tgt['at_ts'], tgt['direction'])
-        score, breakdown = compute_combo_score(preceding, tgt['target_src'])
-        if score < COMBO_THRESHOLD:
-            skipped_score += 1
-            continue
-        unique_srcs = list(set(s for _, s in preceding))
-        doc = {
-            'pair': tgt['pair'],
-            'symbol': tgt['pair'].replace('/', '').upper(),
-            'direction': tgt['direction'],
-            'entry': tgt['entry'],
-            'strategy': 'combo',
-            'combo_score': score,
-            'combo_breakdown': breakdown,
-            'trigger_source': tgt['target_src'],
-            'preceding_sources': unique_srcs,
-            'preceding_count': len(preceding),
-            'created_at': tgt['at'],
-            'state': 'BACKFILLED',
-            'tp_R': 2.0,
-        }
-        # Avoid duplicate insert
-        try:
-            existing = db.new_strategy_signals.find_one({
-                'pair': tgt['pair'], 'strategy': 'combo',
+    try:
+        for idx, tgt in enumerate(targets):
+            _BACKFILL_STATE['targets_done'] = idx + 1
+            # Cooldown check (in-memory)
+            last_ts = last_combo_per_pair.get(tgt['pair'], 0)
+            if tgt['at_ts'] - last_ts < COMBO_COOLDOWN_S:
+                skipped_cooldown += 1
+                _BACKFILL_STATE['skipped_cooldown'] = skipped_cooldown
+                continue
+            preceding = collect_preceding_signals(db, tgt['pair'], tgt['at_ts'], tgt['direction'])
+            score, breakdown = compute_combo_score(preceding, tgt['target_src'])
+            if score < COMBO_THRESHOLD:
+                skipped_score += 1
+                _BACKFILL_STATE['skipped_score'] = skipped_score
+                continue
+            unique_srcs = list(set(s for _, s in preceding))
+            doc = {
+                'pair': tgt['pair'],
+                'symbol': tgt['pair'].replace('/', '').upper(),
+                'direction': tgt['direction'],
+                'entry': tgt['entry'],
+                'strategy': 'combo',
+                'combo_score': score,
+                'combo_breakdown': breakdown,
+                'trigger_source': tgt['target_src'],
+                'preceding_sources': unique_srcs,
+                'preceding_count': len(preceding),
                 'created_at': tgt['at'],
-            })
-            if existing: continue
-            db.new_strategy_signals.insert_one(doc)
-            fired += 1
-            last_combo_per_pair[tgt['pair']] = tgt['at_ts']
-        except Exception as e:
-            logger.debug(f'[combo-backfill] insert {tgt["pair"]}: {e}')
+                'state': 'BACKFILLED',
+                'tp_R': 2.0,
+            }
+            # Avoid duplicate insert
+            try:
+                existing = db.new_strategy_signals.find_one({
+                    'pair': tgt['pair'], 'strategy': 'combo',
+                    'created_at': tgt['at'],
+                })
+                if existing: continue
+                db.new_strategy_signals.insert_one(doc)
+                fired += 1
+                _BACKFILL_STATE['fired'] = fired
+                last_combo_per_pair[tgt['pair']] = tgt['at_ts']
+            except Exception as e:
+                logger.debug(f'[combo-backfill] insert {tgt["pair"]}: {e}')
+    except Exception as e:
+        logger.exception(f'[combo-backfill] error: {e}')
+        _BACKFILL_STATE['error'] = str(e)
 
     logger.info(f'[combo-backfill] DONE — fired={fired} '
                  f'skipped_score={skipped_score} skipped_cooldown={skipped_cooldown}')
+    _BACKFILL_STATE['running'] = False
+    _BACKFILL_STATE['finished_at'] = datetime.now(timezone.utc).isoformat()
     return {
         'fired': fired, 'skipped_score': skipped_score,
         'skipped_cooldown': skipped_cooldown,
