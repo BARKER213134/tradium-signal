@@ -7758,6 +7758,90 @@ window.openPrepumpChart = async function(pair) {
       if (window._addRSI) window._addRSI(chart, d.candles, { anchor: div });
       chart.timeScale().fitContent();
       if (loading) loading.style.display = 'none';
+
+      // ─── НАШИ СИГНАЛЫ из journal/by-symbol + Pre-Pump entry trigger ───
+      try {
+        const sigsR = await fetch(`/api/journal/by-symbol?symbol=${pair}&days=14`).catch(()=>null);
+        const sigsD = sigsR ? await sigsR.json().catch(()=>({})) : {};
+        const allSigs = (sigsD || {}).items || [];
+        // Также pre-pump candidates for this pair
+        const ppR = await fetch(`/api/prepump/candidates?hours=168&limit=50`).catch(()=>null);
+        const ppD = ppR ? await ppR.json().catch(()=>({})) : {};
+        const ppItems = ((ppD || {}).items || []).filter(c => c.pair === pair);
+
+        const markers = [];
+        const tfSec = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '12h': 43200, '1d': 86400 }[tf] || 3600;
+        const firstTs = d.candles[0].time;
+        const lastTs = d.candles[d.candles.length - 1].time;
+        const nearest = (ts) => {
+          if (!ts) return null;
+          let mc = null, minD = Infinity;
+          for (const c of d.candles) {
+            const diff = Math.abs(c.time - ts);
+            if (diff < minD) { minD = diff; mc = c; }
+          }
+          return mc;
+        };
+        const inRange = (ts) => ts >= firstTs - tfSec && ts <= lastTs + tfSec * 2;
+
+        // Сначала наши сигналы (CV/ST/anomaly/confluence/etc) — мелкие стрелки
+        const srcEmoji = {
+          'cryptovizor': '🚀', 'tradium': '📡', 'supertrend': '🌀',
+          'anomaly': '⚠', 'confluence': '🎯', 'cluster': '💠',
+          'paper': '🤖', 'cv_flip': '⏳', 'verified': '✨',
+          'volume_surge': '🌊', 'triple_confluence': '🐉',
+          'vol_accum': '🔋', 'volcano': '🌋', 'second_flip': '♻️',
+          'rsi_cross_12h': '⚡',
+        };
+        const byTime = new Map();
+        for (const s of allSigs) {
+          const ts = s.at_ts || 0;
+          if (!ts || !inRange(ts)) continue;
+          const mc = nearest(ts);
+          if (!mc) continue;
+          const key = mc.time + '_' + s.direction;
+          if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: s.direction === 'LONG', items: [] });
+          byTime.get(key).items.push(s);
+        }
+        for (const g of byTime.values()) {
+          const emojis = [...new Set(g.items.map(it => srcEmoji[it.source] || '•'))].slice(0,3).join('');
+          markers.push({
+            time: g.time,
+            position: g.isLong ? 'belowBar' : 'aboveBar',
+            color: g.isLong ? '#00e5a0' : '#ff4d6d',
+            shape: g.isLong ? 'arrowUp' : 'arrowDown',
+            text: g.items.length > 1 ? `×${g.items.length} ${emojis}` : emojis,
+            size: 1,
+          });
+        }
+
+        // Pre-Pump entry triggers — БОЛЬШИЕ оранжевые маркеры для PRIME, жёлтые для STRONG
+        for (const c of ppItems) {
+          const ts = c.detected_at_ts;
+          if (!ts || !inRange(ts)) continue;
+          const mc = nearest(ts);
+          if (!mc) continue;
+          const isPrime = c.tier === 'PRIME';
+          const isStrong = c.tier === 'STRONG';
+          if (!isPrime && !isStrong) continue;  // only PRIME/STRONG
+          const isL = c.direction === 'LONG';
+          markers.push({
+            time: mc.time,
+            position: isL ? 'belowBar' : 'aboveBar',
+            color: isPrime ? '#ff8c50' : '#ffd23e',
+            shape: 'circle',
+            text: isPrime ? `🔥${c.composite_score.toFixed(0)}` : `🟡${c.composite_score.toFixed(0)}`,
+            size: 2,
+          });
+        }
+
+        if (markers.length && series.setMarkers) {
+          markers.sort((a, b) => a.time - b.time);
+          series.setMarkers(markers);
+        }
+      } catch (e) {
+        console.warn('[prepump-chart-markers]', e);
+      }
     } catch (e) {
       if (loading) loading.textContent = 'Ошибка: ' + e.message;
     }
@@ -8321,7 +8405,8 @@ if (document.readyState !== 'loading') hotLoad();
 </script>
 {% endif %}{# /bot == 'hot_now' #}
 
-<!-- Chart Modal — общий для journal и hot_now -->
+{% if bot == 'journal' or bot == 'hot_now' %}
+<!-- Chart Modal — общий для journal и hot_now (не рендерим для prepump, иначе viewable) -->
 <div id="journalChartModal">
   <div style="width:85vw;max-width:1000px;height:75vh;background:var(--dark);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);" onclick="event.stopPropagation();">
     <div id="jChartHeader" style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-family:var(--font-mono);gap:8px;">
@@ -8356,6 +8441,7 @@ if (document.readyState !== 'loading') hotLoad();
     <div id="jChartContainer" style="height:calc(100% - 48px);"></div>
   </div>
 </div>
+{% endif %}{# /journal_chart_modal — только для journal/hot_now #}
 
 <script>
 let _journalData = [];
