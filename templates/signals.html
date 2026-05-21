@@ -7373,8 +7373,17 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
 .tf-btn.active { background:var(--accent); color:#000; border-color:var(--accent); font-weight:700; }
 </style>
 
-<!-- Строка 1: Поиск монеты + Market Regime badge -->
+<!-- Строка 1: Поиск монеты + Market Regime badge + TOTAL2 Bias -->
 <div class="an-toolbar" style="padding:10px 18px;margin-bottom:0;">
+  <!-- 🟢 LONG / 🔴 SHORT / ⚪ WAIT — большая кнопка, ST(TOTAL2) на 1D+4H -->
+  <div id="jBiasBig" title="TOTAL2 (топ-20 альтов, excl. BTC) SuperTrend на 4H+1D. Обновляется каждые 5 мин." style="display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:10px;font-family:var(--font-mono);font-size:18px;font-weight:900;letter-spacing:0.08em;background:rgba(255,255,255,0.04);border:2px solid rgba(255,255,255,0.15);color:#888;cursor:pointer;line-height:1;min-width:120px;justify-content:center;" onclick="_refreshBias(true)">
+    <span style="font-size:9px;color:var(--muted);font-weight:600;letter-spacing:0.06em;">TOTAL2</span>
+    <span id="jBiasLabel">···</span>
+  </div>
+  <span id="jBiasInfo" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);line-height:1.4;">
+    <span id="jBiasReason">загрузка…</span><br>
+    <span id="jBiasVal" style="color:#7a8ba6;"></span>
+  </span>
   <span id="jRegimeBadge" title="Текущая фаза рынка по BTC EMA20/50 (4h+1d). Обновляется каждые 60с." style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:0.03em;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);color:var(--muted);cursor:default;">
     <span style="font-size:10px;color:var(--muted);">PHASE</span>
     <span id="jRegimeText">…</span>
@@ -9157,6 +9166,45 @@ async function loadJournalRegime() {
 // Initial + interval (60s)
 setTimeout(loadJournalRegime, 800);
 safeInterval(loadJournalRegime, 60000);
+
+// ── 🟢 LONG / 🔴 SHORT / ⚪ WAIT (TOTAL2 SuperTrend bias) ─────────────
+// Эталон: TOTAL2 = sum(mcap top-20 alts) — proxy ~85% TradingView's TOTAL2.
+// ST(10,3) computed на 4H + 1D, bias = composite. Refresh каждые 5 мин (тот же
+// TTL что и кеш в market_total.py — не загружает CoinGecko/Binance Vision лишний раз).
+async function _refreshBias(force=false) {
+  const lbl = document.getElementById('jBiasLabel');
+  const cnt = document.getElementById('jBiasBig');
+  const rsn = document.getElementById('jBiasReason');
+  const val = document.getElementById('jBiasVal');
+  if (!lbl || !cnt) return;
+  try {
+    const r = await fetch(`/api/market-bias${force ? '?force=true' : ''}`);
+    const d = await r.json();
+    lbl.textContent = d.label || '···';
+    cnt.style.borderColor = d.color || 'rgba(255,255,255,0.15)';
+    cnt.style.color = d.color || '#888';
+    cnt.style.background = (d.bias === 'LONG' || d.bias === 'LONG_CAUTION') ?
+      'linear-gradient(135deg, rgba(0,229,160,0.15), rgba(0,229,160,0.05))' :
+      (d.bias === 'SHORT' || d.bias === 'SHORT_CAUTION') ?
+      'linear-gradient(135deg, rgba(255,77,109,0.15), rgba(255,77,109,0.05))' :
+      'rgba(255,255,255,0.04)';
+    if (rsn) rsn.textContent = d.reason || '';
+    if (val && d.total2_usd) {
+      const tB = (d.total2_usd / 1e9).toFixed(1);
+      const chg = d.chg_24h_pct || 0;
+      const chgClr = chg >= 0 ? '#00e5a0' : '#ff4d6d';
+      const st4 = (d.st_4h && d.st_4h.state) || '?';
+      const st1 = (d.st_1d && d.st_1d.state) || '?';
+      val.innerHTML = `$${tB}B · 24h <span style="color:${chgClr};">${chg>=0?'+':''}${chg}%</span> · ST 4H=${st4} 1D=${st1}`;
+    }
+    cnt.title = `TOTAL2 (top-20 alts ≈ ${d.coins_count || 20} coins, excl. BTC)\n\nBias: ${d.label}\nReason: ${d.reason}\n\nTOTAL2 = $${((d.total2_usd||0)/1e9).toFixed(1)}B\n24h change: ${d.chg_24h_pct||0}%\n\nST 4H: ${(d.st_4h||{}).state || '?'}\nST 1D: ${(d.st_1d||{}).state || '?'}\n\nКлик чтобы force refresh.`;
+  } catch(e) {
+    lbl.textContent = 'ERR';
+    if (rsn) rsn.textContent = 'fetch error';
+  }
+}
+setTimeout(_refreshBias, 1200);
+safeInterval(_refreshBias, 5 * 60 * 1000);  // refresh каждые 5 мин
 
 async function loadJournal() {
   try {

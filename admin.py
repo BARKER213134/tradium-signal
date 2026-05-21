@@ -10017,6 +10017,13 @@ async def api_whale_backtest_start(payload: dict | None = None):
     return {'started': True, 'pair_limit': pair_limit}
 
 
+@app.get("/api/market-bias")
+async def api_market_bias(force: bool = False):
+    """TOTAL2 SuperTrend → LONG/SHORT/WAIT bias для шапки журнала."""
+    import market_total as mt
+    return await asyncio.to_thread(mt.get_market_bias, force)
+
+
 @app.post("/api/whale/backfill")
 async def api_whale_backfill(days: int = 14):
     """Backfill WHALE сигналов за N дней (default 14). Журнал получит whale signals."""
