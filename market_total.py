@@ -323,21 +323,45 @@ def get_market_bias(force_refresh: bool = False) -> dict:
         daily.append({"t": series_4h[i]["t"], "c": series_4h[i]["c"]})
     st_1d = _compute_supertrend(daily, period=10, mult=3.0) if len(daily) >= 15 else None
 
+    # Duration в текущем состоянии (с момента последнего flip)
+    def _duration_str(secs: float) -> str:
+        if secs < 0: return "—"
+        if secs < 3600:
+            return f"{int(secs/60)}m"
+        h = int(secs / 3600)
+        if h < 48:
+            return f"{h}h"
+        d = h // 24
+        rem_h = h % 24
+        return f"{d}d {rem_h}h" if rem_h else f"{d}d"
+
+    now_ms = int(time.time() * 1000)
+    dur_4h_str = "?"
+    dur_1d_str = "?"
+    if st_4h and st_4h.get("last_flip_idx") is not None and series_4h:
+        flip_idx = st_4h["last_flip_idx"]
+        if 0 <= flip_idx < len(series_4h):
+            dur_4h_str = _duration_str((now_ms - series_4h[flip_idx]["t"]) / 1000)
+    if st_1d and st_1d.get("last_flip_idx") is not None and daily:
+        flip_idx = st_1d["last_flip_idx"]
+        if 0 <= flip_idx < len(daily):
+            dur_1d_str = _duration_str((now_ms - daily[flip_idx]["t"]) / 1000)
+
     # Compose bias
     s4 = (st_4h or {}).get("state")
     s1 = (st_1d or {}).get("state")
     if s1 == "UP" and s4 == "UP":
         bias, label, color = "LONG", "LONG", "#00e5a0"
-        reason = "1D UP + 4H UP"
+        reason = f"1D UP ({dur_1d_str}) + 4H UP ({dur_4h_str})"
     elif s1 == "DOWN" and s4 == "DOWN":
         bias, label, color = "SHORT", "SHORT", "#ff4d6d"
-        reason = "1D DOWN + 4H DOWN"
+        reason = f"1D DOWN ({dur_1d_str}) + 4H DOWN ({dur_4h_str})"
     elif s1 == "UP" and s4 == "DOWN":
         bias, label, color = "LONG_CAUTION", "LONG ⚠", "#ffd23e"
-        reason = "1D UP, 4H откатывается"
+        reason = f"1D UP ({dur_1d_str}), 4H откат уже {dur_4h_str}"
     elif s1 == "DOWN" and s4 == "UP":
         bias, label, color = "SHORT_CAUTION", "SHORT ⚠", "#ffa94d"
-        reason = "1D DOWN, 4H отскок"
+        reason = f"1D DOWN ({dur_1d_str}), 4H отскок уже {dur_4h_str}"
     else:
         bias, label, color = "WAIT", "WAIT", "#7a8ba6"
         reason = "конфликт TF или нет данных"
@@ -364,10 +388,12 @@ def get_market_bias(force_refresh: bool = False) -> dict:
         "st_4h": {
             "state": s4,
             "value": (st_4h or {}).get("value"),
+            "duration": dur_4h_str,
         } if st_4h else None,
         "st_1d": {
             "state": s1,
             "value": (st_1d or {}).get("value"),
+            "duration": dur_1d_str,
         } if st_1d else None,
         "history": [{"t": c["t"], "c": c["c"]} for c in chart_history],
         "computed_at": now,

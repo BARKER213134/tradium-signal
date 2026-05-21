@@ -9196,9 +9196,16 @@ async function _refreshBias(force=false) {
       const tB = (d.total2_usd / 1e9).toFixed(1);
       const chg = d.chg_24h_pct || 0;
       const chgClr = chg >= 0 ? '#00e5a0' : '#ff4d6d';
-      const st4 = (d.st_4h && d.st_4h.state) || '?';
-      const st1 = (d.st_1d && d.st_1d.state) || '?';
-      val.innerHTML = `$${tB}B · 24h <span style="color:${chgClr};">${chg>=0?'+':''}${chg}%</span> · ST 4H=${st4} 1D=${st1}`;
+      const s4 = d.st_4h || {};
+      const s1 = d.st_1d || {};
+      // Color by state
+      const c4 = s4.state === 'UP' ? '#00e5a0' : (s4.state === 'DOWN' ? '#ff4d6d' : '#888');
+      const c1 = s1.state === 'UP' ? '#00e5a0' : (s1.state === 'DOWN' ? '#ff4d6d' : '#888');
+      const d4 = s4.duration || '?';
+      const d1 = s1.duration || '?';
+      val.innerHTML = `$${tB}B · 24h <span style="color:${chgClr};">${chg>=0?'+':''}${chg}%</span><br>` +
+                      `<span style="color:${c1};font-weight:600;">1D ${s1.state||'?'} ${d1}</span> · ` +
+                      `<span style="color:${c4};font-weight:600;">4H ${s4.state||'?'} ${d4}</span>`;
     }
     cnt.title = `TOTAL2 (top-20 alts ≈ ${d.coins_count || 20} coins, excl. BTC)\n\nBias: ${d.label}\nReason: ${d.reason}\n\nTOTAL2 = $${((d.total2_usd||0)/1e9).toFixed(1)}B\n24h change: ${d.chg_24h_pct||0}%\n\nST 4H: ${(d.st_4h||{}).state || '?'}\nST 1D: ${(d.st_1d||{}).state || '?'}\n\nКлик чтобы force refresh.`;
   } catch(e) {
