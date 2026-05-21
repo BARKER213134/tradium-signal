@@ -9925,6 +9925,63 @@ async def api_prepump_candidates(tier: str = "", limit: int = 200, hours: int = 
     return {'items': deduped, 'count': len(deduped)}
 
 
+@app.post("/api/prepump/backtest/start")
+async def api_prepump_backtest_start():
+    """Запускает 30d backtest на Railway (async, в фоне).
+    Возвращает task id; status через GET /api/prepump/backtest/status."""
+    import prepump_backtest as bt
+    state = bt._get_state()
+    if state.get('running'):
+        return {'started': False, 'reason': 'already running',
+                'state': state}
+    # Run in thread (sync function but blocking I/O)
+    asyncio.create_task(asyncio.to_thread(bt.run_backtest_sync))
+    return {'started': True, 'message': 'backtest запущен, проверяй через /api/prepump/backtest/status'}
+
+
+@app.get("/api/prepump/backtest/status")
+async def api_prepump_backtest_status():
+    """Текущий прогресс backtest. Если завершён — содержит report."""
+    import prepump_backtest as bt
+    from database import _get_db
+    state = bt._get_state()
+    out = {'state': state}
+    # Если есть готовый report — отдаём
+    try:
+        db = _get_db()
+        report = db.prepump_backtest_report.find_one({}, {'_id': 0})
+        if report:
+            # Конвертим datetime в isoformat для JSON
+            for k in ['started_at', 'finished_at']:
+                v = report.get(k)
+                if hasattr(v, 'isoformat'):
+                    report[k] = v.isoformat()
+            out['report'] = report
+    except Exception:
+        pass
+    return out
+
+
+@app.get("/api/prepump/backtest/triggers")
+async def api_prepump_backtest_triggers(tier: str = "", limit: int = 100):
+    """Возвращает индивидуальные backtest triggers (для UI review)."""
+    from database import _get_db
+    db = _get_db()
+    q = {}
+    if tier:
+        q['tier'] = tier.upper()
+
+    def _query():
+        items = []
+        for d in db.prepump_backtest_results.find(q, {'_id': 0}).sort('mfe_pct', -1).limit(limit):
+            if hasattr(d.get('at'), 'isoformat'):
+                d['at'] = d['at'].isoformat()
+            items.append(d)
+        return items
+
+    return {'items': await asyncio.to_thread(_query)}
+
+
 @app.get("/api/prepump/active-sectors")
 async def api_prepump_active_sectors(hours: int = 24):
     """Возвращает активные секторы (rotation) последние N часов."""

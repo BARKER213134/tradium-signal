@@ -7468,7 +7468,14 @@ async function _pollDeltaBackfill() {
         <option value="168">Неделя</option>
       </select>
       <button onclick="_loadPrepump()" style="background:rgba(255,140,80,0.15);border:1px solid #ff8c50;color:#ff8c50;border-radius:6px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">↻ Refresh</button>
+      <button onclick="_startPrepumpBacktest()" id="ppBtBtn" style="background:rgba(123,92,255,0.15);border:1px solid #7b5cff;color:#7b5cff;border-radius:6px;padding:6px 14px;font-size:11px;font-family:var(--font-mono);font-weight:700;cursor:pointer;">📊 Backtest 30d</button>
     </div>
+  </div>
+
+  <!-- Backtest results panel -->
+  <div id="ppBtPanel" style="display:none;margin-bottom:16px;padding:14px;background:var(--dark-2);border:1px solid #7b5cff;border-radius:8px;">
+    <div style="font-size:13px;font-weight:800;color:#7b5cff;margin-bottom:10px;">📊 BACKTEST 30d RESULTS</div>
+    <div id="ppBtContent" style="font-family:var(--font-mono);font-size:11px;color:var(--text);line-height:1.6;"></div>
   </div>
 
   <!-- Active sectors strip -->
@@ -7745,11 +7752,137 @@ window.openPrepumpChart = async function(pair) {
   document.getElementById('ppChartTF').addEventListener('change', (e) => renderChart(e.target.value));
 };
 
+// Backtest control
+async function _startPrepumpBacktest() {
+  const btn = document.getElementById('ppBtBtn');
+  if (!confirm('Запустить 30-дневный backtest? Займёт ~5-10 минут на Railway.')) return;
+  btn.disabled = true; btn.textContent = '⏳ Запускаю...';
+  try {
+    const r = await fetch('/api/prepump/backtest/start', {method: 'POST'}).then(r => r.json());
+    if (r.started) {
+      btn.textContent = '⏳ Backtest идёт...';
+      _pollPrepumpBacktest();
+    } else {
+      alert('Уже запущен: ' + (r.reason || 'unknown'));
+      btn.disabled = false; btn.textContent = '📊 Backtest 30d';
+      _pollPrepumpBacktest();
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+    btn.disabled = false; btn.textContent = '📊 Backtest 30d';
+  }
+}
+
+async function _pollPrepumpBacktest() {
+  const btn = document.getElementById('ppBtBtn');
+  const panel = document.getElementById('ppBtPanel');
+  const content = document.getElementById('ppBtContent');
+  try {
+    const r = await fetch('/api/prepump/backtest/status').then(r => r.json());
+    const s = r.state || {};
+    const report = r.report;
+
+    if (s.running) {
+      panel.style.display = 'block';
+      const pct = s.pairs_total ? Math.round(s.pairs_done / s.pairs_total * 100) : 0;
+      content.innerHTML = `
+        ⏳ Прогресс: <b>${s.pairs_done}/${s.pairs_total}</b> пар (${pct}%)<br>
+        Триггеров найдено: <b>${s.triggers_found}</b><br>
+        Текущая пара: <span style="color:var(--muted);">${s.last_pair || '—'}</span><br>
+        Запущен: ${s.started_at || '—'}
+      `;
+      setTimeout(_pollPrepumpBacktest, 5000);
+      return;
+    }
+
+    if (s.error) {
+      content.innerHTML = `❌ Ошибка: <code>${s.error}</code>`;
+      panel.style.display = 'block';
+      btn.disabled = false; btn.textContent = '📊 Backtest 30d';
+      return;
+    }
+
+    if (report) {
+      // Format report
+      const tiers = report.by_tier || {};
+      const freq = report.frequency_per_day || {};
+      let html = `
+        ✅ <b>Завершён:</b> ${report.finished_at || '—'}<br>
+        Pairs scanned: <b>${report.pairs_scanned}</b> · Total triggers: <b>${report.total_triggers}</b><br>
+        <br>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="border-bottom:1px solid var(--border);text-align:left;color:var(--muted);">
+          <th style="padding:6px;">Tier</th><th>N</th><th>Freq/day</th><th>WR%</th><th>MFE_med</th><th>Final_med</th><th>≥10%</th>
+        </tr></thead><tbody>
+      `;
+      for (const t of ['PRIME','STRONG','WATCH']) {
+        const d = tiers[t] || {};
+        if (!d.n) continue;
+        const color = t === 'PRIME' ? '#ff8c50' : t === 'STRONG' ? '#ffd23e' : '#88d8a3';
+        html += `
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:6px;color:${color};font-weight:700;">${t}</td>
+          <td>${d.n}</td>
+          <td>${freq[t] || 0}</td>
+          <td><b>${d.wr_pct}%</b></td>
+          <td>+${d.mfe_median}%</td>
+          <td>${d.final_median >= 0 ? '+' : ''}${d.final_median}%</td>
+          <td>${d.pct_ge10}%</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+
+      // EV grid для PRIME
+      const ev = (tiers.PRIME || {}).ev_grid;
+      if (ev) {
+        html += '<br><b style="color:#ff8c50;">PRIME · EV (TP/SL grid):</b><br>';
+        for (const k of Object.keys(ev)) {
+          const d = ev[k];
+          const evColor = d.ev_pct > 0 ? '#00e5a0' : '#ff4d6d';
+          html += `<span style="margin-right:14px;">${k}: <span style="color:${evColor};">EV ${d.ev_pct > 0 ? '+' : ''}${d.ev_pct}%</span></span>`;
+        }
+        html += '<br>';
+      }
+
+      // Top PRIME setups
+      if (report.top_primes && report.top_primes.length) {
+        html += '<br><b style="color:#ff8c50;">🔥 Top PRIME setups (top 15 by MFE):</b><br>';
+        html += '<div style="max-height:200px;overflow-y:auto;margin-top:6px;">';
+        for (const p of report.top_primes.slice(0, 15)) {
+          const dt = new Date(p.at).toLocaleString('ru-RU', {dateStyle:'short', timeStyle:'short'});
+          html += `<div style="padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.05);">`;
+          html += `[${dt}] <b style="color:var(--electric);">${p.pair}</b> ${p.direction} `;
+          html += `score=${p.score} `;
+          html += `MFE=<span style="color:#00e5a0;">+${p.mfe_pct.toFixed(2)}%</span> `;
+          html += `MAE=${p.mae_pct.toFixed(2)}% `;
+          html += `Fin=<span style="color:${p.final_pct >= 0 ? '#00e5a0' : '#ff4d6d'};">${p.final_pct >= 0 ? '+' : ''}${p.final_pct.toFixed(2)}%</span>`;
+          html += `</div>`;
+        }
+        html += '</div>';
+      }
+
+      content.innerHTML = html;
+      panel.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = '📊 Backtest 30d (re-run)';
+    } else {
+      btn.disabled = false;
+      btn.textContent = '📊 Backtest 30d';
+    }
+  } catch (e) {
+    console.warn('[bt-poll]', e);
+    btn.disabled = false;
+    btn.textContent = '📊 Backtest 30d';
+  }
+}
+
 // Auto-refresh every 60s
 document.getElementById('ppTierFilter')?.addEventListener('change', _loadPrepump);
 document.getElementById('ppHoursFilter')?.addEventListener('change', _loadPrepump);
 _loadPrepump();
 setInterval(_loadPrepump, 60000);
+// Check if backtest report exists on load
+_pollPrepumpBacktest();
 </script>
 {% endif %}{# /bot == 'prepump' #}
 
