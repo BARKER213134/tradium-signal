@@ -7373,17 +7373,20 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
 .tf-btn.active { background:var(--accent); color:#000; border-color:var(--accent); font-weight:700; }
 </style>
 
-<!-- Строка 1: Поиск монеты + Market Regime badge + TOTAL2 Bias -->
-<div class="an-toolbar" style="padding:10px 18px;margin-bottom:0;">
-  <!-- 🟢 LONG / 🔴 SHORT / ⚪ WAIT — большая кнопка, ST(TOTAL2) на 1D+4H -->
-  <div id="jBiasBig" title="TOTAL2 (топ-20 альтов, excl. BTC) SuperTrend на 4H+1D. Обновляется каждые 5 мин." style="display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:10px;font-family:var(--font-mono);font-size:18px;font-weight:900;letter-spacing:0.08em;background:rgba(255,255,255,0.04);border:2px solid rgba(255,255,255,0.15);color:#888;cursor:pointer;line-height:1;min-width:120px;justify-content:center;" onclick="_refreshBias(true)">
-    <span style="font-size:9px;color:var(--muted);font-weight:600;letter-spacing:0.06em;">TOTAL2</span>
+<!-- ════ Big TOTAL2 bias banner — посередине, гигантский ════ -->
+<div style="display:flex;justify-content:center;align-items:center;gap:24px;padding:18px 0 4px;margin-bottom:0;">
+  <div id="jBiasBig" title="TOTAL2 (топ-20 альтов, excl. BTC) SuperTrend на 4H+1D. Обновляется каждые 5 мин. Клик = force refresh." style="display:inline-flex;align-items:center;gap:18px;padding:18px 56px;border-radius:18px;font-family:var(--font-mono);font-size:64px;font-weight:900;letter-spacing:0.12em;background:rgba(255,255,255,0.04);border:3px solid rgba(255,255,255,0.15);color:#888;cursor:pointer;line-height:1;min-width:420px;justify-content:center;box-shadow:0 0 24px rgba(0,0,0,0.4);" onclick="_refreshBias(true)">
+    <span style="font-size:13px;color:var(--muted);font-weight:700;letter-spacing:0.16em;writing-mode:vertical-rl;transform:rotate(180deg);opacity:0.7;">TOTAL2</span>
     <span id="jBiasLabel">···</span>
   </div>
-  <span id="jBiasInfo" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);line-height:1.4;">
-    <span id="jBiasReason">загрузка…</span><br>
-    <span id="jBiasVal" style="color:#7a8ba6;"></span>
-  </span>
+  <div id="jBiasInfo" style="font-family:var(--font-mono);font-size:13px;color:var(--muted);line-height:1.6;">
+    <div id="jBiasReason" style="font-weight:600;color:#cbd5e1;">загрузка…</div>
+    <div id="jBiasVal" style="color:#7a8ba6;font-size:12px;margin-top:4px;"></div>
+  </div>
+</div>
+
+<!-- Строка 1: Поиск монеты + Market Regime badge -->
+<div class="an-toolbar" style="padding:10px 18px;margin-bottom:0;">
   <span id="jRegimeBadge" title="Текущая фаза рынка по BTC EMA20/50 (4h+1d). Обновляется каждые 60с." style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:0.03em;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);color:var(--muted);cursor:default;">
     <span style="font-size:10px;color:var(--muted);">PHASE</span>
     <span id="jRegimeText">…</span>
