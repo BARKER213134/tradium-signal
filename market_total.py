@@ -350,21 +350,17 @@ def get_market_bias(force_refresh: bool = False) -> dict:
     # Compose bias
     s4 = (st_4h or {}).get("state")
     s1 = (st_1d or {}).get("state")
-    if s1 == "UP" and s4 == "UP":
+    # Bias ориентируется по 4H ST (реактивнее, ловит regime shift раньше).
+    # 1D остаётся для контекста в reason но НЕ блокирует/не модифицирует label.
+    if s4 == "UP":
         bias, label, color = "LONG", "LONG", "#00e5a0"
-        reason = f"1D UP ({dur_1d_str}) + 4H UP ({dur_4h_str})"
-    elif s1 == "DOWN" and s4 == "DOWN":
+        reason = f"4H UP ({dur_4h_str}) · 1D {s1 or '?'} ({dur_1d_str})"
+    elif s4 == "DOWN":
         bias, label, color = "SHORT", "SHORT", "#ff4d6d"
-        reason = f"1D DOWN ({dur_1d_str}) + 4H DOWN ({dur_4h_str})"
-    elif s1 == "UP" and s4 == "DOWN":
-        bias, label, color = "LONG_CAUTION", "LONG ⚠", "#ffd23e"
-        reason = f"1D UP ({dur_1d_str}), 4H откат уже {dur_4h_str}"
-    elif s1 == "DOWN" and s4 == "UP":
-        bias, label, color = "SHORT_CAUTION", "SHORT ⚠", "#ffa94d"
-        reason = f"1D DOWN ({dur_1d_str}), 4H отскок уже {dur_4h_str}"
+        reason = f"4H DOWN ({dur_4h_str}) · 1D {s1 or '?'} ({dur_1d_str})"
     else:
         bias, label, color = "WAIT", "WAIT", "#7a8ba6"
-        reason = "конфликт TF или нет данных"
+        reason = "нет данных по 4H"
 
     # Current TOTAL2 value (last close)
     cur_total2 = series_4h[-1]["c"] if series_4h else 0
