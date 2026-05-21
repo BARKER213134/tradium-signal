@@ -7815,7 +7815,8 @@ window.openPrepumpChart = async function(pair) {
           });
         }
 
-        // Pre-Pump entry triggers — БОЛЬШИЕ оранжевые маркеры для PRIME, жёлтые для STRONG
+        // Pre-Pump entry triggers — все tier'ы (PRIME/STRONG/WATCH)
+        // PRIME = большие оранжевые, STRONG = жёлтые, WATCH = зелёные средние
         for (const c of ppItems) {
           const ts = c.detected_at_ts;
           if (!ts || !inRange(ts)) continue;
@@ -7823,15 +7824,21 @@ window.openPrepumpChart = async function(pair) {
           if (!mc) continue;
           const isPrime = c.tier === 'PRIME';
           const isStrong = c.tier === 'STRONG';
-          if (!isPrime && !isStrong) continue;  // only PRIME/STRONG
+          const isWatch = c.tier === 'WATCH';
+          if (!isPrime && !isStrong && !isWatch) continue;
           const isL = c.direction === 'LONG';
+          const tierConfig = isPrime
+            ? { color: '#ff8c50', emoji: '🔥', size: 2 }
+            : isStrong
+              ? { color: '#ffd23e', emoji: '🟡', size: 2 }
+              : { color: '#88d8a3', emoji: '🟢', size: 1 };
           markers.push({
             time: mc.time,
             position: isL ? 'belowBar' : 'aboveBar',
-            color: isPrime ? '#ff8c50' : '#ffd23e',
+            color: tierConfig.color,
             shape: 'circle',
-            text: isPrime ? `🔥${c.composite_score.toFixed(0)}` : `🟡${c.composite_score.toFixed(0)}`,
-            size: 2,
+            text: `${tierConfig.emoji}${c.composite_score.toFixed(0)}`,
+            size: tierConfig.size,
           });
         }
 
