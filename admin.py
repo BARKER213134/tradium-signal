@@ -9925,6 +9925,37 @@ async def api_prepump_candidates(tier: str = "", limit: int = 200, hours: int = 
     return {'items': deduped, 'count': len(deduped)}
 
 
+@app.post("/api/signal-quality/backtest/start")
+async def api_signal_quality_backtest_start():
+    """Запускает backtest качества каждого источника signals (14d)."""
+    import signal_quality_backtest as sq
+    state = sq._get_state()
+    if state.get('running'):
+        return {'started': False, 'state': state}
+    asyncio.create_task(asyncio.to_thread(sq.run_signal_quality_backtest))
+    return {'started': True}
+
+
+@app.get("/api/signal-quality/backtest/status")
+async def api_signal_quality_backtest_status():
+    import signal_quality_backtest as sq
+    from database import _get_db
+    state = sq._get_state()
+    out = {'state': state}
+    try:
+        db = _get_db()
+        report = db.signal_quality_backtest_report.find_one({}, {'_id': 0})
+        if report:
+            for k in ['started_at', 'finished_at']:
+                v = report.get(k)
+                if hasattr(v, 'isoformat'):
+                    report[k] = v.isoformat()
+            out['report'] = report
+    except Exception:
+        pass
+    return out
+
+
 @app.post("/api/prepump/early-backtest/start")
 async def api_prepump_early_backtest_start():
     """Запускает EARLY_ENTRY backtest на исторических signals (без composite)."""
