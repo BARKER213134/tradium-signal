@@ -10722,6 +10722,75 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
     except Exception:
         pass
 
+    # New Strategy Signals — whale/shark/combo/volume_surge/triple_confluence/
+    # vol_accum/volcano/second_flip. Без этого блока эмодзи 🐋/🦈/🧠 etc
+    # не отображались на per-coin chart журнала.
+    try:
+        from database import _get_db
+        nss = _get_db().new_strategy_signals
+        STRAT_EMOJI = {"volume_surge": "🌊", "triple_confluence": "🐉",
+                        "vol_accum": "🔋", "volcano": "🌋",
+                        "second_flip": "♻️", "combo": "🧠",
+                        "whale": "🐋", "shark": "🦈"}
+        STRAT_LABEL = {"volume_surge": "Volume Surge",
+                       "triple_confluence": "Triple Confluence",
+                       "vol_accum": "Vol Accum", "volcano": "Volcano",
+                       "second_flip": "Second Flip", "combo": "COMBO",
+                       "whale": "WHALE", "shark": "SHARK"}
+        for n in nss.find({"created_at": {"$gte": since}, **pair_or}).sort("created_at", -1):
+            at_dt = n.get("created_at")
+            strat = n.get("strategy", "?")
+            em = STRAT_EMOJI.get(strat, "✨")
+            label = STRAT_LABEL.get(strat, strat)
+            # Strategy-specific extras для tooltip pattern_txt
+            extra_parts = []
+            if strat == "whale":
+                if n.get("whale_tier"): extra_parts.append(f"tier {n['whale_tier']}")
+                if n.get("whale_score"): extra_parts.append(f"score {n['whale_score']}")
+            elif strat == "shark":
+                if n.get("shark_tier"): extra_parts.append(f"tier {n['shark_tier']}")
+                if n.get("shark_score"): extra_parts.append(f"score {n['shark_score']}")
+                ind = n.get('shark_indicators') or {}
+                if ind.get('multi_top_count'):
+                    extra_parts.append(f"multi-top×{ind['multi_top_count']}")
+            elif strat == "combo" and n.get('combo_score'):
+                extra_parts.append(f"score {n['combo_score']}")
+            elif strat == "volume_surge" and n.get('vol_ratio'):
+                extra_parts.append(f"vol {n['vol_ratio']}×")
+            pattern_txt = f"{em} {label}"
+            if extra_parts:
+                pattern_txt += " · " + " · ".join(extra_parts)
+            if at_dt and hasattr(at_dt, "isoformat"):
+                at_iso = at_dt.isoformat()
+                at_ts = int(at_dt.timestamp())
+            else:
+                at_iso = None; at_ts = 0
+            items.append({
+                "source": strat,  # 'whale' / 'shark' / 'combo' / ...
+                "symbol": (n.get("pair") or "").replace("/", "").upper(),
+                "pair": n.get("pair", ""),
+                "direction": n.get("direction", ""),
+                "entry": n.get("entry"),
+                "tp1": n.get("tp"),
+                "sl": n.get("sl"),
+                "pattern": pattern_txt,
+                "score": n.get("source_count") or n.get("vol_ratio") or 0,
+                "st_passed": None,
+                "pump_score": 0,
+                "is_top_pick": False,
+                "top_pick_confirmations_count": 0,
+                "ns_strategy": strat,
+                "ns_state": n.get("state", "WAITING"),
+                "whale_tier": n.get("whale_tier"),
+                "whale_score": n.get("whale_score"),
+                "shark_tier": n.get("shark_tier"),
+                "shark_score": n.get("shark_score"),
+                "at": at_iso,
+                "at_ts": at_ts,
+            })
+    except Exception:
+        pass
+
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
 
     # Inject q_score (HOT marker нужен на графиках по конкретной паре)
