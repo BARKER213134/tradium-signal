@@ -10725,6 +10725,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
     # New Strategy Signals — whale/shark/combo/volume_surge/triple_confluence/
     # vol_accum/volcano/second_flip. Без этого блока эмодзи 🐋/🦈/🧠 etc
     # не отображались на per-coin chart журнала.
+    # Projection + limit(200) для ускорения (на пары с большой историей
+    # backfill могло быть >500 записей без projection — медленно).
     try:
         from database import _get_db
         nss = _get_db().new_strategy_signals
@@ -10737,7 +10739,13 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
                        "second_flip": "Second Flip", "combo": "COMBO",
                        "whale": "WHALE", "shark": "SHARK"}
-        for n in nss.find({"created_at": {"$gte": since}, **pair_or}).sort("created_at", -1):
+        for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
+            "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
+            "tp": 1, "sl": 1, "created_at": 1, "state": 1,
+            "whale_tier": 1, "whale_score": 1, "whale_indicators": 1,
+            "shark_tier": 1, "shark_score": 1, "shark_indicators": 1,
+            "combo_score": 1, "vol_ratio": 1, "source_count": 1,
+        }).sort("created_at", -1).limit(200):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
             em = STRAT_EMOJI.get(strat, "✨")

@@ -796,6 +796,10 @@ def init_db():
         nss.create_index("created_at", expireAfterSeconds=30*86400, name="ttl_30d")
         nss.create_index([("strategy", ASCENDING), ("created_at", DESCENDING)])
         nss.create_index([("pair", ASCENDING), ("created_at", DESCENDING)])
+        # Index on symbol — для $or: [{pair},{symbol}] query из chart marker
+        # endpoints (collect_signals_for / journal/by-symbol). Без этого
+        # $or форсит collection scan → chart loading медленный.
+        nss.create_index([("symbol", ASCENDING), ("created_at", DESCENDING)])
         nss.create_index([("state", ASCENDING), ("created_at", DESCENDING)])
         nss.create_index([("st_signal_id", ASCENDING)], sparse=True)
     except Exception:

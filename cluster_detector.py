@@ -169,6 +169,7 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
         # New Strategy Signals — whale/shark/combo/volume_surge/triple_confluence/
         # vol_accum/volcano/second_flip. Для chart markers в журнале (без этого
         # на графике не было 🐋/🦈/🧠/🌊 etc эмодзи на pair-signals fallback path).
+        # Projection + limit для ускорения (бы стало медленно на больших окнах).
         try:
             from database import _get_db
             nss = _get_db().new_strategy_signals
@@ -176,7 +177,13 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
                 "created_at": {"$gte": start, "$lte": end_at},
                 "direction": direction,
                 "$or": [{"symbol": norm.replace("/", "")}, {"pair": norm}],
-            }):
+            }, {
+                "strategy": 1, "created_at": 1, "entry": 1,
+                "whale_tier": 1, "whale_score": 1, "whale_indicators": 1,
+                "shark_tier": 1, "shark_score": 1, "shark_indicators": 1,
+                "combo_score": 1, "trigger_source": 1, "preceding_sources": 1,
+                "vol_ratio": 1, "source_count": 1,
+            }).sort("created_at", -1).limit(100):
                 strat = s.get("strategy", "?")
                 # Meta — стратегия-специфичная info для tooltip
                 meta = {}
