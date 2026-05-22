@@ -9358,17 +9358,57 @@ safeInterval(loadJournalRegime, 60000);
 
 // ── 🟢 LONG / 🔴 SHORT / ⚪ WAIT (TOTAL2 SuperTrend bias) ─────────────
 // Эталон: TOTAL2 = sum(mcap top-20 alts) — proxy ~85% TradingView's TOTAL2.
-// ST(10,3) computed на 4H + 1D, bias = composite. Refresh каждые 5 мин (тот же
-// TTL что и кеш в market_total.py — не загружает CoinGecko/Binance Vision лишний раз).
+// ST(10,3) computed на 4H + 1D, bias = ST 4H state.
+// Backend refresh: 5 min (тот же TTL что и кеш в market_total.py).
+// Duration string обновляется client-side каждые 30 сек из flip_ts.
+
+// Состояние последнего ответа от API (для live duration update)
+let _biasData = null;
+
+function _fmtDuration(secs) {
+  if (secs == null || secs < 0) return '?';
+  if (secs < 3600) return Math.floor(secs / 60) + 'm';
+  const h = Math.floor(secs / 3600);
+  if (h < 48) return h + 'h';
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return rh > 0 ? `${d}d ${rh}h` : `${d}d`;
+}
+
+function _updateBiasDurations() {
+  // Каждые 30s обновляем строку duration на основе flip_ts (без запроса к серверу)
+  if (!_biasData) return;
+  const val = document.getElementById('jBiasVal');
+  const rsn = document.getElementById('jBiasReason');
+  if (!val) return;
+  const s4 = _biasData.st_4h || {};
+  const s1 = _biasData.st_1d || {};
+  const now_s = Math.floor(Date.now() / 1000);
+  const d4 = s4.flip_ts ? _fmtDuration(now_s - s4.flip_ts) : (s4.duration || '?');
+  const d1 = s1.flip_ts ? _fmtDuration(now_s - s1.flip_ts) : (s1.duration || '?');
+  // Обновляем val (нижняя строка под кнопкой)
+  const tB = (_biasData.total2_usd || 0) / 1e9;
+  const chg = _biasData.chg_24h_pct || 0;
+  const chgClr = chg >= 0 ? '#00e5a0' : '#ff4d6d';
+  const c4 = s4.state === 'UP' ? '#00e5a0' : (s4.state === 'DOWN' ? '#ff4d6d' : '#888');
+  const c1 = s1.state === 'UP' ? '#00e5a0' : (s1.state === 'DOWN' ? '#ff4d6d' : '#888');
+  val.innerHTML = `$${tB.toFixed(1)}B · 24h <span style="color:${chgClr};">${chg>=0?'+':''}${chg}%</span><br>` +
+                  `<span style="color:${c1};font-weight:600;">1D ${s1.state||'?'} ${d1}</span> · ` +
+                  `<span style="color:${c4};font-weight:600;">4H ${s4.state||'?'} ${d4}</span>`;
+  // Обновляем reason
+  if (rsn) {
+    if (s4.state === 'UP') rsn.textContent = `4H UP (${d4}) · 1D ${s1.state||'?'} (${d1})`;
+    else if (s4.state === 'DOWN') rsn.textContent = `4H DOWN (${d4}) · 1D ${s1.state||'?'} (${d1})`;
+  }
+}
 async function _refreshBias(force=false) {
   const lbl = document.getElementById('jBiasLabel');
   const cnt = document.getElementById('jBiasBig');
-  const rsn = document.getElementById('jBiasReason');
-  const val = document.getElementById('jBiasVal');
   if (!lbl || !cnt) return;
   try {
     const r = await fetch(`/api/market-bias${force ? '?force=true' : ''}`);
     const d = await r.json();
+    _biasData = d;  // сохраняем для _updateBiasDurations
     lbl.textContent = d.label || '···';
     cnt.style.borderColor = d.color || 'rgba(255,255,255,0.15)';
     cnt.style.color = d.color || '#888';
@@ -9377,30 +9417,20 @@ async function _refreshBias(force=false) {
       (d.bias === 'SHORT') ?
       'linear-gradient(135deg, rgba(255,77,109,0.20), rgba(255,77,109,0.08))' :
       'rgba(255,255,255,0.04)';
-    if (rsn) rsn.textContent = d.reason || '';
-    if (val && d.total2_usd) {
-      const tB = (d.total2_usd / 1e9).toFixed(1);
-      const chg = d.chg_24h_pct || 0;
-      const chgClr = chg >= 0 ? '#00e5a0' : '#ff4d6d';
-      const s4 = d.st_4h || {};
-      const s1 = d.st_1d || {};
-      // Color by state
-      const c4 = s4.state === 'UP' ? '#00e5a0' : (s4.state === 'DOWN' ? '#ff4d6d' : '#888');
-      const c1 = s1.state === 'UP' ? '#00e5a0' : (s1.state === 'DOWN' ? '#ff4d6d' : '#888');
-      const d4 = s4.duration || '?';
-      const d1 = s1.duration || '?';
-      val.innerHTML = `$${tB}B · 24h <span style="color:${chgClr};">${chg>=0?'+':''}${chg}%</span><br>` +
-                      `<span style="color:${c1};font-weight:600;">1D ${s1.state||'?'} ${d1}</span> · ` +
-                      `<span style="color:${c4};font-weight:600;">4H ${s4.state||'?'} ${d4}</span>`;
-    }
-    cnt.title = `TOTAL2 (top-20 alts ≈ ${d.coins_count || 20} coins, excl. BTC)\n\nBias: ${d.label}\nReason: ${d.reason}\n\nTOTAL2 = $${((d.total2_usd||0)/1e9).toFixed(1)}B\n24h change: ${d.chg_24h_pct||0}%\n\nST 4H: ${(d.st_4h||{}).state || '?'}\nST 1D: ${(d.st_1d||{}).state || '?'}\n\nКлик чтобы force refresh.`;
+    _updateBiasDurations();  // первичный render с live duration
+    cnt.title = `TOTAL2 (top-20 alts ≈ ${d.coins_count || 20} coins, excl. BTC)\n\nBias: ${d.label}\nReason: ${d.reason}\n\nTOTAL2 = $${((d.total2_usd||0)/1e9).toFixed(1)}B\n24h change: ${d.chg_24h_pct||0}%\n\nST 4H: ${(d.st_4h||{}).state || '?'}\nST 1D: ${(d.st_1d||{}).state || '?'}\n\nClick = force refresh.`;
   } catch(e) {
     lbl.textContent = 'ERR';
+    const rsn = document.getElementById('jBiasReason');
     if (rsn) rsn.textContent = 'fetch error';
   }
 }
 setTimeout(_refreshBias, 1200);
-safeInterval(_refreshBias, 5 * 60 * 1000);  // refresh каждые 5 мин
+// Backend refresh каждые 5 мин (соответствует cache TTL в market_total.py)
+safeInterval(_refreshBias, 5 * 60 * 1000);
+// Frontend duration update каждые 30 сек — даёт ощущение "живого" timer'а
+// без лишних запросов к серверу. Использует flip_ts из последнего ответа.
+safeInterval(_updateBiasDurations, 30 * 1000);
 
 async function loadJournal() {
   try {

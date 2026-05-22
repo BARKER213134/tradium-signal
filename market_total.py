@@ -338,13 +338,17 @@ def get_market_bias(force_refresh: bool = False) -> dict:
     now_ms = int(time.time() * 1000)
     dur_4h_str = "?"
     dur_1d_str = "?"
+    flip_4h_ts = None
+    flip_1d_ts = None
     if st_4h and st_4h.get("last_flip_idx") is not None and series_4h:
         flip_idx = st_4h["last_flip_idx"]
         if 0 <= flip_idx < len(series_4h):
+            flip_4h_ts = int(series_4h[flip_idx]["t"] / 1000)  # seconds
             dur_4h_str = _duration_str((now_ms - series_4h[flip_idx]["t"]) / 1000)
     if st_1d and st_1d.get("last_flip_idx") is not None and daily:
         flip_idx = st_1d["last_flip_idx"]
         if 0 <= flip_idx < len(daily):
+            flip_1d_ts = int(daily[flip_idx]["t"] / 1000)
             dur_1d_str = _duration_str((now_ms - daily[flip_idx]["t"]) / 1000)
 
     # Compose bias
@@ -385,11 +389,13 @@ def get_market_bias(force_refresh: bool = False) -> dict:
             "state": s4,
             "value": (st_4h or {}).get("value"),
             "duration": dur_4h_str,
+            "flip_ts": flip_4h_ts,  # Unix seconds — для frontend live update
         } if st_4h else None,
         "st_1d": {
             "state": s1,
             "value": (st_1d or {}).get("value"),
             "duration": dur_1d_str,
+            "flip_ts": flip_1d_ts,
         } if st_1d else None,
         "history": [{"t": c["t"], "c": c["c"]} for c in chart_history],
         "computed_at": now,
