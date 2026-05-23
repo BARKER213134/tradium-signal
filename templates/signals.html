@@ -3696,13 +3696,41 @@ function _renderSetupResult(d) {
   const c4 = st4h.state === 'UP' ? '#00e5a0' : (st4h.state === 'DOWN' ? '#ff4d6d' : '#888');
   const cb = bias.bias === 'LONG' ? '#00e5a0' : (bias.bias === 'SHORT' ? '#ff4d6d' : '#888');
 
-  // Recent signals list
-  const recentHtml = (d.recent_signals || []).slice(0, 5).map(rs => {
-    const em = rs.strategy === 'whale' ? '🐋' : (rs.strategy === 'shark' ? '🦈' : '✨');
+  // ── Recent signals list (ALL sources за 72h) + cluster bias header ──
+  const srcEmoji = {whale:'🐋', shark:'🦈', combo:'🧠', triple_confluence:'🐉',
+                    st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', cv_flip:'⏳',
+                    anomaly:'⚠', cryptovizor:'🚀', tradium:'📡', cluster:'💠',
+                    volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
+                    second_flip:'♻️'};
+  const longCnt = d.cluster_long || 0;
+  const shortCnt = d.cluster_short || 0;
+  const clusterBias = d.cluster_bias || 'NEUTRAL';
+  const clBiasColor = clusterBias === 'LONG' ? '#00e5a0' : (clusterBias === 'SHORT' ? '#ff4d6d' : '#888');
+  const clusterHeader = `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;margin-bottom:8px;border-bottom:1px solid var(--border);">
+    <div style="font-size:11px;color:var(--muted);">📊 Cluster bias за 72h (TOP-7 sources):</div>
+    <div style="display:flex;gap:14px;align-items:center;font-family:var(--font-mono);">
+      <span style="color:#00e5a0;font-weight:700;">${longCnt} LONG</span>
+      <span style="color:#ff4d6d;font-weight:700;">${shortCnt} SHORT</span>
+      <span style="color:${clBiasColor};font-weight:800;padding:2px 10px;border:1px solid ${clBiasColor};border-radius:6px;">${clusterBias}</span>
+    </div>
+  </div>`;
+  const recentHtml = (d.recent_signals || []).slice(0, 30).map(rs => {
+    const em = srcEmoji[rs.source] || '•';
+    const dirColor = rs.direction === 'LONG' ? '#00e5a0' : (rs.direction === 'SHORT' ? '#ff4d6d' : 'var(--muted)');
     const dt = rs.at ? new Date(rs.at).toLocaleString('ru-RU') : '';
-    const dirColor = rs.direction === 'LONG' ? '#00e5a0' : '#ff4d6d';
-    return `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">${em} <b>${rs.strategy.toUpperCase()}</b> <span style="color:${dirColor};">${rs.direction}</span> @ ${rs.entry} · tier ${rs.tier} · score ${rs.score} · <span style="color:var(--muted);">${dt}</span></div>`;
-  }).join('') || '<div style="color:var(--muted);padding:6px 0;">Нет сигналов за 48h</div>';
+    const age = rs.age_hours != null ? `${rs.age_hours}h` : '';
+    const tierBadge = rs.tier ? `<span style="padding:1px 6px;background:rgba(255,210,62,0.15);border:1px solid rgba(255,210,62,0.4);border-radius:4px;color:#ffd23e;font-size:10px;">${rs.tier}</span>` : '';
+    const scoreBadge = rs.score != null ? `<span style="color:var(--muted);">score ${rs.score}</span>` : '';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">
+      <span style="font-size:16px;width:24px;text-align:center;">${em}</span>
+      <span style="min-width:130px;font-weight:600;">${(rs.source||'?').toUpperCase()}</span>
+      <span style="color:${dirColor};font-weight:700;width:55px;">${rs.direction || '?'}</span>
+      <span style="color:var(--muted);width:80px;">@ ${rs.entry || '—'}</span>
+      ${tierBadge}
+      ${scoreBadge}
+      <span style="margin-left:auto;color:var(--muted);font-size:10px;">${age} назад · ${dt}</span>
+    </div>`;
+  }).join('') || '<div style="color:var(--muted);padding:6px 0;">Нет сигналов за 72h</div>';
 
   // Reasons list
   const reasonsHtml = (d.reasons || []).map(r =>
@@ -3774,9 +3802,10 @@ function _renderSetupResult(d) {
       ${waitForHtml ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);"><div style="font-family:var(--font-mono);font-size:11px;color:#ffd23e;letter-spacing:0.1em;margin-bottom:6px;">⏳ ЖДАТЬ:</div>${waitForHtml}</div>` : ''}
     </div>
 
-    <!-- Recent signals -->
+    <!-- Recent signals (ALL sources за 72h) + cluster bias -->
     <div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
-      <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;margin-bottom:8px;">🕐 ПОСЛЕДНИЕ СИГНАЛЫ (48h)</div>
+      <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;margin-bottom:8px;">🕐 ВСЕ СИГНАЛЫ ЗА 72H (${(d.recent_signals||[]).length})</div>
+      ${clusterHeader}
       ${recentHtml}
     </div>
   `;

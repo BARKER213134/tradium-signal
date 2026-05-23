@@ -202,32 +202,169 @@ def check_setup(pair_input: str) -> dict:
         except Exception:
             pass
 
-        # Recent signals (whale/shark for this pair in 48h)
+        # === ВСЕ сигналы за 72h из всех источников ===
+        now_dt = datetime.now(timezone.utc)
+        since = now_dt - timedelta(hours=72)
+        pair_or = {"$or": [{"pair": pair}, {"symbol": symbol}]}
+
+        all_sigs: list = []
+
+        # 1. new_strategy_signals (whale/shark/combo/volume_surge/triple_confluence/...)
         try:
-            since = datetime.now(timezone.utc) - timedelta(hours=48)
             for d in db.new_strategy_signals.find({
-                'strategy': {'$in': ['whale', 'shark']},
-                '$or': [{'pair': pair}, {'symbol': symbol}],
-                'created_at': {'$gte': since},
+                **pair_or, 'created_at': {'$gte': since},
             }, {
-                'strategy': 1, 'created_at': 1, 'direction': 1,
-                'entry': 1, 'whale_tier': 1, 'shark_tier': 1,
-                'whale_score': 1, 'shark_score': 1, 'state': 1,
-            }).sort('created_at', -1).limit(10):
+                'strategy': 1, 'created_at': 1, 'direction': 1, 'entry': 1,
+                'whale_tier': 1, 'shark_tier': 1, 'whale_score': 1,
+                'shark_score': 1, 'combo_score': 1, 'state': 1,
+                'vol_ratio': 1, 'source_count': 1,
+            }).sort('created_at', -1).limit(50):
                 dt = d.get('created_at')
-                if dt and dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                result["recent_signals"].append({
-                    'strategy': d.get('strategy'),
+                if dt and dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                all_sigs.append({
+                    'source': d.get('strategy'),
                     'at': dt.isoformat() if dt else None,
+                    'at_ts': int(dt.timestamp()) if dt else 0,
                     'direction': d.get('direction'),
                     'entry': d.get('entry'),
                     'tier': d.get('whale_tier') or d.get('shark_tier'),
-                    'score': d.get('whale_score') or d.get('shark_score'),
+                    'score': d.get('whale_score') or d.get('shark_score') or d.get('combo_score'),
                     'state': d.get('state'),
                 })
-        except Exception:
-            pass
+        except Exception: pass
+
+        # 2. supertrend_signals (vip/mtf — daily игнорим)
+        try:
+            for s in db.supertrend_signals.find({
+                'pair': pair,
+                'flip_at': {'$gte': since},
+                'tier': {'$in': ['vip', 'mtf']},
+            }, {'tier':1,'direction':1,'entry_price':1,'flip_at':1}).sort('flip_at',-1).limit(20):
+                dt = s.get('flip_at')
+                if dt and dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                all_sigs.append({
+                    'source': f"st_{s.get('tier','mtf')}",
+                    'at': dt.isoformat() if dt else None,
+                    'at_ts': int(dt.timestamp()) if dt else 0,
+                    'direction': s.get('direction'),
+                    'entry': s.get('entry_price'),
+                    'tier': s.get('tier', '').upper(),
+                })
+        except Exception: pass
+
+        # 3. confluence
+        try:
+            for c in db.confluence.find({
+                **pair_or, 'detected_at': {'$gte': since},
+            }, {'direction':1,'price':1,'detected_at':1,'score':1,'strength':1}).sort('detected_at',-1).limit(20):
+                dt = c.get('detected_at')
+                if dt and dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                all_sigs.append({
+                    'source': 'confluence',
+                    'at': dt.isoformat() if dt else None,
+                    'at_ts': int(dt.timestamp()) if dt else 0,
+                    'direction': c.get('direction'),
+                    'entry': c.get('price'),
+                    'score': c.get('score'),
+                    'tier': c.get('strength'),
+                })
+        except Exception: pass
+
+        # 4. cv_flip
+        try:
+            for f in db.cv_flip_signals.find({
+                'pair': pair,
+                'cv_triggered_at': {'$gte': since},
+                'state': 'FLIPPED',
+            }, {'direction':1,'entry':1,'flip_price':1,'flip_at':1,'cv_triggered_at':1}).sort('cv_triggered_at',-1).limit(20):
+                dt = f.get('flip_at') or f.get('cv_triggered_at')
+                if dt and dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                all_sigs.append({
+                    'source': 'cv_flip',
+                    'at': dt.isoformat() if dt else None,
+                    'at_ts': int(dt.timestamp()) if dt else 0,
+                    'direction': f.get('direction'),
+                    'entry': f.get('entry') or f.get('flip_price'),
+                })
+        except Exception: pass
+
+        # 5. anomalies
+        try:
+            for a in db.anomalies.find({
+                **pair_or, 'detected_at': {'$gte': since},
+            }, {'direction':1,'price':1,'detected_at':1,'score':1}).sort('detected_at',-1).limit(15):
+                dt = a.get('detected_at')
+                if dt and dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                all_sigs.append({
+                    'source': 'anomaly',
+                    'at': dt.isoformat() if dt else None,
+                    'at_ts': int(dt.timestamp()) if dt else 0,
+                    'direction': a.get('direction'),
+                    'entry': a.get('price'),
+                    'score': a.get('score'),
+                })
+        except Exception: pass
+
+        # 6. cryptovizor + tradium (pattern_triggered)
+        try:
+            for s in db.signals.find({
+                'pair': pair,
+                'source': {'$in': ['cryptovizor', 'tradium']},
+                'pattern_triggered': True,
+                'pattern_triggered_at': {'$gte': since},
+            }, {'source':1,'direction':1,'entry':1,'pattern_price':1,'pattern_triggered_at':1,'ai_score':1,'pattern_name':1}).sort('pattern_triggered_at',-1).limit(10):
+                dt = s.get('pattern_triggered_at')
+                if dt and dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                all_sigs.append({
+                    'source': s.get('source'),
+                    'at': dt.isoformat() if dt else None,
+                    'at_ts': int(dt.timestamp()) if dt else 0,
+                    'direction': s.get('direction'),
+                    'entry': s.get('pattern_price') or s.get('entry'),
+                    'score': s.get('ai_score'),
+                    'tier': s.get('pattern_name'),
+                })
+        except Exception: pass
+
+        # 7. clusters
+        try:
+            for cl in db.clusters.find({
+                **pair_or, 'trigger_at': {'$gte': since},
+            }, {'direction':1,'trigger_price':1,'trigger_at':1,'strength':1}).sort('trigger_at',-1).limit(10):
+                dt = cl.get('trigger_at')
+                if dt and dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                all_sigs.append({
+                    'source': 'cluster',
+                    'at': dt.isoformat() if dt else None,
+                    'at_ts': int(dt.timestamp()) if dt else 0,
+                    'direction': cl.get('direction'),
+                    'entry': cl.get('trigger_price'),
+                    'tier': cl.get('strength'),
+                })
+        except Exception: pass
+
+        # Sort by time desc + add age_hours
+        all_sigs.sort(key=lambda x: x.get('at_ts', 0), reverse=True)
+        now_ts = int(now_dt.timestamp())
+        for s in all_sigs:
+            if s.get('at_ts'):
+                s['age_hours'] = round((now_ts - s['at_ts']) / 3600, 1)
+
+        result["recent_signals"] = all_sigs
+
+        # === Signal cluster bias: подсчёт LONG vs SHORT за 72h ===
+        # TOP-7 backtest-validated sources только (остальные шумят)
+        top_sources = {'whale', 'shark', 'combo', 'triple_confluence',
+                       'st_vip', 'confluence', 'cv_flip'}
+        long_count = sum(1 for s in all_sigs
+                         if s.get('direction') == 'LONG' and s.get('source') in top_sources)
+        short_count = sum(1 for s in all_sigs
+                          if s.get('direction') == 'SHORT' and s.get('source') in top_sources)
+        result["cluster_long"] = long_count
+        result["cluster_short"] = short_count
+        result["cluster_bias"] = ('LONG' if long_count > short_count + 1
+                                   else 'SHORT' if short_count > long_count + 1
+                                   else 'NEUTRAL')
 
         # ── Compose VERDICT ──
         long_ok = wh_res["passes_core"] and result["long_tier"] in ('STANDARD', 'PREMIUM')
@@ -284,6 +421,23 @@ def check_setup(pair_input: str) -> dict:
         if total2_bias == 'LONG':
             align_short_bonus -= 10
             short_penalties.append('TOTAL2 bias = LONG (рынок альтов вверх)')
+
+        # BONUS / PENALTY: signal cluster bias за 72h
+        # Если 3+ LONG signals из TOP-7 → +15 LONG, −10 SHORT
+        # Если 3+ SHORT signals из TOP-7 → +15 SHORT, −10 LONG
+        cluster_bias = result.get("cluster_bias", "NEUTRAL")
+        long_cnt = result.get("cluster_long", 0)
+        short_cnt = result.get("cluster_short", 0)
+        if cluster_bias == 'LONG' and long_cnt >= 3:
+            align_long_bonus += 15
+            long_penalties.append(f'+15 cluster_72h: {long_cnt} LONG vs {short_cnt} SHORT signals')
+            align_short_bonus -= 10
+            short_penalties.append(f'cluster_72h дрейфует в LONG ({long_cnt} vs {short_cnt})')
+        elif cluster_bias == 'SHORT' and short_cnt >= 3:
+            align_short_bonus += 15
+            short_penalties.append(f'+15 cluster_72h: {short_cnt} SHORT vs {long_cnt} LONG signals')
+            align_long_bonus -= 10
+            long_penalties.append(f'cluster_72h дрейфует в SHORT ({short_cnt} vs {long_cnt})')
 
         adj_long = result["long_score"] + align_long_bonus
         adj_short = result["short_score"] + align_short_bonus
