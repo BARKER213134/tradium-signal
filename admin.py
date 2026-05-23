@@ -10810,6 +10810,17 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
 
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
 
+    # 🎰 Inject setup_verdict из pair_verdicts (single pair lookup)
+    try:
+        pv = _get_db().pair_verdicts.find_one({'pair': pair_slash}, {'verdict': 1})
+        if pv and pv.get('verdict'):
+            v = pv['verdict']
+            for it in items:
+                if not it.get('setup_verdict'):
+                    it['setup_verdict'] = v
+    except Exception:
+        pass
+
     # Inject q_score (HOT marker нужен на графиках по конкретной паре)
     try:
         from quality_score import compute_signal_score
@@ -11379,6 +11390,25 @@ def _compute_journal_sync(_fast_only: bool = False):
 
     # Сортируем по дате (новые сверху)
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
+
+    # ─── 🎰 Inject setup_verdict из pair_verdicts collection ───
+    # Single Mongo query на все уникальные pairs items, batch lookup.
+    try:
+        from database import _get_db as _g_db
+        _db = _g_db()
+        unique_pairs = list(set(it.get('pair') for it in items if it.get('pair')))
+        pv_map = {}
+        for pv in _db.pair_verdicts.find(
+            {'pair': {'$in': unique_pairs}},
+            {'pair': 1, 'verdict': 1}
+        ):
+            pv_map[pv['pair']] = pv.get('verdict')
+        for it in items:
+            v = pv_map.get(it.get('pair'))
+            if v and not it.get('setup_verdict'):
+                it['setup_verdict'] = v
+    except Exception as _e:
+        logging.getLogger(__name__).debug(f'[journal] pair_verdicts join fail: {_e}')
 
     # ─── Stack count enrichment (MOONSHOT detection) ───
     # Для каждого item считаем distinct (source, direction) на той же паре

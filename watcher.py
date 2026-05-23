@@ -103,57 +103,100 @@ async def _whale_scanner_loop():
 
 
 async def _setup_verdict_loop():
-    """🎰 Setup-Checker verdict loop — каждые 60s бежит по сигналам без
-    setup_verdict, считает verdict через setup_checker.get_compact_verdict()
-    и сохраняет на signal doc.
-
-    Используется UI журналом для display correct verdict (с эмодзи) на
-    каждом signal вместо client-side упрощённой логики.
+    """🎰 Setup-Checker verdict loop — каждые 60s обновляет коллекцию
+    pair_verdicts с одним verdict per pair. Journal endpoints джойнят
+    эту коллекцию к ЛЮБОМУ signal (whale/shark/supertrend/cv_flip/conf/etc).
 
     Architecture:
-      - Кэш per pair 5 минут (setup_checker._verdict_cache)
-      - Один setup_checker call покрывает ВСЕ signals same pair в окне 5 мин
-      - Process max 30 unique pairs per cycle → ~6 sec runtime
+      - Collect unique pairs из всех source collections (последние 48h)
+      - Per pair: setup_checker.get_compact_verdict() с 5-мин кешем
+      - Upsert в pair_verdicts collection {pair, verdict, updated_at}
+      - Process max 30 unique pairs per cycle → ~6-15 sec runtime
+      - Re-process pair если updated_at > 10 min (свежие данные)
     """
     import asyncio as _asyncio
     from datetime import datetime, timezone, timedelta
-    await _asyncio.sleep(120)  # дать watcher разогреться + всем scanner'ам
+    await _asyncio.sleep(120)
     while True:
         try:
-            from database import _get_db
+            from database import _get_db, utcnow
             from setup_checker import get_compact_verdict
             db = _get_db()
             cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
-            # Find signals в new_strategy_signals без setup_verdict
-            no_verdict = list(db.new_strategy_signals.find({
-                'created_at': {'$gte': cutoff},
-                'setup_verdict': {'$exists': False},
-            }, {'_id': 1, 'pair': 1}).limit(200))
-            if not no_verdict:
+            stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+
+            # Собираем уникальные pairs из всех актуальных source collections
+            unique_pairs: set = set()
+            try:
+                # new_strategy_signals (whale/shark/combo/etc)
+                for s in db.new_strategy_signals.find(
+                    {'created_at': {'$gte': cutoff}}, {'pair': 1}
+                ).limit(500):
+                    if s.get('pair'): unique_pairs.add(s['pair'])
+                # supertrend (ST MTF / VIP)
+                for s in db.supertrend_signals.find(
+                    {'flip_at': {'$gte': cutoff}, 'tier': {'$in': ['vip', 'mtf']}},
+                    {'pair': 1}
+                ).limit(500):
+                    if s.get('pair'): unique_pairs.add(s['pair'])
+                # confluence
+                for s in db.confluence.find(
+                    {'detected_at': {'$gte': cutoff}}, {'pair': 1}
+                ).limit(300):
+                    if s.get('pair'): unique_pairs.add(s['pair'])
+                # cv_flip
+                for s in db.cv_flip_signals.find(
+                    {'cv_triggered_at': {'$gte': cutoff}, 'state': 'FLIPPED'},
+                    {'pair': 1}
+                ).limit(300):
+                    if s.get('pair'): unique_pairs.add(s['pair'])
+            except Exception as e:
+                logger.debug(f'[verdict-loop] collect pairs: {e}')
+
+            if not unique_pairs:
                 await _asyncio.sleep(60)
                 continue
-            # Group by pair
-            by_pair: dict = {}
-            for s in no_verdict:
-                by_pair.setdefault(s.get('pair'), []).append(s['_id'])
-            logger.info(f'[verdict-loop] {len(no_verdict)} signals, '
-                         f'{len(by_pair)} unique pairs')
+
+            # Find pairs which need verdict refresh (no verdict OR stale > 10 min)
+            need_refresh: list = []
+            try:
+                pv_col = db.pair_verdicts
+                pv_col.create_index('pair', unique=True)
+                existing = {p['pair']: p.get('updated_at')
+                            for p in pv_col.find(
+                                {'pair': {'$in': list(unique_pairs)}},
+                                {'pair': 1, 'updated_at': 1})}
+                for p in unique_pairs:
+                    upd = existing.get(p)
+                    if upd is None:
+                        need_refresh.append(p)
+                    elif upd and upd.tzinfo is None:
+                        upd = upd.replace(tzinfo=timezone.utc)
+                    if upd and upd < stale_cutoff:
+                        need_refresh.append(p)
+            except Exception:
+                need_refresh = list(unique_pairs)
+
+            logger.info(f'[verdict-loop] {len(unique_pairs)} unique pairs, '
+                         f'{len(need_refresh)} need refresh')
             # Process max 30 pairs per cycle
             processed = 0
-            for pair, ids in list(by_pair.items())[:30]:
-                if not pair:
-                    continue
+            for pair in need_refresh[:30]:
+                if not pair: continue
                 try:
                     verdict = await _asyncio.to_thread(get_compact_verdict, pair)
-                    # Store on all signal docs of this pair
-                    db.new_strategy_signals.update_many(
-                        {'_id': {'$in': ids}},
-                        {'$set': {'setup_verdict': verdict}},
+                    db.pair_verdicts.update_one(
+                        {'pair': pair},
+                        {'$set': {
+                            'pair': pair, 'verdict': verdict,
+                            'updated_at': utcnow(),
+                        }},
+                        upsert=True,
                     )
-                    processed += len(ids)
+                    processed += 1
                 except Exception as _e:
-                    logger.debug(f'[verdict-loop] {pair} fail: {_e}')
-            logger.info(f'[verdict-loop] processed {processed} signals')
+                    logger.debug(f'[verdict-loop] {pair}: {_e}')
+            logger.info(f'[verdict-loop] processed {processed} verdicts')
         except Exception:
             logger.exception('[verdict-loop] crashed')
         await _asyncio.sleep(60)
