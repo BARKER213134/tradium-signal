@@ -10857,9 +10857,24 @@ window._verdictInfo = function(s) {
       verdict: 'WAIT',
     };
   }
-  // 7. Confluence weak (<5), anomaly, tradium pattern_triggered, cluster — OK tier
+  // 7. ST MTF (WR 36.9% низковато но всё ещё signal) → OK
+  else if (src === 'supertrend' && s.st_tier === 'mtf') {
+    base = {
+      emoji: '👍',
+      tier: 'OK',
+      qualityLabel: `🔱 ST MTF · слабее VIP но используем`,
+      color: '#88d8a3',
+      bg: 'rgba(136,216,163,0.12)',
+      expR: '+0.2 .. +0.6R',
+      verdict: isLong ? 'ENTER_LONG' : isShort ? 'ENTER_SHORT' : 'WAIT',
+    };
+  }
+  // 8. Confluence weak (<5), anomaly, tradium, cluster, cryptovizor pattern_triggered — OK tier
+  // cryptovizor в journal API уже filtered to pattern_triggered=true (admin.py),
+  // так что все cryptovizor items здесь являются "confirmed" signals
   else if ((src === 'confluence' && (s.score || 0) >= 3)
-           || src === 'tradium' || src === 'cluster' || src === 'anomaly') {
+           || src === 'tradium' || src === 'cluster' || src === 'anomaly'
+           || src === 'cryptovizor') {
     base = {
       emoji: '👍',
       tier: 'OK',
@@ -10870,7 +10885,7 @@ window._verdictInfo = function(s) {
       verdict: isLong ? 'ENTER_LONG' : isShort ? 'ENTER_SHORT' : 'WAIT',
     };
   }
-  // 8. Прочее (cryptovizor weak / volume_surge / vol_accum / volcano / second_flip / rsi_cross_12h)
+  // 9. Прочее (volume_surge / vol_accum / volcano / second_flip / rsi_cross_12h / st_daily / etc)
   else {
     base = {
       emoji: '⏳',
@@ -10942,6 +10957,8 @@ window._verdictInfo = function(s) {
     v3_accept: true,
   };
 };
+window._verdictInfo._version = 'v3-setup-checker';
+console.log('[verdictInfo] loaded', window._verdictInfo._version);
 
 window._renderVerdictCell = function(s) {
   const v = window._verdictInfo(s);
