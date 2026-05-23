@@ -10770,12 +10770,56 @@ window._verdictInfo = function(s) {
     };
   }
 
-  // ━━━ Fallback: client-side computation если нет stored verdict ━━━
+  // ━━━ Fallback: client-side только 3 states — LONG / SHORT / WAIT ━━━
+  // Mirror setup_checker simplified output
   const src = s.source || '';
   const dir = (s.direction || '').toUpperCase();
   const isLong = dir === 'LONG';
   const isShort = dir === 'SHORT';
 
+  // Counter-trend boolean check (для упрощения downgrade в WAIT)
+  let _ctPenalty = 0;
+  if (s.rsi4h_match === false) _ctPenalty += 20;
+  if (s.rsi12h_match === false) _ctPenalty += 10;
+  const _t2 = window._biasData && window._biasData.bias;
+  if (_t2 === 'SHORT' && isLong) _ctPenalty += 10;
+  if (_t2 === 'LONG' && isShort) _ctPenalty += 10;
+
+  // Quality sources (top-7 backtest + acceptable mid-tier sources)
+  // Все они получают LONG/SHORT по direction
+  const goodSources = new Set([
+    'whale', 'shark', 'triple_confluence', 'combo',
+    'confluence', 'tradium', 'cluster', 'anomaly', 'cryptovizor',
+  ]);
+  const stTierIsVip = src === 'supertrend' && s.st_tier === 'vip';
+  const stTierIsMtf = src === 'supertrend' && s.st_tier === 'mtf';
+
+  let base = null;
+  if (goodSources.has(src) || stTierIsVip || stTierIsMtf) {
+    // Производственные источники → LONG или SHORT по direction
+    if (isLong) {
+      base = {emoji:'🟢', tier:'LONG', qualityLabel:`${src} LONG`,
+              color:'#00e5a0', bg:'rgba(0,229,160,0.15)',
+              expR:'+0.5 .. +1.5R', verdict:'ENTER_LONG'};
+    } else if (isShort) {
+      base = {emoji:'🔴', tier:'SHORT', qualityLabel:`${src} SHORT`,
+              color:'#ff4d6d', bg:'rgba(255,77,109,0.15)',
+              expR:'+0.5 .. +1.5R', verdict:'ENTER_SHORT'};
+    }
+  }
+  // Counter-trend OR noisy sources OR no direction → WAIT
+  if (!base || _ctPenalty >= 20) {
+    base = {emoji:'⏳', tier:'WAIT', qualityLabel:src || 'unknown',
+            color:'#ffd23e', bg:'rgba(255,210,62,0.12)',
+            expR:'~0R', verdict:'WAIT'};
+    if (_ctPenalty >= 20) base.qualityLabel = `${src} · counter-trend`;
+  } else if (_ctPenalty >= 10) {
+    base.qualityLabel += ' · ⚠ partial counter-trend';
+  }
+
+  // [SKIP_OLD_LOGIC] — старая ветвящаяся логика по source убрана.
+  // Новый block выше делает 3 states (LONG/SHORT/WAIT) одной таблицей.
+  if (false) {  // dead-code guard, оставлен чтоб не ломать syntax
   // Counter-trend penalty проверки
   const rsi4hMatch = s.rsi4h_match;  // true = aligned, false = opposite
   const rsi12hMatch = s.rsi12h_match;
@@ -10943,6 +10987,7 @@ window._verdictInfo = function(s) {
   } else if (counterPenalty >= 10) {
     base.qualityLabel += ` · ⚠ ${counterReasons.join(', ')}`;
   }
+  }  // end if(false) dead-code guard
 
   // v3.0 regime gate ОТКЛЮЧЕН для новой Setup Checker logic —
   // он был спроектирован под старые tiers (ELITE/STRONG/GOOD) и реджектил
@@ -10957,7 +11002,7 @@ window._verdictInfo = function(s) {
     v3_accept: true,
   };
 };
-window._verdictInfo._version = 'v4-no-regime-gate';
+window._verdictInfo._version = 'v5-only-3-states';
 console.log('[verdictInfo] loaded', window._verdictInfo._version);
 
 window._renderVerdictCell = function(s) {

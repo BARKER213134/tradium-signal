@@ -726,27 +726,19 @@ def get_compact_verdict(pair_input: str) -> dict:
     long_score = full.get('long_score', 0)
     short_score = full.get('short_score', 0)
 
-    # Determine tier label + emoji (mirror UI logic)
+    # Только 3 состояния: LONG / SHORT / WAIT (как в Setup Checker UI)
     if verdict == 'ENTER_LONG':
-        tier_label = f"ELITE_LONG" if long_tier == 'PREMIUM' else "LONG"
-        emoji = '👑' if long_tier == 'PREMIUM' else '🟢'
-        color = '#ffd700' if long_tier == 'PREMIUM' else '#00e5a0'
+        tier_label = "LONG"
+        emoji = '🟢'
+        color = '#00e5a0'
     elif verdict == 'ENTER_SHORT':
-        tier_label = "ELITE_SHORT" if short_tier == 'PREMIUM' else "SHORT"
-        emoji = '👑' if short_tier == 'PREMIUM' else '🔴'
-        color = '#ffd700' if short_tier == 'PREMIUM' else '#ff4d6d'
-    elif verdict == 'WAIT':
+        tier_label = "SHORT"
+        emoji = '🔴'
+        color = '#ff4d6d'
+    else:  # WAIT / NO_DATA / ERROR — всё в WAIT
         tier_label = 'WAIT'
         emoji = '⏳'
         color = '#ffd23e'
-    elif verdict == 'NO_DATA':
-        tier_label = 'NO_DATA'
-        emoji = '❓'
-        color = '#888'
-    else:
-        tier_label = 'ERROR'
-        emoji = '❌'
-        color = '#ff4d6d'
 
     compact = {
         'verdict': verdict,
