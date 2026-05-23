@@ -675,15 +675,22 @@ def check_setup(pair_input: str) -> dict:
                 wait_short.append(f"SHARK MARGINAL score {result['short_score']} < 60")
 
             result["wait_for"] = []
+            # Подсказка по обоим направлениям из текущих scores
+            long_pot = result.get("long_score", 0)
+            short_pot = result.get("short_score", 0)
+            if long_pot >= 30:
+                result["wait_for"].append(f"🐋 LONG потенциал {long_pot}/60 — жди vol spike чтобы стать STANDARD")
+            elif short_pot >= 30:
+                result["wait_for"].append(f"🦈 SHORT потенциал {short_pot}/60 — жди vol spike чтобы стать STANDARD")
             if st2h_state == 'DOWN':
-                result["wait_for"].append("Жди ST 2H flip UP для LONG entry")
+                result["wait_for"].append("Жди ST 2H flip UP для clean LONG entry")
             elif st2h_state == 'UP':
-                result["wait_for"].append("Жди ST 2H flip DOWN для SHORT entry")
-            result["wait_for"].extend(wait_long[:1])  # самое важное
+                result["wait_for"].append("Жди ST 2H flip DOWN для clean SHORT entry")
+            result["wait_for"].extend(wait_long[:1])
             result["wait_for"].extend(wait_short[:1])
-            result["reasons"].append("Нет качественного setup сейчас")
-            result["reasons"].append(f"LONG: {wait_long[0] if wait_long else 'ok'}")
-            result["reasons"].append(f"SHORT: {wait_short[0] if wait_short else 'ok'}")
+            result["reasons"].append("Нет качественного setup сейчас — wait")
+            result["reasons"].append(f"LONG score {long_pot}/60: {wait_long[0] if wait_long else 'ok'}")
+            result["reasons"].append(f"SHORT score {short_pot}/60: {wait_short[0] if wait_short else 'ok'}")
 
         # Add bias context to reasons
         if total2_bias:

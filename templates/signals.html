@@ -3776,24 +3776,40 @@ function _renderSetupResult(d) {
     </div>
 
     <!-- LONG vs SHORT scores -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
-      <div style="padding:14px;background:var(--card);border:1.5px solid ${d.verdict==='ENTER_LONG' ? '#00e5a0' : 'var(--border)'};border-radius:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:#00e5a0;">🐋 LONG (WHALE)</span>
-          <span style="font-family:var(--font-mono);font-size:20px;font-weight:900;color:#00e5a0;">${d.long_score || 0}</span>
+    ${(() => {
+      // Если score есть но tier None — это "потенциал" (vol_spike не прошёл)
+      // Показываем сколько % от STANDARD threshold (60) набрано
+      const longScore = d.long_score || 0;
+      const shortScore = d.short_score || 0;
+      const longPotPct = Math.min(100, Math.round(longScore / 60 * 100));
+      const shortPotPct = Math.min(100, Math.round(shortScore / 60 * 100));
+      const longPotBadge = (!d.long_tier && longScore >= 20)
+        ? `<div style="margin-top:4px;padding:4px 8px;background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.35);border-radius:5px;font-size:10px;color:#ffd23e;font-family:var(--font-mono);">🌱 ПОТЕНЦИАЛ ${longPotPct}% (нужен vol spike для STANDARD)</div>`
+        : '';
+      const shortPotBadge = (!d.short_tier && shortScore >= 20)
+        ? `<div style="margin-top:4px;padding:4px 8px;background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.35);border-radius:5px;font-size:10px;color:#ffd23e;font-family:var(--font-mono);">🌱 ПОТЕНЦИАЛ ${shortPotPct}% (нужен vol spike для STANDARD)</div>`
+        : '';
+      return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
+        <div style="padding:14px;background:var(--card);border:1.5px solid ${d.verdict==='ENTER_LONG' ? '#00e5a0' : 'var(--border)'};border-radius:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:#00e5a0;">🐋 LONG (WHALE)</span>
+            <span style="font-family:var(--font-mono);font-size:20px;font-weight:900;color:#00e5a0;">${longScore}</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted);">Tier: <b style="color:${d.long_tier==='PREMIUM'?'#ffd23e':(d.long_tier==='STANDARD'?'#00e5a0':'var(--muted)')};">${d.long_tier || '—'}</b></div>
+          ${longPotBadge}
+          <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">${longAmps}</div>
         </div>
-        <div style="font-size:11px;color:var(--muted);">Tier: <b style="color:${d.long_tier==='PREMIUM'?'#ffd23e':(d.long_tier==='STANDARD'?'#00e5a0':'var(--muted)')};">${d.long_tier || '—'}</b></div>
-        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">${longAmps}</div>
-      </div>
-      <div style="padding:14px;background:var(--card);border:1.5px solid ${d.verdict==='ENTER_SHORT' ? '#ff4d6d' : 'var(--border)'};border-radius:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:#ff4d6d;">🦈 SHORT (SHARK)</span>
-          <span style="font-family:var(--font-mono);font-size:20px;font-weight:900;color:#ff4d6d;">${d.short_score || 0}</span>
+        <div style="padding:14px;background:var(--card);border:1.5px solid ${d.verdict==='ENTER_SHORT' ? '#ff4d6d' : 'var(--border)'};border-radius:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:#ff4d6d;">🦈 SHORT (SHARK)</span>
+            <span style="font-family:var(--font-mono);font-size:20px;font-weight:900;color:#ff4d6d;">${shortScore}</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted);">Tier: <b style="color:${d.short_tier==='PREMIUM'?'#ffd23e':(d.short_tier==='STANDARD'?'#ff4d6d':'var(--muted)')};">${d.short_tier || '—'}</b></div>
+          ${shortPotBadge}
+          <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">${shortAmps}</div>
         </div>
-        <div style="font-size:11px;color:var(--muted);">Tier: <b style="color:${d.short_tier==='PREMIUM'?'#ffd23e':(d.short_tier==='STANDARD'?'#ff4d6d':'var(--muted)')};">${d.short_tier || '—'}</b></div>
-        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">${shortAmps}</div>
-      </div>
-    </div>
+      </div>`;
+    })()}
 
     <!-- Reasons + WaitFor -->
     <div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:14px;">

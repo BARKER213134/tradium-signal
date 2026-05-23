@@ -341,7 +341,7 @@ def compute_whale_score(candles_2h: list[dict], flip_idx: int,
     return {
         'score': score,
         'tier': tier,
-        'passes_core': True,
+        'passes_core': passes_core,
         'breakdown': breakdown,
         'indicators': indicators,
     }
