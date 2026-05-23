@@ -10741,6 +10741,36 @@ window._verdictInfoLegacy = function(s) {
 //   3. Counter-trend penalty: rsi4h_match / rsi12h_match boolean alignment с direction
 //   4. TOTAL2 bias bonus (если window._biasData доступен)
 window._verdictInfo = function(s) {
+  // ━━━ Server-side stored verdict (приоритет) ━━━
+  // background loop _setup_verdict_loop в watcher.py заполняет
+  // s.setup_verdict через setup_checker.get_compact_verdict().
+  // Если есть — используем его напрямую (мульти-TF analysis, full klines).
+  if (s.setup_verdict && s.setup_verdict.tier) {
+    const sv = s.setup_verdict;
+    const tier = sv.tier;
+    const isWait = tier === 'WAIT';
+    return {
+      emoji: sv.emoji || '⏳',
+      tier: tier,
+      qualityLabel: `🎰 Setup Checker · confidence ${sv.confidence || 0}% · ` +
+        `LONG ${sv.long_score || 0} · SHORT ${sv.short_score || 0} · ` +
+        `bias ${sv.cluster_bias || 'NEUTRAL'} (${sv.cluster_long || 0}L/${sv.cluster_short || 0}S)`,
+      color: sv.color || '#888',
+      bg: tier === 'ELITE_LONG' || tier === 'ELITE_SHORT' ? 'rgba(255,215,0,0.20)'
+          : tier === 'LONG' ? 'rgba(0,229,160,0.15)'
+          : tier === 'SHORT' ? 'rgba(255,77,109,0.15)'
+          : isWait ? 'rgba(255,210,62,0.12)' : '',
+      expR: tier.indexOf('ELITE') === 0 ? '+1.5 .. +2.5R'
+            : (tier === 'LONG' || tier === 'SHORT') ? '+0.8 .. +1.5R'
+            : '~0R',
+      verdict: sv.verdict || 'WAIT',
+      tierLower: tier.toLowerCase(),
+      label: `${sv.emoji} ${tier.replace('_', ' ')} · Setup Checker conf ${sv.confidence}%`,
+      v3_accept: !isWait,
+    };
+  }
+
+  // ━━━ Fallback: client-side computation если нет stored verdict ━━━
   const src = s.source || '';
   const dir = (s.direction || '').toUpperCase();
   const isLong = dir === 'LONG';

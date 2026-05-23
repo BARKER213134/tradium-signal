@@ -10753,6 +10753,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "whale_tier": 1, "whale_score": 1, "whale_indicators": 1,
             "shark_tier": 1, "shark_score": 1, "shark_indicators": 1,
             "combo_score": 1, "vol_ratio": 1, "source_count": 1,
+            "setup_verdict": 1,  # server-side verdict from setup_checker
         }).sort("created_at", -1).limit(200):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -11327,6 +11328,10 @@ def _compute_journal_sync(_fast_only: bool = False):
                 # SHARK tier (тот же mechanism — для filtering и UI tooltip)
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),
+                # 🎰 Setup Checker verdict (server-side, заполняется background
+                # loop'ом в watcher через get_compact_verdict). Если есть —
+                # client JS использует его эмодзи/tier напрямую.
+                "setup_verdict": n.get("setup_verdict"),
                 "tp_R": n.get("tp_R"),
                 "rr": n.get("tp_R"),
                 "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),

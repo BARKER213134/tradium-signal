@@ -695,3 +695,76 @@ def check_setup(pair_input: str) -> dict:
         result["verdict"] = "ERROR"
         result["reasons"].append(f"Error: {str(e)}")
         return result
+
+
+# ════ Compact verdict для хранения в signal docs ════════════
+# Используется background loop'ом — не нужны все 200 полей setup_checker,
+# только эмодзи + tier + confidence для UI display.
+
+_verdict_cache: dict = {}  # {pair: (ts, compact_verdict)}
+_VERDICT_CACHE_TTL = 300  # 5 мин — same pair не пересчитывается
+
+
+def get_compact_verdict(pair_input: str) -> dict:
+    """Returns compact verdict для signal doc storage.
+    Cached 5 минут на pair (одна и та же пара = same verdict в окне 5 мин).
+
+    Output:
+      {verdict, confidence, tier, emoji, color, label}
+    """
+    import time
+    pair = _normalize_pair(pair_input)
+    now = time.time()
+    cached = _verdict_cache.get(pair)
+    if cached and (now - cached[0]) < _VERDICT_CACHE_TTL:
+        return cached[1]
+
+    full = check_setup(pair)
+    verdict = full.get('verdict', 'UNKNOWN')
+    long_tier = full.get('long_tier')
+    short_tier = full.get('short_tier')
+    long_score = full.get('long_score', 0)
+    short_score = full.get('short_score', 0)
+
+    # Determine tier label + emoji (mirror UI logic)
+    if verdict == 'ENTER_LONG':
+        tier_label = f"ELITE_LONG" if long_tier == 'PREMIUM' else "LONG"
+        emoji = '👑' if long_tier == 'PREMIUM' else '🟢'
+        color = '#ffd700' if long_tier == 'PREMIUM' else '#00e5a0'
+    elif verdict == 'ENTER_SHORT':
+        tier_label = "ELITE_SHORT" if short_tier == 'PREMIUM' else "SHORT"
+        emoji = '👑' if short_tier == 'PREMIUM' else '🔴'
+        color = '#ffd700' if short_tier == 'PREMIUM' else '#ff4d6d'
+    elif verdict == 'WAIT':
+        tier_label = 'WAIT'
+        emoji = '⏳'
+        color = '#ffd23e'
+    elif verdict == 'NO_DATA':
+        tier_label = 'NO_DATA'
+        emoji = '❓'
+        color = '#888'
+    else:
+        tier_label = 'ERROR'
+        emoji = '❌'
+        color = '#ff4d6d'
+
+    compact = {
+        'verdict': verdict,
+        'tier': tier_label,
+        'emoji': emoji,
+        'color': color,
+        'confidence': full.get('confidence', 0),
+        'long_score': long_score,
+        'short_score': short_score,
+        'long_tier': long_tier,
+        'short_tier': short_tier,
+        'st_2h_state': (full.get('st_2h') or {}).get('state'),
+        'st_4h_state': (full.get('st_4h') or {}).get('state'),
+        'total2_bias': (full.get('total2_bias') or {}).get('bias'),
+        'cluster_bias': full.get('cluster_bias'),
+        'cluster_long': full.get('cluster_long'),
+        'cluster_short': full.get('cluster_short'),
+        'computed_at': now,
+    }
+    _verdict_cache[pair] = (now, compact)
+    return compact

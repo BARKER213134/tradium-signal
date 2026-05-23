@@ -102,6 +102,63 @@ async def _whale_scanner_loop():
         await _asyncio.sleep(30 * 60)
 
 
+async def _setup_verdict_loop():
+    """🎰 Setup-Checker verdict loop — каждые 60s бежит по сигналам без
+    setup_verdict, считает verdict через setup_checker.get_compact_verdict()
+    и сохраняет на signal doc.
+
+    Используется UI журналом для display correct verdict (с эмодзи) на
+    каждом signal вместо client-side упрощённой логики.
+
+    Architecture:
+      - Кэш per pair 5 минут (setup_checker._verdict_cache)
+      - Один setup_checker call покрывает ВСЕ signals same pair в окне 5 мин
+      - Process max 30 unique pairs per cycle → ~6 sec runtime
+    """
+    import asyncio as _asyncio
+    from datetime import datetime, timezone, timedelta
+    await _asyncio.sleep(120)  # дать watcher разогреться + всем scanner'ам
+    while True:
+        try:
+            from database import _get_db
+            from setup_checker import get_compact_verdict
+            db = _get_db()
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+            # Find signals в new_strategy_signals без setup_verdict
+            no_verdict = list(db.new_strategy_signals.find({
+                'created_at': {'$gte': cutoff},
+                'setup_verdict': {'$exists': False},
+            }, {'_id': 1, 'pair': 1}).limit(200))
+            if not no_verdict:
+                await _asyncio.sleep(60)
+                continue
+            # Group by pair
+            by_pair: dict = {}
+            for s in no_verdict:
+                by_pair.setdefault(s.get('pair'), []).append(s['_id'])
+            logger.info(f'[verdict-loop] {len(no_verdict)} signals, '
+                         f'{len(by_pair)} unique pairs')
+            # Process max 30 pairs per cycle
+            processed = 0
+            for pair, ids in list(by_pair.items())[:30]:
+                if not pair:
+                    continue
+                try:
+                    verdict = await _asyncio.to_thread(get_compact_verdict, pair)
+                    # Store on all signal docs of this pair
+                    db.new_strategy_signals.update_many(
+                        {'_id': {'$in': ids}},
+                        {'$set': {'setup_verdict': verdict}},
+                    )
+                    processed += len(ids)
+                except Exception as _e:
+                    logger.debug(f'[verdict-loop] {pair} fail: {_e}')
+            logger.info(f'[verdict-loop] processed {processed} signals')
+        except Exception:
+            logger.exception('[verdict-loop] crashed')
+        await _asyncio.sleep(60)
+
+
 async def _shark_scanner_loop():
     """🦈 SHARK safety-net scanner — каждые 30 мин (mirror WHALE).
     TG dispatch напрямую из fired_docs."""
@@ -4922,6 +4979,13 @@ async def start_watcher():
         logger.info("[shark-scanner] background loop started")
     except Exception:
         logger.exception("[shark-scanner] failed to start loop")
+    # 🎰 Setup Checker verdict loop — каждые 60s заполняет setup_verdict
+    # на новых signals
+    try:
+        asyncio.create_task(_setup_verdict_loop())
+        logger.info("[verdict-loop] background loop started")
+    except Exception:
+        logger.exception("[verdict-loop] failed to start loop")
     # [DISABLED — Atlas Free M0 throttle protection]
     # Background prewarm loops отключены чтобы НЕ дополнительно нагружать
     # перегруженный Atlas Free Tier. UI справится через user-driven cache —
