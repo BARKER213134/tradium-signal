@@ -10848,9 +10848,9 @@ window._verdictInfo = function(s) {
   // 6. CV flip (FLIPPED state — WR 43.5% но решение пограничное)
   else if (src === 'cv_flip') {
     base = {
-      emoji: '⚠',
-      tier: 'CAUTION',
-      qualityLabel: `⏳ CV Flip (WR 43%) — слабый edge`,
+      emoji: '⏳',
+      tier: 'WAIT',
+      qualityLabel: `⏳ CV Flip (WR 43%) — слабый edge, лучше пропустить`,
       color: '#ffd23e',
       bg: 'rgba(255,210,62,0.12)',
       expR: '+0.2 .. +0.6R',
@@ -10873,8 +10873,8 @@ window._verdictInfo = function(s) {
   // 8. Прочее (cryptovizor weak / volume_surge / vol_accum / volcano / second_flip / rsi_cross_12h)
   else {
     base = {
-      emoji: '⚪',
-      tier: 'MEH',
+      emoji: '⏳',
+      tier: 'WAIT',
       qualityLabel: `${src || 'unknown'} — слабый source (WR <50%)`,
       color: '#888',
       bg: '',
@@ -10884,11 +10884,11 @@ window._verdictInfo = function(s) {
   }
 
   // Apply counter-trend penalty
-  if (counterPenalty >= 20 && base.tier !== 'CAUTION' && base.tier !== 'MEH') {
-    // Downgrade to CAUTION
+  if (counterPenalty >= 20 && base.tier !== 'WAIT' && base.tier !== 'OK') {
+    // Downgrade to WAIT
     base = {
-      emoji: '⚠',
-      tier: 'CAUTION',
+      emoji: '⏳',
+      tier: 'WAIT',
       qualityLabel: `${base.qualityLabel} · но ${counterReasons.join(', ')}`,
       color: '#ffd23e',
       bg: 'rgba(255,210,62,0.12)',
@@ -10905,8 +10905,7 @@ window._verdictInfo = function(s) {
   const bucketMap = {
     'ELITE_LONG': 'ELITE',  'ELITE_SHORT': 'ELITE',
     'LONG': 'GOOD',         'SHORT': 'GOOD',
-    'CAUTION': 'CAUTION',   'OK': 'OK',
-    'MEH': 'MEH',
+    'WAIT': 'CAUTION',      'OK': 'OK',
   };
   const tierBucket = bucketMap[base.tier] || base.tier;
 
@@ -10947,18 +10946,20 @@ window._verdictInfo = function(s) {
 window._renderVerdictCell = function(s) {
   const v = window._verdictInfo(s);
   const tip = `${v.label} · ожидаемый AvgR: ${v.expR}`;
+  // Pretty tier label: ELITE_LONG → "ELITE LONG", WAIT → "WAIT"
+  const tierLabel = (v.tier || '').replace('_', ' ').replace('REJECT ', 'REJECT ');
   // Если v3.0 reject — показываем ⛔ сверху + dimmed original emoji
   if (v.v3_accept === false && v.original_emoji) {
     return `<td class="mono" style="text-align:center;padding:6px 4px !important;${v.bg};" title="${tip}">
-      <div style="font-size:16px;line-height:1;">${v.emoji}</div>
-      <div style="font-size:12px;line-height:1;opacity:0.4;margin-top:1px;">${v.original_emoji}</div>
-      <div style="font-size:7px;color:${v.color};font-weight:700;margin-top:2px;letter-spacing:0.3px;">REJECT</div>
+      <div style="font-size:18px;line-height:1;">${v.emoji}</div>
+      <div style="font-size:13px;line-height:1;opacity:0.4;margin-top:1px;">${v.original_emoji}</div>
+      <div style="font-size:8px;color:${v.color};font-weight:700;margin-top:2px;letter-spacing:0.3px;">REJECT</div>
     </td>`;
   }
-  // Accept (или regime unknown) — full emoji
+  // Accept — large emoji + clean tier label (LONG / SHORT / WAIT / ELITE LONG / OK)
   return `<td class="mono" style="text-align:center;padding:6px 4px !important;${v.bg ? 'background:'+v.bg+';' : ''}" title="${tip}">
-    <div style="font-size:20px;line-height:1;">${v.emoji}</div>
-    <div style="font-size:8px;color:${v.color};font-weight:700;margin-top:2px;letter-spacing:0.5px;text-transform:uppercase;">${v.tier}</div>
+    <div style="font-size:22px;line-height:1;">${v.emoji}</div>
+    <div style="font-size:10px;color:${v.color};font-weight:800;margin-top:3px;letter-spacing:0.5px;text-transform:uppercase;font-family:var(--font-mono);">${tierLabel}</div>
   </td>`;
 };
 
