@@ -97,6 +97,52 @@ def _fmt_duration(secs: float) -> str:
     return f"{d}d {rh}h" if rh else f"{d}d"
 
 
+def _rsi(closes: list[float], period: int = 14) -> Optional[float]:
+    """Wilder's RSI. Returns last value."""
+    n = len(closes)
+    if n < period + 2:
+        return None
+    gains, losses = [], []
+    for i in range(1, n):
+        d = closes[i] - closes[i-1]
+        gains.append(max(d, 0))
+        losses.append(max(-d, 0))
+    avg_g = sum(gains[:period]) / period
+    avg_l = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_g = (avg_g * (period - 1) + gains[i]) / period
+        avg_l = (avg_l * (period - 1) + losses[i]) / period
+    if avg_l == 0: return 100.0
+    rs = avg_g / avg_l
+    return round(100 - (100 / (1 + rs)), 1)
+
+
+def _rsi_state(rsi_val: Optional[float], closes: list[float]) -> str:
+    """Returns 'above_sma' or 'below_sma' relative to RSI SMA(14)."""
+    if rsi_val is None or len(closes) < 35: return '?'
+    # Compute RSI array and its SMA
+    n = len(closes)
+    gains, losses = [], []
+    for i in range(1, n):
+        d = closes[i] - closes[i-1]
+        gains.append(max(d, 0))
+        losses.append(max(-d, 0))
+    rsi_arr = [0.0] * n
+    avg_g = sum(gains[:14]) / 14
+    avg_l = sum(losses[:14]) / 14
+    rs = avg_g / avg_l if avg_l > 0 else 1e9
+    rsi_arr[14] = 100 - (100 / (1 + rs))
+    for i in range(15, n):
+        avg_g = (avg_g * 13 + gains[i-1]) / 14
+        avg_l = (avg_l * 13 + losses[i-1]) / 14
+        rs = avg_g / avg_l if avg_l > 0 else 1e9
+        rsi_arr[i] = 100 - (100 / (1 + rs))
+    # SMA(RSI, 14) on last value
+    if len(rsi_arr) < 28: return '?'
+    sma_rsi = sum(rsi_arr[-14:]) / 14
+    return 'above_sma' if rsi_val > sma_rsi else 'below_sma'
+
+
 def check_setup(pair_input: str) -> dict:
     """Главная функция — analyze setup для pair_input.
     Returns dict с detailed verdict.
@@ -351,6 +397,119 @@ def check_setup(pair_input: str) -> dict:
                 s['age_hours'] = round((now_ts - s['at_ts']) / 3600, 1)
 
         result["recent_signals"] = all_sigs
+
+        # ════════ MAX VERIFICATION — все данные платформы ════════
+
+        # 1. RSI multi-TF (1H, 4H, 12H)
+        result["rsi_multi"] = {}
+        try:
+            from exchange import get_klines_any
+            for tf, label in [('1h', '1H'), ('4h', '4H'), ('12h', '12H')]:
+                try:
+                    kl = get_klines_any(pair, tf, 50)
+                    if kl and len(kl) >= 30:
+                        closes = [c['c'] for c in kl]
+                        rsi_v = _rsi(closes, 14)
+                        state = _rsi_state(rsi_v, closes)
+                        result["rsi_multi"][label] = {
+                            "rsi": rsi_v,
+                            "state": state,  # above_sma / below_sma
+                        }
+                except Exception:
+                    pass
+        except Exception: pass
+
+        # 2. Volume metrics на 2H
+        try:
+            if len(candles_2h) >= 30:
+                v_now = candles_2h[-2]['v']
+                v_sma9 = sum(c['v'] for c in candles_2h[-11:-2]) / 9
+                v_sma30 = sum(c['v'] for c in candles_2h[-32:-2]) / 30
+                result["volume_2h"] = {
+                    "current": round(v_now, 2),
+                    "sma9": round(v_sma9, 2),
+                    "sma30": round(v_sma30, 2),
+                    "ratio_sma9": round(v_now / v_sma9, 2) if v_sma9 else 0,
+                    "ratio_sma30": round(v_now / v_sma30, 2) if v_sma30 else 0,
+                }
+                # 24h volume estimate (last 12 × 2H bars)
+                v_24h = sum(c['v'] for c in candles_2h[-12:])
+                result["volume_24h_estimate"] = round(v_24h, 2)
+        except Exception: pass
+
+        # 3. Funding rate (из anomaly_scanner batch cache, если есть)
+        try:
+            from anomaly_scanner import _batch_cache as ab_cache, _refresh_batch_cache
+            # try refresh non-blocking
+            _refresh_batch_cache()
+            sym = pair.replace('/', '')
+            fund = (ab_cache.get('funding') or {}).get(sym)
+            if fund is not None:
+                result["funding"] = {
+                    "rate_pct": round(fund, 4),
+                    "interpretation": (
+                        "EXTREME LONG (squeeze risk)" if fund >= 0.05 else
+                        "elevated LONG positioning" if fund >= 0.02 else
+                        "normal" if -0.02 <= fund <= 0.02 else
+                        "elevated SHORT positioning" if fund <= -0.05 else
+                        "EXTREME SHORT (squeeze risk)" if fund <= -0.10 else
+                        "normal"
+                    ),
+                }
+        except Exception: pass
+
+        # 4. 24h volume (из batch cache)
+        try:
+            from anomaly_scanner import _batch_cache as ab_cache
+            sym = pair.replace('/', '')
+            t = (ab_cache.get('ticker') or {}).get(sym)
+            if t:
+                result["volume_24h_usd"] = round(t.get('volume_usd', 0), 0)
+                result["price_now"] = t.get('price')
+        except Exception: pass
+
+        # 5. Cluster delta / Resonance — если есть recent signal
+        # Pull from latest new_strategy_signal
+        try:
+            latest_ns = db.new_strategy_signals.find_one({
+                '$or': [{'pair': pair}, {'symbol': symbol}],
+            }, {
+                'delta_15m': 1, 'delta_1h': 1,
+                'resonance_15m': 1, 'resonance_1h': 1,
+            }, sort=[('created_at', -1)])
+            if latest_ns:
+                result["delta"] = {
+                    "d15m": latest_ns.get('delta_15m'),
+                    "d1h": latest_ns.get('delta_1h'),
+                }
+                result["resonance"] = {
+                    "r15m": latest_ns.get('resonance_15m'),
+                    "r1h": latest_ns.get('resonance_1h'),
+                }
+        except Exception: pass
+
+        # 6. Price structure: HH/HL or LH/LL pattern
+        try:
+            if len(candles_2h) >= 40:
+                recent = candles_2h[-40:]
+                highs = [c['h'] for c in recent]
+                lows = [c['l'] for c in recent]
+                # Compare last 10 bars vs prev 10 (rough HH/HL detection)
+                last_h = max(highs[-10:])
+                last_l = min(lows[-10:])
+                prev_h = max(highs[-20:-10])
+                prev_l = min(lows[-20:-10])
+                hh = last_h > prev_h
+                hl = last_l > prev_l
+                lh = last_h < prev_h
+                ll = last_l < prev_l
+                if hh and hl: structure = 'HH+HL (uptrend)'
+                elif lh and ll: structure = 'LH+LL (downtrend)'
+                elif hh and ll: structure = 'expanding range'
+                elif lh and hl: structure = 'narrowing range'
+                else: structure = 'sideways'
+                result["structure"] = structure
+        except Exception: pass
 
         # === Signal cluster bias: подсчёт LONG vs SHORT за 72h ===
         # TOP-7 backtest-validated sources только (остальные шумят)

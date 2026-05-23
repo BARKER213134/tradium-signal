@@ -3802,6 +3802,9 @@ function _renderSetupResult(d) {
       ${waitForHtml ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);"><div style="font-family:var(--font-mono);font-size:11px;color:#ffd23e;letter-spacing:0.1em;margin-bottom:6px;">⏳ ЖДАТЬ:</div>${waitForHtml}</div>` : ''}
     </div>
 
+    <!-- 🔬 MAX VERIFICATION — все доступные данные платформы -->
+    ${_renderVerification(d)}
+
     <!-- Recent signals (ALL sources за 72h) + cluster bias -->
     <div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
       <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;margin-bottom:8px;">🕐 ВСЕ СИГНАЛЫ ЗА 72H (${(d.recent_signals||[]).length})</div>
@@ -3809,6 +3812,76 @@ function _renderSetupResult(d) {
       ${recentHtml}
     </div>
   `;
+}
+
+function _renderVerification(d) {
+  const rsi = d.rsi_multi || {};
+  const vol = d.volume_2h || {};
+  const fund = d.funding;
+  const delta = d.delta || {};
+  const resonance = d.resonance || {};
+  const struc = d.structure;
+  const price = d.price_now;
+  const vol24 = d.volume_24h_usd;
+
+  // RSI multi-TF row
+  const rsiRow = ['1H','4H','12H'].map(tf => {
+    const r = rsi[tf];
+    if (!r) return `<div style="flex:1;padding:8px;text-align:center;color:var(--muted);font-size:10px;">${tf}: —</div>`;
+    const v = r.rsi;
+    const col = v >= 70 ? '#ff4d6d' : v >= 60 ? '#ffa94d' : v <= 30 ? '#00e5a0' : v <= 40 ? '#88d8a3' : 'var(--muted)';
+    const sigil = r.state === 'above_sma' ? '↑' : '↓';
+    return `<div style="flex:1;padding:8px;text-align:center;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:6px;">
+      <div style="font-size:9px;color:var(--muted);letter-spacing:0.1em;">RSI ${tf}</div>
+      <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:${col};">${v} ${sigil}</div>
+      <div style="font-size:9px;color:var(--muted);">${r.state === 'above_sma' ? 'выше SMA' : 'ниже SMA'}</div>
+    </div>`;
+  }).join('');
+
+  // Volume metrics
+  let volHtml = '';
+  if (vol.ratio_sma9 != null) {
+    const volColor = vol.ratio_sma9 >= 3 ? '#ff4d6d' : vol.ratio_sma9 >= 2 ? '#ffd23e' : vol.ratio_sma9 >= 1 ? '#00e5a0' : 'var(--muted)';
+    volHtml = `<div style="display:flex;gap:14px;align-items:center;padding:10px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:6px;">
+      <div style="font-size:10px;color:var(--muted);letter-spacing:0.1em;min-width:60px;">VOL 2H</div>
+      <div style="font-family:var(--font-mono);font-size:16px;color:${volColor};font-weight:700;">${vol.ratio_sma9}× SMA9</div>
+      <div style="font-family:var(--font-mono);font-size:12px;color:var(--muted);">· ${vol.ratio_sma30}× SMA30</div>
+      ${vol24 ? `<div style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--muted);">24h: $${(vol24/1e6).toFixed(1)}M</div>` : ''}
+    </div>`;
+  }
+
+  // Funding
+  let fundHtml = '';
+  if (fund && fund.rate_pct != null) {
+    const fcolor = Math.abs(fund.rate_pct) >= 0.05 ? '#ff4d6d' : Math.abs(fund.rate_pct) >= 0.02 ? '#ffa94d' : '#00e5a0';
+    fundHtml = `<div style="display:flex;gap:14px;align-items:center;padding:10px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:6px;">
+      <div style="font-size:10px;color:var(--muted);letter-spacing:0.1em;min-width:60px;">FUNDING</div>
+      <div style="font-family:var(--font-mono);font-size:16px;color:${fcolor};font-weight:700;">${fund.rate_pct >= 0 ? '+' : ''}${fund.rate_pct}%</div>
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);">${fund.interpretation}</div>
+    </div>`;
+  }
+
+  // Delta / Resonance / Structure (compact row)
+  const extras = [];
+  if (delta.d15m != null) extras.push(`<span style="color:var(--muted);">Δ 15m: <b style="color:${delta.d15m >= 0 ? '#00e5a0' : '#ff4d6d'};">${delta.d15m >= 0 ? '+' : ''}${delta.d15m}</b></span>`);
+  if (delta.d1h != null) extras.push(`<span style="color:var(--muted);">Δ 1h: <b style="color:${delta.d1h >= 0 ? '#00e5a0' : '#ff4d6d'};">${delta.d1h >= 0 ? '+' : ''}${delta.d1h}</b></span>`);
+  if (resonance.r15m != null) extras.push(`<span style="color:var(--muted);">R 15m: <b>${resonance.r15m}</b></span>`);
+  if (resonance.r1h != null) extras.push(`<span style="color:var(--muted);">R 1h: <b>${resonance.r1h}</b></span>`);
+  if (struc) extras.push(`<span style="color:var(--muted);">📐 структура: <b>${struc}</b></span>`);
+  if (price) extras.push(`<span style="color:var(--muted);">price: <b>${price}</b></span>`);
+  const extrasHtml = extras.length
+    ? `<div style="padding:10px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:6px;font-family:var(--font-mono);font-size:12px;display:flex;gap:14px;flex-wrap:wrap;">${extras.join(' · ')}</div>`
+    : '';
+
+  return `<div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:14px;">
+    <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;margin-bottom:10px;">🔬 MAX VERIFICATION — данные платформы</div>
+    <div style="display:flex;gap:8px;margin-bottom:10px;">${rsiRow}</div>
+    ${volHtml}
+    ${volHtml && fundHtml ? '<div style="height:8px;"></div>' : ''}
+    ${fundHtml}
+    ${(volHtml || fundHtml) && extrasHtml ? '<div style="height:8px;"></div>' : ''}
+    ${extrasHtml}
+  </div>`;
 }
 
 // Auto-focus input on load
@@ -7748,9 +7821,19 @@ safeInterval(loadForexJournal, 30000);
   vertical-align: middle;
 }
 #jBody td:nth-child(6) {
-  /* Паттерн — текст слева */
+  /* Паттерн — текст слева, эмодзи крупнее */
   text-align: left;
   padding-left: 14px !important;
+  font-size: 14px;
+  line-height: 1.4;
+}
+/* Эмодзи внутри pattern cell — крупнее остального текста */
+#jBody td.pattern-cell {
+  font-size: 14px;
+}
+/* Inline emoji visual boost — все unicode emoji в pattern cell */
+.pattern-cell {
+  font-family: var(--font-mono);
 }
 /* RSI help popover (backtest edges) */
 #rsiHelpPopover {
@@ -10483,7 +10566,7 @@ function renderJournal(items, startIdx) {
       <td class="mono text-accent fw-700">${pairCell}</td>
       <td>${dir}</td>
       <td class="mono">${s.entry || '—'}</td>
-      <td class="mono" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(s.pattern || '').replace(/"/g,'&quot;')}">${s.pattern || ''} ${s.score ? '('+s.score+')' : ''}${window._klBadge ? window._klBadge(s._kl) : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
+      <td class="mono pattern-cell" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(s.pattern || '').replace(/"/g,'&quot;')}">${s.pattern || ''} ${s.score ? '<span style=\"color:var(--muted);font-size:11px;\">('+s.score+')</span>' : ''}${window._klBadge ? window._klBadge(s._kl) : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
       ${verdictCell}
       ${rsiCell}
       ${smaCell}
