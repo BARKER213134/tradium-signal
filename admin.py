@@ -10081,6 +10081,14 @@ async def api_shark_scan_now(lookback_hours: int = 6):
     return stats
 
 
+@app.get("/api/setup-check")
+async def api_setup_check(pair: str):
+    """🎰 Paste-and-evaluate setup checker.
+    Возвращает ENTER_LONG / ENTER_SHORT / WAIT verdict с breakdown."""
+    import setup_checker as sc
+    return await asyncio.to_thread(sc.check_setup, pair)
+
+
 @app.get("/api/market-bias")
 async def api_market_bias(force: bool = False):
     """TOTAL2 SuperTrend → LONG/SHORT/WAIT bias для шапки журнала."""

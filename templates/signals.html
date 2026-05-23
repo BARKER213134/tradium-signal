@@ -3488,6 +3488,173 @@ setTimeout(_skLoad, 500);
 </script>
 
 
+{% elif bot == 'setup_check' %}
+<!-- ════════════ 🎰 SETUP CHECKER — paste pair → ENTER LONG/SHORT/WAIT ════════════ -->
+<div class="strategy-box" style="border-color:rgba(255,210,62,0.45);background:linear-gradient(135deg,rgba(255,210,62,0.10),rgba(255,140,80,0.05));">
+  <div class="strat-icon">🎰</div>
+  <div class="strat-body">
+    <div class="strat-title" style="color:#ffd23e;">Setup Checker · вставь pair → получишь вердикт</div>
+    Проверяет любую пару через нашу production-логику (WHALE + SHARK detectors + TOTAL2 bias + ST 2H/4H alignment).
+    <b>Выдаёт</b>: ENTER LONG / ENTER SHORT / WAIT + score breakdown + причины.
+    <b>Учитывает</b>: ST flip state, vol spike, multi-top/base, prior trend, RSI cross, anti-markers, TOTAL2 bias bonus.
+  </div>
+</div>
+
+<!-- Input form -->
+<div style="display:flex;gap:12px;align-items:center;margin:20px 0;padding:16px;background:var(--card);border:1px solid var(--border);border-radius:12px;">
+  <input id="sc-pair" type="text" placeholder="WIF, BTCUSDT, ETH/USDT..."
+         style="flex:1;background:var(--dark);border:1px solid var(--border);border-radius:8px;padding:12px 18px;font-size:16px;font-family:var(--font-mono);color:var(--text);outline:none;text-transform:uppercase;"
+         onkeydown="if(event.key==='Enter') _scCheck()">
+  <button onclick="_scCheck()" style="background:linear-gradient(135deg,rgba(255,210,62,0.30),rgba(255,140,80,0.20));color:#ffd23e;border:1.5px solid rgba(255,210,62,0.6);border-radius:8px;padding:12px 28px;font-size:14px;font-family:var(--font-mono);font-weight:800;cursor:pointer;letter-spacing:0.08em;">
+    🎰 ПРОВЕРИТЬ
+  </button>
+</div>
+
+<!-- Result container -->
+<div id="sc-result" style="display:none;"></div>
+
+<script>
+async function _scCheck() {
+  const input = document.getElementById('sc-pair');
+  const result = document.getElementById('sc-result');
+  const pair = (input.value || '').trim().toUpperCase();
+  if (!pair) { input.focus(); return; }
+  result.style.display = 'block';
+  result.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-family:var(--font-mono);">⏳ Анализирую ' + pair + '…</div>';
+  try {
+    const r = await fetch(`/api/setup-check?pair=${encodeURIComponent(pair)}`);
+    const d = await r.json();
+    _renderSetupResult(d);
+  } catch (e) {
+    result.innerHTML = `<div style="padding:20px;color:#ff4d6d;">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function _renderSetupResult(d) {
+  const result = document.getElementById('sc-result');
+  // ── Verdict big banner ──
+  let verdictBg, verdictColor, verdictEmoji, verdictText;
+  if (d.verdict === 'ENTER_LONG') {
+    verdictBg = 'linear-gradient(135deg,rgba(0,229,160,0.30),rgba(0,229,160,0.10))';
+    verdictColor = '#00e5a0';
+    verdictEmoji = '🟢';
+    verdictText = 'ENTER LONG';
+  } else if (d.verdict === 'ENTER_SHORT') {
+    verdictBg = 'linear-gradient(135deg,rgba(255,77,109,0.30),rgba(255,77,109,0.10))';
+    verdictColor = '#ff4d6d';
+    verdictEmoji = '🔴';
+    verdictText = 'ENTER SHORT';
+  } else if (d.verdict === 'WAIT') {
+    verdictBg = 'linear-gradient(135deg,rgba(255,210,62,0.25),rgba(255,140,80,0.10))';
+    verdictColor = '#ffd23e';
+    verdictEmoji = '⏳';
+    verdictText = 'WAIT';
+  } else if (d.verdict === 'NO_DATA') {
+    verdictBg = 'rgba(255,255,255,0.04)'; verdictColor = '#888';
+    verdictEmoji = '❓'; verdictText = 'NO DATA';
+  } else {
+    verdictBg = 'rgba(255,77,109,0.15)'; verdictColor = '#ff4d6d';
+    verdictEmoji = '❌'; verdictText = d.verdict || 'ERROR';
+  }
+
+  const st2h = d.st_2h || {};
+  const st4h = d.st_4h || {};
+  const bias = d.total2_bias || {};
+  const c2 = st2h.state === 'UP' ? '#00e5a0' : (st2h.state === 'DOWN' ? '#ff4d6d' : '#888');
+  const c4 = st4h.state === 'UP' ? '#00e5a0' : (st4h.state === 'DOWN' ? '#ff4d6d' : '#888');
+  const cb = bias.bias === 'LONG' ? '#00e5a0' : (bias.bias === 'SHORT' ? '#ff4d6d' : '#888');
+
+  // Recent signals list
+  const recentHtml = (d.recent_signals || []).slice(0, 5).map(rs => {
+    const em = rs.strategy === 'whale' ? '🐋' : (rs.strategy === 'shark' ? '🦈' : '✨');
+    const dt = rs.at ? new Date(rs.at).toLocaleString('ru-RU') : '';
+    const dirColor = rs.direction === 'LONG' ? '#00e5a0' : '#ff4d6d';
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">${em} <b>${rs.strategy.toUpperCase()}</b> <span style="color:${dirColor};">${rs.direction}</span> @ ${rs.entry} · tier ${rs.tier} · score ${rs.score} · <span style="color:var(--muted);">${dt}</span></div>`;
+  }).join('') || '<div style="color:var(--muted);padding:6px 0;">Нет сигналов за 48h</div>';
+
+  // Reasons list
+  const reasonsHtml = (d.reasons || []).map(r =>
+    `<div style="padding:4px 0;font-size:13px;">• ${r}</div>`
+  ).join('');
+
+  const waitForHtml = (d.wait_for || []).map(w =>
+    `<div style="padding:4px 0;font-size:13px;color:#ffd23e;">⏳ ${w}</div>`
+  ).join('');
+
+  // LONG / SHORT score breakdown
+  const longAmps = Object.entries(d.long_breakdown || {})
+    .filter(([k,v]) => !k.startsWith('core_'))
+    .map(([k,v]) => `<div style="font-size:11px;color:var(--muted);">+${v} ${k}</div>`).join('') || '<div style="font-size:11px;color:var(--muted);">—</div>';
+  const shortAmps = Object.entries(d.short_breakdown || {})
+    .filter(([k,v]) => !k.startsWith('core_'))
+    .map(([k,v]) => `<div style="font-size:11px;color:var(--muted);">+${v} ${k}</div>`).join('') || '<div style="font-size:11px;color:var(--muted);">—</div>';
+
+  result.innerHTML = `
+    <!-- Verdict banner -->
+    <div style="display:flex;justify-content:center;align-items:center;gap:18px;padding:24px;margin-bottom:18px;background:${verdictBg};border:2.5px solid ${verdictColor};border-radius:14px;">
+      <span style="font-size:48px;">${verdictEmoji}</span>
+      <div style="text-align:left;">
+        <div style="font-family:var(--font-mono);font-size:36px;font-weight:900;letter-spacing:0.1em;color:${verdictColor};">${verdictText}</div>
+        <div style="font-family:var(--font-mono);font-size:14px;color:var(--muted);margin-top:4px;">${d.pair} · confidence ${d.confidence}%</div>
+      </div>
+    </div>
+
+    <!-- TF + bias summary -->
+    <div style="display:flex;gap:14px;margin-bottom:18px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:140px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:0.1em;margin-bottom:4px;">ST 2H</div>
+        <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:${c2};">${st2h.state || '?'} <small style="color:var(--muted);">${st2h.duration || ''}</small></div>
+      </div>
+      <div style="flex:1;min-width:140px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:0.1em;margin-bottom:4px;">ST 4H</div>
+        <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:${c4};">${st4h.state || '?'} <small style="color:var(--muted);">${st4h.duration || ''}</small></div>
+      </div>
+      <div style="flex:1;min-width:140px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:0.1em;margin-bottom:4px;">TOTAL2 bias</div>
+        <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:${cb};">${bias.label || '?'}</div>
+      </div>
+    </div>
+
+    <!-- LONG vs SHORT scores -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
+      <div style="padding:14px;background:var(--card);border:1.5px solid ${d.verdict==='ENTER_LONG' ? '#00e5a0' : 'var(--border)'};border-radius:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:#00e5a0;">🐋 LONG (WHALE)</span>
+          <span style="font-family:var(--font-mono);font-size:20px;font-weight:900;color:#00e5a0;">${d.long_score || 0}</span>
+        </div>
+        <div style="font-size:11px;color:var(--muted);">Tier: <b style="color:${d.long_tier==='PREMIUM'?'#ffd23e':(d.long_tier==='STANDARD'?'#00e5a0':'var(--muted)')};">${d.long_tier || '—'}</b></div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">${longAmps}</div>
+      </div>
+      <div style="padding:14px;background:var(--card);border:1.5px solid ${d.verdict==='ENTER_SHORT' ? '#ff4d6d' : 'var(--border)'};border-radius:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:#ff4d6d;">🦈 SHORT (SHARK)</span>
+          <span style="font-family:var(--font-mono);font-size:20px;font-weight:900;color:#ff4d6d;">${d.short_score || 0}</span>
+        </div>
+        <div style="font-size:11px;color:var(--muted);">Tier: <b style="color:${d.short_tier==='PREMIUM'?'#ffd23e':(d.short_tier==='STANDARD'?'#ff4d6d':'var(--muted)')};">${d.short_tier || '—'}</b></div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">${shortAmps}</div>
+      </div>
+    </div>
+
+    <!-- Reasons + WaitFor -->
+    <div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:14px;">
+      <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;margin-bottom:8px;">📋 ПРИЧИНЫ</div>
+      ${reasonsHtml}
+      ${waitForHtml ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);"><div style="font-family:var(--font-mono);font-size:11px;color:#ffd23e;letter-spacing:0.1em;margin-bottom:6px;">⏳ ЖДАТЬ:</div>${waitForHtml}</div>` : ''}
+    </div>
+
+    <!-- Recent signals -->
+    <div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
+      <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;margin-bottom:8px;">🕐 ПОСЛЕДНИЕ СИГНАЛЫ (48h)</div>
+      ${recentHtml}
+    </div>
+  `;
+}
+
+// Auto-focus input on load
+setTimeout(() => { const i = document.getElementById('sc-pair'); if (i) i.focus(); }, 200);
+</script>
+
+
 {% elif bot == 'conflicts' %}
 <!-- ── Anti-cluster / Divergence Detector ──────────────────────────── -->
 <style>
