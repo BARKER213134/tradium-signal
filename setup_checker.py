@@ -238,51 +238,105 @@ def check_setup(pair_input: str) -> dict:
         st4h_state = (result["st_4h"] or {}).get("state") if result["st_4h"] else None
         total2_bias = (result["total2_bias"] or {}).get("bias") if result["total2_bias"] else None
 
-        # Confidence boost from TF alignment
+        # Confidence boost from TF alignment + penalty за counter-trend
         align_long_bonus = 0
         align_short_bonus = 0
+        long_penalties = []
+        short_penalties = []
+
+        # Bonus: оба TF aligned с direction
         if st2h_state == 'UP' and st4h_state == 'UP':
             align_long_bonus += 10
         if st2h_state == 'DOWN' and st4h_state == 'DOWN':
             align_short_bonus += 10
+
+        # Bonus: TOTAL2 bias aligned
         if total2_bias == 'LONG' and st2h_state == 'UP':
             align_long_bonus += 5
         if total2_bias == 'SHORT' and st2h_state == 'DOWN':
             align_short_bonus += 5
 
+        # PENALTY: counter-trend signal (ST идёт против direction)
+        # LONG WHALE против ST 2H DOWN — −20 confidence
+        if st2h_state == 'DOWN':
+            align_long_bonus -= 20
+            long_penalties.append('ST 2H = DOWN (counter-trend LONG)')
+        # SHORT SHARK против ST 2H UP — −20 confidence (важно для Blow-Off
+        # entries — climax в момент pump'а формально UP но reversal часто
+        # происходит сразу — поэтому penalty не убивает signal, а сигнализирует
+        # что entry рисковый)
+        if st2h_state == 'UP':
+            align_short_bonus -= 20
+            short_penalties.append('ST 2H = UP (counter-trend SHORT — riskier)')
+
+        # PENALTY: 4H тоже против
+        if st4h_state == 'DOWN':
+            align_long_bonus -= 10
+            long_penalties.append('ST 4H = DOWN (deep counter-trend LONG)')
+        if st4h_state == 'UP':
+            align_short_bonus -= 10
+            short_penalties.append('ST 4H = UP (deep counter-trend SHORT)')
+
+        # PENALTY: TOTAL2 bias против direction
+        if total2_bias == 'SHORT':
+            align_long_bonus -= 10
+            long_penalties.append('TOTAL2 bias = SHORT (рынок альтов вниз)')
+        if total2_bias == 'LONG':
+            align_short_bonus -= 10
+            short_penalties.append('TOTAL2 bias = LONG (рынок альтов вверх)')
+
         adj_long = result["long_score"] + align_long_bonus
         adj_short = result["short_score"] + align_short_bonus
 
+        # Сохраняем для UI
+        result["long_alignment"] = align_long_bonus
+        result["short_alignment"] = align_short_bonus
+        result["long_penalties"] = long_penalties
+        result["short_penalties"] = short_penalties
+
         # Final decision
+        def _fmt_align(bonus, penalties):
+            """Форматирует +/- bonus с penalties как human-readable."""
+            sign = '+' if bonus >= 0 else ''
+            s = f"{sign}{bonus} alignment"
+            if penalties:
+                s += f" ({'; '.join(penalties)})"
+            return s
+
         if long_ok and short_ok:
             # Rare — both fired. Use bias to break tie
             if adj_long > adj_short + 10:
                 result["verdict"] = "ENTER_LONG"
-                result["confidence"] = min(95, 50 + adj_long // 2)
-                result["reasons"].append(f"WHALE {result['long_tier']} score {result['long_score']}+{align_long_bonus} | ST 2H {st2h_state}")
+                result["confidence"] = max(20, min(95, 50 + adj_long // 2))
+                result["reasons"].append(f"🐋 WHALE {result['long_tier']} score {result['long_score']}, {_fmt_align(align_long_bonus, long_penalties)}")
             elif adj_short > adj_long + 10:
                 result["verdict"] = "ENTER_SHORT"
-                result["confidence"] = min(95, 50 + adj_short // 2)
-                result["reasons"].append(f"SHARK {result['short_tier']} score {result['short_score']}+{align_short_bonus} | ST 2H {st2h_state}")
+                result["confidence"] = max(20, min(95, 50 + adj_short // 2))
+                result["reasons"].append(f"🦈 SHARK {result['short_tier']} score {result['short_score']}, {_fmt_align(align_short_bonus, short_penalties)}")
             else:
                 result["verdict"] = "WAIT"
-                result["reasons"].append("Оба сигнала качают — конфликтующая ситуация")
+                result["reasons"].append("Оба сигнала качают — конфликт")
         elif long_ok:
             result["verdict"] = "ENTER_LONG"
-            result["confidence"] = min(95, 50 + adj_long // 2)
-            result["reasons"].append(f"🐋 WHALE {result['long_tier']} score {result['long_score']} (+{align_long_bonus} bonus)")
+            result["confidence"] = max(20, min(95, 50 + adj_long // 2))
+            result["reasons"].append(f"🐋 WHALE {result['long_tier']} score {result['long_score']}, {_fmt_align(align_long_bonus, long_penalties)}")
             if st2h_state == 'UP':
-                result["reasons"].append(f"✓ ST 2H = UP ({result['st_2h']['duration']})")
+                result["reasons"].append(f"✓ ST 2H = UP ({result['st_2h']['duration']}) — trend-aligned")
             else:
-                result["reasons"].append(f"⚠ ST 2H = {st2h_state} (entry against 2H)")
+                result["reasons"].append(f"⚠ COUNTER-TREND — ST 2H = {st2h_state} ({result['st_2h']['duration']})")
+            # Если confidence ≤ 35 — лучше пропустить
+            if result["confidence"] <= 35:
+                result["reasons"].append(f"❌ Confidence {result['confidence']}% слишком низкий — пропусти")
         elif short_ok:
             result["verdict"] = "ENTER_SHORT"
-            result["confidence"] = min(95, 50 + adj_short // 2)
-            result["reasons"].append(f"🦈 SHARK {result['short_tier']} score {result['short_score']} (+{align_short_bonus} bonus)")
+            result["confidence"] = max(20, min(95, 50 + adj_short // 2))
+            result["reasons"].append(f"🦈 SHARK {result['short_tier']} score {result['short_score']}, {_fmt_align(align_short_bonus, short_penalties)}")
             if st2h_state == 'DOWN':
-                result["reasons"].append(f"✓ ST 2H = DOWN ({result['st_2h']['duration']})")
+                result["reasons"].append(f"✓ ST 2H = DOWN ({result['st_2h']['duration']}) — trend-aligned")
             else:
-                result["reasons"].append(f"⚠ ST 2H = {st2h_state} (entry against 2H)")
+                result["reasons"].append(f"⚠ COUNTER-TREND — ST 2H = {st2h_state} ({result['st_2h']['duration']})")
+            if result["confidence"] <= 35:
+                result["reasons"].append(f"❌ Confidence {result['confidence']}% слишком низкий — пропусти")
         else:
             # WAIT scenario
             result["verdict"] = "WAIT"
