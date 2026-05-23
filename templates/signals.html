@@ -3488,6 +3488,138 @@ setTimeout(_skLoad, 500);
 </script>
 
 
+{% elif bot == 'combo' %}
+<!-- ════════════ 🧠 COMBO — Composite Signal (precondition analysis) ════════════ -->
+<div class="strategy-box" style="border-color:rgba(180,140,255,0.45);background:linear-gradient(135deg,rgba(180,140,255,0.10),rgba(140,100,255,0.05));">
+  <div class="strat-icon">🧠</div>
+  <div class="strat-body">
+    <div class="strat-title" style="color:#b48cff;">COMBO · composite signal от st_vip / triple_confluence + precondition positives</div>
+    Triggered когда приходит target (st_vip ИЛИ triple_confluence) И в 24h preceding окне same direction same pair собирается достаточно "win markers".
+    <b>WIN markers</b>: st_vip (+30), triple_confluence (+25), confluence (+15), tradium (+5), rsi_cross_12h (+5).
+    <b>ANTI markers</b>: st_mtf (-10), cv_flip (-10), cryptovizor (-8), st_daily (-5), vol_accum (-5).
+    Threshold: <b>30</b>. Backtest 30d: <b>WR 52.5%, MFE 4.73%</b>.
+    Alerts в общий журнал (нет отдельного бота).
+  </div>
+</div>
+
+<!-- State filter + stats -->
+<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:12px 0;">
+  <select id="cb-state" onchange="_cbLoad()"
+          style="background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="all">Все states</option>
+    <option value="WAITING">⏳ Waiting</option>
+    <option value="TP">✅ TP hit</option>
+    <option value="SL">⛔ SL hit</option>
+    <option value="MANUAL">📍 Manual</option>
+    <option value="TIMEOUT">⏱ Timeout</option>
+    <option value="BACKFILLED">📜 Backfilled</option>
+    <option value="NEW">🆕 New</option>
+  </select>
+  <select id="cb-hours" onchange="_cbLoad()"
+          style="background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="24">24ч</option>
+    <option value="72">3 дня</option>
+    <option value="168">7 дней</option>
+    <option value="336" selected>14 дней</option>
+    <option value="720">30 дней</option>
+  </select>
+  <div id="cb-stats" style="font-size:11px;color:var(--muted);font-family:var(--font-mono);"></div>
+  <button onclick="_cbBackfill()" style="background:rgba(180,140,255,0.18);color:#b48cff;border:1px solid rgba(180,140,255,0.45);border-radius:8px;padding:8px 14px;font-size:12px;font-family:var(--font-mono);cursor:pointer;">
+    🔄 Backfill 30d
+  </button>
+</div>
+
+<!-- Results table -->
+<div style="overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--card);">
+  <table id="cb-table" style="width:100%;border-collapse:collapse;font-size:12px;font-family:var(--font-mono);">
+    <thead style="background:var(--dark);position:sticky;top:0;">
+      <tr>
+        <th style="padding:8px;text-align:center;color:var(--muted);font-weight:600;width:40px;"></th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Pair</th>
+        <th style="padding:8px;text-align:center;color:var(--muted);font-weight:600;">Dir</th>
+        <th style="padding:8px;text-align:center;color:var(--muted);font-weight:600;">Score</th>
+        <th style="padding:8px;text-align:right;color:var(--muted);font-weight:600;">Entry</th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Trigger</th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Preceding sources</th>
+        <th style="padding:8px;text-align:center;color:var(--muted);font-weight:600;">State</th>
+        <th style="padding:8px;text-align:left;color:var(--muted);font-weight:600;">Created</th>
+      </tr>
+    </thead>
+    <tbody id="cb-tbody">
+      <tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted);">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function _cbLoad() {
+  const state = document.getElementById('cb-state').value;
+  const hours = document.getElementById('cb-hours').value;
+  const tbody = document.getElementById('cb-tbody');
+  const statsEl = document.getElementById('cb-stats');
+  tbody.innerHTML = '<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted);">Загрузка…</td></tr>';
+  try {
+    const r = await fetch(`/api/new-strategies?strategy=combo&state=${state}&hours=${hours}&limit=500`);
+    const j = await r.json();
+    const items = j.items || [];
+    if (items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--muted);">Нет COMBO сигналов в этом окне.</td></tr>';
+      statsEl.textContent = '0 сигналов';
+      return;
+    }
+    // Stats: by trigger source
+    const byTrig = {};
+    const byDir = {};
+    items.forEach(it => {
+      const t = it.trigger_source || '?'; byTrig[t] = (byTrig[t] || 0) + 1;
+      const d = it.direction || '?'; byDir[d] = (byDir[d] || 0) + 1;
+    });
+    const tParts = Object.entries(byTrig).map(([t,n]) => `${t}=${n}`);
+    const dParts = Object.entries(byDir).map(([d,n]) => `${d}=${n}`);
+    statsEl.textContent = `${items.length} signals · trigger: ${tParts.join(' · ')} · dir: ${dParts.join(' · ')}`;
+
+    const rows = items.map(it => {
+      const dir = it.direction || '?';
+      const dirColor = dir === 'LONG' ? '#00e5a0' : (dir === 'SHORT' ? '#ff4d6d' : 'var(--muted)');
+      const score = it.combo_score || 0;
+      const scoreColor = score >= 50 ? '#ffd23e' : (score >= 30 ? '#00e5a0' : 'var(--muted)');
+      const created = it.created_at ? new Date(it.created_at).toLocaleString('ru-RU') : '';
+      const preceding = (it.preceding_sources || []).join(', ') || '—';
+      const trig = it.trigger_source || '—';
+      const trigEmoji = trig === 'st_vip' ? '🌀' : (trig === 'triple_confluence' ? '🐉' : '?');
+      const stateBadge = (it.state || 'WAITING');
+      const pairUrl = `/signals?bot=journal&pair=${encodeURIComponent(it.pair || '')}`;
+      return `<tr style="border-top:1px solid var(--border);">
+        <td style="padding:8px;text-align:center;font-size:18px;">🧠</td>
+        <td style="padding:8px;"><a href="${pairUrl}" style="color:#b48cff;text-decoration:none;">${it.pair || '?'}</a></td>
+        <td style="padding:8px;text-align:center;color:${dirColor};font-weight:700;">${dir}</td>
+        <td style="padding:8px;text-align:center;color:${scoreColor};font-weight:700;">${score}</td>
+        <td style="padding:8px;text-align:right;">${it.entry || '—'}</td>
+        <td style="padding:8px;color:var(--muted);">${trigEmoji} ${trig}</td>
+        <td style="padding:8px;color:var(--muted);font-size:11px;">${preceding}</td>
+        <td style="padding:8px;text-align:center;">${stateBadge}</td>
+        <td style="padding:8px;color:var(--muted);">${created}</td>
+      </tr>`;
+    }).join('');
+    tbody.innerHTML = rows;
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="9" style="padding:20px;text-align:center;color:#ff4d6d;">Ошибка: ${e.message}</td></tr>`;
+  }
+}
+
+async function _cbBackfill() {
+  if (!confirm('Запустить COMBO backfill за 30 дней? Займёт ~5-10 минут.')) return;
+  try {
+    const r = await fetch('/api/combo/backfill', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({days: 30}) });
+    const j = await r.json();
+    alert('Backfill запущен. Прогресс в /api/combo/backfill/status.');
+  } catch (e) { alert('Ошибка: ' + e.message); }
+}
+
+setTimeout(_cbLoad, 500);
+</script>
+
+
 {% elif bot == 'setup_check' %}
 <!-- ════════════ 🎰 SETUP CHECKER — paste pair → ENTER LONG/SHORT/WAIT ════════════ -->
 <div class="strategy-box" style="border-color:rgba(255,210,62,0.45);background:linear-gradient(135deg,rgba(255,210,62,0.10),rgba(255,140,80,0.05));">

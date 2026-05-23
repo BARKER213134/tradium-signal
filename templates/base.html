@@ -309,6 +309,26 @@
             box-shadow: 0 0 18px rgba(255,77,109,0.7), inset 0 0 10px rgba(255,140,80,0.35);
         }
 
+        /* ━━━ 🧠 COMBO — composite signal — фиолетовый glow ━━━ */
+        .bot-switch[data-bot="combo"] {
+            background: linear-gradient(135deg, rgba(180,140,255,0.18), rgba(140,100,255,0.10));
+            color: #b48cff;
+            border-color: rgba(180,140,255,0.55);
+            font-weight: 800;
+            box-shadow: 0 0 8px rgba(180,140,255,0.25), inset 0 0 4px rgba(140,100,255,0.15);
+        }
+        .bot-switch[data-bot="combo"]:hover {
+            background: linear-gradient(135deg, rgba(180,140,255,0.28), rgba(140,100,255,0.18));
+            color: #d4b8ff;
+            box-shadow: 0 0 14px rgba(180,140,255,0.45), inset 0 0 6px rgba(140,100,255,0.25);
+        }
+        .bot-switch[data-bot="combo"].active {
+            background: linear-gradient(135deg, rgba(180,140,255,0.38), rgba(140,100,255,0.22));
+            color: #fff;
+            border-color: #b48cff;
+            box-shadow: 0 0 18px rgba(180,140,255,0.7), inset 0 0 10px rgba(140,100,255,0.35);
+        }
+
         /* ── Key Level badges ── */
         .kl-badge {
             display: inline-block;
