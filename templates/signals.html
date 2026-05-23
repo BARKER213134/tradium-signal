@@ -10713,8 +10713,9 @@ setInterval(() => window._refreshRegimeCache(), 60000);
 // Если v3.0 принял бы signal → original emoji (🏆/🔥/✅/...)
 // Если v3.0 отклонил бы (direction OR verdict против regime) → ⛔ REJECT
 // Если ВООБЩЕ SKIP (avoid edge) → ❌ SKIP всегда
-window._verdictInfo = function(s) {
-  // Build tier list. RSI tier через _rsiEdgeInfo (если он есть)
+// Legacy verdict info — оставляем для совместимости fallback
+window._verdictInfoLegacy = function(s) {
+  // (старая логика на edge tiers — копия для архива; используется ниже как fallback)
   const tiers = [];
   if (window._rsiEdgeInfo) {
     const r4 = (s.rsi_4h != null) ? s.rsi_4h : null;
@@ -10724,44 +10725,191 @@ window._verdictInfo = function(s) {
   if (window._smaEdgeInfo) tiers.push(window._smaEdgeInfo(s).tier);
   if (window._trendEdgeInfo) tiers.push(window._trendEdgeInfo(s).tier);
   if (window._anomalyEdgeInfo) tiers.push(window._anomalyEdgeInfo(s).tier);
-
-  const hasAvoid = tiers.includes('avoid');
-  const hasWarn = tiers.includes('warn');
   const topCount = tiers.filter(t => t === 'top').length;
   const goodCount = tiers.filter(t => t === 'good').length;
+  if (topCount >= 3) return {emoji:'🏆', tier:'ELITE', color:'#ffd700'};
+  if (topCount >= 2) return {emoji:'🔥', tier:'STRONG', color:'#ff8c50'};
+  if (topCount >= 1) return {emoji:'✅', tier:'GOOD', color:'#00e5a0'};
+  if (goodCount >= 2) return {emoji:'👍', tier:'OK', color:'#88d8a3'};
+  return {emoji:'⚪', tier:'MEH', color:'#888'};
+};
 
-  // Compute base quality tier
-  let base;
-  if (hasAvoid) {
-    base = {emoji:'❌', tier:'SKIP', qualityLabel:'есть avoid edge',
-             color:'#ff4d6d', bg:'rgba(255,77,109,0.22)', expR:'−0.4 .. −1.0R'};
-  } else if (topCount >= 3) {
-    base = {emoji:'🏆', tier:'ELITE', qualityLabel:'3+ top edges',
-             color:'#ffd700', bg:'rgba(255,215,0,0.20)', expR:'+1.6 .. +2.2R'};
-  } else if (topCount >= 2) {
-    base = {emoji:'🔥', tier:'STRONG', qualityLabel:'2 top edges',
-             color:'#ff8c50', bg:'rgba(255,140,80,0.20)', expR:'+1.0 .. +1.5R'};
-  } else if (topCount >= 1) {
-    base = {emoji:'✅', tier:'GOOD', qualityLabel:'1 top edge',
-             color:'#00e5a0', bg:'rgba(0,229,160,0.15)', expR:'+0.7 .. +1.5R'};
-  } else if (hasWarn) {
-    base = {emoji:'⚠', tier:'CAUTION', qualityLabel:'counter-trend warn',
-             color:'#ffd23e', bg:'rgba(255,210,62,0.12)', expR:'−0.1 .. +0.3R'};
-  } else if (goodCount >= 2) {
-    base = {emoji:'👍', tier:'OK', qualityLabel:'multiple good edges',
-             color:'#88d8a3', bg:'rgba(136,216,163,0.12)', expR:'+0.3 .. +0.7R'};
-  } else {
-    base = {emoji:'⚪', tier:'MEH', qualityLabel:'нейтрально',
-             color:'#888', bg:'', expR:'~0R'};
+// ━━━ Setup-Checker-style verdict (главный) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Использует ту же логику что setup_checker.py:
+//   1. WHALE/SHARK signals → ENTER_LONG/SHORT с tier (PREMIUM/STANDARD)
+//   2. Top backtest sources (TC / st_vip / combo / confluence STRONG / cv_flip) → ENTER
+//   3. Counter-trend penalty: rsi4h_match / rsi12h_match boolean alignment с direction
+//   4. TOTAL2 bias bonus (если window._biasData доступен)
+window._verdictInfo = function(s) {
+  const src = s.source || '';
+  const dir = (s.direction || '').toUpperCase();
+  const isLong = dir === 'LONG';
+  const isShort = dir === 'SHORT';
+
+  // Counter-trend penalty проверки
+  const rsi4hMatch = s.rsi4h_match;  // true = aligned, false = opposite
+  const rsi12hMatch = s.rsi12h_match;
+  let counterPenalty = 0;
+  let counterReasons = [];
+  if (rsi4hMatch === false) {
+    counterPenalty += 20;
+    counterReasons.push('4h state против direction');
+  }
+  if (rsi12hMatch === false) {
+    counterPenalty += 10;
+    counterReasons.push('12h state против direction');
+  }
+  // TOTAL2 bias check (если есть)
+  const t2 = window._biasData && window._biasData.bias;
+  if (t2 === 'SHORT' && isLong) {
+    counterPenalty += 10;
+    counterReasons.push('TOTAL2 bias=SHORT');
+  }
+  if (t2 === 'LONG' && isShort) {
+    counterPenalty += 10;
+    counterReasons.push('TOTAL2 bias=LONG');
   }
 
-  // SKIP всегда отклоняется (no regime override saves it)
-  if (base.tier === 'SKIP') {
-    return {...base, tierLower:'avoid', label:`SKIP — ${base.qualityLabel}`,
-             v3_accept:false, v3_reason:'avoid_edge'};
+  // ── Compute base verdict ──
+  let base = null;
+
+  // 1. WHALE / SHARK (highest priority — backtest validated PREMIUM)
+  if (src === 'whale' && (s.whale_tier === 'PREMIUM' || s.whale_tier === 'STANDARD')) {
+    const isPrem = s.whale_tier === 'PREMIUM';
+    base = {
+      emoji: isPrem ? '👑' : '🟢',
+      tier: isPrem ? 'ELITE_LONG' : 'LONG',
+      qualityLabel: `🐋 WHALE ${s.whale_tier} · score ${s.whale_score || '?'}`,
+      color: isPrem ? '#ffd700' : '#00e5a0',
+      bg: isPrem ? 'rgba(255,215,0,0.20)' : 'rgba(0,229,160,0.15)',
+      expR: isPrem ? '+1.5 .. +2.5R' : '+0.8 .. +1.5R',
+      verdict: 'ENTER_LONG',
+    };
+  } else if (src === 'shark' && (s.shark_tier === 'PREMIUM' || s.shark_tier === 'STANDARD')) {
+    const isPrem = s.shark_tier === 'PREMIUM';
+    base = {
+      emoji: isPrem ? '👑' : '🔴',
+      tier: isPrem ? 'ELITE_SHORT' : 'SHORT',
+      qualityLabel: `🦈 SHARK ${s.shark_tier} · score ${s.shark_score || '?'}`,
+      color: isPrem ? '#ffd700' : '#ff4d6d',
+      bg: isPrem ? 'rgba(255,215,0,0.20)' : 'rgba(255,77,109,0.15)',
+      expR: isPrem ? '+1.5 .. +2.5R' : '+0.8 .. +1.5R',
+      verdict: 'ENTER_SHORT',
+    };
+  }
+  // 2. Triple Confluence (WR 61.1% — top in 14d backtest)
+  else if (src === 'triple_confluence') {
+    base = {
+      emoji: isLong ? '🟢' : '🔴',
+      tier: isLong ? 'LONG' : 'SHORT',
+      qualityLabel: `🐉 Triple Confluence (WR 61%)`,
+      color: isLong ? '#00e5a0' : '#ff4d6d',
+      bg: isLong ? 'rgba(0,229,160,0.15)' : 'rgba(255,77,109,0.15)',
+      expR: '+0.8 .. +1.5R',
+      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT',
+    };
+  }
+  // 3. SuperTrend VIP (WR 60.1%)
+  else if (src === 'supertrend' && s.st_tier === 'vip') {
+    base = {
+      emoji: isLong ? '🟢' : '🔴',
+      tier: isLong ? 'LONG' : 'SHORT',
+      qualityLabel: `🌀 ST VIP (WR 60%)`,
+      color: isLong ? '#00e5a0' : '#ff4d6d',
+      bg: isLong ? 'rgba(0,229,160,0.15)' : 'rgba(255,77,109,0.15)',
+      expR: '+0.7 .. +1.3R',
+      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT',
+    };
+  }
+  // 4. Confluence (≥5 = strong; WR 55%)
+  else if (src === 'confluence' && (s.score || 0) >= 5) {
+    base = {
+      emoji: isLong ? '🟢' : '🔴',
+      tier: isLong ? 'LONG' : 'SHORT',
+      qualityLabel: `🎯 Confluence STRONG (score ${s.score})`,
+      color: isLong ? '#00e5a0' : '#ff4d6d',
+      bg: isLong ? 'rgba(0,229,160,0.15)' : 'rgba(255,77,109,0.15)',
+      expR: '+0.6 .. +1.2R',
+      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT',
+    };
+  }
+  // 5. COMBO (WR 52.5%)
+  else if (src === 'combo') {
+    base = {
+      emoji: isLong ? '🟢' : '🔴',
+      tier: isLong ? 'LONG' : 'SHORT',
+      qualityLabel: `🧠 COMBO (score ${s.combo_score || '?'})`,
+      color: isLong ? '#00e5a0' : '#ff4d6d',
+      bg: isLong ? 'rgba(0,229,160,0.15)' : 'rgba(255,77,109,0.15)',
+      expR: '+0.5 .. +1.0R',
+      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT',
+    };
+  }
+  // 6. CV flip (FLIPPED state — WR 43.5% но решение пограничное)
+  else if (src === 'cv_flip') {
+    base = {
+      emoji: '⚠',
+      tier: 'CAUTION',
+      qualityLabel: `⏳ CV Flip (WR 43%) — слабый edge`,
+      color: '#ffd23e',
+      bg: 'rgba(255,210,62,0.12)',
+      expR: '+0.2 .. +0.6R',
+      verdict: 'WAIT',
+    };
+  }
+  // 7. Confluence weak (<5), anomaly, tradium pattern_triggered, cluster — OK tier
+  else if ((src === 'confluence' && (s.score || 0) >= 3)
+           || src === 'tradium' || src === 'cluster' || src === 'anomaly') {
+    base = {
+      emoji: '👍',
+      tier: 'OK',
+      qualityLabel: `${src} — средний edge`,
+      color: '#88d8a3',
+      bg: 'rgba(136,216,163,0.12)',
+      expR: '+0.2 .. +0.6R',
+      verdict: isLong ? 'ENTER_LONG' : isShort ? 'ENTER_SHORT' : 'WAIT',
+    };
+  }
+  // 8. Прочее (cryptovizor weak / volume_surge / vol_accum / volcano / second_flip / rsi_cross_12h)
+  else {
+    base = {
+      emoji: '⚪',
+      tier: 'MEH',
+      qualityLabel: `${src || 'unknown'} — слабый source (WR <50%)`,
+      color: '#888',
+      bg: '',
+      expR: '~0R',
+      verdict: 'WAIT',
+    };
   }
 
-  // ─── v3.0 REGIME GATE — accept/reject by current regime + direction ───
+  // Apply counter-trend penalty
+  if (counterPenalty >= 20 && base.tier !== 'CAUTION' && base.tier !== 'MEH') {
+    // Downgrade to CAUTION
+    base = {
+      emoji: '⚠',
+      tier: 'CAUTION',
+      qualityLabel: `${base.qualityLabel} · но ${counterReasons.join(', ')}`,
+      color: '#ffd23e',
+      bg: 'rgba(255,210,62,0.12)',
+      expR: '~0R (counter-trend)',
+      verdict: 'WAIT',
+    };
+  } else if (counterPenalty >= 10) {
+    base.qualityLabel += ` · ⚠ ${counterReasons.join(', ')}`;
+  }
+
+  // ─── v3.0 REGIME GATE (упрощённый под новые tiers) ───
+  // Старая система имела allowedVerdicts ['ELITE','STRONG','GOOD'] — мапим
+  // новые tiers в "quality buckets":
+  const bucketMap = {
+    'ELITE_LONG': 'ELITE',  'ELITE_SHORT': 'ELITE',
+    'LONG': 'GOOD',         'SHORT': 'GOOD',
+    'CAUTION': 'CAUTION',   'OK': 'OK',
+    'MEH': 'MEH',
+  };
+  const tierBucket = bucketMap[base.tier] || base.tier;
+
   const regime = window._currentRegime;
   const cfg = window._currentRegimeConfig;
   const direction = (s.direction || '').toUpperCase();
@@ -10772,33 +10920,26 @@ window._verdictInfo = function(s) {
     let v3_reason = null;
     if (direction && allowedDirs.length && !allowedDirs.includes(direction)) {
       v3_reason = `regime_${regime}_direction_${direction}`;
-    } else if (!allowedVerdicts.includes(base.tier)) {
-      v3_reason = `regime_${regime}_verdict_${base.tier}`;
+    } else if (allowedVerdicts.length && !allowedVerdicts.includes(tierBucket)) {
+      v3_reason = `regime_${regime}_verdict_${tierBucket}`;
     }
     if (v3_reason) {
-      // v3.0 REJECT — показываем ⛔ + small badge с original tier
       return {
-        emoji: '⛔',
-        tier: 'REJECT_' + base.tier,
-        tierLower: 'reject',
-        label: `⛔ v3.0 REJECT (regime=${regime}) · quality=${base.tier} ${base.qualityLabel}`,
-        color: '#7a8ba6',
-        bg: 'rgba(122,139,166,0.10)',
-        expR: 'n/a (отклонено)',
-        v3_accept: false,
+        emoji: '⛔', tier: 'REJECT_' + base.tier, tierLower: 'reject',
+        label: `⛔ v3.0 REJECT (regime=${regime}) · ${base.qualityLabel}`,
+        color: '#7a8ba6', bg: 'rgba(122,139,166,0.10)',
+        expR: 'n/a (отклонено)', v3_accept: false,
         v3_reason: v3_reason,
-        original_emoji: base.emoji,
-        original_tier: base.tier,
+        original_emoji: base.emoji, original_tier: base.tier,
       };
     }
   }
 
-  // v3.0 ACCEPT (или regime unknown)
-  const regimeLabel = regime ? ` · ${regime} regime` : '';
+  // ACCEPT
   return {
     ...base,
     tierLower: base.tier.toLowerCase(),
-    label: `${base.emoji} ${base.tier} — ${base.qualityLabel}${regimeLabel}`,
+    label: `${base.emoji} ${base.verdict || base.tier} — ${base.qualityLabel}`,
     v3_accept: true,
   };
 };
