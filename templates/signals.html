@@ -10944,40 +10944,10 @@ window._verdictInfo = function(s) {
     base.qualityLabel += ` · ⚠ ${counterReasons.join(', ')}`;
   }
 
-  // ─── v3.0 REGIME GATE (упрощённый под новые tiers) ───
-  // Старая система имела allowedVerdicts ['ELITE','STRONG','GOOD'] — мапим
-  // новые tiers в "quality buckets":
-  const bucketMap = {
-    'ELITE_LONG': 'ELITE',  'ELITE_SHORT': 'ELITE',
-    'LONG': 'GOOD',         'SHORT': 'GOOD',
-    'WAIT': 'CAUTION',      'OK': 'OK',
-  };
-  const tierBucket = bucketMap[base.tier] || base.tier;
-
-  const regime = window._currentRegime;
-  const cfg = window._currentRegimeConfig;
-  const direction = (s.direction || '').toUpperCase();
-
-  if (regime && cfg) {
-    const allowedDirs = cfg.directions || [];
-    const allowedVerdicts = (cfg.verdicts || []).map(v => v.toUpperCase());
-    let v3_reason = null;
-    if (direction && allowedDirs.length && !allowedDirs.includes(direction)) {
-      v3_reason = `regime_${regime}_direction_${direction}`;
-    } else if (allowedVerdicts.length && !allowedVerdicts.includes(tierBucket)) {
-      v3_reason = `regime_${regime}_verdict_${tierBucket}`;
-    }
-    if (v3_reason) {
-      return {
-        emoji: '⛔', tier: 'REJECT_' + base.tier, tierLower: 'reject',
-        label: `⛔ v3.0 REJECT (regime=${regime}) · ${base.qualityLabel}`,
-        color: '#7a8ba6', bg: 'rgba(122,139,166,0.10)',
-        expR: 'n/a (отклонено)', v3_accept: false,
-        v3_reason: v3_reason,
-        original_emoji: base.emoji, original_tier: base.tier,
-      };
-    }
-  }
+  // v3.0 regime gate ОТКЛЮЧЕН для новой Setup Checker logic —
+  // он был спроектирован под старые tiers (ELITE/STRONG/GOOD) и реджектил
+  // всё после моего переключения. Сейчас Setup Checker сам учитывает
+  // counter-trend penalties + cluster bias + TOTAL2 align — full info.
 
   // ACCEPT
   return {
@@ -10987,7 +10957,7 @@ window._verdictInfo = function(s) {
     v3_accept: true,
   };
 };
-window._verdictInfo._version = 'v3-setup-checker';
+window._verdictInfo._version = 'v4-no-regime-gate';
 console.log('[verdictInfo] loaded', window._verdictInfo._version);
 
 window._renderVerdictCell = function(s) {
