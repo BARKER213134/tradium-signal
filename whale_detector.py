@@ -268,13 +268,14 @@ def compute_whale_score(candles_2h: list[dict], flip_idx: int,
     # CORE: vol spike check (ST flip already given by caller)
     vol_ok, vol_ratio = check_vol_spike(candles_2h, flip_idx)
     indicators['vol_ratio_max'] = vol_ratio
-    if not vol_ok:
-        return {'score': 0, 'tier': None, 'passes_core': False,
-                'breakdown': {'vol_spike_failed': True},
-                'indicators': indicators}
-
-    score = CORE_SCORE
-    breakdown['core_st_flip_vol_spike'] = CORE_SCORE
+    passes_core = bool(vol_ok)
+    # Считаем amplifiers ВСЕГДА (даже без CORE) — score покажет "потенциал".
+    # passes_core flag отдельно указывает фактически ли setup готов.
+    score = CORE_SCORE if passes_core else 0
+    if passes_core:
+        breakdown['core_st_flip_vol_spike'] = CORE_SCORE
+    else:
+        breakdown['vol_spike_failed'] = True
 
     # Base duration
     base_days = check_base_duration(candles_2h, flip_idx)
@@ -325,14 +326,17 @@ def compute_whale_score(candles_2h: list[dict], flip_idx: int,
                 score += ANTI_MARKERS[k]
                 breakdown[k] = ANTI_MARKERS[k]
 
-    # Tier classification
+    # Tier classification — требует passes_core (vol spike fired).
+    # Без CORE score показывает "потенциал", но tier остаётся None →
+    # signal не fires в real-time (maybe_fire_whale skip'ает).
     tier = None
-    if score >= TIER_THRESHOLDS['PREMIUM']:
-        tier = 'PREMIUM'
-    elif score >= TIER_THRESHOLDS['STANDARD']:
-        tier = 'STANDARD'
-    elif score >= TIER_THRESHOLDS['MARGINAL']:
-        tier = 'MARGINAL'
+    if passes_core:
+        if score >= TIER_THRESHOLDS['PREMIUM']:
+            tier = 'PREMIUM'
+        elif score >= TIER_THRESHOLDS['STANDARD']:
+            tier = 'STANDARD'
+        elif score >= TIER_THRESHOLDS['MARGINAL']:
+            tier = 'MARGINAL'
 
     return {
         'score': score,
