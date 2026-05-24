@@ -8023,24 +8023,12 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
 
 <!-- Строка 2: Фильтры -->
 <div class="an-toolbar" style="padding:8px 18px;gap:6px;flex-wrap:wrap;">
-  <select id="jFilterVerdict" onchange="filterJournal()" title="Фильтр по Вердикту (агрегат RSI/SMA/Trend/Anomaly tiers + v3.0 regime)" style="background:linear-gradient(135deg, rgba(255,215,0,0.12), rgba(255,140,80,0.08));color:#ffd700;border:1px solid rgba(255,215,0,0.55);border-radius:6px;padding:5px 12px;font-size:11px;font-family:var(--font-mono);font-weight:700;letter-spacing:0.03em;">
+  <select id="jFilterVerdict" onchange="filterJournal()" title="Фильтр по Setup Checker вердикту (LONG / SHORT / WAIT)" style="background:linear-gradient(135deg, rgba(255,215,0,0.12), rgba(255,140,80,0.08));color:#ffd700;border:1px solid rgba(255,215,0,0.55);border-radius:6px;padding:5px 12px;font-size:11px;font-family:var(--font-mono);font-weight:700;letter-spacing:0.03em;">
     <option value="">🎯 Вердикт: все</option>
-    <optgroup label="── v3.0 (текущий regime) ──">
-      <option value="v3_accept">✅ v3.0 ПРИНЯЛ бы (открылась бы сделка)</option>
-      <option value="v3_reject">⛔ v3.0 ОТКЛОНИЛ бы (wrong regime/dir)</option>
-    </optgroup>
-    <optgroup label="── По качеству ──">
-      <option value="ELITE">🏆 ELITE (3+ top)</option>
-      <option value="STRONG">🔥 STRONG (2+ top)</option>
-      <option value="strict">🏆+🔥 STRICT (ELITE+STRONG)</option>
-      <option value="GOOD">✅ GOOD (1 top)</option>
-      <option value="OK">👍 OK (2+ good)</option>
-      <option value="MEH">⚪ MEH</option>
-      <option value="CAUTION">⚠ CAUTION</option>
-      <option value="SKIP">❌ SKIP</option>
-      <option value="no_skip">🚫 Скрыть SKIP</option>
-      <option value="positive">📈 Прибыльные (ELITE+STRONG+GOOD+OK)</option>
-    </optgroup>
+    <option value="LONG">🟢 LONG (ENTER LONG)</option>
+    <option value="SHORT">🔴 SHORT (ENTER SHORT)</option>
+    <option value="WAIT">⏳ WAIT (пропустить)</option>
+    <option value="entry">📈 ENTRY only (LONG+SHORT, скрыть WAIT)</option>
   </select>
   <select id="jFilterSrc" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все источники</option>
@@ -10055,27 +10043,20 @@ function filterJournal() {
       else if (smaF === 'all_bull')  { if (p15 !== 'bull' || p1 !== 'bull' || p4 !== 'bull' || pd !== 'bull') return false; }
       else if (smaF === 'all_bear')  { if (p15 !== 'bear' || p1 !== 'bear' || p4 !== 'bear' || pd !== 'bear') return false; }
     }
-    // 🎯 Verdict filter (агрегат RSI/SMA/Trend/Anomaly tiers + v3.0 regime)
+    // 🎯 Verdict filter — Setup Checker LONG/SHORT/WAIT
     const verdictFilter = document.getElementById('jFilterVerdict');
     const vf = verdictFilter ? verdictFilter.value : '';
     if (vf && window._verdictInfo) {
       const info = window._verdictInfo(s);
-      // Quality tier (original): сохранён в original_tier (при v3 reject) или tier (при accept)
-      const quality = (info.original_tier || info.tier || '').toUpperCase();
-      const verdictName = quality === 'AVOID' ? 'SKIP' :
-                          quality === 'WARN' ? 'CAUTION' : quality;
-      if (vf === 'v3_accept') {
-        if (!info.v3_accept) return false;
-      } else if (vf === 'v3_reject') {
-        if (info.v3_accept !== false) return false;
-      } else if (vf === 'strict') {
-        if (!['ELITE','STRONG'].includes(verdictName)) return false;
-      } else if (vf === 'no_skip') {
-        if (verdictName === 'SKIP') return false;
-      } else if (vf === 'positive') {
-        if (!['ELITE','STRONG','GOOD','OK'].includes(verdictName)) return false;
-      } else {
-        if (verdictName !== vf) return false;
+      const tier = (info.tier || '').toUpperCase();
+      if (vf === 'LONG') {
+        if (tier !== 'LONG') return false;
+      } else if (vf === 'SHORT') {
+        if (tier !== 'SHORT') return false;
+      } else if (vf === 'WAIT') {
+        if (tier !== 'WAIT') return false;
+      } else if (vf === 'entry') {
+        if (tier !== 'LONG' && tier !== 'SHORT') return false;
       }
     }
     return true;
@@ -11176,95 +11157,62 @@ window._toggleVerdictHelp = function(ev) {
     pop = document.createElement('div');
     pop.id = 'verdictHelpPopover';
     pop.innerHTML = `
-      <h4>🎯 Вердикт по сигналу — v3.0 regime-aware</h4>
+      <h4>🎯 Вердикт по сигналу — Setup Checker</h4>
       <div style="color:var(--muted);font-size:10px;margin-bottom:10px;">
-        Вердикт = quality (4 edges aligned) + текущий market regime (BTC EMAs).<br>
-        Если v3.0 принял бы сигнал → original emoji 🏆/🔥/✅/...<br>
-        Если v3.0 ОТКЛОНИЛ бы (wrong direction OR low verdict для regime) → ⛔ REJECT<br>
-        Например: 🏆 ELITE SHORT в BULL regime → ⛔ (только LONG в BULL).
-      </div>
-      <div style="color:var(--muted);font-size:10px;margin-bottom:8px;padding:6px 8px;background:rgba(178,139,255,0.08);border-radius:5px;">
-        <b>Regime rules:</b><br>
-        🚀 BULL: LONG only, STRONG+ELITE only, size ×0.5<br>
-        🌀 CHOP: оба dir, GOOD+STRONG+ELITE, size ×2.0<br>
-        📉 BEAR: SHORT only, GOOD+STRONG+ELITE, size ×1.5
+        Вердикт берётся из <b>Setup Checker pipeline</b> (server-side):<br>
+        WHALE + SHARK detectors + TOTAL2 bias + ST 2H/4H alignment + counter-trend penalties.<br>
+        Только 3 состояния: 🟢 LONG / 🔴 SHORT / ⏳ WAIT.
       </div>
 
-      <div class="v-row" style="background:rgba(255,215,0,0.10);padding:6px 8px;border-radius:5px;">
-        <div class="v-emoji">🏆</div>
-        <div class="v-tier" style="background:rgba(255,215,0,0.25);color:#ffd700;">ELITE</div>
+      <div class="v-row" style="background:rgba(0,229,160,0.10);padding:8px 10px;border-radius:6px;border:1px solid rgba(0,229,160,0.35);">
+        <div class="v-emoji" style="font-size:22px;">🟢</div>
+        <div class="v-tier" style="background:rgba(0,229,160,0.25);color:#00e5a0;font-size:12px;">LONG</div>
         <div class="v-desc">
-          <b>3+ top edges</b> совпадают. Sniper-mode.<br>
-          <span style="color:#00e5a0;">WR 99.3% · AvgR +1.63R · 280 trades / 14d</span><br>
-          <span style="color:var(--muted);font-size:10px;">→ Жми безусловно, если risk gates позволяют</span>
+          <b>ENTER LONG</b> — Setup Checker даёт ENTER_LONG verdict.<br>
+          <span style="color:#00e5a0;">Production sources: WHALE / Triple Confluence / ST VIP / Confluence STRONG / COMBO</span><br>
+          <span style="color:var(--muted);font-size:10px;">→ Можно открывать LONG (учитывая risk gates + size по volатильности)</span>
         </div>
       </div>
 
-      <div class="v-row" style="background:rgba(255,140,80,0.10);padding:6px 8px;border-radius:5px;margin-top:4px;">
-        <div class="v-emoji">🔥</div>
-        <div class="v-tier" style="background:rgba(255,140,80,0.25);color:#ff8c50;">STRONG</div>
+      <div class="v-row" style="background:rgba(255,77,109,0.10);padding:8px 10px;border-radius:6px;border:1px solid rgba(255,77,109,0.35);margin-top:6px;">
+        <div class="v-emoji" style="font-size:22px;">🔴</div>
+        <div class="v-tier" style="background:rgba(255,77,109,0.25);color:#ff4d6d;font-size:12px;">SHORT</div>
         <div class="v-desc">
-          <b>2 top edges</b> совпадают. Сильный edge.<br>
-          <span style="color:#00e5a0;">WR 83.5% · AvgR +1.36R · 708 trades / 14d</span><br>
-          <span style="color:var(--muted);font-size:10px;">→ Хороший вход</span>
+          <b>ENTER SHORT</b> — Setup Checker даёт ENTER_SHORT verdict.<br>
+          <span style="color:#ff4d6d;">Production sources: SHARK / Triple Confluence / ST VIP / Confluence STRONG / COMBO</span><br>
+          <span style="color:var(--muted);font-size:10px;">→ Можно открывать SHORT</span>
         </div>
       </div>
 
-      <div class="v-row" style="background:rgba(0,229,160,0.08);padding:6px 8px;border-radius:5px;margin-top:4px;">
-        <div class="v-emoji">✅</div>
-        <div class="v-tier" style="background:rgba(0,229,160,0.20);color:#00e5a0;">GOOD</div>
+      <div class="v-row" style="background:rgba(255,210,62,0.10);padding:8px 10px;border-radius:6px;border:1px solid rgba(255,210,62,0.35);margin-top:6px;">
+        <div class="v-emoji" style="font-size:22px;">⏳</div>
+        <div class="v-tier" style="background:rgba(255,210,62,0.25);color:#ffd23e;font-size:12px;">WAIT</div>
         <div class="v-desc">
-          <b>1 top edge.</b> Положительный EV.<br>
-          <span style="color:#00e5a0;">WR 70-86% · AvgR +1.0..+2.18R</span><br>
-          <span style="color:var(--muted);font-size:10px;">→ Можно входить, особенно если top = Anomaly (+2.18R)</span>
-        </div>
-      </div>
-
-      <div class="v-row" style="background:rgba(136,216,163,0.08);padding:6px 8px;border-radius:5px;margin-top:4px;">
-        <div class="v-emoji">👍</div>
-        <div class="v-tier" style="background:rgba(136,216,163,0.15);color:#88d8a3;">OK</div>
-        <div class="v-desc">
-          <b>2+ good edges</b> (без top). Умеренный edge.<br>
-          <span style="color:#88d8a3;">AvgR +0.3..+0.7R</span><br>
-          <span style="color:var(--muted);font-size:10px;">→ Brake-even с лёгким плюсом</span>
+          <b>Жди</b> — нет качественного setup сейчас.<br>
+          Причины:<br>
+          • Score < 60 (STANDARD threshold не пройден)<br>
+          • Counter-trend (ST 4h/12h против signal direction)<br>
+          • Noisy source (cv_flip / volume_surge / vol_accum / volcano / second_flip)<br>
+          • TOTAL2 bias против direction signal'а<br>
+          <span style="color:var(--muted);font-size:10px;">→ Лучше пропустить. Score может расти — следи за "🌱 ПОТЕНЦИАЛ"</span>
         </div>
       </div>
 
       <hr>
 
-      <div class="v-row" style="padding:6px 8px;">
-        <div class="v-emoji">⚪</div>
-        <div class="v-tier" style="background:rgba(136,136,136,0.20);color:#aaa;">MEH</div>
-        <div class="v-desc">
-          Нейтрально (no edge, no warn). AvgR ≈0R<br>
-          <span style="color:var(--muted);font-size:10px;">→ Скорее скип. Шум.</span>
-        </div>
+      <div style="color:var(--muted);font-size:10px;padding:6px 8px;background:rgba(178,139,255,0.06);border-radius:5px;">
+        <b>Архитектура:</b><br>
+        1. Background loop в watcher.py каждые 60s бежит по new signals<br>
+        2. Setup Checker считает verdict per pair (5-min cache)<br>
+        3. Результат сохраняется в pair_verdicts collection<br>
+        4. Journal API джойнит pair_verdicts к каждому signal → setup_verdict field<br>
+        5. UI _verdictInfo читает setup_verdict если есть (server-side),<br>
+        &nbsp; иначе fallback на client-side упрощённую логику (та же 3 states).
       </div>
 
-      <div class="v-row" style="background:rgba(255,210,62,0.08);padding:6px 8px;border-radius:5px;margin-top:4px;">
-        <div class="v-emoji">⚠</div>
-        <div class="v-tier" style="background:rgba(255,210,62,0.20);color:#ffd23e;">CAUTION</div>
-        <div class="v-desc">
-          Counter-trend warning (например LONG при 4h DOWN).<br>
-          <span style="color:#ffd23e;">AvgR −0.1..+0.3R</span><br>
-          <span style="color:var(--muted);font-size:10px;">→ Лучше пропустить</span>
-        </div>
-      </div>
-
-      <div class="v-row" style="background:rgba(255,77,109,0.10);padding:6px 8px;border-radius:5px;margin-top:4px;">
-        <div class="v-emoji">❌</div>
-        <div class="v-tier" style="background:rgba(255,77,109,0.20);color:#ff4d6d;">SKIP</div>
-        <div class="v-desc">
-          <b>Avoid edge</b> — известный negative EV source (volume_surge / volcano / TC SHORT / vol_accum SHORT).<br>
-          <span style="color:#ff4d6d;">AvgR −0.4..−1.0R · WR 0-15%</span><br>
-          <span style="color:var(--muted);font-size:10px;">→ ВСЕГДА игнорируй</span>
-        </div>
-      </div>
-
-      <hr>
       <div style="color:var(--muted);font-size:10px;margin-top:8px;">
-        Priority: <b>avoid</b> побеждает всё → 3+top → 2 top → 1 top → warn → 2 good → neutral.<br>
-        Хочешь sniper-mode = только 🏆 ELITE и 🔥 STRONG.
+        💡 <b>Hint:</b> используй фильтр <b>🎯 Вердикт</b> в шапке таблицы для отбора<br>
+        только LONG или только SHORT setups.
       </div>
     `;
     const hdr = document.getElementById('jSortVerdict');
