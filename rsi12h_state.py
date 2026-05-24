@@ -58,8 +58,8 @@ def get_state(pair: str) -> dict:
 
     # Fresh compute
     try:
-        from divergence import _fetch_klines_fapi
-        kl = _fetch_klines_fapi(pair, '12h', 50)
+        from divergence import _get_klines  # fapi → BingX fallback
+        kl = _get_klines(pair, '12h', 50)
         if not kl or len(kl) < 30:
             result = {'state': None, 'rsi': None, 'sma': None}
         else:

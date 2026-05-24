@@ -56,9 +56,9 @@ def get_state(pair: str, at_ts: Optional[int] = None) -> dict:
             return {**entry, 'cached_age_s': now - entry['ts']}
 
     try:
-        from divergence import _fetch_klines_fapi
+        from divergence import _get_klines  # fapi → BingX fallback
         # 500 баров 1h = 20 дней — хватает на EMA200 (warmup) + recent crosses
-        kl = _fetch_klines_fapi(pair, '1h', 500)
+        kl = _get_klines(pair, '1h', 500)
         if not kl or len(kl) < 220:
             result = {'last_cross': None, 'bars_ago': None, 'cross_t': None,
                       'ema50': None, 'ema200': None, 'error': True}

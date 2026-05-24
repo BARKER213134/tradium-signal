@@ -49,8 +49,8 @@ def get_state(pair: str) -> dict:
         if (now - entry.get('ts', 0)) < ttl:
             return {**entry, 'cached_age_s': now - entry['ts']}
     try:
-        from divergence import _fetch_klines_fapi
-        kl = _fetch_klines_fapi(pair, '4h', 50)
+        from divergence import _get_klines  # fapi → BingX fallback
+        kl = _get_klines(pair, '4h', 50)
         if not kl or len(kl) < 30:
             result = {'state': None, 'rsi': None, 'sma': None}
         else:
