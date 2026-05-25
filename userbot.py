@@ -1193,6 +1193,106 @@ async def _channel_pulse_check(client):
             logger.exception("[pulse] error")
 
 
+async def _bigbuy_pulse_check(client):
+    """🔔 Каждые 3 мин читает историю bot DM @cvizor_bot (id 5708266033),
+    парсит каждое сообщение через bigbuy_parser, сохраняет новые BIG BUY
+    в коллекцию bigbuy_signals. Polling fallback на случай если push events
+    не доставляются.
+
+    Аналог _channel_pulse_check для CV, но более частый pulse (3 мин) т.к.
+    BIG BUY критичен (LONG bias high-delta) и приходит DM-ом — а DM events
+    Telethon доставляет менее надёжно чем channel events.
+
+    Тот же ID что в backfill_missed.backfill_bigbuy() — env CRYPTOVIZOR_BOT_ID.
+    """
+    from database import _events
+    PULSE_EVERY = 3 * 60  # 3 мин — быстрее CV pulse
+    env_id = os.getenv("CRYPTOVIZOR_BOT_ID", "5708266033").strip()
+    try:
+        bot_dm_id = int(env_id)
+    except ValueError:
+        bot_dm_id = 5708266033
+    logger.info(f"[bigbuy-pulse] started, target chat_id={bot_dm_id}, every {PULSE_EVERY}s")
+    while True:
+        try:
+            await asyncio.sleep(PULSE_EVERY)
+            if not client.is_connected():
+                logger.warning("[bigbuy-pulse] client disconnected — exit pulse")
+                try:
+                    await asyncio.to_thread(_events().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_bigbuy_pulse_exit",
+                        "data": {"reason": "client_disconnected"},
+                    })
+                except Exception:
+                    pass
+                return
+            try:
+                # limit=30 чтобы захватить все пропущенные за 3min + safety buffer.
+                # BIG BUY редкие (5-15 в час обычно), 30 хватает с большим запасом.
+                msgs = await asyncio.wait_for(
+                    client.get_messages(bot_dm_id, limit=30), timeout=20.0,
+                )
+            except Exception as e:
+                err = f"{type(e).__name__}: {str(e)[:200]}"
+                logger.warning(f"[bigbuy-pulse] get_messages fail: {err}")
+                try:
+                    await asyncio.to_thread(_events().insert_one, {
+                        "at": utcnow(),
+                        "type": "userbot_bigbuy_pulse_error",
+                        "data": {"phase": "get_messages", "error": err, "chat_id": bot_dm_id},
+                    })
+                except Exception:
+                    pass
+                continue
+            if not msgs:
+                continue
+
+            from bigbuy_parser import is_bigbuy_message, parse_bigbuy_message, store_bigbuy_signal
+            imported = 0
+            scanned = 0
+            non_big_buy = 0
+            for m in reversed(msgs):  # хронологический порядок (старые→новые)
+                scanned += 1
+                txt = m.raw_text or ""
+                if not is_bigbuy_message(txt):
+                    non_big_buy += 1
+                    continue
+                parsed = parse_bigbuy_message(txt)
+                if not parsed:
+                    continue
+                # store_bigbuy_signal сам дедупит по msg_id (existing find_one)
+                ok = await asyncio.to_thread(store_bigbuy_signal, parsed, m.id)
+                if ok:
+                    imported += 1
+                    logger.info(f"[bigbuy-pulse] imported msg_id={m.id} {parsed.get('pair')}")
+                    # Шлём в Telegram через _bigbuy_send_telegram (BOT16)
+                    try:
+                        from watcher import _bigbuy_send_telegram
+                        await _bigbuy_send_telegram(parsed)
+                    except Exception as _tge:
+                        logger.debug(f"[bigbuy-pulse] tg send fail: {_tge}")
+
+            try:
+                ev_type = "userbot_bigbuy_pulse_imported" if imported > 0 else "userbot_bigbuy_pulse_ok"
+                await asyncio.to_thread(_events().insert_one, {
+                    "at": utcnow(),
+                    "type": ev_type,
+                    "data": {
+                        "scanned": scanned,
+                        "imported": imported,
+                        "non_big_buy": non_big_buy,
+                        "chat_id": bot_dm_id,
+                    },
+                })
+            except Exception:
+                pass
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("[bigbuy-pulse] error")
+
+
 async def _watchdog(client):
     """Мониторит активность каналов; пишет heartbeat каждые 5 мин.
 
@@ -1269,6 +1369,7 @@ async def start_userbot():
             })
             watchdog_task = asyncio.create_task(_watchdog(client))
             pulse_task = asyncio.create_task(_channel_pulse_check(client))
+            bigbuy_pulse_task = asyncio.create_task(_bigbuy_pulse_check(client))
             await client.run_until_disconnected()
             _last_disconnect_at = utcnow()
             logger.warning("[userbot] disconnected, reconnecting in 30s")
@@ -1283,6 +1384,11 @@ async def start_userbot():
             try:
                 if 'pulse_task' in locals() and pulse_task and not pulse_task.done():
                     pulse_task.cancel()
+            except Exception:
+                pass
+            try:
+                if 'bigbuy_pulse_task' in locals() and bigbuy_pulse_task and not bigbuy_pulse_task.done():
+                    bigbuy_pulse_task.cancel()
             except Exception:
                 pass
             if client:
@@ -1345,6 +1451,20 @@ def get_status_details() -> dict:
 
     cryptovizor_handler_registered=False ⇒ задайте CRYPTOVIZOR_CHANNEL_ID
     в Railway env (5703939817 для TRENDS Cryptovizor)."""
+    # 🔔 BIG BUY pulse статус (последний tick / последний imported)
+    bigbuy_pulse_info = {"last_tick_at": None, "last_imported_at": None}
+    try:
+        from database import _events
+        for evt_type, key in (
+            ("userbot_bigbuy_pulse_ok", "last_tick_at"),
+            ("userbot_bigbuy_pulse_imported", "last_imported_at"),
+        ):
+            last = _events().find_one({"type": evt_type}, sort=[("at", -1)])
+            if last and last.get("at"):
+                bigbuy_pulse_info[key] = last["at"].isoformat() + "Z"
+    except Exception:
+        pass
+
     return {
         "is_connected": bool(_tg_client and _tg_client.is_connected()),
         "last_setup_at": _last_setup_at.isoformat() + "Z" if _last_setup_at else None,
@@ -1354,6 +1474,7 @@ def get_status_details() -> dict:
         "cryptovizor_id_resolved": _cryptovizor_id_resolved,
         "cryptovizor_resolve_method": _cryptovizor_resolve_method,
         "cryptovizor_env_set": bool(os.getenv("CRYPTOVIZOR_CHANNEL_ID", "").strip()),
+        "bigbuy_pulse": bigbuy_pulse_info,
         "handlers_registered": dict(_handlers_registered),
     }
 
