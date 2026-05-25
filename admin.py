@@ -321,7 +321,7 @@ class StaticCacheMiddleware(BaseHTTPMiddleware):
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-bigbuy", "/api/backfill-bigbuy/status", "/api/bigbuy-search-dialogs", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-bigbuy", "/api/backfill-bigbuy/status", "/api/bigbuy-search-dialogs", "/api/bigbuy-stats", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
             "/api/new-strategies", "/api/new-strategies/by-pair",
@@ -647,6 +647,38 @@ async def health():
     _HEALTH_CACHE["ts"] = now
     _HEALTH_CACHE["data"] = data
     return data
+
+
+@app.get("/api/bigbuy-stats")
+async def api_bigbuy_stats(limit: int = 10):
+    """🔔 Статистика BIG BUY коллекции — count + последние N сигналов."""
+    def _sync():
+        from database import _get_db
+        col = _get_db().bigbuy_signals
+        from datetime import timedelta
+        from database import utcnow
+        now = utcnow()
+        total = col.count_documents({})
+        last_24h = col.count_documents({"received_at": {"$gte": now - timedelta(hours=24)}})
+        last_7d = col.count_documents({"received_at": {"$gte": now - timedelta(days=7)}})
+        last_30d = col.count_documents({"received_at": {"$gte": now - timedelta(days=30)}})
+        recent = []
+        for d in col.find({}).sort("received_at", -1).limit(max(1, min(limit, 50))):
+            recent.append({
+                "pair": d.get("pair"),
+                "price": d.get("price"),
+                "delta_pct_30m": d.get("delta_pct_30m"),
+                "vol_min_usdt": d.get("vol_min_usdt"),
+                "received_at": d["received_at"].isoformat() if hasattr(d.get("received_at"), "isoformat") else None,
+                "msg_id": d.get("msg_id"),
+                "state": d.get("state"),
+            })
+        return {
+            "total": total, "last_24h": last_24h,
+            "last_7d": last_7d, "last_30d": last_30d,
+            "recent": recent,
+        }
+    return await asyncio.to_thread(_sync)
 
 
 @app.get("/api/bigbuy-search-dialogs")
