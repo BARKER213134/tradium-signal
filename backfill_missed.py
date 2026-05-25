@@ -146,6 +146,71 @@ async def backfill_cryptovizor(client, since: datetime, hard_limit: int = 2000) 
     return added
 
 
+async def backfill_bigbuy(client, since: datetime, hard_limit: int = 5000) -> dict:
+    """🔔 Backfill BIG BUY signals из канала Cryptovizor.
+
+    Идём по истории CV (тот же канал что обычный CV) с момента since.
+    Парсим каждое сообщение через bigbuy_parser.is_bigbuy_message →
+    parse_bigbuy_message → store_bigbuy_signal.
+
+    Возвращает: {scanned, big_buy_found, stored, duplicates}
+    """
+    from bigbuy_parser import is_bigbuy_message, parse_bigbuy_message, store_bigbuy_signal
+    cv_id = await _resolve_cv_id(client)
+    if cv_id is None:
+        return {"scanned": 0, "big_buy_found": 0, "stored": 0, "duplicates": 0, "error": "cv_id not resolved"}
+
+    logger.info(f"[BIGBUY] Загружаю CV сообщения с {since} до сейчас (max {hard_limit})…")
+    scanned = 0
+    found = 0
+    stored = 0
+    duplicates = 0
+
+    async for m in client.iter_messages(cv_id, limit=hard_limit):
+        scanned += 1
+        msg_date = m.date
+        if msg_date.tzinfo is not None:
+            msg_date_naive = msg_date.replace(tzinfo=None)
+        else:
+            msg_date_naive = msg_date
+        if msg_date_naive < since:
+            break
+        text = m.raw_text or ""
+        if not is_bigbuy_message(text):
+            continue
+        found += 1
+        parsed = parse_bigbuy_message(text)
+        if not parsed:
+            continue
+        # Принудительно заполняем received_at реальной датой сообщения
+        # (а не utcnow() как делает дефолтный store_bigbuy_signal).
+        try:
+            from database import _get_db
+            db = _get_db()
+            # Дедуп: по msg_id
+            existing = db.bigbuy_signals.find_one({"msg_id": m.id})
+            if existing:
+                duplicates += 1
+                continue
+            doc = {
+                **parsed,
+                "msg_id": m.id,
+                "received_at": msg_date_naive,
+                "entry": parsed.get("price"),
+                "state": "ARCHIVE",  # старые сигналы не активны для realtime trigger
+                "backfilled": True,
+            }
+            db.bigbuy_signals.insert_one(doc)
+            stored += 1
+            logger.info(f"[BIGBUY +] {parsed['pair']} price={parsed['price']} "
+                         f"Δ30m={parsed.get('delta_pct_30m')}% ({msg_date_naive})")
+        except Exception:
+            logger.exception(f"[BIGBUY] store fail для msg {m.id}")
+
+    logger.info(f"[BIGBUY] Done: scanned={scanned} BIG_BUY={found} stored={stored} dup={duplicates}")
+    return {"scanned": scanned, "big_buy_found": found, "stored": stored, "duplicates": duplicates}
+
+
 async def backfill_tradium(client, since: datetime, hard_limit: int = 500) -> int:
     """Идёт по истории Tradium с момента since (UTC naive). Только текст, без графиков.
     Фильтрует по форум-топику TRADIUM_SETUP_TOPIC_ID (Trade Setup Screener)."""

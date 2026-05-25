@@ -321,7 +321,7 @@ class StaticCacheMiddleware(BaseHTTPMiddleware):
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-bigbuy", "/api/backfill-bigbuy/status", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
             "/api/new-strategies", "/api/new-strategies/by-pair",
@@ -647,6 +647,82 @@ async def health():
     _HEALTH_CACHE["ts"] = now
     _HEALTH_CACHE["data"] = data
     return data
+
+
+@app.post("/api/backfill-bigbuy")
+async def api_backfill_bigbuy(payload: dict | None = None):
+    """🔔 Backfill BIG BUY signals из канала Cryptovizor.
+
+    Body (optional): {"hours": 720, "hard_limit": 10000}
+    По умолчанию — за 30 дней назад, max 10000 сообщений.
+    """
+    payload = payload or {}
+    hours = float(payload.get("hours") or 720)  # 30 days default
+    hard_limit = int(payload.get("hard_limit") or 10000)
+
+    try:
+        from userbot import _tg_client
+    except Exception:
+        _tg_client = None
+    if _tg_client is None or not _tg_client.is_connected():
+        return {"ok": False, "error": "Telethon client not connected"}
+
+    asyncio.create_task(_run_backfill_bigbuy(_tg_client, hours, hard_limit))
+    return {"ok": True, "started": True, "hours": hours, "hard_limit": hard_limit}
+
+
+_bigbuy_backfill_state: dict = {"running": False, "started_at": None,
+                                 "finished_at": None, "stats": None}
+
+
+async def _run_backfill_bigbuy(client, hours: float, hard_limit: int):
+    """Фоновая задача: подтянуть BIG BUY сигналы из истории CV."""
+    import logging as _log
+    from datetime import datetime, timezone, timedelta
+    log = _log.getLogger("backfill-bigbuy-api")
+    global _bigbuy_backfill_state
+    _bigbuy_backfill_state = {
+        "running": True,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "finished_at": None,
+        "stats": None,
+    }
+    try:
+        from backfill_missed import backfill_bigbuy
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        since = now - timedelta(hours=hours)
+        log.info(f"[bigbuy-backfill] since {since}, hard_limit={hard_limit}")
+        stats = await backfill_bigbuy(client, since, hard_limit=hard_limit)
+        log.info(f"[bigbuy-backfill] DONE: {stats}")
+        _bigbuy_backfill_state["stats"] = stats
+        # Уведомление в админ-бот
+        try:
+            from watcher import _bot, _admin_chat_id
+            if _bot and _admin_chat_id:
+                await _bot.send_message(
+                    _admin_chat_id,
+                    f"🔔 <b>BIG BUY Backfill завершён</b>\n\n"
+                    f"📊 Scanned: {stats.get('scanned', 0)}\n"
+                    f"🔔 BIG BUY найдено: {stats.get('big_buy_found', 0)}\n"
+                    f"✅ Сохранено: {stats.get('stored', 0)}\n"
+                    f"♻️ Дубли: {stats.get('duplicates', 0)}",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+    except Exception as e:
+        log.exception("[bigbuy-backfill] crashed")
+        _bigbuy_backfill_state["stats"] = {"error": str(e)}
+    finally:
+        from datetime import datetime as _dt, timezone as _tz
+        _bigbuy_backfill_state["running"] = False
+        _bigbuy_backfill_state["finished_at"] = _dt.now(_tz.utc).isoformat()
+
+
+@app.get("/api/backfill-bigbuy/status")
+async def api_backfill_bigbuy_status():
+    """Статус BIG BUY backfill (started_at, finished_at, stats)."""
+    return _bigbuy_backfill_state
 
 
 @app.post("/api/backfill-missed")
