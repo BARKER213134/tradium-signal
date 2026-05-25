@@ -779,6 +779,10 @@
       window.sigIcon = function(src, score, meta) {
         const isTopPick = meta && meta.is_top_pick;
         const isStrong = meta && meta.strong;
+        // 🐋👑 WHALE PREMIUM / 🦈👑 SHARK PREMIUM — most premium tier
+        // ~4 в день в среднем, score 80-95. Visually outstanding.
+        if (src === 'whale' && meta && meta.whale_tier === 'PREMIUM') return '👑🐋';
+        if (src === 'shark' && meta && meta.shark_tier === 'PREMIUM') return '👑🦈';
         // 👑 перекрывает ⭐ (top pick выше strong)
         const prefix = isTopPick ? '👑' : (isStrong ? '⭐' : '');
         if (src === 'confluence') {
@@ -801,12 +805,16 @@
         })[src] || '•';
         return prefix + base;
       };
-      window.sigIcon._version = 'v13-shark-cache-bust';
+      window.sigIcon._version = 'v14-premium-whale-shark-crown';
       console.log('[sigIcon] loaded', window.sigIcon._version);
 
       // sigIconCompact — для маркеров НА ГРАФИКЕ (без 👑/⭐ префиксов,
       // чтобы не загромождать). Top Pick визуализируется цветом через color param.
-      window.sigIconCompact = function(src, score) {
+      // Exception: WHALE/SHARK PREMIUM — крупные эмодзи 👑🐋/👑🦈 чтоб
+      // PREMIUM signals (4 в день) сразу бросались в глаза на чарте.
+      window.sigIconCompact = function(src, score, tier) {
+        if (src === 'whale' && tier === 'PREMIUM') return '👑🐋';
+        if (src === 'shark' && tier === 'PREMIUM') return '👑🦈';
         if (src === 'confluence') {
           const s = +score || 0;
           return s >= 6 ? '🔥' : s >= 5 ? '⭐' : '🎯';

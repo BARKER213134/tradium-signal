@@ -2616,7 +2616,12 @@ async def _whale_send_telegram(doc: dict):
     brk = doc.get('whale_breakdown') or {}
     amps = [k for k in brk if not k.startswith('core_') and brk[k] > 0]
 
-    txt = (f"🐋 <b>WHALE {tier_emoji} {tier}</b>\n"
+    # PREMIUM = ~4 per day, very rare. Distinct visual emphasis в сообщении.
+    if tier == 'PREMIUM':
+        header = f"👑🐋 <b>WHALE PREMIUM — RARE</b> ⭐\n"
+    else:
+        header = f"🐋 <b>WHALE {tier_emoji} {tier}</b>\n"
+    txt = (header +
            f"━━━━━━━━━━━━━━━━━━\n"
            f"<b>{pair}</b> · LONG\n"
            f"<b>Entry:</b> {entry}\n"
@@ -2653,7 +2658,11 @@ async def _shark_send_telegram(doc: dict):
     brk = doc.get('shark_breakdown') or {}
     amps = [k for k in brk if not k.startswith('core_') and brk[k] > 0]
 
-    txt = (f"🦈 <b>SHARK {tier_emoji} {tier}</b>\n"
+    if tier == 'PREMIUM':
+        sh_header = f"👑🦈 <b>SHARK PREMIUM — RARE</b> ⭐\n"
+    else:
+        sh_header = f"🦈 <b>SHARK {tier_emoji} {tier}</b>\n"
+    txt = (sh_header +
            f"━━━━━━━━━━━━━━━━━━\n"
            f"<b>{pair}</b> · SHORT 🔴\n"
            f"<b>Entry:</b> {entry}\n"

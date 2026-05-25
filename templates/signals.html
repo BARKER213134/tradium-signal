@@ -5518,7 +5518,7 @@ async function _drawPaperHistChart(idx) {
       if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: isL, icons: new Set(), items: [] });
       const g = byTime.get(key);
       const _strong = window.isStrongSignal ? window.isStrongSignal(s) : false;
-      const icon = window.sigIcon(s.source, s.score, { is_top_pick: !!s.is_top_pick, strong: _strong });
+      const icon = window.sigIcon(s.source, s.score, { is_top_pick: !!s.is_top_pick, strong: _strong, whale_tier: s.whale_tier, shark_tier: s.shark_tier });
       g.icons.add(icon);
       g.items.push(s);
     }
@@ -9548,7 +9548,7 @@ async function loadCoinChart(coin) {
       }
       const isLong = s.direction === 'LONG';
       const _strongM = window.isStrongSignal ? window.isStrongSignal(s) : false;
-      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _strongM});
+      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _strongM, whale_tier: s.whale_tier, shark_tier: s.shark_tier});
       markers.push({
         time: mc.time,
         direction: s.direction,
@@ -12005,6 +12005,8 @@ async function openJournalChart(idx, forceTF) {
       const g = byKey.get(key);
       const _mMeta = Object.assign({}, m.meta || {}, {
         strong: window.isStrongSignal ? window.isStrongSignal(m) : false,
+        whale_tier: m.whale_tier || (m.meta && m.meta.tier),
+        shark_tier: m.shark_tier || (m.meta && m.meta.tier),
       });
       g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, _mMeta));
       g.items.push(m);
