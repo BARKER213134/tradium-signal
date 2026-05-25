@@ -3821,6 +3821,22 @@ function _renderSetupResult(d) {
     <!-- 🔬 MAX VERIFICATION — все доступные данные платформы -->
     ${_renderVerification(d)}
 
+    <!-- 📈 CHART — свечи + все сигналы маркерами (как в журнале) -->
+    <div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;">📈 ГРАФИК ${d.pair} + СИГНАЛЫ</div>
+        <div style="display:flex;gap:4px;" id="sc-tf-buttons">
+          <button onclick="_scSetTf('15m')" class="sc-tf-btn" data-tf="15m" style="padding:3px 10px;background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">15m</button>
+          <button onclick="_scSetTf('1h')" class="sc-tf-btn active" data-tf="1h" style="padding:3px 10px;background:rgba(255,210,62,0.15);border:1px solid #ffd23e;color:#ffd23e;border-radius:4px;font-size:10px;font-family:var(--font-mono);cursor:pointer;font-weight:700;">1h</button>
+          <button onclick="_scSetTf('4h')" class="sc-tf-btn" data-tf="4h" style="padding:3px 10px;background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">4h</button>
+          <button onclick="_scSetTf('1d')" class="sc-tf-btn" data-tf="1d" style="padding:3px 10px;background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;font-size:10px;font-family:var(--font-mono);cursor:pointer;">1d</button>
+        </div>
+      </div>
+      <div id="sc-chart" style="width:100%;height:450px;background:#0a0e14;border-radius:6px;position:relative;">
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);">⏳ Загрузка графика…</div>
+      </div>
+    </div>
+
     <!-- Recent signals (ALL sources за 72h) + cluster bias -->
     <div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
       <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;margin-bottom:8px;">🕐 ВСЕ СИГНАЛЫ ЗА 72H (${(d.recent_signals||[]).length})</div>
@@ -3828,6 +3844,142 @@ function _renderSetupResult(d) {
       ${recentHtml}
     </div>
   `;
+  // Render chart после insert в DOM
+  window._scLastData = d;
+  setTimeout(() => _scRenderChart(d, window._scTf || '1h'), 50);
+}
+
+window._scTf = '1h';
+function _scSetTf(tf) {
+  window._scTf = tf;
+  document.querySelectorAll('.sc-tf-btn').forEach(b => {
+    if (b.dataset.tf === tf) {
+      b.style.background = 'rgba(255,210,62,0.15)';
+      b.style.borderColor = '#ffd23e';
+      b.style.color = '#ffd23e';
+      b.style.fontWeight = '700';
+    } else {
+      b.style.background = 'none';
+      b.style.borderColor = 'var(--border)';
+      b.style.color = 'var(--muted)';
+      b.style.fontWeight = 'normal';
+    }
+  });
+  if (window._scLastData) _scRenderChart(window._scLastData, tf);
+}
+
+async function _scRenderChart(d, tf) {
+  const chartDiv = document.getElementById('sc-chart');
+  if (!chartDiv) return;
+  const pair = d.pair;
+  const symbol = (pair || '').replace('/', '').toUpperCase();
+  if (!symbol) return;
+  chartDiv.innerHTML = '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);">⏳ Загрузка свечей…</div>';
+
+  // Lazy-load LWC
+  if (!window._lwcLoaded) {
+    await new Promise(resolve => {
+      const sc = document.createElement('script');
+      sc.src = '/static/lightweight-charts.js';
+      sc.onload = () => { window._lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat(); resolve(); };
+      document.head.appendChild(sc);
+    });
+  }
+
+  const limitByTF = { '15m': 250, '30m': 200, '1h': 300, '4h': 150, '1d': 60 };
+  const candleLimit = limitByTF[tf] || 300;
+  try {
+    const cR = await fetch(`/api/journal-candles?symbol=${symbol}&tf=${tf}&limit=${candleLimit}`);
+    const cD = await cR.json();
+    if (!cD.ok || !cD.candles || !cD.candles.length) {
+      chartDiv.innerHTML = '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#ff4d6d;">Нет свечей для ' + pair + '</div>';
+      return;
+    }
+    chartDiv.innerHTML = '';
+    const chart = (window._createChartSafe || LightweightCharts.createChart)(chartDiv, {
+      layout: { background: { type: 'solid', color: '#0a0e14' }, textColor: '#888' },
+      grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#1a1e2a' },
+      timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
+      width: chartDiv.clientWidth,
+      height: 450,
+    });
+    const series = chart.addCandlestickSeries({
+      upColor: '#00e5a0', downColor: '#ff4d6d',
+      borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
+      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
+    });
+    series.setData(cD.candles);
+    if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, cD.candles);
+    if (window._addVolumeSeries) window._addVolumeSeries(chart, cD.candles, tf);
+    if (window._addSuperTrend) window._addSuperTrend(chart, cD.candles, tf, { anchor: chartDiv });
+    if (window._addTrendEMA) window._addTrendEMA(chart, cD.candles, { anchor: chartDiv });
+    if (window._addRsiSma14) window._addRsiSma14(chart, cD.candles, { anchor: chartDiv });
+    if (window._addRSI) window._addRSI(chart, cD.candles, { anchor: chartDiv });
+
+    // ── Маркеры всех сигналов из recent_signals (включая 🔔 BIG BUY) ──
+    const tfSec = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 3600;
+    const firstTs = cD.candles[0].time;
+    const lastTs = cD.candles[cD.candles.length - 1].time;
+    const nearest = (ts) => {
+      if (!ts) return null;
+      let mc = null, minD = Infinity;
+      for (const c of cD.candles) {
+        const diff = Math.abs(c.time - ts);
+        if (diff < minD) { minD = diff; mc = c; }
+      }
+      return mc;
+    };
+    const inRange = (ts) => ts >= firstTs - tfSec && ts <= lastTs + tfSec * 2;
+
+    const srcEmoji = {
+      whale:'🐋', shark:'🦈', combo:'🧠', triple_confluence:'🐉',
+      st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', cv_flip:'⏳',
+      anomaly:'⚠', cryptovizor:'🚀', tradium:'📡', cluster:'💠',
+      volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
+      second_flip:'♻️', bigbuy:'🔔', supertrend:'🌀',
+    };
+    const markers = [];
+    const byTime = new Map();
+    for (const s of (d.recent_signals || [])) {
+      const ts = s.at_ts || 0;
+      if (!ts || !inRange(ts)) continue;
+      const mc = nearest(ts);
+      if (!mc) continue;
+      const key = mc.time + '_' + (s.direction || '?');
+      if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: s.direction === 'LONG', items: [], emojis: new Set() });
+      const g = byTime.get(key);
+      g.items.push(s);
+      g.emojis.add(srcEmoji[s.source] || '•');
+    }
+    for (const g of byTime.values()) {
+      const emojis = [...g.emojis].slice(0, 4).join('');
+      markers.push({
+        time: g.time,
+        position: g.isLong ? 'belowBar' : 'aboveBar',
+        color: g.isLong ? '#00e5a0' : '#ff4d6d',
+        shape: g.isLong ? 'arrowUp' : 'arrowDown',
+        text: emojis + (g.items.length > 1 ? ` ×${g.items.length}` : ''),
+        size: g.items.length >= 3 ? 2 : 1,
+      });
+    }
+    if (markers.length && series.setMarkers) {
+      markers.sort((a, b) => a.time - b.time);
+      series.setMarkers(markers);
+    }
+    // Auto-resize on window resize
+    if (!window._scResizeHandler) {
+      window._scResizeHandler = true;
+      window.addEventListener('resize', () => {
+        const div = document.getElementById('sc-chart');
+        if (div && window._scLastData) _scRenderChart(window._scLastData, window._scTf || '1h');
+      });
+    }
+  } catch (e) {
+    console.warn('[sc-chart]', e);
+    chartDiv.innerHTML = '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#ff4d6d;">Ошибка: ' + (e.message || e) + '</div>';
+  }
 }
 
 function _renderVerification(d) {
