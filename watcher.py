@@ -2642,6 +2642,34 @@ async def _whale_send_telegram(doc: dict):
         logger.warning(f'[whale] send fail: {e}')
 
 
+async def _bigbuy_send_telegram(doc: dict):
+    """🔔 BIG BUY alert в BOT16 (общий с WHALE/SHARK). Forward parsed CV signal."""
+    global _bot16
+    from config import WHALE_CHAT_ID
+    pair = doc.get('pair', '?')
+    price = doc.get('price', '?')
+    delta = doc.get('delta_pct_30m')
+    rules = doc.get('rules', [])
+    rules_txt = '\n'.join(f"  • {r}" for r in rules[:6])
+    txt = (f"🔔 <b>BIG BUY</b> (Cryptovizor)\n"
+           f"━━━━━━━━━━━━━━━━━━\n"
+           f"<b>{pair}</b> · LONG 🟢\n"
+           f"<b>Price:</b> {price}\n"
+           + (f"<b>Δ30m:</b> +{delta}%\n" if delta else "")
+           + f"━━━━━━━━━━━━━━━━━━\n"
+           f"<b>Rules:</b>\n{rules_txt}\n"
+           f"━━━━━━━━━━━━━━━━━━\n"
+           f"<a href='https://www.binance.com/en/futures/{pair.replace('/', '')}'>📈 Chart</a>")
+    target = _bot16 or _bot
+    if not target:
+        return
+    try:
+        await target.send_message(chat_id=WHALE_CHAT_ID, text=txt,
+                                  disable_web_page_preview=True)
+    except Exception as e:
+        logger.warning(f'[bigbuy] send fail: {e}')
+
+
 async def _shark_send_telegram(doc: dict):
     """Шлёт SHARK alert в BOT16 (общий с WHALE — same token, send-only mode).
     Использует тот же WHALE_CHAT_ID и WHALE_MIN_TIER threshold."""

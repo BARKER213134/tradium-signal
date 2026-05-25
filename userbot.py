@@ -1001,6 +1001,23 @@ async def _setup_telethon_client():
                     })
                 except Exception:
                     pass
+                # ── 🔔 BIG BUY parser (Cryptovizor шлёт оба типа: Perfectly fit + BIG BUY) ──
+                try:
+                    from bigbuy_parser import is_bigbuy_message, parse_bigbuy_message, store_bigbuy_signal
+                    if is_bigbuy_message(event.raw_text):
+                        parsed = parse_bigbuy_message(event.raw_text)
+                        if parsed:
+                            ok = await asyncio.to_thread(store_bigbuy_signal, parsed, event.message.id)
+                            if ok:
+                                # Forward to BOT16 (общий с WHALE/SHARK)
+                                try:
+                                    from watcher import _bigbuy_send_telegram
+                                    await _bigbuy_send_telegram(parsed)
+                                except Exception as _tge:
+                                    logger.debug(f"[bigbuy] tg send fail: {_tge}")
+                            return  # BIG BUY обработан, не идём в CV handler
+                except Exception:
+                    logger.exception("[bigbuy] parse/store crashed")
                 await handle_cryptovizor_message(event.raw_text, event.message.id)
             except Exception:
                 logger.exception("[userbot] Cryptovizor handler crashed")

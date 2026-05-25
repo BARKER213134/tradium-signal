@@ -10808,6 +10808,49 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
     except Exception:
         pass
 
+    # ─── 🔔 BIG BUY signals (Cryptovizor bot) per-coin ───
+    try:
+        from database import _get_db as _g_db_bb2
+        bb_col = _g_db_bb2().bigbuy_signals
+        for bb in bb_col.find({
+            "received_at": {"$gte": since}, **pair_or,
+        }).sort("received_at", -1).limit(200):
+            at_dt = bb.get("received_at")
+            pair = bb.get("pair", "")
+            rules = bb.get("rules", [])
+            delta = bb.get("delta_pct_30m")
+            pattern_parts = ["🔔 BIG BUY"]
+            if delta is not None:
+                pattern_parts.append(f"Δ30m +{delta}%")
+            if bb.get("vol_min_usdt"):
+                pattern_parts.append(f"vol≥${bb['vol_min_usdt']/1e6:.0f}M")
+            if at_dt and hasattr(at_dt, "isoformat"):
+                at_iso = at_dt.isoformat()
+                at_ts = int(at_dt.timestamp())
+            else:
+                at_iso = None; at_ts = 0
+            items.append({
+                "source": "bigbuy",
+                "symbol": bb.get("symbol", pair.replace("/", "").upper()),
+                "pair": pair,
+                "direction": "LONG",
+                "entry": bb.get("price") or bb.get("entry"),
+                "tp1": None, "sl": None,
+                "pattern": " · ".join(pattern_parts),
+                "score": delta,
+                "st_passed": None,
+                "pump_score": 0,
+                "is_top_pick": False,
+                "top_pick_confirmations_count": 0,
+                "bigbuy_rules": rules[:6],
+                "delta_pct_30m": delta,
+                "vol_min_usdt": bb.get("vol_min_usdt"),
+                "at": at_iso,
+                "at_ts": at_ts,
+            })
+    except Exception:
+        pass
+
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
 
     # 🎰 Inject setup_verdict из pair_verdicts (single pair lookup)
@@ -11383,6 +11426,42 @@ def _compute_journal_sync(_fast_only: bool = False):
             })
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] rsi_cross fetch fail: {e}")
+
+    # ─── 🔔 BIG BUY signals (Cryptovizor bot) ───
+    try:
+        from database import _get_db as _g_db_bb
+        bb_col = _g_db_bb().bigbuy_signals
+        for bb in bb_col.find({'received_at': {'$gte': since_14d}}).sort('received_at', -1).limit(500):
+            at_dt = bb.get('received_at')
+            pair = bb.get('pair', '')
+            rules = bb.get('rules', [])
+            delta = bb.get('delta_pct_30m')
+            pattern_parts = ['🔔 BIG BUY']
+            if delta is not None:
+                pattern_parts.append(f'Δ30m +{delta}%')
+            if bb.get('vol_min_usdt'):
+                pattern_parts.append(f'vol≥${bb["vol_min_usdt"]/1e6:.0f}M')
+            items.append({
+                'source': 'bigbuy',
+                'symbol': bb.get('symbol', pair.replace('/', '').upper()),
+                'pair': pair,
+                'direction': 'LONG',
+                'entry': bb.get('price') or bb.get('entry'),
+                'tp1': None, 'sl': None,
+                'pattern': ' · '.join(pattern_parts),
+                'score': delta,
+                'is_top_pick': False,
+                'pump_score': 0,
+                'st_passed': None,
+                'top_pick_confirmations_count': 0,
+                'delta_pct_30m': delta,
+                'vol_min_usdt': bb.get('vol_min_usdt'),
+                'rules_count': len(rules),
+                'at': at_dt.isoformat() if hasattr(at_dt, 'isoformat') else str(at_dt or ''),
+                'at_ts': int(at_dt.timestamp()) if hasattr(at_dt, 'timestamp') else 0,
+            })
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] bigbuy fetch fail: {e}")
 
     # V-Bottom signals — DISABLED по запросу юзера (15.05.26).
     # Сигналы не показываются в журнале. Collection v_bottom_signals

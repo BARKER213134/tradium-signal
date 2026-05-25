@@ -2855,8 +2855,8 @@ async function _nsLoad() {
       tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted);">Нет сигналов в этом окне</td></tr>';
       return;
     }
-    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', combo:'🧠', whale:'🐋', shark:'🦈'};
-    const sLabel = {volume_surge:'Volume Surge', triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano Breakout', second_flip:'Second Flip', combo:'COMBO', whale:'WHALE', shark:'SHARK'};
+    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', combo:'🧠', whale:'🐋', shark:'🦈', bigbuy:'🔔'};
+    const sLabel = {volume_surge:'Volume Surge', triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano Breakout', second_flip:'Second Flip', combo:'COMBO', whale:'WHALE', shark:'SHARK', bigbuy:'BIG BUY'};
     const stEmoji = {WAITING:'⏳', TP:'✅', SL:'⛔', MANUAL:'📍', TIMEOUT:'⏱'};
     let html = '';
     for (const it of items) {
@@ -3701,7 +3701,7 @@ function _renderSetupResult(d) {
                     st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', cv_flip:'⏳',
                     anomaly:'⚠', cryptovizor:'🚀', tradium:'📡', cluster:'💠',
                     volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
-                    second_flip:'♻️'};
+                    second_flip:'♻️', bigbuy:'🔔'};
   const longCnt = d.cluster_long || 0;
   const shortCnt = d.cluster_short || 0;
   const clusterBias = d.cluster_bias || 'NEUTRAL';
@@ -5809,7 +5809,7 @@ async function _renderPaperChart(idx, tf) {
       for (const c of d.candles) { const diff = Math.abs(c.time - ts); if (diff < minD) { minD = diff; mc = c; } }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️'};
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', bigbuy:'🔔'};
     const entryTs = p.opened_at ? Math.floor(new Date(p.opened_at).getTime()/1000) : 0;
     const mainMc = nearestP(entryTs);
     const isLong = p.direction === 'LONG';
@@ -9162,7 +9162,8 @@ async function hotLoad() {
     statsEl.textContent = `${items.length} HOT / ${d.count || 0} total`;
     const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️',
                     cluster:'💠', confluence:'🎯', cryptovizor:'🚀', tradium:'📡',
-                    paper:'🤖', verified:'✨', supertrend:'🌀'};
+                    paper:'🤖', verified:'✨', supertrend:'🌀', whale:'🐋', shark:'🦈',
+                    combo:'🧠', bigbuy:'🔔'};
     const html = items.map((s, idx) => {
       const sc = s.q_score || 0;
       const scColor = sc >= 70 ? '#00e5a0' : sc >= 60 ? '#88d8a3' : sc >= 45 ? '#ffd23e' : '#ff8c50';
@@ -9927,7 +9928,7 @@ function filterJournal() {
     if (minTs && !sourceExplicit && !['tradium','cluster'].includes(s.source) && (s.at_ts || 0) < minTs) return false;
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
-      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','combo','whale','shark'].includes(s.source)) return false;
+      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','combo','whale','shark','bigbuy'].includes(s.source)) return false;
     } else if (src && s.source !== src) return false;
     if (dir && s.direction !== dir) return false;
     if (kc === 'pass' && s.st_passed !== true) return false;
@@ -9964,7 +9965,7 @@ function filterJournal() {
       const isPaper = s.source === 'paper';
       const isAnomaly = s.source === 'anomaly';
       const isVerified = s.source === 'verified';
-      const isNewStrategy = ['volume_surge','triple_confluence','vol_accum','volcano','second_flip','combo','whale','shark'].includes(s.source);
+      const isNewStrategy = ['volume_surge','triple_confluence','vol_accum','volcano','second_flip','combo','whale','shark','bigbuy'].includes(s.source);
       if (!(isStrong || isTopPick || isStAllTiers || isCluster || isPaper || isAnomaly || isVerified || isNewStrategy)) return false;
     }
     // 🎯 Только у уровня — фильтр по price-proximity к KL зоне
@@ -10785,7 +10786,7 @@ window._verdictInfo = function(s) {
   // Quality sources (top-7 backtest + acceptable mid-tier sources)
   // Все они получают LONG/SHORT по direction
   const goodSources = new Set([
-    'whale', 'shark', 'triple_confluence', 'combo',
+    'whale', 'shark', 'triple_confluence', 'combo', 'bigbuy',
     'confluence', 'tradium', 'cluster', 'anomaly', 'cryptovizor',
   ]);
   const stTierIsVip = src === 'supertrend' && s.st_tier === 'vip';
@@ -11952,7 +11953,7 @@ async function openJournalChart(idx, forceTF) {
       }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️'};
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', bigbuy:'🔔'};
     const modalMarkerMap = new Map();
 
     // Базовая строка для сопоставления символа: нормализуем к "BTCUSDT"

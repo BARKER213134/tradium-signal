@@ -802,10 +802,11 @@
           combo:'🧠',        // 🧠 COMBO (st_vip / TC + precondition positives)
           whale:'🐋',        // 🐋 WHALE (ST flip 2H UP + vol spike + amplifiers, WR 53.8%)
           shark:'🦈',        // 🦈 SHARK (ST flip 2H DOWN + distribution top + multi-top, WR 60.4%)
+          bigbuy:'🔔',       // 🔔 BIG BUY (Cryptovizor — высокая положительная дельта)
         })[src] || '•';
         return prefix + base;
       };
-      window.sigIcon._version = 'v14-premium-whale-shark-crown';
+      window.sigIcon._version = 'v15-bigbuy';
       console.log('[sigIcon] loaded', window.sigIcon._version);
 
       // sigIconCompact — для маркеров НА ГРАФИКЕ (без 👑/⭐ префиксов,
@@ -827,6 +828,7 @@
         if (src === 'combo') return '🧠';
         if (src === 'whale') return '🐋';
         if (src === 'shark') return '🦈';
+        if (src === 'bigbuy') return '🔔';
         return ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠'})[src] || '•';
       };
 

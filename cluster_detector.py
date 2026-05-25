@@ -211,6 +211,29 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
         except Exception:
             pass  # mongo unavailable / коллекция отсутствует — не блокируем основной flow
 
+        # ─── 🔔 BIG BUY signals (Cryptovizor bot) — chart markers ───
+        # BIG BUY всегда LONG, поэтому только когда direction == LONG.
+        if direction == "LONG":
+            try:
+                from database import _get_db as _g_db_bb3
+                bb_col = _g_db_bb3().bigbuy_signals
+                for bb in bb_col.find({
+                    "received_at": {"$gte": start, "$lte": end_at},
+                    "$or": [{"symbol": norm.replace("/", "")}, {"pair": norm}],
+                }).sort("received_at", -1).limit(50):
+                    out.append({
+                        "source": "bigbuy",
+                        "at": bb["received_at"],
+                        "price": bb.get("price") or bb.get("entry"),
+                        "meta": {
+                            "delta_pct_30m": bb.get("delta_pct_30m"),
+                            "vol_min_usdt": bb.get("vol_min_usdt"),
+                            "rules": (bb.get("rules") or [])[:6],
+                        },
+                    })
+            except Exception:
+                pass
+
     out.sort(key=lambda x: x["at"])
     return out
 
