@@ -321,7 +321,7 @@ class StaticCacheMiddleware(BaseHTTPMiddleware):
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-bigbuy", "/api/backfill-bigbuy/status", "/api/bigbuy-search-dialogs", "/api/bigbuy-stats", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-bigbuy", "/api/backfill-bigbuy/status", "/api/bigbuy-search-dialogs", "/api/bigbuy-stats", "/api/backtest-bigbuy", "/api/backtest-bigbuy/status", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
             "/api/new-strategies", "/api/new-strategies/by-pair",
@@ -647,6 +647,240 @@ async def health():
     _HEALTH_CACHE["ts"] = now
     _HEALTH_CACHE["data"] = data
     return data
+
+
+_bigbuy_bt_state: dict = {"running": False, "started_at": None,
+                           "finished_at": None, "result": None, "progress": ""}
+
+
+@app.post("/api/backtest-bigbuy")
+async def api_backtest_bigbuy(payload: dict | None = None):
+    """🔔 Backtest всех BIG BUY signals: WR / MFE / MAE по разным TP/SL/horizon.
+
+    Body (optional): {"horizon_h": 48, "limit": 0}
+    По дефолту обрабатывает все BIG BUY сигналы за всё время в БД.
+    """
+    payload = payload or {}
+    horizon_h = int(payload.get("horizon_h") or 48)
+    sig_limit = int(payload.get("limit") or 0)
+    global _bigbuy_bt_state
+    if _bigbuy_bt_state.get("running"):
+        return {"ok": False, "error": "уже запущен"}
+    _bigbuy_bt_state = {
+        "running": True, "started_at": utcnow_iso_z(),
+        "finished_at": None, "result": None, "progress": "starting",
+    }
+    asyncio.create_task(_run_bigbuy_backtest(horizon_h, sig_limit))
+    return {"ok": True, "started": True, "horizon_h": horizon_h, "limit": sig_limit or "all"}
+
+
+@app.get("/api/backtest-bigbuy/status")
+async def api_backtest_bigbuy_status():
+    return _bigbuy_bt_state
+
+
+def utcnow_iso_z() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _run_bigbuy_backtest(horizon_h: int, sig_limit: int):
+    """Backtest: для каждого BIG BUY сигнала тянем klines от received_at до
+    received_at + horizon_h, считаем MFE/MAE по hourly свечам, TP/SL win-rates."""
+    import logging as _log
+    log = _log.getLogger("bigbuy-backtest")
+    global _bigbuy_bt_state
+    try:
+        import httpx
+        from datetime import datetime, timezone, timedelta
+        from database import _get_db
+        col = _get_db().bigbuy_signals
+        sigs_q = col.find({}).sort("received_at", -1)
+        if sig_limit > 0:
+            sigs_q = sigs_q.limit(sig_limit)
+        sigs = list(sigs_q)
+        log.info(f"[bb-bt] loaded {len(sigs)} signals, horizon={horizon_h}h")
+        _bigbuy_bt_state["progress"] = f"loaded {len(sigs)} signals"
+
+        # TP/SL combos для теста
+        combos = [
+            ("+2/-1", 2.0, 1.0),
+            ("+3/-1.5", 3.0, 1.5),
+            ("+5/-2.5", 5.0, 2.5),
+            ("+5/-3", 5.0, 3.0),
+            ("+8/-4", 8.0, 4.0),
+            ("+10/-5", 10.0, 5.0),
+        ]
+        # Horizons для MFE/MAE
+        horizons = [4, 12, 24, 48]
+        # Per-combo counters: wins/losses/open per horizon
+        results = {f"{h}h": {c[0]: {"win": 0, "loss": 0, "open": 0, "win_after_loss": 0}
+                              for c in combos} for h in horizons}
+        # MFE/MAE per horizon
+        mfe_pct = {f"{h}h": [] for h in horizons}
+        mae_pct = {f"{h}h": [] for h in horizons}
+        # Per-delta tier WR (для оценки нужен ли filter)
+        tier_stats = {  # delta_pct buckets
+            "0-500": {"n": 0, "wr_3_1.5_24h": 0},
+            "500-1000": {"n": 0, "wr_3_1.5_24h": 0},
+            "1000-2000": {"n": 0, "wr_3_1.5_24h": 0},
+            "2000+": {"n": 0, "wr_3_1.5_24h": 0},
+        }
+        skipped_no_klines = 0
+        skipped_no_price = 0
+        evaluated = 0
+
+        BINANCE_SPOT = "https://api.binance.com"
+        BINANCE_FUT = "https://fapi.binance.com"
+
+        async with httpx.AsyncClient(timeout=12) as cli:
+            for i, s in enumerate(sigs):
+                if i % 25 == 0:
+                    _bigbuy_bt_state["progress"] = f"{i}/{len(sigs)} (evaluated={evaluated})"
+                pair = s.get("pair", "")
+                if not pair:
+                    continue
+                symbol = pair.replace("/", "")
+                entry = s.get("price") or s.get("entry")
+                if not entry or entry <= 0:
+                    skipped_no_price += 1
+                    continue
+                at_dt = s.get("received_at")
+                if not at_dt:
+                    continue
+                start_ms = int(at_dt.replace(tzinfo=timezone.utc).timestamp() * 1000) if at_dt.tzinfo is None else int(at_dt.timestamp() * 1000)
+                end_ms = start_ms + horizon_h * 3600 * 1000
+                # Fetch 1h klines (futures сначала — Cryptovizor = perps)
+                klines = None
+                for url in (f"{BINANCE_FUT}/fapi/v1/klines", f"{BINANCE_SPOT}/api/v3/klines"):
+                    try:
+                        r = await cli.get(url, params={
+                            "symbol": symbol, "interval": "1h",
+                            "startTime": start_ms, "endTime": end_ms, "limit": 100,
+                        })
+                        if r.status_code == 200:
+                            data = r.json()
+                            if data:
+                                klines = [{"t": int(k[0]), "o": float(k[1]),
+                                           "h": float(k[2]), "l": float(k[3]),
+                                           "c": float(k[4])} for k in data]
+                                break
+                    except Exception:
+                        pass
+                if not klines:
+                    skipped_no_klines += 1
+                    continue
+                evaluated += 1
+                # Compute MFE/MAE per horizon
+                for h in horizons:
+                    h_end = start_ms + h * 3600 * 1000
+                    win_klines = [k for k in klines if k["t"] <= h_end]
+                    if not win_klines:
+                        continue
+                    max_h = max(k["h"] for k in win_klines)
+                    min_l = min(k["l"] for k in win_klines)
+                    mfe = (max_h - entry) / entry * 100
+                    mae = (min_l - entry) / entry * 100
+                    mfe_pct[f"{h}h"].append(mfe)
+                    mae_pct[f"{h}h"].append(mae)
+                    # Test each TP/SL combo на этом horizon (BIG BUY = LONG)
+                    for name, tp_pct, sl_pct in combos:
+                        tp_price = entry * (1 + tp_pct / 100)
+                        sl_price = entry * (1 - sl_pct / 100)
+                        outcome = "open"
+                        for c in win_klines:
+                            # На каждой свечи: если high достигла TP И low достигла SL —
+                            # консервативно считаем SL hit first (пессимизм).
+                            tp_hit = c["h"] >= tp_price
+                            sl_hit = c["l"] <= sl_price
+                            if tp_hit and sl_hit:
+                                outcome = "loss"
+                                break
+                            if tp_hit:
+                                outcome = "win"
+                                break
+                            if sl_hit:
+                                outcome = "loss"
+                                break
+                        results[f"{h}h"][name][outcome] += 1
+                # tier-based WR (using 3/1.5 24h combo)
+                delta = s.get("delta_pct_30m") or 0
+                tier = ("0-500" if delta < 500
+                        else "500-1000" if delta < 1000
+                        else "1000-2000" if delta < 2000
+                        else "2000+")
+                tier_stats[tier]["n"] += 1
+                # find win/loss for 3/1.5 24h
+                if "24h" in results and "+3/-1.5" in results["24h"]:
+                    # this signal — нужно посчитать его outcome отдельно (но мы уже agg)
+                    # вместо этого пересчитаем per-signal быстро
+                    h24_klines = [k for k in klines if k["t"] <= start_ms + 24 * 3600 * 1000]
+                    tp = entry * 1.03
+                    sl = entry * 0.985
+                    for c in h24_klines:
+                        if c["h"] >= tp:
+                            tier_stats[tier]["wr_3_1.5_24h"] += 1
+                            break
+                        if c["l"] <= sl:
+                            break
+
+        # ── Aggregated stats ─────────────────────────────────────
+        def pct(a, b):
+            return round(100 * a / b, 1) if b > 0 else 0
+
+        summary = {
+            "total_signals": len(sigs),
+            "evaluated": evaluated,
+            "skipped_no_klines": skipped_no_klines,
+            "skipped_no_price": skipped_no_price,
+            "by_horizon": {},
+            "tier_wr_3_1_5_24h": {},
+        }
+        for h in horizons:
+            mfe_list = mfe_pct[f"{h}h"]
+            mae_list = mae_pct[f"{h}h"]
+            if not mfe_list:
+                continue
+            mfe_list_sorted = sorted(mfe_list)
+            mae_list_sorted = sorted(mae_list)
+            n = len(mfe_list)
+            summary["by_horizon"][f"{h}h"] = {
+                "n": n,
+                "MFE_median": round(mfe_list_sorted[n // 2], 2),
+                "MFE_p90": round(mfe_list_sorted[int(n * 0.9)], 2) if n > 5 else None,
+                "MFE_max": round(max(mfe_list), 2),
+                "MFE_pct_above_3": pct(sum(1 for x in mfe_list if x >= 3), n),
+                "MFE_pct_above_5": pct(sum(1 for x in mfe_list if x >= 5), n),
+                "MFE_pct_above_10": pct(sum(1 for x in mfe_list if x >= 10), n),
+                "MAE_median": round(mae_list_sorted[n // 2], 2),
+                "MAE_p10": round(mae_list_sorted[int(n * 0.1)], 2) if n > 5 else None,
+                "MAE_min": round(min(mae_list), 2),
+                "combos": {},
+            }
+            for name, _, _ in combos:
+                r = results[f"{h}h"][name]
+                total_closed = r["win"] + r["loss"]
+                wr = pct(r["win"], total_closed) if total_closed else 0
+                summary["by_horizon"][f"{h}h"]["combos"][name] = {
+                    "win": r["win"], "loss": r["loss"], "open": r["open"],
+                    "wr": wr, "total_closed": total_closed,
+                }
+        for tier_name, ts in tier_stats.items():
+            n = ts["n"]
+            summary["tier_wr_3_1_5_24h"][tier_name] = {
+                "n": n,
+                "wr": pct(ts["wr_3_1.5_24h"], n) if n else 0,
+                "wins": ts["wr_3_1.5_24h"],
+            }
+        _bigbuy_bt_state["result"] = summary
+        log.info(f"[bb-bt] DONE: evaluated={evaluated}/{len(sigs)}")
+    except Exception as e:
+        log.exception("[bb-bt] crashed")
+        _bigbuy_bt_state["result"] = {"error": str(e)[:300]}
+    finally:
+        from datetime import datetime, timezone
+        _bigbuy_bt_state["running"] = False
+        _bigbuy_bt_state["finished_at"] = datetime.now(timezone.utc).isoformat()
 
 
 @app.get("/api/bigbuy-stats")
