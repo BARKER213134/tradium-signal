@@ -321,7 +321,7 @@ class StaticCacheMiddleware(BaseHTTPMiddleware):
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-bigbuy", "/api/backfill-bigbuy/status", "/api/bigbuy-search-dialogs", "/api/bigbuy-stats", "/api/backtest-bigbuy", "/api/backtest-bigbuy/status", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-bigbuy", "/api/backfill-bigbuy/status", "/api/bigbuy-search-dialogs", "/api/bigbuy-stats", "/api/backtest-bigbuy", "/api/backtest-bigbuy/status", "/api/backtest-bigbuy-confluence", "/api/backtest-bigbuy-confluence/status", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
             "/api/new-strategies", "/api/new-strategies/by-pair",
@@ -651,6 +651,326 @@ async def health():
 
 _bigbuy_bt_state: dict = {"running": False, "started_at": None,
                            "finished_at": None, "result": None, "progress": ""}
+
+_bigbuy_conf_state: dict = {"running": False, "started_at": None,
+                             "finished_at": None, "result": None, "progress": ""}
+
+
+@app.post("/api/backtest-bigbuy-confluence")
+async def api_backtest_bigbuy_confluence(payload: dict | None = None):
+    """🔔 Backtest BIG BUY с confluence из других LONG источников.
+
+    Для каждого BIG BUY: ищем другие LONG сигналы на той же паре в окне
+    [T-24h, T+2h]. Группируем по комбинации источников. Считаем WR/MFE для
+    каждой комбинации (TP+5%/SL-3% на 4h horizon — лучший edge из base BT).
+
+    Body (optional): {"window_back_h": 24, "window_fwd_h": 2,
+                       "tp_pct": 5.0, "sl_pct": 3.0, "horizon_h": 4}
+    """
+    payload = payload or {}
+    window_back_h = float(payload.get("window_back_h") or 24)
+    window_fwd_h = float(payload.get("window_fwd_h") or 2)
+    tp_pct = float(payload.get("tp_pct") or 5.0)
+    sl_pct = float(payload.get("sl_pct") or 3.0)
+    horizon_h = int(payload.get("horizon_h") or 4)
+    global _bigbuy_conf_state
+    if _bigbuy_conf_state.get("running"):
+        return {"ok": False, "error": "уже запущен"}
+    _bigbuy_conf_state = {
+        "running": True, "started_at": utcnow_iso_z(),
+        "finished_at": None, "result": None, "progress": "starting",
+    }
+    asyncio.create_task(_run_bigbuy_confluence_bt(
+        window_back_h, window_fwd_h, tp_pct, sl_pct, horizon_h,
+    ))
+    return {"ok": True, "started": True,
+            "window_back_h": window_back_h, "window_fwd_h": window_fwd_h,
+            "tp_pct": tp_pct, "sl_pct": sl_pct, "horizon_h": horizon_h}
+
+
+@app.get("/api/backtest-bigbuy-confluence/status")
+async def api_backtest_bigbuy_confluence_status():
+    return _bigbuy_conf_state
+
+
+async def _run_bigbuy_confluence_bt(window_back_h, window_fwd_h,
+                                     tp_pct, sl_pct, horizon_h):
+    """Для каждого BIG BUY: загружаем все LONG сигналы на этой паре
+    в окне [T-back, T+fwd], считаем outcome (WIN/LOSS), агрегируем по
+    confluence-combo."""
+    import logging as _log
+    log = _log.getLogger("bb-confluence-bt")
+    global _bigbuy_conf_state
+    try:
+        import httpx
+        from datetime import datetime, timezone, timedelta
+        from database import _get_db
+        db = _get_db()
+        col = db.bigbuy_signals
+        sigs = list(col.find({}).sort("received_at", -1))
+        log.info(f"[bb-conf] loaded {len(sigs)} BIG BUY signals")
+        _bigbuy_conf_state["progress"] = f"loaded {len(sigs)} signals"
+
+        BINANCE_SPOT = "https://api.binance.com"
+        BINANCE_FUT = "https://fapi.binance.com"
+
+        # Collect outcomes per signal + найденные confluence sources
+        outcomes = []  # [{"signal": s, "outcome": "win/loss/open", "sources": set(), "mfe": x}]
+
+        async with httpx.AsyncClient(timeout=12) as cli:
+            for i, s in enumerate(sigs):
+                if i % 25 == 0:
+                    _bigbuy_conf_state["progress"] = f"{i}/{len(sigs)}"
+                pair = s.get("pair", "")
+                if not pair:
+                    continue
+                symbol = pair.replace("/", "")
+                entry = s.get("price") or s.get("entry")
+                at_dt = s.get("received_at")
+                if not entry or entry <= 0 or not at_dt:
+                    continue
+                # Compute window
+                if at_dt.tzinfo is None:
+                    at_utc = at_dt.replace(tzinfo=timezone.utc)
+                else:
+                    at_utc = at_dt
+                back_at = at_utc - timedelta(hours=window_back_h)
+                fwd_at = at_utc + timedelta(hours=window_fwd_h)
+                back_naive = back_at.replace(tzinfo=None)
+                fwd_naive = fwd_at.replace(tzinfo=None)
+                pair_or = {"$or": [{"pair": pair}, {"symbol": symbol}]}
+
+                # Find confluence sources на той же паре в окне
+                sources_found = set()
+
+                # 1. WHALE — new_strategy_signals strategy=whale
+                try:
+                    nss = db.new_strategy_signals
+                    has_whale = nss.find_one({
+                        "strategy": "whale", "direction": "LONG",
+                        "created_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        **pair_or,
+                    })
+                    if has_whale: sources_found.add("whale")
+                    has_tc = nss.find_one({
+                        "strategy": "triple_confluence", "direction": "LONG",
+                        "created_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        **pair_or,
+                    })
+                    if has_tc: sources_found.add("tc")
+                    has_combo = nss.find_one({
+                        "strategy": "combo", "direction": "LONG",
+                        "created_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        **pair_or,
+                    })
+                    if has_combo: sources_found.add("combo")
+                    has_vs = nss.find_one({
+                        "strategy": "volume_surge", "direction": "LONG",
+                        "created_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        **pair_or,
+                    })
+                    if has_vs: sources_found.add("vol_surge")
+                    has_vol = nss.find_one({
+                        "strategy": "volcano", "direction": "LONG",
+                        "created_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        **pair_or,
+                    })
+                    if has_vol: sources_found.add("volcano")
+                except Exception:
+                    pass
+
+                # 2. ST_VIP / ST_MTF (supertrend signals)
+                try:
+                    sts = db.supertrend_signals
+                    has_st_vip = sts.find_one({
+                        "tier": "vip", "direction": "LONG",
+                        "flip_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        "$or": [{"pair": pair}, {"pair_norm": symbol}],
+                    })
+                    if has_st_vip: sources_found.add("st_vip")
+                    has_st_mtf = sts.find_one({
+                        "tier": "mtf", "direction": "LONG",
+                        "flip_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        "$or": [{"pair": pair}, {"pair_norm": symbol}],
+                    })
+                    if has_st_mtf: sources_found.add("st_mtf")
+                except Exception:
+                    pass
+
+                # 3. Confluence collection
+                try:
+                    conf = db.confluence
+                    has_conf = conf.find_one({
+                        "direction": "LONG",
+                        "detected_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        **pair_or,
+                    })
+                    if has_conf: sources_found.add("confluence")
+                except Exception:
+                    pass
+
+                # 4. Cluster
+                try:
+                    cls = db.clusters
+                    has_cl = cls.find_one({
+                        "direction": "LONG",
+                        "trigger_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        **pair_or,
+                    })
+                    if has_cl: sources_found.add("cluster")
+                except Exception:
+                    pass
+
+                # 5. Anomaly LONG
+                try:
+                    anm = db.anomalies
+                    has_anm = anm.find_one({
+                        "direction": "LONG",
+                        "detected_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        "$or": [{"pair": pair}, {"symbol": symbol}],
+                    })
+                    if has_anm: sources_found.add("anomaly")
+                except Exception:
+                    pass
+
+                # 6. Tradium / Cryptovizor LONG signals
+                try:
+                    sgs = db.signals
+                    has_trd = sgs.find_one({
+                        "source": "tradium", "direction": "LONG",
+                        "received_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        **pair_or,
+                    })
+                    if has_trd: sources_found.add("tradium")
+                    has_cv = sgs.find_one({
+                        "source": "cryptovizor", "direction": "LONG",
+                        "pattern_triggered": True,
+                        "pattern_triggered_at": {"$gte": back_naive, "$lte": fwd_naive},
+                        **pair_or,
+                    })
+                    if has_cv: sources_found.add("cv")
+                except Exception:
+                    pass
+
+                # Fetch klines для outcome
+                start_ms = int(at_utc.timestamp() * 1000)
+                end_ms = start_ms + horizon_h * 3600 * 1000
+                klines = None
+                for url in (f"{BINANCE_FUT}/fapi/v1/klines", f"{BINANCE_SPOT}/api/v3/klines"):
+                    try:
+                        r = await cli.get(url, params={
+                            "symbol": symbol, "interval": "15m",
+                            "startTime": start_ms, "endTime": end_ms, "limit": 100,
+                        })
+                        if r.status_code == 200:
+                            data = r.json()
+                            if data:
+                                klines = [{"t": int(k[0]), "h": float(k[2]),
+                                           "l": float(k[3])} for k in data]
+                                break
+                    except Exception:
+                        pass
+                if not klines:
+                    continue
+
+                tp_price = entry * (1 + tp_pct / 100)
+                sl_price = entry * (1 - sl_pct / 100)
+                outcome = "open"
+                max_h = max(k["h"] for k in klines)
+                min_l = min(k["l"] for k in klines)
+                mfe = (max_h - entry) / entry * 100
+                for c in klines:
+                    if c["h"] >= tp_price and c["l"] <= sl_price:
+                        outcome = "loss"
+                        break
+                    if c["h"] >= tp_price:
+                        outcome = "win"
+                        break
+                    if c["l"] <= sl_price:
+                        outcome = "loss"
+                        break
+
+                outcomes.append({
+                    "sources": sources_found,
+                    "outcome": outcome,
+                    "mfe": mfe,
+                    "pair": pair,
+                })
+
+        # ── Aggregate ────────────────────────────────────────────
+        # 1. Alone (no other sources)
+        # 2. By individual source (any)
+        # 3. By count of sources
+        def pct(a, b):
+            return round(100 * a / b, 1) if b > 0 else 0
+        def agg(items):
+            wins = sum(1 for x in items if x["outcome"] == "win")
+            losses = sum(1 for x in items if x["outcome"] == "loss")
+            opens = sum(1 for x in items if x["outcome"] == "open")
+            closed = wins + losses
+            mfe_list = [x["mfe"] for x in items]
+            mfe_med = round(sorted(mfe_list)[len(mfe_list) // 2], 2) if mfe_list else 0
+            mfe_avg = round(sum(mfe_list) / len(mfe_list), 2) if mfe_list else 0
+            mfe_above_5 = pct(sum(1 for x in mfe_list if x >= 5), len(mfe_list))
+            ev = pct(wins * tp_pct - losses * sl_pct, max(1, closed))
+            # ev expressed as % per trade (rough): EV_per = WR*TP - (1-WR)*SL
+            wr = pct(wins, closed) if closed else 0
+            ev_per = round((wr / 100) * tp_pct - (1 - wr / 100) * sl_pct, 2)
+            return {
+                "n": len(items),
+                "wins": wins, "losses": losses, "open": opens,
+                "wr": wr, "ev_per_trade": ev_per,
+                "mfe_median": mfe_med, "mfe_avg": mfe_avg,
+                "mfe_pct_above_5": mfe_above_5,
+            }
+
+        # Bucket 1: alone
+        alone = [x for x in outcomes if not x["sources"]]
+        # Bucket 2: per source
+        all_sources = sorted({src for x in outcomes for src in x["sources"]})
+        per_source = {}
+        for src in all_sources:
+            per_source[src] = agg([x for x in outcomes if src in x["sources"]])
+
+        # Bucket 3: by count
+        by_count = {
+            "0_alone": agg([x for x in outcomes if len(x["sources"]) == 0]),
+            "1_source": agg([x for x in outcomes if len(x["sources"]) == 1]),
+            "2_sources": agg([x for x in outcomes if len(x["sources"]) == 2]),
+            "3+_sources": agg([x for x in outcomes if len(x["sources"]) >= 3]),
+        }
+
+        # Top combos (specific source combinations)
+        from collections import Counter
+        combo_counts = Counter()
+        for x in outcomes:
+            if x["sources"]:
+                combo_counts[tuple(sorted(x["sources"]))] += 1
+        top_combos = {}
+        for combo, count in combo_counts.most_common(10):
+            if count < 3:
+                break
+            items = [x for x in outcomes if tuple(sorted(x["sources"])) == combo]
+            top_combos["+".join(combo)] = agg(items)
+
+        summary = {
+            "params": {"window_back_h": window_back_h, "window_fwd_h": window_fwd_h,
+                       "tp_pct": tp_pct, "sl_pct": sl_pct, "horizon_h": horizon_h},
+            "total": len(outcomes),
+            "by_count": by_count,
+            "per_source": per_source,
+            "top_combos": top_combos,
+        }
+        _bigbuy_conf_state["result"] = summary
+        log.info(f"[bb-conf] DONE: evaluated={len(outcomes)}")
+    except Exception as e:
+        log.exception("[bb-conf] crashed")
+        _bigbuy_conf_state["result"] = {"error": str(e)[:500]}
+    finally:
+        from datetime import datetime, timezone
+        _bigbuy_conf_state["running"] = False
+        _bigbuy_conf_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+
 
 
 @app.post("/api/backtest-bigbuy")
