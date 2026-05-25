@@ -146,27 +146,33 @@ async def backfill_cryptovizor(client, since: datetime, hard_limit: int = 2000) 
     return added
 
 
-async def backfill_bigbuy(client, since: datetime, hard_limit: int = 5000) -> dict:
-    """🔔 Backfill BIG BUY signals из канала Cryptovizor.
+async def backfill_bigbuy(client, since: datetime, hard_limit: int = 5000,
+                           target_id: int | None = None) -> dict:
+    """🔔 Backfill BIG BUY signals из чата Cryptovizor.
 
-    Идём по истории CV (тот же канал что обычный CV) с момента since.
-    Парсим каждое сообщение через bigbuy_parser.is_bigbuy_message →
-    parse_bigbuy_message → store_bigbuy_signal.
+    По умолчанию идёт из bot DM @cvizor_bot (id 5708266033) — оттуда реально
+    шлются BIG BUY (Telethon iter_dialogs scan показал hits=5).
 
-    Возвращает: {scanned, big_buy_found, stored, duplicates}
+    Можно передать target_id чтобы переопределить (для CV канала или другого DM).
+
+    Возвращает: {scanned, big_buy_found, stored, duplicates, target_id}
     """
     from bigbuy_parser import is_bigbuy_message, parse_bigbuy_message, store_bigbuy_signal
-    cv_id = await _resolve_cv_id(client)
-    if cv_id is None:
-        return {"scanned": 0, "big_buy_found": 0, "stored": 0, "duplicates": 0, "error": "cv_id not resolved"}
+    # Default: @cvizor_bot DM (id 5708266033). Env override: CRYPTOVIZOR_BOT_ID.
+    if target_id is None:
+        env_id = os.getenv("CRYPTOVIZOR_BOT_ID", "5708266033").strip()
+        try:
+            target_id = int(env_id)
+        except ValueError:
+            target_id = 5708266033
 
-    logger.info(f"[BIGBUY] Загружаю CV сообщения с {since} до сейчас (max {hard_limit})…")
+    logger.info(f"[BIGBUY] Загружаю из chat_id={target_id} с {since} (max {hard_limit})…")
     scanned = 0
     found = 0
     stored = 0
     duplicates = 0
 
-    async for m in client.iter_messages(cv_id, limit=hard_limit):
+    async for m in client.iter_messages(target_id, limit=hard_limit):
         scanned += 1
         msg_date = m.date
         if msg_date.tzinfo is not None:
@@ -208,7 +214,8 @@ async def backfill_bigbuy(client, since: datetime, hard_limit: int = 5000) -> di
             logger.exception(f"[BIGBUY] store fail для msg {m.id}")
 
     logger.info(f"[BIGBUY] Done: scanned={scanned} BIG_BUY={found} stored={stored} dup={duplicates}")
-    return {"scanned": scanned, "big_buy_found": found, "stored": stored, "duplicates": duplicates}
+    return {"scanned": scanned, "big_buy_found": found, "stored": stored,
+            "duplicates": duplicates, "target_id": target_id}
 
 
 async def backfill_tradium(client, since: datetime, hard_limit: int = 500) -> int:

@@ -8050,6 +8050,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="combo">🧠 COMBO (st_vip / TC + good preceding)</option>
     <option value="whale">🐋 WHALE (ST flip 2H UP + vol spike + amplifiers, LONG)</option>
     <option value="shark">🦈 SHARK (ST flip 2H DOWN + distribution top + multi-top, SHORT)</option>
+    <option value="bigbuy">🔔 BIG BUY (Cryptovizor — high positive delta, LONG)</option>
     <option value="rsi_cross_12h">⚡ RSI/SMA cross 12h + vol≥2×</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
@@ -8117,6 +8118,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jWhaleOnlyBtn" onclick="_toggleSourceOnly('whale')" title="🐋 WHALE только. STANDARD WR 53.8%, MFE 5.56% (LONG)." style="background:linear-gradient(135deg, rgba(0,140,255,0.18), rgba(0,200,255,0.10));border:1.5px solid rgba(0,140,255,0.55);border-radius:6px;padding:4px 12px;font-size:11px;font-family:var(--font-mono);color:#00c8ff;cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;font-weight:800;">🐋 WHALE · OFF</button>
   <button id="jSharkOnlyBtn" onclick="_toggleSourceOnly('shark')" title="🦈 SHARK только. STANDARD WR 60.4%, MFE 4.96% (SHORT)." style="background:linear-gradient(135deg, rgba(255,77,109,0.18), rgba(255,140,80,0.10));border:1.5px solid rgba(255,77,109,0.55);border-radius:6px;padding:4px 12px;font-size:11px;font-family:var(--font-mono);color:#ff4d6d;cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;font-weight:800;">🦈 SHARK · OFF</button>
   <button id="jComboOnlyBtn" onclick="_toggleSourceOnly('combo')" title="🧠 COMBO только. ST_VIP/TC + precondition positives. WR 52.5%, MFE 4.73%." style="background:linear-gradient(135deg, rgba(180,140,255,0.18), rgba(140,100,255,0.10));border:1.5px solid rgba(180,140,255,0.55);border-radius:6px;padding:4px 12px;font-size:11px;font-family:var(--font-mono);color:#b48cff;cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;font-weight:800;">🧠 COMBO · OFF</button>
+  <button id="jBigBuyOnlyBtn" onclick="_toggleSourceOnly('bigbuy')" title="🔔 BIG BUY только. Cryptovizor — high positive delta (LONG bias)." style="background:linear-gradient(135deg, rgba(0,229,160,0.18), rgba(0,200,100,0.10));border:1.5px solid rgba(0,229,160,0.55);border-radius:6px;padding:4px 12px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;font-weight:800;">🔔 BIG BUY · OFF</button>
   <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
   <button id="jDeltaBackfillBtn" onclick="_startDeltaBackfill()" title="Запустить массовый backfill cluster_delta для всех сигналов в БД (через klines, полная история)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:140px;text-align:center;">📊 Δ Backfill</button>
 </div>
@@ -9976,13 +9978,14 @@ function filterJournal() {
     if (window._journalHotOnly) {
       if ((s.q_score || 0) < 60) return false;
     }
-    // 🐋 / 🦈 / 🧠 source-only filters — union если несколько включены
-    const _srcOnlyActive = window._journalWhaleOnly || window._journalSharkOnly || window._journalComboOnly;
+    // 🐋 / 🦈 / 🧠 / 🔔 source-only filters — union если несколько включены
+    const _srcOnlyActive = window._journalWhaleOnly || window._journalSharkOnly || window._journalComboOnly || window._journalBigBuyOnly;
     if (_srcOnlyActive) {
       const matchWhale = window._journalWhaleOnly && s.source === 'whale';
       const matchShark = window._journalSharkOnly && s.source === 'shark';
       const matchCombo = window._journalComboOnly && s.source === 'combo';
-      if (!(matchWhale || matchShark || matchCombo)) return false;
+      const matchBigBuy = window._journalBigBuyOnly && s.source === 'bigbuy';
+      if (!(matchWhale || matchShark || matchCombo || matchBigBuy)) return false;
     }
     // 🏆 TOP-7 BEST only — фильтр по 7 лучшим backtest-validated источникам.
     // Ranking (по WR×MFE×N): triple_confluence > st_vip > confluence > WHALE >
@@ -10349,9 +10352,11 @@ function _toggleHighScore() {
 function _toggleSourceOnly(src) {
   const key = src === 'whale' ? '_journalWhaleOnly'
             : src === 'shark' ? '_journalSharkOnly'
+            : src === 'bigbuy' ? '_journalBigBuyOnly'
             : '_journalComboOnly';
   const btnId = src === 'whale' ? 'jWhaleOnlyBtn'
              : src === 'shark' ? 'jSharkOnlyBtn'
+             : src === 'bigbuy' ? 'jBigBuyOnlyBtn'
              : 'jComboOnlyBtn';
   const cfg = {
     whale: {emoji:'🐋', label:'WHALE',
@@ -10366,6 +10371,10 @@ function _toggleSourceOnly(src) {
             onBg:'linear-gradient(135deg, rgba(180,140,255,0.35), rgba(140,100,255,0.20))',
             offBg:'linear-gradient(135deg, rgba(180,140,255,0.18), rgba(140,100,255,0.10))',
             color:'#b48cff', onBorder:'#b48cff', offBorder:'rgba(180,140,255,0.55)'},
+    bigbuy: {emoji:'🔔', label:'BIG BUY',
+             onBg:'linear-gradient(135deg, rgba(0,229,160,0.35), rgba(0,200,100,0.20))',
+             offBg:'linear-gradient(135deg, rgba(0,229,160,0.18), rgba(0,200,100,0.10))',
+             color:'#00e5a0', onBorder:'#00e5a0', offBorder:'rgba(0,229,160,0.55)'},
   }[src];
   window[key] = !window[key];
   const btn = document.getElementById(btnId);

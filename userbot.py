@@ -1054,9 +1054,27 @@ async def _setup_telethon_client():
                 })
             except Exception:
                 pass
+            # ── 🔔 BIG BUY: ловим из любого источника (включая bot DM
+            # @cvizor_bot id=5708266033). Cryptovizor шлёт BIG BUY как DM,
+            # не через канал — поэтому cryptovizor_handler их не видит.
+            try:
+                if event.raw_text:
+                    from bigbuy_parser import is_bigbuy_message, parse_bigbuy_message, store_bigbuy_signal
+                    if is_bigbuy_message(event.raw_text):
+                        parsed = parse_bigbuy_message(event.raw_text)
+                        if parsed:
+                            ok = await asyncio.to_thread(store_bigbuy_signal, parsed, event.message.id)
+                            if ok:
+                                try:
+                                    from watcher import _bigbuy_send_telegram
+                                    await _bigbuy_send_telegram(parsed)
+                                except Exception as _tge:
+                                    logger.debug(f"[bigbuy] tg send fail: {_tge}")
+            except Exception:
+                logger.exception("[bigbuy/wildcard] parse/store crashed")
         except Exception:
             pass
-    logger.info("[userbot] DIAG: wildcard event tap для unknown chat_id (постоянный)")
+    logger.info("[userbot] DIAG: wildcard event tap + BIG BUY catcher (любой chat_id)")
 
     _handlers_registered["tradium"] = True
     _handlers_registered["kl"] = True

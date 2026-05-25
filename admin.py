@@ -708,6 +708,7 @@ async def api_backfill_bigbuy(payload: dict | None = None):
     payload = payload or {}
     hours = float(payload.get("hours") or 720)  # 30 days default
     hard_limit = int(payload.get("hard_limit") or 10000)
+    target_id = payload.get("target_id")  # int или None → bot DM по умолчанию
 
     try:
         from userbot import _tg_client
@@ -716,16 +717,17 @@ async def api_backfill_bigbuy(payload: dict | None = None):
     if _tg_client is None or not _tg_client.is_connected():
         return {"ok": False, "error": "Telethon client not connected"}
 
-    asyncio.create_task(_run_backfill_bigbuy(_tg_client, hours, hard_limit))
-    return {"ok": True, "started": True, "hours": hours, "hard_limit": hard_limit}
+    asyncio.create_task(_run_backfill_bigbuy(_tg_client, hours, hard_limit, target_id))
+    return {"ok": True, "started": True, "hours": hours,
+            "hard_limit": hard_limit, "target_id": target_id or "@cvizor_bot DM"}
 
 
 _bigbuy_backfill_state: dict = {"running": False, "started_at": None,
                                  "finished_at": None, "stats": None}
 
 
-async def _run_backfill_bigbuy(client, hours: float, hard_limit: int):
-    """Фоновая задача: подтянуть BIG BUY сигналы из истории CV."""
+async def _run_backfill_bigbuy(client, hours: float, hard_limit: int, target_id=None):
+    """Фоновая задача: подтянуть BIG BUY сигналы из chat (по умолчанию bot DM)."""
     import logging as _log
     from datetime import datetime, timezone, timedelta
     log = _log.getLogger("backfill-bigbuy-api")
@@ -740,8 +742,8 @@ async def _run_backfill_bigbuy(client, hours: float, hard_limit: int):
         from backfill_missed import backfill_bigbuy
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         since = now - timedelta(hours=hours)
-        log.info(f"[bigbuy-backfill] since {since}, hard_limit={hard_limit}")
-        stats = await backfill_bigbuy(client, since, hard_limit=hard_limit)
+        log.info(f"[bigbuy-backfill] since {since}, hard_limit={hard_limit}, target={target_id}")
+        stats = await backfill_bigbuy(client, since, hard_limit=hard_limit, target_id=target_id)
         log.info(f"[bigbuy-backfill] DONE: {stats}")
         _bigbuy_backfill_state["stats"] = stats
         # Уведомление в админ-бот
