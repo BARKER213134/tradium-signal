@@ -321,7 +321,7 @@ class StaticCacheMiddleware(BaseHTTPMiddleware):
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-bigbuy", "/api/backfill-bigbuy/status", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-bigbuy", "/api/backfill-bigbuy/status", "/api/bigbuy-search-dialogs", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
             "/api/new-strategies", "/api/new-strategies/by-pair",
@@ -647,6 +647,55 @@ async def health():
     _HEALTH_CACHE["ts"] = now
     _HEALTH_CACHE["data"] = data
     return data
+
+
+@app.get("/api/bigbuy-search-dialogs")
+async def api_bigbuy_search_dialogs(scan_per_dialog: int = 30, max_dialogs: int = 100):
+    """🔍 Ищет 'BIG BUY' в последних N сообщениях каждого диалога Telethon аккаунта.
+
+    Помогает определить из какого канала/группы реально приходят BIG BUY сигналы
+    (если не из основного CV канала).
+    """
+    try:
+        from userbot import _tg_client
+    except Exception:
+        _tg_client = None
+    if _tg_client is None or not _tg_client.is_connected():
+        return {"ok": False, "error": "Telethon client not connected"}
+
+    results = []
+    dialogs_scanned = 0
+    try:
+        async for d in _tg_client.iter_dialogs(limit=max_dialogs):
+            dialogs_scanned += 1
+            try:
+                hits = 0
+                last_hit_sample = None
+                last_hit_date = None
+                async for m in _tg_client.iter_messages(d.id, limit=scan_per_dialog):
+                    txt = (m.raw_text or "")
+                    if 'BIG BUY' in txt:
+                        hits += 1
+                        if last_hit_sample is None:
+                            last_hit_sample = txt[:400]
+                            last_hit_date = m.date.isoformat() if m.date else None
+                if hits > 0:
+                    results.append({
+                        "dialog_id": d.id,
+                        "name": d.name,
+                        "is_channel": bool(getattr(d, "is_channel", False)),
+                        "is_group": bool(getattr(d, "is_group", False)),
+                        "is_user": bool(getattr(d, "is_user", False)),
+                        "hits": hits,
+                        "scanned": scan_per_dialog,
+                        "last_hit_date": last_hit_date,
+                        "sample": last_hit_sample,
+                    })
+            except Exception as e:
+                pass
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300], "dialogs_scanned": dialogs_scanned}
+    return {"ok": True, "dialogs_scanned": dialogs_scanned, "matches": results}
 
 
 @app.post("/api/backfill-bigbuy")
