@@ -9453,7 +9453,7 @@ if (document.readyState !== 'loading') hotLoad();
         <button id="stOverlayToggleBtn" onclick="window._toggleStOverlay()" ...>🌀 ST</button>
         <button id="histMarkersToggleBtn" onclick="window._toggleHistMarkers()" ...>📍 Hist</button>
         -->
-        <button id="jResonanceBtn" onclick="_toggleResonance()" title="Кластерный график с Resonance.vision (Selenium screenshot, ~30s)" style="background:linear-gradient(135deg,rgba(180,140,255,0.18),rgba(140,100,255,0.10));border:1px solid rgba(180,140,255,0.55);border-radius:6px;color:#b48cff;font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 10px;font-weight:700;">📊 Резонанс</button>
+        <button id="jResonanceBtn" onclick="window._toggleResonance && window._toggleResonance()" title="Кластерный график с Resonance.vision (LIVE iframe)" style="background:linear-gradient(135deg,rgba(180,140,255,0.18),rgba(140,100,255,0.10));border:1px solid rgba(180,140,255,0.55);border-radius:6px;color:#b48cff;font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 10px;font-weight:700;">📊 Резонанс</button>
         <button onclick="if(_currentJournalIdx>0)openJournalChart(_currentJournalIdx-1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">◀</button>
         <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
         <button onclick="if(_currentJournalIdx<_journalFiltered.length-1)openJournalChart(_currentJournalIdx+1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">▶</button>
@@ -11971,11 +11971,21 @@ function jSort(field) {
 window._resonanceOn = false;
 window._resonanceCurrentMode = 'iframe';  // 'iframe' | 'screenshot'
 
-async function _toggleResonance() {
+window._toggleResonance = async function _toggleResonance() {
+  console.log('[resonance] toggle clicked');
   const overlay = document.getElementById('jResonanceOverlay');
   const btn = document.getElementById('jResonanceBtn');
-  if (!overlay || !btn) return;
+  if (!overlay) {
+    console.error('[resonance] overlay element not found! Hard refresh браузер (Ctrl+Shift+R)');
+    alert('Resonance overlay не найден. Сделай Ctrl+Shift+R чтобы сбросить кеш HTML.');
+    return;
+  }
+  if (!btn) {
+    console.error('[resonance] button element not found');
+    return;
+  }
   window._resonanceOn = !window._resonanceOn;
+  console.log('[resonance] state:', window._resonanceOn ? 'ON' : 'OFF');
   if (!window._resonanceOn) {
     overlay.style.display = 'none';
     btn.textContent = '📊 Резонанс';
@@ -11986,6 +11996,10 @@ async function _toggleResonance() {
   btn.textContent = '📊 Резонанс · ON';
   btn.style.background = 'linear-gradient(135deg,rgba(180,140,255,0.45),rgba(140,100,255,0.25))';
   _resonanceMode(window._resonanceCurrentMode);
+};
+// Backward-compat alias (для inline onclick='_toggleResonance()')
+if (typeof _toggleResonance === 'undefined') {
+  var _toggleResonance = window._toggleResonance;
 }
 
 function _resonanceMode(mode) {
