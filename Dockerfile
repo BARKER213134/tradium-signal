@@ -34,6 +34,9 @@ RUN apt-get update \
         libgbm1 \
         libdrm2 \
         fonts-liberation \
+        xvfb \
+        libosmesa6 \
+        mesa-utils \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CHROME_BIN=/usr/bin/chromium

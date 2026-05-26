@@ -23,29 +23,58 @@ _last_login_ts = 0
 _SESSION_TTL_S = 4 * 3600  # 4h — потом перелогинимся
 
 
+_xvfb_started = False
+
+
+def _ensure_xvfb():
+    """Поднимает Xvfb виртуальный X-сервер если ещё не запущен.
+    Headless Chromium с DISPLAY=:99 рендерит WebGL через swiftshader."""
+    global _xvfb_started
+    if _xvfb_started:
+        return
+    import subprocess
+    try:
+        # -ac no access control, +extension GLX = enable GLX extension
+        subprocess.Popen(
+            ["Xvfb", ":99", "-screen", "0", "1600x1000x24",
+             "-ac", "+extension", "GLX", "+render", "-noreset"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        os.environ["DISPLAY"] = ":99"
+        time.sleep(1.5)  # wait for Xvfb to come up
+        _xvfb_started = True
+        logger.info("[resonance] Xvfb started on :99 (1600x1000x24 + GLX)")
+    except Exception as e:
+        logger.warning(f"[resonance] Xvfb start fail: {e} — fallback to --headless=new")
+
+
 def _get_driver():
-    """Headless Chromium driver. На Railway: CHROME_BIN=/usr/bin/chromium."""
+    """Chromium driver на Xvfb (виртуальный X с GLX/WebGL support).
+    На Railway: CHROME_BIN=/usr/bin/chromium + Xvfb из Docker."""
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.chrome.service import Service
 
+    # Поднимаем Xvfb (виртуальный X-сервер) — позволяет Chromium работать
+    # БЕЗ --headless, что даёт настоящий WebGL через swiftshader.
+    _ensure_xvfb()
+    use_xvfb = bool(os.environ.get("DISPLAY"))
+
     opts = Options()
-    opts.add_argument("--headless=new")  # new headless (supports WebGL via swiftshader)
+    if not use_xvfb:
+        # Fallback на headless если Xvfb не поднялся
+        opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--window-size=1600,1000")
     opts.add_argument("--disable-extensions")
     opts.add_argument("--disable-logging")
     opts.add_argument("--log-level=3")
-    # ── WebGL/GPU включаем через swiftshader (software rendering) ──
-    # Resonance.vision требует WebGL — без этих флагов получаем
-    # "График недоступен — Ваш браузер не поддерживает WebGL"
-    # Угол (Angle) + swiftshader = software GL backend, работает в headless.
-    opts.add_argument("--use-gl=angle")
-    opts.add_argument("--use-angle=swiftshader")
-    opts.add_argument("--enable-unsafe-swiftshader")  # forced swiftshader
+    # ── WebGL через swiftshader (software rendering) ──
+    # На Xvfb работает реальный GLX, swiftshader — fallback.
+    opts.add_argument("--use-gl=swiftshader")
+    opts.add_argument("--enable-unsafe-swiftshader")
     opts.add_argument("--enable-webgl")
-    opts.add_argument("--enable-webgl2-compute-context")
     opts.add_argument("--ignore-gpu-blocklist")
     opts.add_argument("--enable-accelerated-2d-canvas")
     # Уменьшаем риск bot-detection
