@@ -7,7 +7,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Системные зависимости для matplotlib/mplfinance + Chromium для Resonance
+# Системные зависимости для matplotlib/mplfinance + Chromium для Resonance.
+# WebGL libraries нужны для resonance.vision (он требует WebGL через
+# swiftshader — software GL renderer в headless Chromium).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         gcc \
@@ -17,6 +19,21 @@ RUN apt-get update \
         curl \
         chromium \
         chromium-driver \
+        libgl1 \
+        libegl1 \
+        libgles2 \
+        libglx0 \
+        libglvnd0 \
+        libxkbcommon0 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxrandr2 \
+        libxfixes3 \
+        libnss3 \
+        libasound2 \
+        libgbm1 \
+        libdrm2 \
+        fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CHROME_BIN=/usr/bin/chromium

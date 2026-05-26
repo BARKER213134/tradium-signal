@@ -30,14 +30,24 @@ def _get_driver():
     from selenium.webdriver.chrome.service import Service
 
     opts = Options()
-    opts.add_argument("--headless=new")
+    opts.add_argument("--headless=new")  # new headless (supports WebGL via swiftshader)
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--disable-gpu")
     opts.add_argument("--window-size=1600,1000")
     opts.add_argument("--disable-extensions")
     opts.add_argument("--disable-logging")
     opts.add_argument("--log-level=3")
+    # ── WebGL/GPU включаем через swiftshader (software rendering) ──
+    # Resonance.vision требует WebGL — без этих флагов получаем
+    # "График недоступен — Ваш браузер не поддерживает WebGL"
+    # Угол (Angle) + swiftshader = software GL backend, работает в headless.
+    opts.add_argument("--use-gl=angle")
+    opts.add_argument("--use-angle=swiftshader")
+    opts.add_argument("--enable-unsafe-swiftshader")  # forced swiftshader
+    opts.add_argument("--enable-webgl")
+    opts.add_argument("--enable-webgl2-compute-context")
+    opts.add_argument("--ignore-gpu-blocklist")
+    opts.add_argument("--enable-accelerated-2d-canvas")
     # Уменьшаем риск bot-detection
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
