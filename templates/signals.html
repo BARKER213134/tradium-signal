@@ -9453,6 +9453,7 @@ if (document.readyState !== 'loading') hotLoad();
         <button id="stOverlayToggleBtn" onclick="window._toggleStOverlay()" ...>🌀 ST</button>
         <button id="histMarkersToggleBtn" onclick="window._toggleHistMarkers()" ...>📍 Hist</button>
         -->
+        <button id="jResonanceBtn" onclick="_toggleResonance()" title="Кластерный график с Resonance.vision (Selenium screenshot, ~30s)" style="background:linear-gradient(135deg,rgba(180,140,255,0.18),rgba(140,100,255,0.10));border:1px solid rgba(180,140,255,0.55);border-radius:6px;color:#b48cff;font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 10px;font-weight:700;">📊 Резонанс</button>
         <button onclick="if(_currentJournalIdx>0)openJournalChart(_currentJournalIdx-1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">◀</button>
         <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
         <button onclick="if(_currentJournalIdx<_journalFiltered.length-1)openJournalChart(_currentJournalIdx+1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">▶</button>
@@ -9460,7 +9461,14 @@ if (document.readyState !== 'loading') hotLoad();
         <button onclick="closeJournalChartModal()" style="background:none;border:none;color:var(--muted);font-size:24px;cursor:pointer;padding:0 8px;">×</button>
       </div>
     </div>
-    <div id="jChartContainer" style="height:calc(100% - 48px);"></div>
+    <div id="jChartContainer" style="height:calc(100% - 48px);position:relative;">
+      <!-- Resonance overlay — поверх chart, hidden by default -->
+      <div id="jResonanceOverlay" style="display:none;position:absolute;inset:0;background:#0a0e14;z-index:5;flex-direction:column;align-items:center;justify-content:center;overflow:auto;">
+        <div id="jResonanceStatus" style="padding:20px;color:var(--muted);font-family:var(--font-mono);font-size:13px;">⏳ Загружаю кластерный график…</div>
+        <img id="jResonanceImg" src="" alt="" style="max-width:100%;max-height:100%;display:none;border-radius:6px;box-shadow:0 4px 20px rgba(0,0,0,0.4);">
+        <div id="jResonanceMeta" style="margin-top:8px;display:flex;gap:8px;font-family:var(--font-mono);font-size:10px;color:var(--muted);"></div>
+      </div>
+    </div>
   </div>
 </div>
 {% endif %}{# /journal_chart_modal — только для journal/hot_now #}
@@ -9497,6 +9505,8 @@ function _setModalTF(tf) {
   try { localStorage.setItem('tradium_modalTF', tf); } catch {}
   _setActiveTF('jModalTFBar', tf);
   if (_currentJournalIdx >= 0) openJournalChart(_currentJournalIdx, tf);
+  // Если резонанс открыт — перерисуем для нового TF
+  if (window._resonanceRerenderIfOn) window._resonanceRerenderIfOn();
 }
 
 function _srcLabel(src) {
@@ -11947,10 +11957,95 @@ function jSort(field) {
   renderJournalPage();
 }
 
+// ─── 📊 Resonance.vision toggle для журнала modal ────────────────
+window._resonanceOn = false;
+async function _toggleResonance() {
+  const overlay = document.getElementById('jResonanceOverlay');
+  const btn = document.getElementById('jResonanceBtn');
+  const img = document.getElementById('jResonanceImg');
+  const status = document.getElementById('jResonanceStatus');
+  const meta = document.getElementById('jResonanceMeta');
+  if (!overlay || !btn) return;
+  window._resonanceOn = !window._resonanceOn;
+  if (!window._resonanceOn) {
+    overlay.style.display = 'none';
+    btn.textContent = '📊 Резонанс';
+    btn.style.background = 'linear-gradient(135deg,rgba(180,140,255,0.18),rgba(140,100,255,0.10))';
+    return;
+  }
+  overlay.style.display = 'flex';
+  btn.textContent = '📊 Резонанс · ON';
+  btn.style.background = 'linear-gradient(135deg,rgba(180,140,255,0.45),rgba(140,100,255,0.25))';
+
+  // Determine pair + tf
+  const sig = _journalFiltered[_currentJournalIdx];
+  if (!sig) { status.textContent = 'Нет сигнала'; return; }
+  const pair = (sig.pair || sig.symbol || '').replace('/', '').toUpperCase();
+  if (!pair) { status.textContent = 'Нет пары'; return; }
+  const tf = _modalTF || '1h';
+
+  status.style.display = 'block';
+  status.innerHTML = `⏳ Загружаю кластерный график ${pair} ${tf}…<br><small style="color:var(--muted);">Selenium screenshot (~30-60s) — кешируется на 15 мин</small>`;
+  img.style.display = 'none';
+  meta.innerHTML = '';
+
+  const t0 = Date.now();
+  const url = `/api/resonance-screenshot?symbol=${encodeURIComponent(pair)}&tf=${encodeURIComponent(tf)}`;
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) {
+      // JSON error response
+      let err = `HTTP ${r.status}`;
+      try { const j = await r.json(); err = j.error || err; } catch (_) {}
+      status.innerHTML = `❌ Ошибка: ${err}`;
+      return;
+    }
+    const ct = r.headers.get('content-type') || '';
+    const cacheHeader = r.headers.get('x-cache') || '?';
+    if (!ct.startsWith('image/')) {
+      const j = await r.json().catch(() => ({}));
+      status.innerHTML = `❌ Ошибка: ${j.error || 'не PNG'}`;
+      return;
+    }
+    const blob = await r.blob();
+    const objUrl = URL.createObjectURL(blob);
+    img.onload = () => {
+      status.style.display = 'none';
+      img.style.display = 'block';
+      const dt = ((Date.now() - t0) / 1000).toFixed(1);
+      meta.innerHTML = `<span>📊 Resonance · ${pair} · ${tf}</span><span>cache: ${cacheHeader}</span><span>${dt}s · ${(blob.size/1024).toFixed(0)}kb</span>`;
+      // revoke old blob URL когда новый загружен
+      if (window._lastResonanceUrl) URL.revokeObjectURL(window._lastResonanceUrl);
+      window._lastResonanceUrl = objUrl;
+    };
+    img.onerror = () => { status.innerHTML = '❌ Не удалось показать PNG'; };
+    img.src = objUrl;
+  } catch (e) {
+    status.innerHTML = `❌ Network error: ${e.message || e}`;
+  }
+}
+
+// При смене TF — если резонанс ON, перерисуем
+window._resonanceRerenderIfOn = function() {
+  if (window._resonanceOn) {
+    window._resonanceOn = false;  // toggle off
+    _toggleResonance();  // toggle on с новым TF
+  }
+};
+
 function closeJournalChartModal() {
   // Освобождаем WebGL контекст перед закрытием (предотвращает утечку)
   const container = document.getElementById('jChartContainer');
   if (container && window._disposeChart) window._disposeChart(container);
+  // Сброс резонанса state
+  window._resonanceOn = false;
+  const overlay = document.getElementById('jResonanceOverlay');
+  if (overlay) overlay.style.display = 'none';
+  const btn = document.getElementById('jResonanceBtn');
+  if (btn) {
+    btn.textContent = '📊 Резонанс';
+    btn.style.background = 'linear-gradient(135deg,rgba(180,140,255,0.18),rgba(140,100,255,0.10))';
+  }
   const modal = document.getElementById('journalChartModal');
   if (modal) modal.classList.remove('open');
   // Сразу обновляем журнал, не ждём 20-секундного тика. Юзер мог провести

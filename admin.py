@@ -321,7 +321,7 @@ class StaticCacheMiddleware(BaseHTTPMiddleware):
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-bigbuy", "/api/backfill-bigbuy/status", "/api/bigbuy-search-dialogs", "/api/bigbuy-stats", "/api/backtest-bigbuy", "/api/backtest-bigbuy/status", "/api/backtest-bigbuy-confluence", "/api/backtest-bigbuy-confluence/status", "/api/setup-check", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
+        if path in ("/login", "/health", "/healthz", "/api/userbot-status", "/api/backfill-missed", "/api/backfill-bigbuy", "/api/backfill-bigbuy/status", "/api/bigbuy-search-dialogs", "/api/bigbuy-stats", "/api/backtest-bigbuy", "/api/backtest-bigbuy/status", "/api/backtest-bigbuy-confluence", "/api/backtest-bigbuy-confluence/status", "/api/setup-check", "/api/resonance-screenshot", "/api/resonance-status", "/api/backfill-patterns", "/api/activate-tradium-archive", "/api/backfill-tradium-charts", "/api/peek-tradium", "/api/peek-tradium-topic", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
             "/api/new-strategies", "/api/new-strategies/by-pair",
@@ -1201,6 +1201,92 @@ async def _run_bigbuy_backtest(horizon_h: int, sig_limit: int):
         from datetime import datetime, timezone
         _bigbuy_bt_state["running"] = False
         _bigbuy_bt_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+
+_resonance_cache: dict = {}  # {(symbol, tf): (ts, png_bytes)}
+_RESONANCE_TTL_S = 900  # 15 мин
+_resonance_lock = asyncio.Lock()  # один Selenium процесс за раз
+
+
+@app.get("/api/resonance-screenshot")
+async def api_resonance_screenshot(symbol: str, tf: str = "H1", force: bool = False):
+    """📊 Скриншот кластерного графика с Resonance.vision.
+
+    Selenium-driven (headless Chromium на Railway). Cache 15 минут per
+    (symbol, tf), чтобы не делать новый screenshot на каждый refresh
+    графика в журнале.
+
+    Returns: image/png Response или JSON error.
+    """
+    import time
+    from fastapi.responses import Response
+    sym = (symbol or "").upper().replace("/", "").replace("USDT", "").strip()
+    if not sym:
+        return {"ok": False, "error": "no symbol"}
+    sym_full = sym + "USDT"
+    tf_norm = (tf or "H1").strip()
+    tf_map = {"15m": "M15", "30m": "M30", "1h": "H1", "4h": "H4", "12h": "H4", "1d": "H4"}
+    tf_render = tf_map.get(tf_norm.lower(), tf_norm.upper() if tf_norm.upper() in ("M15","M30","H1","H4") else "H1")
+    key = (sym_full, tf_render)
+    now = time.time()
+    if not force:
+        cached = _resonance_cache.get(key)
+        if cached and (now - cached[0]) < _RESONANCE_TTL_S:
+            return Response(content=cached[1], media_type="image/png",
+                            headers={"X-Cache": "HIT",
+                                     "Cache-Control": "public, max-age=900"})
+
+    # Selenium tight lock (один процесс зараз — у Railway 0.5-1GB)
+    async with _resonance_lock:
+        # Re-check cache after acquiring lock (другой request мог уже отрисовать)
+        cached = _resonance_cache.get(key)
+        if cached and (now - cached[0]) < _RESONANCE_TTL_S and not force:
+            return Response(content=cached[1], media_type="image/png",
+                            headers={"X-Cache": "HIT-LOCK"})
+        try:
+            from resonance_chart import get_cluster_screenshot
+            png = await asyncio.wait_for(
+                asyncio.to_thread(get_cluster_screenshot, sym_full, tf_render),
+                timeout=90.0,
+            )
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "screenshot timeout (>90s)"}
+        except Exception as e:
+            logging.getLogger(__name__).exception("[resonance] screenshot fail")
+            return {"ok": False, "error": str(e)[:300]}
+
+        if not png:
+            return {"ok": False, "error": "screenshot returned empty (login/popup issue?)"}
+
+        _resonance_cache[key] = (now, png)
+        # Prune old cache (keep last 30)
+        if len(_resonance_cache) > 30:
+            sorted_keys = sorted(_resonance_cache.items(), key=lambda kv: kv[1][0])
+            for k, _ in sorted_keys[:len(_resonance_cache) - 30]:
+                _resonance_cache.pop(k, None)
+        return Response(content=png, media_type="image/png",
+                        headers={"X-Cache": "MISS",
+                                 "Cache-Control": "public, max-age=900"})
+
+
+@app.get("/api/resonance-status")
+async def api_resonance_status():
+    """Статус Resonance cache + login state."""
+    import time
+    now = time.time()
+    items = []
+    for (sym, tf), (ts, png) in _resonance_cache.items():
+        items.append({
+            "symbol": sym, "tf": tf,
+            "size_bytes": len(png),
+            "age_minutes": round((now - ts) / 60, 1),
+        })
+    try:
+        from resonance_chart import _session_cookies
+        logged_in = bool(_session_cookies)
+    except Exception:
+        logged_in = False
+    return {"logged_in": logged_in, "cached": items, "lock_held": _resonance_lock.locked()}
 
 
 @app.get("/api/bigbuy-stats")
