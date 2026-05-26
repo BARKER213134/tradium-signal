@@ -201,69 +201,20 @@ def _apply_cookies(driver) -> bool:
 
 
 def _switch_pair(driver, sym_base: str) -> bool:
-    """Переключает текущую пару (default обычно BTC). sym_base = 'ETH' / 'WIF' etc."""
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.common.keys import Keys
-
-    if sym_base.upper() == "BTC":
-        return True
-
-    target_full = f"{sym_base.upper()}/USDT"
-    # Кликаем по текущей паре (обычно "BTC/USDT" в кнопке/баре)
-    clicked = False
-    for b in driver.find_elements(By.TAG_NAME, "button"):
-        if "/USDT" in (b.text or ""):
-            try:
-                driver.execute_script("arguments[0].click();", b)
-                clicked = True
-                break
-            except Exception:
-                continue
-    if not clicked:
-        # Может быть текстовая кнопка в баре или search icon
-        for el in driver.find_elements(By.CSS_SELECTOR, '[class*="search"], [class*="Search"], [class*="ticker"], [class*="Ticker"]'):
-            try:
-                if el.is_displayed():
-                    driver.execute_script("arguments[0].click();", el)
-                    clicked = True
-                    break
-            except Exception:
-                continue
-    time.sleep(2)
-    _clear_popups(driver)
-    # Search input
-    inputs = driver.find_elements(By.TAG_NAME, "input")
-    typed = False
-    for inp in inputs:
-        try:
-            if inp.is_displayed():
-                inp.clear()
-                inp.send_keys(sym_base)
-                typed = True
-                time.sleep(3)
-                break
-        except Exception:
-            continue
-    if not typed:
-        return False
-
-    # Click first matching result
-    results = driver.find_elements(By.XPATH, f"//*[contains(text(), '{target_full}')]")
-    for r in results:
-        try:
-            if r.is_displayed() and r.tag_name not in ('button', 'input', 'html', 'body'):
-                driver.execute_script("arguments[0].click();", r)
-                time.sleep(3)
-                return True
-        except Exception:
-            continue
-    # Если не нашли — пробуем нажать enter
+    """Переключает текущую пару через URL param ?symbol=XXX/USDT.
+    Резонанс хранит выбранную пару в URL — самый надёжный способ."""
+    from urllib.parse import quote
+    target = quote(f"{sym_base.upper()}/USDT", safe='')
+    url = f"https://resonance.vision/ru/clusters?symbol={target}"
     try:
-        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.RETURN)
-        time.sleep(3)
-    except Exception:
-        pass
-    return False
+        driver.get(url)
+        time.sleep(5)
+        _clear_popups(driver)
+        time.sleep(1)
+        return True
+    except Exception as e:
+        logger.warning(f"[resonance] switch_pair via URL fail: {e}")
+        return False
 
 
 def _set_timeframe(driver, tf_label: str):
@@ -369,8 +320,22 @@ def get_cluster_screenshot(symbol: str, timeframe: str = "H1") -> Optional[bytes
         _clear_popups(driver)
         time.sleep(1)
 
-        # ── Step 2: switch pair ───────────────────────────────────────
+        # ── Step 2: switch pair (через URL param ?symbol=) ───────────
+        # ВСЕГДА переключаем (даже на BTC — гарантирует начальный pair).
         _switch_pair(driver, sym_base)
+        _clear_popups(driver)
+        time.sleep(2)
+        # Закрываем любые tutorial кнопки после navigation
+        from selenium.webdriver.common.by import By
+        for b in driver.find_elements(By.TAG_NAME, "button"):
+            try:
+                txt = (b.text or "").strip().lower()
+                if txt in ('skip', 'close', 'got it', 'ok', 'no, thanks',
+                           'пропустить', 'закрыть', 'хорошо'):
+                    driver.execute_script("arguments[0].click();", b)
+                    time.sleep(1)
+            except Exception:
+                continue
         _clear_popups(driver)
         time.sleep(1)
 
