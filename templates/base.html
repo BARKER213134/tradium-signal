@@ -2701,12 +2701,20 @@
         // Только уровни рядом с ценой (±12% по умолчанию) — далёкие не рисуем
         const maxDist = opts.maxDistPct || 12;
         const near = zones.filter(z => Math.abs(z.dist_pct) <= maxDist);
-        // top-3 с каждой стороны по силе + inside
-        const res = near.filter(z => z.kind === 'resistance')
-                        .sort((a, b) => b.strength - a.strength).slice(0, 3);
-        const sup = near.filter(z => z.kind === 'support')
-                        .sort((a, b) => b.strength - a.strength).slice(0, 3);
-        const ins = near.filter(z => z.kind === 'inside').slice(0, 1);
+        // ГЛАВНЫЙ уровень каждой стороны (top-1 по силе) — мажор, толстый.
+        // Плюс максимум 1 второстепенный (сила >= 60) — тонкий пунктир.
+        // Итого максимум 5 линий (2R + 2S + inside) — было слишком много.
+        const pick = (arr) => {
+          const sorted = arr.sort((a, b) => b.strength - a.strength);
+          const out = [];
+          if (sorted[0]) out.push({ ...sorted[0], major: true });
+          if (sorted[1] && sorted[1].strength >= 60) out.push({ ...sorted[1], major: false });
+          return out;
+        };
+        const res = pick(near.filter(z => z.kind === 'resistance'));
+        const sup = pick(near.filter(z => z.kind === 'support'));
+        const ins = near.filter(z => z.kind === 'inside').slice(0, 1)
+                        .map(z => ({ ...z, major: false }));
         const show = [...res, ...sup, ...ins];
         if (!show.length) return [];
 
@@ -2725,16 +2733,17 @@
         for (const z of show) {
           const isRes = z.kind === 'resistance';
           const isIns = z.kind === 'inside';
-          const strong = z.strength >= 75;
+          // МАЖОР: толстая (3px) сплошная яркая. Второстепенный: 1px пунктир
+          // приглушённый. Inside: жёлтая 2px пунктир.
           const color = isIns ? 'rgba(255,210,62,0.9)'
-                      : isRes ? (strong ? 'rgba(251,93,125,0.95)' : 'rgba(251,93,125,0.45)')
-                              : (strong ? 'rgba(52,211,153,0.95)' : 'rgba(52,211,153,0.45)');
+                      : isRes ? (z.major ? 'rgba(251,93,125,1)' : 'rgba(251,93,125,0.35)')
+                              : (z.major ? 'rgba(52,211,153,1)' : 'rgba(52,211,153,0.35)');
           try {
             holder.createPriceLine({
               price: z.mid,
               color: color,
-              lineWidth: strong ? 2 : 1,
-              lineStyle: strong ? 0 /* solid */ : 2 /* dashed */,
+              lineWidth: z.major ? 3 : (isIns ? 2 : 1),
+              lineStyle: z.major ? 0 /* solid */ : 2 /* dashed */,
               axisLabelVisible: true,
               title: `${isIns ? '◈' : isRes ? 'R' : 'S'}×${z.touches}`,
             });
