@@ -82,7 +82,7 @@
             position: fixed;
             inset: 0;
             pointer-events: none;
-            z-index: 0;
+            z-index: -1;
             background-image:
               linear-gradient(rgba(148,163,184,0.025) 1px, transparent 1px),
               linear-gradient(90deg, rgba(148,163,184,0.025) 1px, transparent 1px);
@@ -447,12 +447,10 @@
         .content {
             padding: 30px 36px 60px;
             flex: 1;
-            position: relative;
-            z-index: 1;
-            /* contentIn animation УДАЛЕНА (2026-07-02): на тяжёлых страницах
-               (журнал 3000+ строк) main thread блокируется JS-рендером и
-               CSS-анимация замерзала на opacity:0 → страница и модалка
-               графика оставались затемнёнными/невидимыми. */
+            /* position:relative + z-index:1 УДАЛЕНЫ (2026-07-02): создавали
+               stacking context который запирал fixed-модалки (z-200) ПОД
+               topbar (z-50) — шапка модалки графика скрывалась под верхними
+               панелями. Грид body::before теперь на z-index:-1. */
         }
 
         /* ── Panels ── */
