@@ -38,35 +38,13 @@ def _age_minutes(dt) -> int | None:
 
 
 def check_telethon() -> dict:
-    """Подключён ли Telethon userbot."""
-    try:
-        from userbot import _tg_client, _last_setup_error, _last_setup_at
-        connected = _tg_client and _tg_client.is_connected()
-        if connected:
-            age = _age_minutes(_last_setup_at)
-            return {
-                "name": "Telethon (userbot)",
-                "status": "ok",
-                "message": f"Подключён (setup {age}мин назад)" if age is not None else "Подключён",
-                "details": {"last_setup_min": age},
-            }
-        err = (_last_setup_error or "")[:120]
-        if "two different IP" in err or "authorization key" in err:
-            return {
-                "name": "Telethon (userbot)",
-                "status": "error",
-                "message": f"Сессия заблокирована Telegram'ом — нужен re-login через UI banner",
-                "details": {"error": err},
-            }
-        return {
-            "name": "Telethon (userbot)",
-            "status": "error",
-            "message": f"Не подключён: {err[:80] if err else 'unknown'}",
-            "details": {"error": err},
-        }
-    except Exception as e:
-        return {"name": "Telethon (userbot)", "status": "error",
-                "message": f"check failed: {e}"}
+    """Userbot удалён (2026-07-01) — CV/Tradium ingestion отключён."""
+    return {
+        "name": "Telethon (userbot)",
+        "status": "ok",
+        "message": "Отключён — CV/Tradium подписки удалены (не используется)",
+        "details": {"disabled": True},
+    }
 
 
 def check_signals_freshness() -> list[dict]:
@@ -79,48 +57,7 @@ def check_signals_freshness() -> list[dict]:
                  "message": f"db import: {e}"}]
 
     results = []
-    # Cryptovizor
-    try:
-        last = _signals().find_one({"source": "cryptovizor"},
-                                    sort=[("received_at", DESCENDING)])
-        if last:
-            age = _age_minutes(last.get("received_at"))
-            if age is None:
-                status, msg = "warn", "received_at не парсится"
-            elif age > 240:  # 4 часа
-                status = "error"
-                msg = f"Последний CV сигнал {age}мин назад — userbot не получает или группа молчит"
-            elif age > 60:
-                status = "warn"
-                msg = f"Последний CV сигнал {age}мин назад — необычно долго"
-            else:
-                status = "ok"
-                msg = f"Последний CV: {age}мин назад"
-            results.append({"name": "Cryptovizor приём", "status": status,
-                            "message": msg, "details": {"age_min": age}})
-    except Exception as e:
-        results.append({"name": "Cryptovizor приём", "status": "error",
-                        "message": f"query: {e}"})
-
-    # Tradium
-    try:
-        last = _signals().find_one({"source": "tradium"},
-                                    sort=[("received_at", DESCENDING)])
-        if last:
-            age = _age_minutes(last.get("received_at"))
-            if age is None:
-                status, msg = "warn", "received_at не парсится"
-            elif age > 720:  # 12 часов (Tradium редкий)
-                status = "warn"
-                msg = f"Tradium {age}мин назад — необычно долго (forum может молчать)"
-            else:
-                status = "ok"
-                msg = f"Последний Tradium: {age}мин назад"
-            results.append({"name": "Tradium приём", "status": status,
-                            "message": msg, "details": {"age_min": age}})
-    except Exception as e:
-        results.append({"name": "Tradium приём", "status": "error",
-                        "message": f"query: {e}"})
+    # CV + Tradium freshness удалены (2026-07-01)
 
     # Supertrend
     try:

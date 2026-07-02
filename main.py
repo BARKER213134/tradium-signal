@@ -6,7 +6,7 @@ import os
 import uvicorn
 
 from database import init_db
-from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT2_BOT_TOKEN, BOT4_BOT_TOKEN
+from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT4_BOT_TOKEN
 
 
 def _bootstrap_session():

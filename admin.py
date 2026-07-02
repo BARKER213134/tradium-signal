@@ -590,22 +590,7 @@ def _health_sync() -> dict:
                 status["checks"][f"{name}_last_age_min"] = int(age_min)
                 if age_min > 240:
                     status["checks"][f"{name}_warning"] = "stale (>4h no new data)"
-        # Per-source breakdown: tradium / cryptovizor отдельно
-        for src in ("tradium", "cryptovizor"):
-            last_src = _signals().find_one({"source": src},
-                                            sort=[("received_at", DESCENDING)])
-            if last_src and last_src.get("received_at"):
-                age_min = (now - last_src["received_at"]).total_seconds() / 60
-                status["checks"][f"{src}_last_age_min"] = int(age_min)
-            else:
-                status["checks"][f"{src}_last_age_min"] = None
-        # Counts last 24h
-        from datetime import timedelta
-        since_24h = now - timedelta(hours=24)
-        for src in ("tradium", "cryptovizor"):
-            cnt = _signals().count_documents({"source": src,
-                                                "received_at": {"$gte": since_24h}})
-            status["checks"][f"{src}_count_24h"] = cnt
+        # tradium/cryptovizor per-source breakdown удалён (2026-07-01)
     except Exception as e:
         status["checks"]["activity"] = f"fail: {str(e)[:80]}"
     return status
@@ -1191,184 +1176,6 @@ async def api_supertrend_signals(tier: str = "", pair: str = "",
     return await supertrend_signals_cache.get_or_compute(cache_key, _compute)
 
 
-def _cv_flip_backfill_sync(hours: int = 48) -> dict:
-    """Одноразовый backfill cv_flip_signals за последние N часов.
-
-    Для каждого CV signal (source=cryptovizor, любой):
-      1. Upsert WAITING-дубль (если ещё нет), cv_triggered_at = received_at
-         — т.е. следим за любым сообщением из CV-бота, не ждём pattern_triggered.
-      2. Грузит 30m свечи пары и ищет flip ST(7, 2.5) в сторону CV
-         (MIN_BARS_UNDER_ST=1, timeout 24ч от received_at) — тот же
-         алгоритм что в cv_flip_watcher.
-      3. Финализирует state: FLIPPED / TIMEOUT / INVALIDATED / WAITING.
-    """
-    from database import _signals, _cv_flip_signals, utcnow
-    from exchange import get_klines_any
-    from backtest_supertrend import compute_st_series
-    from datetime import timedelta
-    import datetime as _dt
-
-    hours = max(1, min(hours, 168))
-    ST_PERIOD, ST_MULT = 7, 2.5
-    MIN_BARS_UNDER_ST = 1
-    TIMEOUT_H = 24
-    since = utcnow() - timedelta(hours=hours)
-    now = utcnow()
-
-    cv_col = _signals()
-    dup_col = _cv_flip_signals()
-
-    cv_list = list(cv_col.find({
-        "source": "cryptovizor",
-        "received_at": {"$gte": since},
-    }, {
-        "_id": 1, "pair": 1, "direction": 1, "pattern_name": 1,
-        "received_at": 1,
-    }).sort("received_at", 1))
-
-    created = updated = skipped = 0
-    counters = {"WAITING": 0, "FLIPPED": 0, "TIMEOUT": 0, "INVALIDATED": 0}
-    candle_cache: dict = {}
-
-    def _fetch(pair: str):
-        if pair in candle_cache:
-            return candle_cache[pair]
-        try:
-            c = get_klines_any(pair, "30m", 500) or []
-        except Exception:
-            c = []
-        candle_cache[pair] = c
-        return c
-
-    for cv in cv_list:
-        sid = str(cv["_id"])
-        direction = (cv.get("direction") or "").upper()
-        pair = cv.get("pair") or ""
-        cv_at = cv.get("received_at")
-        if direction not in ("LONG", "SHORT") or not pair or cv_at is None:
-            skipped += 1
-            continue
-        want_trend = 1 if direction == "LONG" else -1
-        opp_trend = -want_trend
-
-        existing = dup_col.find_one({"cv_signal_id": sid})
-        if not existing:
-            dup_col.insert_one({
-                "cv_signal_id": sid, "pair": pair, "direction": direction,
-                "cv_triggered_at": cv_at,
-                "cv_pattern_name": cv.get("pattern_name") or "",
-                "state": "WAITING", "flip_at": None, "flip_price": None,
-                "bars_under_st": 0, "st_tf": "30m",
-                "st_params": {"period": ST_PERIOD, "mult": ST_MULT},
-                "timeout_h": TIMEOUT_H,
-                "created_at": now, "updated_at": now,
-                "source": "cv_flip",
-            })
-            created += 1
-            existing = dup_col.find_one({"cv_signal_id": sid})
-        doc_id = existing["_id"]
-
-        if existing.get("state") in ("FLIPPED", "TIMEOUT", "INVALIDATED"):
-            counters[existing["state"]] += 1
-            continue
-
-        newer = cv_col.find_one({
-            "source": "cryptovizor",
-            "pair": pair, "received_at": {"$gt": cv_at},
-        }, {"_id": 1})
-        if newer:
-            dup_col.update_one({"_id": doc_id},
-                               {"$set": {"state": "INVALIDATED", "updated_at": now}})
-            counters["INVALIDATED"] += 1
-            updated += 1
-            continue
-
-        candles = _fetch(pair)
-        if not candles or len(candles) < ST_PERIOD + 5:
-            counters["WAITING"] += 1
-            continue
-        closed = candles[:-1]
-        try:
-            st_series = compute_st_series(closed, ST_PERIOD, ST_MULT)
-        except Exception:
-            counters["WAITING"] += 1
-            continue
-
-        cv_ms = int((cv_at if cv_at.tzinfo else cv_at.replace(tzinfo=_dt.timezone.utc))
-                    .timestamp() * 1000)
-        timeout_ms = cv_ms + TIMEOUT_H * 3600 * 1000
-        first_idx = None
-        for i, c in enumerate(closed):
-            if c["t"] >= cv_ms:
-                first_idx = i
-                break
-        if first_idx is None:
-            counters["WAITING"] += 1
-            continue
-
-        flip_idx = None
-        for i in range(max(first_idx + 1, 1), len(st_series)):
-            if closed[i]["t"] > timeout_ms:
-                break
-            curr = st_series[i].get("trend")
-            prev = st_series[i - 1].get("trend")
-            if curr == want_trend and prev == opp_trend:
-                bars_before = sum(
-                    1 for j in range(first_idx, i)
-                    if st_series[j].get("trend") == opp_trend
-                )
-                if bars_before >= MIN_BARS_UNDER_ST:
-                    flip_idx = i
-                    break
-
-        if flip_idx is not None:
-            flip_bar = closed[flip_idx]
-            flip_price = float(flip_bar["c"])
-            flip_at = _dt.datetime.utcfromtimestamp(
-                (int(flip_bar["t"]) + 30 * 60 * 1000) / 1000.0
-            )
-            st_val = float(st_series[flip_idx].get("st") or 0.0)
-            if st_val <= 0 or (direction == "LONG" and st_val >= flip_price) \
-                    or (direction == "SHORT" and st_val <= flip_price):
-                st_val = flip_price * (0.99 if direction == "LONG" else 1.01)
-            sign = 1 if direction == "LONG" else -1
-            risk = abs(flip_price - st_val)
-            entry = round(flip_price, 8); sl = round(st_val, 8)
-            tp1 = round(flip_price + sign * 1 * risk, 8)
-            tp2 = round(flip_price + sign * 2 * risk, 8)
-            tp3 = round(flip_price + sign * 3 * risk, 8)
-            risk_pct = (risk / flip_price) * 100.0 if flip_price else 0.0
-            dup_col.update_one({"_id": doc_id}, {"$set": {
-                "state": "FLIPPED", "flip_at": flip_at, "flip_price": flip_price,
-                "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3,
-                "st_value_at_flip": st_val,
-                "risk_pct": round(risk_pct, 3),
-                "updated_at": now,
-            }})
-            counters["FLIPPED"] += 1
-            updated += 1
-        else:
-            age_h = (now - cv_at).total_seconds() / 3600.0
-            if age_h > TIMEOUT_H:
-                dup_col.update_one({"_id": doc_id},
-                                   {"$set": {"state": "TIMEOUT", "updated_at": now}})
-                counters["TIMEOUT"] += 1
-                updated += 1
-            else:
-                bars_before = sum(
-                    1 for j in range(first_idx, len(st_series))
-                    if st_series[j].get("trend") == opp_trend
-                )
-                dup_col.update_one({"_id": doc_id}, {"$set": {
-                    "bars_under_st": bars_before, "updated_at": now,
-                }})
-                counters["WAITING"] += 1
-
-    return {
-        "ok": True, "hours": hours, "cv_total": len(cv_list),
-        "created": created, "updated": updated, "skipped": skipped,
-        "states": counters,
-    }
 
 
 @app.get("/api/new-strategies")
@@ -3104,23 +2911,7 @@ async def api_paper_ai_test(payload: dict | None = None):
     from datetime import timedelta
     sig = payload or {}
     if not sig.get("symbol"):
-        # Берём последний CV с pattern
-        doc = _signals().find_one(
-            {"source": "cryptovizor", "pattern_triggered": True},
-            sort=[("pattern_triggered_at", -1)],
-        )
-        if not doc:
-            return {"ok": False, "error": "no signal to test with"}
-        sig = {
-            "symbol": (doc.get("pair") or "").replace("/", "").upper(),
-            "pair": doc.get("pair"),
-            "direction": doc.get("direction"),
-            "entry": doc.get("pattern_price") or doc.get("entry"),
-            "source": "cryptovizor",
-            "score": doc.get("ai_score"),
-            "pattern": doc.get("pattern_name"),
-            "is_top_pick": bool(doc.get("is_top_pick")),
-        }
+        return {"ok": False, "error": "payload required (CV fallback удалён 2026-07-01)"}
     try:
         decision = await pt.ai_decide(sig)
         # Плюс состояние
@@ -3238,7 +3029,6 @@ async def api_bots_status():
     import watcher as _w
     bots = {
         "bot (tradium)": bool(getattr(_w, "_bot", None)),
-        "bot2 (cryptovizor)": bool(getattr(_w, "_bot2", None)),
         "bot4 (ai)": bool(getattr(_w, "_bot4", None)),
         "bot5 (confluence)": bool(getattr(_w, "_bot5", None)),
         "bot7 (cluster)": bool(getattr(_w, "_bot7", None)),
@@ -3246,12 +3036,11 @@ async def api_bots_status():
         "bot10 (supertrend)": bool(getattr(_w, "_bot10", None)),
     }
     # Tokens present in env
-    from config import (BOT_TOKEN, BOT2_BOT_TOKEN, BOT4_BOT_TOKEN,
+    from config import (BOT_TOKEN, BOT4_BOT_TOKEN,
                         BOT5_BOT_TOKEN, BOT7_BOT_TOKEN, BOT9_BOT_TOKEN,
                         BOT10_BOT_TOKEN)
     tokens = {
         "BOT_TOKEN":        bool(BOT_TOKEN),
-        "BOT2_BOT_TOKEN":   bool(BOT2_BOT_TOKEN),
         "BOT4_BOT_TOKEN":   bool(BOT4_BOT_TOKEN),
         "BOT5_BOT_TOKEN":   bool(BOT5_BOT_TOKEN),
         "BOT7_BOT_TOKEN":   bool(BOT7_BOT_TOKEN),
@@ -3269,10 +3058,6 @@ async def api_bots_status():
         return _confluence().count_documents({"detected_at": {"$gte": since_6h}, "score": {"$gte": 5}, "st_passed": True})
     def _cnt_anom():
         return _anomalies().count_documents({"detected_at": {"$gte": since_24h}})
-    def _cnt_trad():
-        return _signals().count_documents({"source": "tradium", "received_at": {"$gte": since_24h}})
-    def _cnt_cv():
-        return _signals().count_documents({"source": "cryptovizor", "pattern_triggered": True, "pattern_triggered_at": {"$gte": since_24h}})
     def _cnt_cluster():
         return _clusters().count_documents({"trigger_at": {"$gte": since_24h}})
     def _cnt_st():
@@ -3282,13 +3067,11 @@ async def api_bots_status():
             return 0
 
     (conf_all, conf_alertable_24h, conf_alertable_6h, anomaly_24h,
-     tradium_24h, cv_24h, cluster_24h, st_24h) = await asyncio.gather(
+     cluster_24h, st_24h) = await asyncio.gather(
         asyncio.to_thread(_cnt_conf_all),
         asyncio.to_thread(_cnt_conf_alert_24h),
         asyncio.to_thread(_cnt_conf_alert_6h),
         asyncio.to_thread(_cnt_anom),
-        asyncio.to_thread(_cnt_trad),
-        asyncio.to_thread(_cnt_cv),
         asyncio.to_thread(_cnt_cluster),
         asyncio.to_thread(_cnt_st),
     )
@@ -3300,8 +3083,6 @@ async def api_bots_status():
             "confluence_alertable_score>=5_st_passed": conf_alertable_24h,
             "confluence_alertable_6h": conf_alertable_6h,
             "anomaly": anomaly_24h,
-            "tradium": tradium_24h,
-            "cryptovizor_pattern": cv_24h,
             "cluster": cluster_24h,
             "supertrend": st_24h,
         },
@@ -3352,154 +3133,6 @@ async def api_key_levels_coverage(days: int = 14):
         "orphan_count": len(orphan),
         "orphan_sample": orphan[:30],
     }
-
-
-@app.post("/api/debug-fetch-chart")
-async def api_debug_fetch_chart(payload: dict):
-    """Синхронно обрабатывает ОДИН signal: ищет чарт, скачивает, прогоняет AI, возвращает детальный лог."""
-    import os
-    from datetime import datetime, timezone
-    from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
-    log = []
-    def L(msg): log.append(str(msg))
-    try:
-        sig_id = int(payload.get("sig_id") or 0)
-        if not sig_id:
-            return {"ok": False, "error": "sig_id required"}
-        from database import _signals, save_chart
-        from ai_analyzer import analyze_chart
-        from config import SOURCE_GROUP_ID, TRADIUM_SETUP_TOPIC_ID, CHARTS_DIR
-        from userbot import _tg_client
-        if not _tg_client or not _tg_client.is_connected():
-            return {"ok": False, "error": "Telethon not connected"}
-        s = _signals().find_one({"id": sig_id})
-        if not s:
-            return {"ok": False, "error": f"signal id={sig_id} not found"}
-        msg_id = s.get("message_id")
-        pair = s.get("pair")
-        L(f"signal: id={sig_id} pair={pair} msg_id={msg_id}")
-        if not msg_id:
-            return {"ok": False, "error": "no message_id", "log": log}
-
-        chart_msg = None
-        for cand in range(msg_id + 1, msg_id + 11):
-            try:
-                m = await _tg_client.get_messages(SOURCE_GROUP_ID, ids=cand)
-            except Exception as e:
-                L(f"cand={cand} get_messages ERROR: {e}")
-                continue
-            if m is None:
-                L(f"cand={cand} None")
-                continue
-            top = None
-            if m.reply_to:
-                top = getattr(m.reply_to, "reply_to_top_id", None) or m.reply_to.reply_to_msg_id
-            is_photo = isinstance(m.media, MessageMediaPhoto)
-            is_doc_image = (
-                isinstance(m.media, MessageMediaDocument)
-                and m.media.document.mime_type
-                and m.media.document.mime_type.startswith("image/")
-            ) if m.media else False
-            L(f"cand={cand} topic={top} media={'photo' if is_photo else ('doc' if is_doc_image else 'none')}")
-            if top != TRADIUM_SETUP_TOPIC_ID:
-                continue
-            if is_photo or is_doc_image:
-                chart_msg = m
-                L(f"  → SELECTED")
-                break
-        if not chart_msg:
-            return {"ok": False, "error": "no chart found", "log": log}
-
-        os.makedirs(CHARTS_DIR, exist_ok=True)
-        chart_filename = f"{sig_id}_{chart_msg.id}.jpg"
-        chart_path = os.path.join(CHARTS_DIR, chart_filename)
-        try:
-            await _tg_client.download_media(chart_msg, file=chart_path)
-            L(f"downloaded: {chart_path} size={os.path.getsize(chart_path)}")
-        except Exception as e:
-            return {"ok": False, "error": f"download failed: {e}", "log": log}
-
-        try:
-            with open(chart_path, "rb") as f:
-                save_chart(sig_id, f.read(), filename=chart_filename)
-            L("saved to GridFS")
-        except Exception as e:
-            L(f"GridFS warn: {e}")
-
-        try:
-            chart_data = await analyze_chart(chart_path)
-            L(f"AI result: {chart_data}")
-        except Exception as e:
-            return {"ok": False, "error": f"AI failed: {e}", "log": log}
-
-        def _tof(v):
-            try: return float(v) if v is not None else None
-            except: return None
-
-        updates = {
-            "has_chart": True,
-            "chart_message_id": chart_msg.id,
-            "chart_path": chart_path,
-            "chart_received_at": datetime.now(timezone.utc).replace(tzinfo=None),
-        }
-        if not chart_data.get("_error"):
-            updates.update({
-                "chart_analyzed": True,
-                "dca1": _tof(chart_data.get("dca1")),
-                "dca2": _tof(chart_data.get("dca2")),
-                "dca3": _tof(chart_data.get("dca3")),
-                "dca4": _tof(chart_data.get("dca4")),
-                "chart_notes": chart_data.get("notes") or chart_data.get("pattern", ""),
-            })
-        _signals().update_one({"_id": s["_id"]}, {"$set": updates})
-        L(f"DB updated with dca1-4: {updates.get('dca1')}, {updates.get('dca2')}, {updates.get('dca3')}, {updates.get('dca4')}")
-        return {"ok": True, "updates": updates, "log": log}
-    except Exception as e:
-        import traceback
-        return {"ok": False, "error": str(e), "traceback": traceback.format_exc(), "log": log}
-
-
-@app.get("/api/inspect-msg-neighbors")
-async def api_inspect_msg_neighbors(msg_id: int, count: int = 5):
-    """Показывает msg_id+1..msg_id+count в Tradium группе чтобы понять куда делось фото."""
-    try:
-        from userbot import _tg_client
-        from config import SOURCE_GROUP_ID, TRADIUM_SETUP_TOPIC_ID
-        from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    if _tg_client is None or not _tg_client.is_connected():
-        return {"ok": False, "error": "not connected"}
-    out = []
-    for cand in range(msg_id, msg_id + count + 1):
-        try:
-            m = await _tg_client.get_messages(SOURCE_GROUP_ID, ids=cand)
-        except Exception as e:
-            out.append({"id": cand, "error": str(e)})
-            continue
-        if m is None:
-            out.append({"id": cand, "found": False})
-            continue
-        top = None
-        if m.reply_to:
-            top = getattr(m.reply_to, "reply_to_top_id", None) or m.reply_to.reply_to_msg_id
-        media_type = None
-        if isinstance(m.media, MessageMediaPhoto):
-            media_type = "photo"
-        elif isinstance(m.media, MessageMediaDocument):
-            media_type = f"doc:{getattr(m.media.document, 'mime_type', '?')}"
-        elif m.media:
-            media_type = type(m.media).__name__
-        out.append({
-            "id": m.id,
-            "date": m.date.isoformat() if m.date else None,
-            "topic_id": top,
-            "is_setup_topic": top == TRADIUM_SETUP_TOPIC_ID,
-            "text_preview": (m.raw_text or "")[:100],
-            "media_type": media_type,
-            "grouped_id": m.grouped_id,
-        })
-    return {"ok": True, "messages": out}
 
 
 @app.get("/api/clusters")
@@ -3628,13 +3261,7 @@ async def _run_backfill_clusters(hours: int):
         from database import _signals, _anomalies, _confluence
         since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
         all_sigs = []
-        for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True,
-                                   "pattern_triggered_at": {"$gte": since},
-                                   "direction": {"$ne": None}, "pair": {"$ne": None}}):
-            all_sigs.append({"pair": s["pair"], "direction": s["direction"], "at": s["pattern_triggered_at"]})
-        for s in _signals().find({"source": "tradium", "received_at": {"$gte": since},
-                                   "direction": {"$ne": None}, "pair": {"$ne": None}}):
-            all_sigs.append({"pair": s["pair"], "direction": s["direction"], "at": s["received_at"]})
+        # CV + Tradium источники удалены (2026-07-01)
         for a in _anomalies().find({"detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]}}):
             pair = a.get("pair") or a.get("symbol", "").replace("USDT", "/USDT")
             all_sigs.append({"pair": pair, "direction": a["direction"], "at": a["detected_at"]})
@@ -4241,59 +3868,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
     # API для аномалий
     pass  # endpoints ниже
 
-    if bot == "cryptovizor":
-        # Default вкладка = 'active' (Сигнал с паттернами) — самое полезное.
-        # Раньше было 'watching' что показывало просто watchlist без сигналов.
-        cv_tab = tab if tab in ("watching", "active", "ai_signal", "backtest", "ai_settings") else "active"
-        if cv_tab == "watching":
-            query = query.filter(Signal.status == "СЛЕЖУ")
-        elif cv_tab == "active":
-            query = query.filter(Signal.status.in_(["ПАТТЕРН", "AI_SIGNAL"]))
-        elif cv_tab == "ai_signal":
-            from database import _signals as _sc
-            ai_ids = [d["id"] for d in _sc().find(
-                {"source": "cryptovizor", "filter_reason": {"$regex": "^AI_SIGNAL"}},
-                {"id": 1}
-            )]
-            if ai_ids:
-                query = query.filter(Signal.id.in_(ai_ids))
-            else:
-                query = query.filter(Signal.status == "__none__")
-        # Один агрегатный запрос вместо 4 отдельных
-        from database import _signals as _sc2
-        _agg = list(_sc2().aggregate([
-            {"$match": {"source": "cryptovizor"}},
-            {"$group": {"_id": "$status", "cnt": {"$sum": 1}}},
-        ]))
-        _counts = {d["_id"]: d["cnt"] for d in _agg}
-        cv_watching = _counts.get("СЛЕЖУ", 0)
-        cv_active = _counts.get("ПАТТЕРН", 0)
-        cv_ai = _sc2().count_documents({"source": "cryptovizor", "filter_reason": {"$regex": "^AI_SIGNAL"}})
-        cv_stats = {"watching": cv_watching, "active": cv_active, "ai_signal": cv_ai}
-        if cv_tab in ("backtest", "ai_settings"):
-            # Backtest / AI Settings — JS загружает данные
-            return templates.TemplateResponse(request, "signals.html", {
-                "signals": [],
-                "total": 0,
-                "bot": bot, "bots": BOTS,
-                "cv_tab": cv_tab, "cv_stats": cv_stats,
-                "tab": cv_tab, "stats": {}, "summary": None,
-                "pages": 1, "page": 1, "pairs": [],
-                "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
-                "eth_ctx": _sync_eth_ctx(cache_only=True), "st_eth": _sync_kc_eth(cache_only=True),
-            })
-        sort_field = Signal.pattern_triggered_at if cv_tab in ("active", "ai_signal") else Signal.received_at
-        signals = query.order_by(desc(sort_field)).limit(200).all()
-        return templates.TemplateResponse(request, "signals.html", {
-            "signals": signals,
-            "total": len(signals),
-            "bot": bot, "bots": BOTS,
-            "cv_tab": cv_tab, "cv_stats": cv_stats,
-            "tab": cv_tab, "stats": {}, "summary": None,
-            "pages": 1, "page": 1, "pairs": [],
-            "filter_pair": "", "filter_direction": "", "filter_has_chart": "",
-            "eth_ctx": _sync_eth_ctx(cache_only=True), "st_eth": _sync_kc_eth(cache_only=True),
-        })
+    # cryptovizor page удалена вместе с CV ingestion (2026-07-01)
 
     # ── Фильтр по вкладке ──
     if tab == "tradium":
@@ -9417,64 +8992,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
 
     items = []
 
-    # Tradium
-    for s in _signals().find({"source": "tradium", **pair_or}, {
-        "pair":1, "direction":1, "entry":1, "tp1":1, "sl":1, "trend":1, "comment":1,
-        "ai_score":1, "st_passed":1, "pump_score":1, "pattern_triggered":1,
-        "is_top_pick":1, "top_pick_confirmations_count":1,
-        "received_at":1, "pattern_triggered_at":1,
-    }).sort("received_at", -1):
-        pat_trig = bool(s.get("pattern_triggered"))
-        at_dt = s.get("pattern_triggered_at") if pat_trig and s.get("pattern_triggered_at") else s.get("received_at")
-        if not at_dt or at_dt < since:
-            continue
-        items.append({
-            "source": "tradium",
-            "symbol": (s.get("pair") or "").replace("/", "").upper(),
-            "pair": s.get("pair", ""),
-            "direction": s.get("direction", ""),
-            "entry": s.get("entry"),
-            "tp1": s.get("tp1"),
-            "sl": s.get("sl"),
-            "pattern": s.get("trend") or s.get("comment") or "",
-            "score": s.get("ai_score"),
-            "st_passed": s.get("st_passed"),
-            "pump_score": s.get("pump_score", 0),
-            "pattern_triggered": pat_trig,
-            "is_top_pick": bool(s.get("is_top_pick")),
-            "top_pick_confirmations_count": s.get("top_pick_confirmations_count", 0),
-            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else None,
-            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
-        })
-
-    # Cryptovizor
-    for s in _signals().find({
-        "source": "cryptovizor", "pattern_triggered": True,
-        "pattern_triggered_at": {"$gte": since}, **pair_or,
-    }, {
-        "pair":1, "direction":1, "entry":1, "pattern_price":1, "dca1":1, "dca2":1,
-        "pattern_name":1, "ai_score":1, "st_passed":1, "pump_score":1,
-        "is_top_pick":1, "top_pick_confirmations_count":1,
-        "received_at":1, "pattern_triggered_at":1,
-    }).sort("pattern_triggered_at", -1):
-        at_dt = s.get("pattern_triggered_at") or s.get("received_at")
-        items.append({
-            "source": "cryptovizor",
-            "symbol": (s.get("pair") or "").replace("/", "").upper(),
-            "pair": s.get("pair", ""),
-            "direction": s.get("direction", ""),
-            "entry": s.get("pattern_price") or s.get("entry"),
-            "tp1": s.get("dca2"),
-            "sl": s.get("dca1"),
-            "pattern": s.get("pattern_name", ""),
-            "score": s.get("ai_score"),
-            "st_passed": s.get("st_passed"),
-            "pump_score": s.get("pump_score", 0),
-            "is_top_pick": bool(s.get("is_top_pick")),
-            "top_pick_confirmations_count": s.get("top_pick_confirmations_count", 0),
-            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else None,
-            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
-        })
+    # Tradium + Cryptovizor journal блоки удалены (2026-07-01)
 
     # Anomalies
     for a in _anomalies().find({"detected_at": {"$gte": since}, **pair_or}, {
@@ -9746,65 +9264,7 @@ def _compute_journal_sync(_fast_only: bool = False):
 
     items = []
 
-    # Tradium signals (все — их мало, ~33)
-    # Если pattern_triggered (DCA4 hit) — используем pattern_triggered_at как время активации.
-    for s in _signals().find({"source": "tradium"}, {
-        "pair":1, "direction":1, "entry":1, "tp1":1, "sl":1, "trend":1, "comment":1,
-        "ai_score":1, "st_passed":1, "pump_score":1, "pattern_triggered":1,
-        "is_top_pick":1, "top_pick_confirmations_count":1,
-        "received_at":1, "pattern_triggered_at":1,
-    }).sort("received_at", -1).limit(500):
-        pat_trig = bool(s.get("pattern_triggered"))
-        at_dt = s.get("pattern_triggered_at") if pat_trig and s.get("pattern_triggered_at") else s.get("received_at")
-        items.append({
-            "source": "tradium",
-            "symbol": (s.get("pair") or "").replace("/", "").upper(),
-            "pair": s.get("pair", ""),
-            "direction": s.get("direction", ""),
-            "entry": s.get("entry"),
-            "tp1": s.get("tp1"),
-            "sl": s.get("sl"),
-            "pattern": s.get("trend") or s.get("comment") or "",
-            "score": s.get("ai_score"),
-            "st_passed": s.get("st_passed"),
-            "pump_score": s.get("pump_score", 0),
-            "pattern_triggered": pat_trig,
-            "is_top_pick": bool(s.get("is_top_pick")),
-            "top_pick_confirmations_count": s.get("top_pick_confirmations_count", 0),
-            "received_at": s["received_at"].isoformat() if hasattr(s.get("received_at"), "isoformat") else None,
-            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
-            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
-        })
-
-    # Cryptovizor signals (только с паттерном за последние 14 дней, cap 800)
-    for s in _signals().find({
-        "source": "cryptovizor", "pattern_triggered": True,
-        "pattern_triggered_at": {"$gte": since_14d},
-    }, {
-        "pair":1, "direction":1, "entry":1, "pattern_price":1, "dca1":1, "dca2":1,
-        "pattern_name":1, "ai_score":1, "st_passed":1, "pump_score":1,
-        "is_top_pick":1, "top_pick_confirmations_count":1,
-        "received_at":1, "pattern_triggered_at":1,
-    }).sort("pattern_triggered_at", -1).limit(2500):
-        # Время = когда паттерн сработал (не когда монета добавлена)
-        at_dt = s.get("pattern_triggered_at") or s.get("received_at")
-        items.append({
-            "source": "cryptovizor",
-            "symbol": (s.get("pair") or "").replace("/", "").upper(),
-            "pair": s.get("pair", ""),
-            "direction": s.get("direction", ""),
-            "entry": s.get("pattern_price") or s.get("entry"),
-            "tp1": s.get("dca2"),  # R1
-            "sl": s.get("dca1"),   # S1
-            "pattern": s.get("pattern_name", ""),
-            "score": s.get("ai_score"),
-            "st_passed": s.get("st_passed"),
-            "pump_score": s.get("pump_score", 0),
-            "is_top_pick": bool(s.get("is_top_pick")),
-            "top_pick_confirmations_count": s.get("top_pick_confirmations_count", 0),
-            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
-            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
-        })
+    # Tradium + Cryptovizor journal блоки удалены (2026-07-01)
 
     # Anomalies (14 дней, cap 800)
     for a in _anomalies().find({"detected_at": {"$gte": since_14d}}, {
@@ -9998,57 +9458,7 @@ def _compute_journal_sync(_fast_only: bool = False):
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] supertrend fetch fail: {e}")
 
-    # ⏳ CV+ST Flip observation (source='cv_flip') — отдельная observation-ветка,
-    # не конкурирует с paper_trader (тот смотрит source='cryptovizor').
-    # Lifecycle icons: ⏳ WAITING / 💥 FLIPPED / ❌ TIMEOUT / 🚫 INVALIDATED.
-    try:
-        from database import _cv_flip_signals
-        for d in _cv_flip_signals().find(
-            {"cv_triggered_at": {"$gte": since_14d}}
-        ).sort("cv_triggered_at", -1).limit(4000):
-            state = d.get("state", "WAITING")
-            state_emoji = {"FLIPPED": "💥", "TIMEOUT": "❌",
-                           "INVALIDATED": "🚫"}.get(state, "⏳")
-            state_label = {"FLIPPED": "Flipped", "TIMEOUT": "Timeout",
-                           "INVALIDATED": "Invalidated",
-                           "WAITING": "Waiting"}.get(state, state)
-            cv_dt = d.get("cv_triggered_at")
-            flip_dt = d.get("flip_at")
-            # sort по flip_at если сработало, иначе по cv_triggered_at
-            sort_dt = flip_dt or cv_dt
-            if sort_dt and hasattr(sort_dt, "timetuple"):
-                at_ts = _cal.timegm(sort_dt.timetuple())
-                at_iso = sort_dt.isoformat() + "Z"
-            else:
-                at_ts = 0
-                at_iso = str(sort_dt or "")
-            flip_iso = flip_dt.isoformat() + "Z" if (flip_dt and hasattr(flip_dt, "timetuple")) else None
-            cv_iso = cv_dt.isoformat() + "Z" if (cv_dt and hasattr(cv_dt, "timetuple")) else None
-            pair = d.get("pair", "")
-            pair_norm = pair.replace("/", "").upper() if pair else ""
-            items.append({
-                "source": "cv_flip",
-                "symbol": pair_norm,
-                "pair": pair,
-                "direction": d.get("direction", ""),
-                "entry": d.get("entry") or d.get("flip_price"),
-                "tp1": d.get("tp1"),
-                "sl": d.get("sl"),
-                "pattern": f"{state_emoji} CV+ST Flip · {state_label}",
-                "score": None,
-                "st_passed": None,
-                "pump_score": 0,
-                "is_top_pick": state == "FLIPPED",
-                "cv_flip_state": state,
-                "cv_triggered_at": cv_iso,
-                "flip_at": flip_iso,
-                "bars_under_st": d.get("bars_under_st", 0),
-                "risk_pct": d.get("risk_pct"),
-                "at": at_iso,
-                "at_ts": at_ts,
-            })
-    except Exception as e:
-        logging.getLogger(__name__).warning(f"[journal] cv_flip fetch fail: {e}")
+    # cv_flip journal блок удалён вместе с CV ingestion (2026-07-01)
 
     # ✨ Verified Entries (авто-проверка Entry Checker — отправлено в @topmonetabot)
     try:
@@ -11864,7 +11274,7 @@ async def api_cluster_delta_backfill_cdn(days: int = 14):
             except Exception:
                 pass
         for col_name in ('new_strategy_signals', 'supertrend_signals',
-                         'cv_flip_signals'):
+                         ):
             try:
                 ts_field = ('flip_at' if col_name == 'supertrend_signals'
                             else 'created_at')
@@ -12226,214 +11636,6 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100,
     except Exception:
         pass
     return {"ok": True, "candles": data}
-
-
-@app.post("/api/save-coin-analysis")
-async def api_save_coin_analysis(payload: dict):
-    """Сохраняет анализ монеты в comment поле сигнала."""
-    from database import _signals
-    pair = payload.get("pair", "")
-    analysis = payload.get("analysis", "")
-    if not pair or not analysis:
-        return {"ok": False}
-    _signals().update_many(
-        {"source": "cryptovizor", "pair": pair, "comment": None},
-        {"$set": {"comment": analysis}},
-    )
-    return {"ok": True}
-
-
-@app.post("/api/backtest-ai")
-async def api_backtest_ai():
-    """Бектест только AI-отфильтрованных сигналов."""
-    from backtest import run_backtest_filtered
-    return await asyncio.to_thread(run_backtest_filtered, "cryptovizor", "AI_SIGNAL")
-
-
-@app.post("/api/signals/clear-by-pairs")
-async def api_clear_by_pairs(payload: dict):
-    """Удаляет сигналы по списку пар из бектеста + сохраняет summary."""
-    from database import _signals as _sc, _get_db, utcnow
-    pairs = payload.get("pairs", [])
-    filter_type = payload.get("filter", "pattern")  # "pattern" или "ai"
-
-    if not pairs:
-        return {"ok": True, "deleted": 0}
-
-    # Собираем данные для summary
-    query = {"source": "cryptovizor", "pair": {"$in": pairs}}
-    if filter_type == "ai":
-        query["filter_reason"] = {"$regex": "^AI_SIGNAL"}
-    else:
-        query["status"] = {"$in": ["ПАТТЕРН", "VOLUME"]}
-
-    signals = list(_sc().find(query, {"pair":1, "direction":1, "pattern_name":1, "entry":1, "pattern_price":1}))
-
-    if not signals:
-        return {"ok": True, "deleted": 0}
-
-    # Summary
-    coins = []
-    for s in signals:
-        entry = s.get("entry") or 0
-        current = s.get("pattern_price") or entry
-        pnl = ((current - entry) / entry * 100) if entry > 0 else 0
-        if s.get("direction") in ("SHORT", "SELL"):
-            pnl = -pnl
-        coins.append({
-            "pair": (s.get("pair") or "").replace("/USDT", ""),
-            "dir": s.get("direction", ""),
-            "pattern": s.get("pattern_name", ""),
-            "pnl": round(pnl, 2),
-        })
-
-    wins = sum(1 for c in coins if c["pnl"] > 0)
-    summary = {
-        "date": str(utcnow()),
-        "type": f"backtest_{filter_type}",
-        "count": len(coins),
-        "win_rate": round(wins / len(coins) * 100, 1) if coins else 0,
-        "total_pnl": round(sum(c["pnl"] for c in coins), 2),
-        "avg_pnl": round(sum(c["pnl"] for c in coins) / len(coins), 2) if coins else 0,
-        "coins": coins,
-    }
-    _get_db().backtest_history.insert_one(summary)
-
-    # Удаляем
-    result = _sc().delete_many(query)
-    broadcast_event("signal_deleted", {"count": result.deleted_count})
-    return {"ok": True, "deleted": result.deleted_count, "summary": summary}
-
-
-@app.post("/api/backtest")
-async def api_backtest():
-    from backtest import run_backtest
-    return await asyncio.to_thread(run_backtest, "cryptovizor")
-
-
-@app.post("/api/backtest/save")
-async def api_backtest_save(payload: dict):
-    """Сохраняет результат бектеста в MongoDB (включая все сигналы)."""
-    from database import _get_db, utcnow
-    payload["saved_at"] = str(utcnow())
-    _get_db().settings.update_one(
-        {"_id": "last_backtest"},
-        {"$set": payload},
-        upsert=True,
-    )
-    return {"ok": True}
-
-
-@app.get("/api/backtest/saved")
-async def api_backtest_saved():
-    """Загружает последний сохранённый бектест."""
-    from database import _get_db
-    doc = _get_db().settings.find_one({"_id": "last_backtest"})
-    if not doc:
-        return {}
-    doc.pop("_id", None)
-    return doc
-
-
-@app.post("/api/ai-criteria/generate")
-async def api_ai_criteria_generate():
-    """AI анализирует бектест и генерирует список критериев с рекомендациями."""
-    from backtest import run_backtest
-    bt = await asyncio.to_thread(run_backtest, "cryptovizor")
-    if bt.get("error"):
-        return {"ok": False, "error": bt["error"]}
-
-    criteria = []
-    # По паттернам
-    for name, v in bt.get("by_pattern", {}).items():
-        if v["count"] >= 2:
-            criteria.append({
-                "id": f"pattern:{name}",
-                "type": "pattern",
-                "label": name,
-                "count": v["count"],
-                "win_rate": v["win_rate"],
-                "avg_pnl": v["avg_pnl"],
-                "recommended": v["win_rate"] >= 55 and v["avg_pnl"] > 0,
-                "enabled": v["win_rate"] >= 55 and v["avg_pnl"] > 0,
-            })
-
-    # По направлению
-    for d, v in bt.get("by_direction", {}).items():
-        criteria.append({
-            "id": f"direction:{d}",
-            "type": "direction",
-            "label": d,
-            "count": v["count"],
-            "win_rate": v["win_rate"],
-            "avg_pnl": v["avg_pnl"],
-            "recommended": v["win_rate"] >= 50,
-            "enabled": v["win_rate"] >= 50,
-        })
-
-    # По часам (группируем в слоты)
-    for h, v in bt.get("by_hour", {}).items():
-        if v["count"] >= 2:
-            criteria.append({
-                "id": f"hour:{h}",
-                "type": "hour",
-                "label": f"{int(h):02d}:00 UTC",
-                "count": v["count"],
-                "win_rate": v["win_rate"],
-                "recommended": v["win_rate"] >= 55,
-                "enabled": v["win_rate"] >= 55,
-            })
-
-    # Общие пороги
-    criteria.append({
-        "id": "min_win_rate",
-        "type": "threshold",
-        "label": f"Min win rate (рекомендация: {max(50, int(bt['overall_win_rate'] - 5))}%)",
-        "value": max(50, int(bt["overall_win_rate"] - 5)),
-        "recommended": True,
-        "enabled": True,
-    })
-    criteria.append({
-        "id": "min_ai_score",
-        "type": "threshold",
-        "label": "Min AI visual score",
-        "value": 40,
-        "recommended": True,
-        "enabled": True,
-    })
-
-    return {
-        "ok": True,
-        "summary": {
-            "total": bt["with_result"],
-            "win_rate": bt["overall_win_rate"],
-            "avg_pnl": bt["overall_avg_pnl"],
-            "top_patterns": bt["top_patterns"],
-            "worst_patterns": bt["worst_patterns"],
-        },
-        "criteria": criteria,
-    }
-
-
-@app.post("/api/ai-criteria/save")
-async def api_ai_criteria_save(payload: dict):
-    """Сохраняет выбранные пользователем критерии."""
-    from database import _get_db, utcnow as _utcnow
-    criteria = payload.get("criteria", [])
-    _get_db().settings.update_one(
-        {"_id": "ai_criteria"},
-        {"$set": {"criteria": criteria, "updated_at": str(_utcnow())}},
-        upsert=True,
-    )
-    return {"ok": True, "saved": len(criteria)}
-
-
-@app.get("/api/ai-criteria")
-async def api_ai_criteria_get():
-    """Загружает сохранённые критерии."""
-    from database import _get_db
-    doc = _get_db().settings.find_one({"_id": "ai_criteria"})
-    return {"criteria": doc.get("criteria", []) if doc else []}
 
 
 @app.get("/api/signal/{signal_id}")

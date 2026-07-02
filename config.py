@@ -40,12 +40,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./signals.db")
 MONGO_URL = os.getenv("MONGO_URL", "")
 MONGO_DB = os.getenv("MONGO_DB", "tradium")
 
-# Второй бот — Cryptovizor
-BOT2_NAME = os.getenv("BOT2_NAME", "cryptovizor")
-BOT2_LABEL = os.getenv("BOT2_LABEL", "Cryptovizor")
-BOT2_BOT_TOKEN = os.getenv("BOT2_BOT_TOKEN", "")
-BOT2_SOURCE_GROUP = os.getenv("BOT2_SOURCE_GROUP", "")
-
+# BOT2 (Cryptovizor) удалён вместе с подпиской (2026-07-01)
 
 # Четвёртый бот — AI Signal (лучшие сигналы)
 BOT4_BOT_TOKEN = os.getenv("BOT4_BOT_TOKEN", "")
@@ -77,11 +72,7 @@ BOT10_BOT_TOKEN = os.getenv("BOT10_BOT_TOKEN", "")
 # по подтверждению. Токен задаётся в Railway когда готовы к live.
 BOT11_BOT_TOKEN = os.getenv("BOT11_BOT_TOKEN", "")
 
-# BOT12 — CV + SuperTrend 30m flip observation notifications.
-# Если BOT12_BOT_TOKEN не задан — watcher просто не шлёт в Telegram,
-# journal/графики работают. Chat_id по умолчанию = ADMIN_CHAT_ID
-# (алерты идут в общий админский чат как у остальных ботов);
-# CV_FLIP_CHAT_ID — опциональный override если хочешь отдельный чат.
+# BOT12 — использовался для CV flip, теперь транспорт для MOONSHOT stack-алертов.
 BOT12_BOT_TOKEN = os.getenv("BOT12_BOT_TOKEN", "")
 _cv_flip_chat = os.getenv("CV_FLIP_CHAT_ID", "").strip()
 CV_FLIP_CHAT_ID = (int(_cv_flip_chat) if _cv_flip_chat.lstrip("-").isdigit()

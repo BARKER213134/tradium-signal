@@ -144,12 +144,6 @@ async def _setup_verdict_loop():
                     {'detected_at': {'$gte': cutoff}}, {'pair': 1}
                 ).limit(300):
                     if s.get('pair'): unique_pairs.add(s['pair'])
-                # cv_flip
-                for s in db.cv_flip_signals.find(
-                    {'cv_triggered_at': {'$gte': cutoff}, 'state': 'FLIPPED'},
-                    {'pair': 1}
-                ).limit(300):
-                    if s.get('pair'): unique_pairs.add(s['pair'])
             except Exception as e:
                 logger.debug(f'[verdict-loop] collect pairs: {e}')
 
@@ -1131,7 +1125,6 @@ async def _check_once():
             # tick, блокировал event loop, /healthz timeout, графики
             # не грузились. Теперь tick проходит быстро, cryptovizor
             # работает фоном с собственной DB session.
-            ("ai_analysis", lambda: _fill_missing_ai_analysis(db)),
             ("paper_positions", lambda: _check_paper_positions()),
             ("cluster_outcomes", lambda: _check_cluster_outcomes()),
             ("fvg_scan", lambda: _check_forex_fvg_scan()),
@@ -1179,594 +1172,6 @@ async def _check_once():
         _confluence_bg_task = asyncio.create_task(_safe_confluence())
 
     # Cryptovizor bg task удалён вместе с CV ingestion (2026-07-01)
-
-async def _cv_alert_followup(signal: Signal, pattern: str, current_price: float,
-                              sym: str, msg_id: int | None):
-    """Background follow-up для CV алерта: paper open + rich edit message.
-    Запускается через asyncio.create_task — НЕ блокирует доставку Telegram.
-    Каждый sub-step с timeout — не накапливаем висящие задачи."""
-    # 1) Paper trader (открытие позиции) — bounded 20с
-    cv_payload = {
-        "symbol": sym, "direction": signal.direction, "entry": current_price,
-        "source": "cryptovizor", "pattern": pattern,
-        "score": getattr(signal, "ai_score", None),
-        "pump_vol": 0, "pump_oi": 0,
-    }
-    try:
-        await asyncio.wait_for(_paper_on_signal(cv_payload), timeout=20.0)
-    except asyncio.TimeoutError:
-        # Раньше тихо терялись — теперь юзер увидит явный rejection в UI.
-        logger.warning(f"[CV-ALERT-FU] paper timeout 20s #{signal.id}")
-        try:
-            import paper_trader as pt
-            pt._log_rejection_sync(cv_payload,
-                f'[TIMEOUT] cv-followup paper >20s #{signal.id}')
-        except Exception:
-            pass
-    except Exception as e:
-        logger.warning(f"[CV-ALERT-FU] paper fail #{signal.id}: {e}")
-        try:
-            import paper_trader as pt
-            pt._log_rejection_sync(cv_payload,
-                f'[CRASH] cv-followup exception — {type(e).__name__}: {str(e)[:200]}')
-        except Exception:
-            pass
-
-    # 2) Cluster check — bounded 10с
-    try:
-        await asyncio.wait_for(
-            _cluster_check_on_signal(signal.pair, signal.direction),
-            timeout=10.0,
-        )
-    except asyncio.TimeoutError:
-        logger.warning(f"[CV-ALERT-FU] cluster_check timeout 10s #{signal.id}")
-    except Exception as e:
-        logger.warning(f"[CV-ALERT-FU] cluster_check fail #{signal.id}: {e}")
-
-    # 3) Rich edit message — добавляем HIGH POTENTIAL/Vol/OI/Фильтры
-    #    в существующий текст через editMessageText. Если timeout — просто
-    #    оставляем минимальный текст, юзер всё равно видит сигнал.
-    if not msg_id:
-        return
-    try:
-        from config import BOT2_BOT_TOKEN, ADMIN_CHAT_ID
-        async def _safe(coro, t=5.0, d=None):
-            try: return await asyncio.wait_for(coro, timeout=t)
-            except Exception: return d
-
-        _stp, _std = await _safe(
-            asyncio.to_thread(_check_keltner_filter, signal.direction),
-            t=5.0, d=(True, {"direction": "NEUTRAL"}))
-        _pump = await _safe(_pump_check(sym), t=5.0,
-            d={"score": 0, "factors": [], "label": "", "volume_spike": 0,
-               "oi_change": 0, "funding": 0})
-        hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
-        _market = ""
-        try:
-            _market = _market_block(_pump, _stp, _std)
-        except Exception:
-            pass
-
-        is_long = signal.direction in ("LONG", "BUY")
-        dir_emoji = "🟢" if is_long else "🔴"
-        dir_label = "LONG" if is_long else "SHORT"
-        pair_short = (signal.pair or "—").replace("/USDT", "")
-        ai_line = ""
-        if getattr(signal, "ai_score", None) is not None:
-            sc = signal.ai_score
-            ea = "🟢" if sc >= 70 else "🟡" if sc >= 40 else "🔴"
-            v = signal.ai_verdict or ("STRONG" if sc >= 70 else "OK" if sc >= 40 else "SKIP")
-            ai_line = f"\n{ea} <b>AI:</b> {sc}/100 · {v}"
-        pnl_line = ""
-        if signal.entry and current_price:
-            raw = ((current_price - signal.entry) / signal.entry) * 100
-            pnl = -raw if not is_long else raw
-            pnl_line = f"\n📊 <b>PnL с сигнала:</b> {pnl:+.2f}%"
-
-        new_text = (
-            f"{hp}"
-            f"🚀 <b>CRYPTOVIZOR · ПАТТЕРН</b>\n\n"
-            f"<b>{pair_short}/USDT</b> · 1h · {dir_emoji} <b>{dir_label}</b>\n"
-            f"<code>{sym}</code>\n\n"
-            f"─── Сигнал ───\n"
-            f"🕯 Паттерн: <b>{pattern}</b>\n"
-            f"🎯 Entry: <code>{signal.entry}</code> → Сейчас: <code>{current_price}</code>"
-            f"{pnl_line}\n"
-            f"{ai_line}"
-            f"⚡ Тренд: {_fmt_trend(signal.trend)}\n"
-            f"{_market}"
-        )
-
-        import httpx
-        url = f"https://api.telegram.org/bot{BOT2_BOT_TOKEN}/editMessageText"
-        async with httpx.AsyncClient(timeout=10) as c:
-            await c.post(url, json={
-                "chat_id": ADMIN_CHAT_ID,
-                "message_id": msg_id,
-                "text": new_text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            })
-    except Exception as e:
-        logger.debug(f"[CV-ALERT-FU] edit fail #{signal.id}: {e}")
-
-async def _fill_missing_ai_analysis(db):
-    """Дозаполняет анализ для AI сигналов у которых comment пустой.
-    Каждый 30с тик main loop — sync find/update раньше блокировали event loop."""
-    from database import _signals as _sc
-
-    def _fetch_docs():
-        return list(_sc().find({
-            "source": "cryptovizor",
-            "filter_reason": {"$regex": "^AI_SIGNAL"},
-            "$or": [{"comment": None}, {"comment": ""}],
-        }).limit(2))
-    try:
-        docs = await asyncio.wait_for(asyncio.to_thread(_fetch_docs), timeout=10.0)
-    except (asyncio.TimeoutError, Exception):
-        return
-
-    for doc in docs:
-        sig_id = doc.get("id")
-        pair = doc.get("pair", "")
-        if not pair:
-            continue
-
-        prices = await get_prices_any([pair])
-        norm = pair.replace("/", "").upper()
-        current = prices.get(norm)
-
-        s1 = doc.get("dca1")
-        r1 = doc.get("dca2")
-
-        # Создаём фейковый signal-like объект
-        class _S:
-            pass
-        sig = _S()
-        for k, v in doc.items():
-            if k != "_id":
-                setattr(sig, k, v)
-
-        analysis = await _generate_ai_deep_analysis(sig, current or doc.get("entry"), s1, r1)
-        if analysis:
-            def _save_analysis():
-                _sc().update_one({"id": sig_id}, {"$set": {"comment": analysis}})
-            try:
-                await asyncio.wait_for(asyncio.to_thread(_save_analysis), timeout=5.0)
-            except (asyncio.TimeoutError, Exception):
-                pass
-            logger.info(f"AI analysis filled for #{sig_id} {pair}")
-
-            # Отправляем в бот если ещё не отправлено
-            # BOT4 отключён — всё идёт в BOT2 (см. комментарий в _send_ai_signal_alert)
-            target_bot = _bot2 or _bot
-            if target_bot and _admin_chat_id:
-                dir_emoji = "🟢" if doc.get("direction") in ("LONG", "BUY") else "🔴"
-                p = pair.replace("/USDT", "")
-                short = analysis[:800] + ("…" if len(analysis) > 800 else "")
-                text = (
-                    f"🤖 <b>AI SIGNAL · {p}/USDT</b>\n"
-                    f"{dir_emoji} <b>{doc.get('direction')}</b> · {doc.get('pattern_name','')}\n\n"
-                    f"{short}"
-                )
-                try:
-                    await target_bot.send_message(_admin_chat_id, text, parse_mode="HTML")
-                except Exception:
-                    pass
-
-
-async def _run_ai_filter(s, current_price, db) -> bool:
-    """Проверяет сигнал по AI критериям. True = проходит в Сигнал AI."""
-    try:
-        from database import _get_db
-        criteria_doc = _get_db().settings.find_one({"_id": "ai_criteria"})
-        user_criteria = criteria_doc.get("criteria", []) if criteria_doc else []
-
-        if not user_criteria:
-            # Нет критериев — пропускаем всё с ai_score >= 60
-            return (s.ai_score or 0) >= 60
-
-        enabled_patterns = {c["label"] for c in user_criteria if c.get("type") == "pattern" and c.get("enabled")}
-        enabled_directions = {c["label"] for c in user_criteria if c.get("type") == "direction" and c.get("enabled")}
-        enabled_hours = {int(c["id"].split(":")[1]) for c in user_criteria if c.get("type") == "hour" and c.get("enabled")}
-        min_ai_score_c = next((c for c in user_criteria if c.get("id") == "min_ai_score"), None)
-
-        hour = s.pattern_triggered_at.hour if s.pattern_triggered_at and hasattr(s.pattern_triggered_at, 'hour') else 0
-
-        pass_pattern = not enabled_patterns or (s.pattern_name in enabled_patterns)
-        pass_direction = not enabled_directions or (s.direction in enabled_directions)
-        pass_hour = not enabled_hours or (hour in enabled_hours)
-        pass_ai = True
-        if min_ai_score_c and min_ai_score_c.get("enabled") and s.ai_score is not None:
-            pass_ai = s.ai_score >= min_ai_score_c.get("value", 0)
-
-        return pass_pattern and pass_direction and pass_hour and pass_ai
-    except Exception as e:
-        logger.error(f"AI filter check #{s.id}: {e}")
-        return False
-
-
-async def _check_ai_signals(db):
-    """Для сигналов Cryptovizor в ПАТТЕРН, ещё не проверенных AI filter →
-    Claude решает на основе бектеста отправлять ли в @aitradiumbot."""
-    # Только сигналы с ai_filter_checked != True
-    signals = (
-        db.query(Signal)
-        .filter(Signal.source == "cryptovizor")
-        .filter(Signal.status == "ПАТТЕРН")
-        .filter(Signal.result == None)  # ещё не проверен AI filter (используем поле result)
-        .limit(5)
-        .all()
-    )
-    if not signals:
-        return
-
-    from backtest import backtest_summary_for_ai
-    from ai_signal_filter import should_send_signal
-
-    # Загружаем сохранённые критерии пользователя
-    from database import _get_db
-    criteria_doc = _get_db().settings.find_one({"_id": "ai_criteria"})
-    user_criteria = criteria_doc.get("criteria", []) if criteria_doc else []
-
-    # Enabled критерии
-    enabled_patterns = {c["label"] for c in user_criteria if c.get("type") == "pattern" and c.get("enabled")}
-    enabled_directions = {c["label"] for c in user_criteria if c.get("type") == "direction" and c.get("enabled")}
-    enabled_hours = {int(c["id"].split(":")[1]) for c in user_criteria if c.get("type") == "hour" and c.get("enabled")}
-    min_win_rate_c = next((c for c in user_criteria if c.get("id") == "min_win_rate"), None)
-    min_ai_score_c = next((c for c in user_criteria if c.get("id") == "min_ai_score"), None)
-
-    has_criteria = bool(user_criteria)
-
-    # Кешируем summary для Claude fallback
-    summary = ""
-    try:
-        summary = await asyncio.to_thread(backtest_summary_for_ai, "cryptovizor")
-    except Exception as e:
-        logger.error(f"Backtest summary error: {e}")
-
-    for s in signals:
-        try:
-            norm = (s.pair or "").replace("/", "").upper()
-            prices = await get_prices_any([s.pair])
-            current = prices.get(norm)
-            hour = s.pattern_triggered_at.hour if s.pattern_triggered_at and hasattr(s.pattern_triggered_at, 'hour') else 0
-
-            # Если есть сохранённые критерии — используем правила
-            if has_criteria:
-                pass_pattern = not enabled_patterns or (s.pattern_name in enabled_patterns)
-                pass_direction = not enabled_directions or (s.direction in enabled_directions)
-                pass_hour = not enabled_hours or (hour in enabled_hours)
-                pass_ai = True
-                if min_ai_score_c and min_ai_score_c.get("enabled") and s.ai_score is not None:
-                    pass_ai = s.ai_score >= min_ai_score_c.get("value", 0)
-
-                send = pass_pattern and pass_direction and pass_hour and pass_ai
-                result = {
-                    "send": send,
-                    "score": 8 if send else 3,
-                    "reasoning": f"Criteria: pattern={'✓' if pass_pattern else '✗'} dir={'✓' if pass_direction else '✗'} hour={'✓' if pass_hour else '✗'} ai={'✓' if pass_ai else '✗'}",
-                }
-            else:
-                # Нет критериев — Claude решает
-                result = await should_send_signal({
-                    "pair": s.pair,
-                    "direction": s.direction,
-                    "pattern": s.pattern_name,
-                    "trend": s.trend,
-                    "entry": s.entry,
-                    "current_price": current,
-                    "ai_score": s.ai_score,
-                    "hour": hour,
-                }, summary)
-
-            # Помечаем как проверенный (используем поле result)
-            s.result = f"AI:{result.get('score', 0)}"
-            db.commit()
-
-            if result.get("send"):
-                # AI-filter passed — просто пометим в БД для UI статистики.
-                # Отдельный алерт НЕ отправляем — сигнал уже пришёл в BOT2
-                # через основной поток _check_cryptovizor → _send_cryptovizor_alert
-                # (AI_SIGNAL ветка удалена 2026-04-18).
-                s.filter_reason = f"AI_PASSED:score={result['score']}"
-                db.commit()
-                log_event(s.id, "ai_passed", price=current,
-                    data={"score": result["score"], "reasoning": result.get("reasoning")},
-                    message=f"AI отобрал: score {result['score']}/10 (без доп. алерта)")
-                _broadcast("signal_update", {"id": s.id, "status": "AI_PASSED", "source": "cryptovizor"})
-                logger.info(f"AI Passed #{s.id} {s.pair} score={result['score']} (no extra alert)")
-            else:
-                log_event(s.id, "ai_skipped",
-                    data={"score": result["score"], "reasoning": result.get("reasoning")},
-                    message=f"AI пропустил: score {result['score']}/10")
-        except Exception as e:
-            logger.error(f"AI filter #{s.id}: {e}")
-
-
-async def _generate_ai_full_analysis(signal, current_price, s1, r1):
-    """Полный анализ для сайта (comment в БД)."""
-    import anthropic
-    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST as ANTHROPIC_MODEL
-
-    pair = (signal.pair or "").replace("/USDT", "")
-    entry = signal.entry or current_price
-    direction = signal.direction or "LONG"
-    pattern = signal.pattern_name or "unknown"
-    trend = signal.trend or ""
-
-    from exchange import get_eth_market_context
-    ectx = get_eth_market_context()
-    eth_ctx_text = (
-        f"ETH за 1h: {ectx.get('eth_1h', 0):+.2f}% | BTC за 1h: {ectx.get('btc_1h', 0):+.2f}% | "
-        f"ETH/BTC тренд: {ectx.get('eth_btc', '—')}"
-    )
-
-    prompt = (
-        f"Ты — профессиональный крипто-трейдер. Дай ПОЛНЫЙ анализ сделки.\n\n"
-        f"Монета: {pair}/USDT\n"
-        f"Направление: {direction}\n"
-        f"Паттерн: {pattern}\n"
-        f"Тренд (5 TF): {trend}\n"
-        f"Entry: {entry}\n"
-        f"Текущая цена: {current_price}\n"
-        f"Support (S1): {s1 or '—'}\n"
-        f"Resistance (R1): {r1 or '—'}\n"
-        f"Рыночный контекст: {eth_ctx_text}\n\n"
-        f"Ответь СТРОГО в таком формате:\n\n"
-        f"О МОНЕТЕ:\n"
-        f"Что это за проект, для чего используется, капитализация, ликвидность, "
-        f"кто стоит за проектом. 2-3 предложения.\n\n"
-        f"ВЕРДИКТ: ENTER или SKIP\n"
-        f"УВЕРЕННОСТЬ: HIGH, MEDIUM или LOW\n"
-        f"SCORE: X/10\n\n"
-        f"TP1: цена\n"
-        f"TP2: цена\n"
-        f"SL: цена\n"
-        f"R:R: соотношение\n\n"
-        f"АНАЛИЗ:\n"
-        f"Описание сетапа — почему паттерн {pattern} здесь работает или нет, "
-        f"структура рынка, уровни, объёмы. "
-        f"Как ETH и BTC влияют на эту монету — коррелирует ли она с рынком. 4-6 предложений.\n\n"
-        f"РИСКИ:\n"
-        f"⚠ Риск 1\n"
-        f"⚠ Риск 2\n"
-        f"⚠ Риск 3\n\n"
-        f"Ответ на русском. БЕЗ markdown, без ## и **. Только plain text."
-    )
-
-    try:
-        from ai_client import get_ai_client
-        client = get_ai_client()
-        message = await asyncio.to_thread(
-            client.messages.create,
-            model=ANTHROPIC_MODEL,
-            max_tokens=800,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return message.content[0].text
-    except Exception as e:
-        logger.error(f"AI full analysis error: {e}")
-        return None
-
-
-async def _generate_ai_tg_summary(signal, current_price, s1, r1):
-    """Короткое саммари для Telegram (помещается в сообщение)."""
-    import anthropic
-    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST as ANTHROPIC_MODEL
-
-    pair = (signal.pair or "").replace("/USDT", "")
-    entry = signal.entry or current_price
-    direction = signal.direction or "LONG"
-    pattern = signal.pattern_name or "unknown"
-    trend = signal.trend or ""
-
-    prompt = (
-        f"Крипто-трейдер. Дай КРАТКИЙ анализ для Telegram.\n\n"
-        f"{pair}/USDT | {direction} | {pattern} | Тренд: {trend}\n"
-        f"Entry: {entry} | Цена: {current_price} | S1: {s1 or '—'} | R1: {r1 or '—'}\n\n"
-        f"Формат строго:\n"
-        f"TP1: цена | TP2: цена | SL: цена\n"
-        f"R:R: X:X | Score: X/10\n"
-        f"Одно предложение — вывод.\n\n"
-        f"На русском. Максимум 200 символов."
-    )
-
-    try:
-        from ai_client import get_ai_client
-        client = get_ai_client()
-        message = await asyncio.to_thread(
-            client.messages.create,
-            model=ANTHROPIC_MODEL,
-            max_tokens=200,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return message.content[0].text
-    except Exception as e:
-        logger.error(f"AI TG summary error: {e}")
-        return None
-
-
-async def _send_ai_signal_alert(signal, ai_result, current_price):
-    # BOT4 отключён (токен невалиден — решение пользователя 2026-04-17).
-    # AI signals теперь шлются в BOT2 (@trendscryptobot), как и обычные
-    # CV-алерты. Fallback на _bot (главный) если BOT2 упал.
-    target_bot = _bot2 or _bot
-
-    # ── Маячок СРАЗУ (раньше был в середине — до него не доходило если
-    # Claude API падал на _generate_ai_full_analysis/tg_summary) ──
-    try:
-        from database import _events
-        _events().insert_one({"at": utcnow(), "type": "ai_alert_called",
-            "data": {"signal_id": signal.id, "pair": signal.pair,
-                     "bot_ready": bool(target_bot), "chat_set": bool(_admin_chat_id)}})
-    except Exception:
-        pass
-
-    if not target_bot or not _admin_chat_id:
-        return
-    is_long = signal.direction in ("LONG", "BUY")
-    dir_emoji = "🟢" if is_long else "🔴"
-    pair = (signal.pair or "—").replace("/USDT", "")
-    score = ai_result.get("score", 0)
-    score_bar = "🟢" * score + "⚪" * (10 - score)
-
-    # Получаем уровни
-    s1 = getattr(signal, "dca1", None)
-    r1 = getattr(signal, "dca2", None)
-
-    # FAST PATH (2026-04-17): Claude-блоки вынесены в background task.
-    # Основной алерт уходит за 2-5 сек с базовой инфой. AI анализ
-    # сохраняется в signal.comment позже и доступен в UI + может быть
-    # отправлен reply-сообщением если нужно.
-    tg_summary = None  # Быстрый алерт без саммари
-    sym = (signal.pair or "").replace("/", "").upper()
-    _st = ai_result.get("st", {})
-    _stp = _st.get("confirmed", False) and _st.get("direction") == signal.direction if _st else True
-
-    try:
-        _pump = await asyncio.wait_for(_pump_check(sym), timeout=5.0)
-    except asyncio.TimeoutError:
-        logger.warning(f"[AI-ALERT] pump_check TIMEOUT #{signal.id}")
-        _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
-    except Exception as e:
-        logger.warning(f"[AI-ALERT] pump_check fail #{signal.id}: {e}")
-        _pump = {"score": 0, "factors": [], "label": "", "volume_spike": 0, "oi_change": 0}
-
-    hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
-
-    lvl = ""
-    if s1: lvl += f"🟢 S1: <code>{s1}</code> | "
-    if r1: lvl += f"🔴 R1: <code>{r1}</code>"
-
-    _kl = _kl_block(signal.pair, signal.direction, utcnow(),
-                    entry=current_price or signal.entry, tp=signal.tp1, sl=signal.sl)
-    _stb = _st_block(signal.pair, signal.direction, "1h")
-    text = (
-        f"{hp}"
-        f"🤖 <b>AI SIGNAL · TOP PICK</b>\n"
-        f"\n"
-        f"<b>{pair}/USDT</b> · 1h · {dir_emoji} <b>{signal.direction}</b>\n"
-        f"<code>{sym}</code>\n"
-        f"{_kl}{_stb}"
-        f"\n"
-        f"─── Сигнал ───\n"
-        f"🕯 Паттерн: <b>{signal.pattern_name}</b>\n"
-        f"🎯 Entry: <code>{signal.entry}</code> → Сейчас: <code>{current_price}</code>\n"
-        f"{lvl}\n"
-        f"⭐ Score: <b>{score}/10</b> {score_bar}\n"
-    )
-    if tg_summary:
-        text += f"\n📝 {tg_summary}\n"
-    try:
-        text += f"\n{_market_block(_pump, _stp, _st or {})}"
-    except Exception as e:
-        logger.warning(f"[AI-ALERT] market_block fail #{signal.id}: {e}")
-    try:
-        text += await asyncio.wait_for(_reversal_block(signal.direction), timeout=5.0)
-    except asyncio.TimeoutError:
-        logger.warning(f"[AI-ALERT] reversal_block TIMEOUT #{signal.id}")
-    except Exception as e:
-        logger.warning(f"[AI-ALERT] reversal_block fail #{signal.id}: {e}")
-    try:
-        text += await asyncio.wait_for(_pending_cluster_block(signal.pair, signal.direction), timeout=5.0)
-    except asyncio.TimeoutError:
-        logger.warning(f"[AI-ALERT] cluster_block TIMEOUT #{signal.id}")
-    except Exception as e:
-        logger.warning(f"[AI-ALERT] cluster_block fail #{signal.id}: {e}")
-
-    try:
-        from database import _signals as _sc2
-        _sc2().update_one({"id": signal.id}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
-    except Exception as e:
-        logger.warning(f"[AI-ALERT] pump save fail #{signal.id}: {e}")
-
-    # Главная отправка — с fallback на BOT2/BOT если основной бот упал
-    # (типичный случай: BOT4_BOT_TOKEN невалиден, но Bot объект создан).
-    bots_to_try = [b for b in [target_bot, _bot2, _bot] if b is not None]
-    # Убираем дубли сохраняя порядок
-    seen_ids = set()
-    unique_bots = []
-    for b in bots_to_try:
-        if id(b) not in seen_ids:
-            seen_ids.add(id(b))
-            unique_bots.append(b)
-
-    sent = False
-    last_err = None
-    for i, b in enumerate(unique_bots):
-        try:
-            await b.send_message(_admin_chat_id, text, parse_mode="HTML")
-            sent = True
-            name = "BOT4" if b is _bot4 else "BOT2" if b is _bot2 else "BOT"
-            logger.info(f"[AI-ALERT] sent #{signal.id} via {name}" + (" (fallback)" if i > 0 else ""))
-            break
-        except Exception as e:
-            last_err = f"{type(e).__name__}: {e}"
-            logger.warning(f"[AI-ALERT] attempt {i+1} failed #{signal.id}: {last_err}")
-
-    if not sent:
-        logger.error(f"[AI-ALERT] ALL BOTS FAILED #{signal.id}: {last_err}")
-        try:
-            from database import _events
-            import traceback as _tb
-            _events().insert_one({"at": utcnow(), "type": "ai_alert_all_failed",
-                "data": {"signal_id": signal.id, "pair": signal.pair,
-                         "error": last_err, "attempts": len(unique_bots)}})
-        except Exception:
-            pass
-
-    try:
-        await _paper_on_signal({"symbol": sym, "direction": signal.direction, "entry": current_price, "source": "ai_signal", "pattern": signal.pattern_name, "score": score, "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
-    except Exception as e:
-        logger.warning(f"[AI-ALERT] paper fail #{signal.id}: {e}")
-    try:
-        await _cluster_check_on_signal(signal.pair, signal.direction)
-    except Exception as e:
-        logger.warning(f"[AI-ALERT] cluster fail #{signal.id}: {e}")
-
-    # ── Fire-and-forget: AI-анализ в фоне (не блокирует отправку) ──
-    # Алерт уже ушёл. Claude-анализ сохранится в signal.comment для UI.
-    if sent:
-        asyncio.create_task(_ai_background_analysis(signal, current_price, s1, r1))
-
-
-async def _ai_background_analysis(signal, current_price, s1, r1):
-    """Фоновый AI-анализ через Claude. Сохраняется в signal.comment для
-    отображения в UI. Не блокирует отправку Telegram-алерта."""
-    try:
-        full_analysis = await asyncio.wait_for(
-            _generate_ai_full_analysis(signal, current_price, s1, r1),
-            timeout=30.0,
-        )
-        if full_analysis:
-            from database import _signals as _sc_bg
-            _sc_bg().update_one({"id": signal.id}, {"$set": {"comment": full_analysis}})
-            logger.info(f"[AI-BG] analysis saved #{signal.id}")
-    except asyncio.TimeoutError:
-        logger.warning(f"[AI-BG] full_analysis TIMEOUT #{signal.id}")
-    except Exception as e:
-        logger.warning(f"[AI-BG] full_analysis fail #{signal.id}: {e}")
-
-
-_anomaly_batch_idx = 0
-_ANOMALY_INTERVAL = 10  # каждый 10-й тик (10×30с = 5 мин)
-_anomaly_tick = _ANOMALY_INTERVAL - 1  # первый скан на первом тике
-
-# Background tasks для тяжёлых scans/обработки — чтобы не блокировать tick.
-# Раньше await блокировал _check_once на 60-200с (anomaly/confluence 1000+
-# pairs sequential scan + cryptovizor 20 signals × render_chart × Claude AI);
-# tick застревал → /healthz timeout → графики не грузились.
-_anomaly_bg_task: "asyncio.Task | None" = None
-_confluence_bg_task: "asyncio.Task | None" = None
-
-# Состояние скана — читается из admin API
-anomaly_scan_state = {
-    "running": False, "progress": 0, "total": 0,
-    "found": 0, "batch": 0, "batches": 0, "current": "",
-    "next_at": 0,  # unix timestamp следующего скана
-}
-
 
 async def _check_anomalies():
     """Сканирует фьючерсные пары батчами. Полный цикл за 4 тика (20 мин)."""
@@ -2398,8 +1803,6 @@ async def _send_top_pick_alert(sig: dict):
         t_type = sig.get("type", "signal")
         type_map = {
             "cluster":     ("💠", "Cluster"),
-            "tradium":     ("📡", "Tradium"),
-            "cryptovizor": ("🚀", "Cryptovizor"),
             "confluence":  ("🎯", "Confluence"),
         }
         type_emoji, type_label = type_map.get(t_type, ("📍", t_type.title()))
@@ -2433,7 +1836,7 @@ async def _send_top_pick_alert(sig: dict):
         confs_lines = []
         for c in confirmations[:5]:
             c_src = c.get("source", "")
-            c_emoji = {"confluence":"🎯","cluster":"💠","tradium":"📡","cryptovizor":"🚀"}.get(c_src, "•")
+            c_emoji = {"confluence":"🎯","cluster":"💠"}.get(c_src, "•")
             at = c.get("at", "")
             age_str = ""
             try:
@@ -2763,9 +2166,8 @@ async def _send_cluster_alert(cl: dict):
     sl_pct = abs((cl["sl_price"] - cl["trigger_price"]) / cl["trigger_price"] * 100)
 
     # Участники
-    src_icons = {"cryptovizor": "🚀", "tradium": "📡", "anomaly": "⚠️", "confluence": "🎯"}
-    src_names = {"cryptovizor": "Молот/Паттерн", "tradium": "Tradium Setup",
-                 "anomaly": "Anomaly", "confluence": "Confluence"}
+    src_icons = {"anomaly": "⚠️", "confluence": "🎯"}
+    src_names = {"anomaly": "Anomaly", "confluence": "Confluence"}
     participants = []
     for s in cl["signals_in_cluster"]:
         icon = src_icons.get(s["source"], "•")
@@ -2775,8 +2177,6 @@ async def _send_cluster_alert(cl: dict):
         extra = ""
         if s["source"] == "confluence":
             extra = f" (score {meta.get('score','?')})"
-        elif s["source"] == "cryptovizor" and meta.get("pattern_name"):
-            extra = f" {meta['pattern_name']}"
         elif s["source"] == "anomaly" and meta.get("types"):
             extra = f" {','.join(meta['types'][:2])}"
         participants.append(f"{icon} {t} @ {price}{extra}")
@@ -3250,7 +2650,7 @@ async def _paper_on_signal(signal_data: dict):
         _src_ee = signal_data.get("source", "")
         _dir_ee = (signal_data.get("direction", "") or "").upper()
         # Только для информативных источников (CV/ST/anomaly/confluence + new strategies)
-        _ee_eligible = _src_ee in ('cryptovizor', 'supertrend', 'anomaly', 'confluence',
+        _ee_eligible = _src_ee in ('supertrend', 'anomaly', 'confluence',
                                     'vol_accum', 'triple_confluence', 'volume_surge',
                                     'second_flip', 'volcano', 'cluster')
         if _pair_ee and _ee_eligible:
@@ -3550,16 +2950,7 @@ async def _ui_prewarm_loop():
             except Exception:
                 pass
 
-            # tradium-setups (медленный — 23s) — параллельно с другими, не блокирует
-            # Прогреваем каждые 5 мин (cycle interval), чтобы Tradium вкладка
-            # открывалась мгновенно. Timeout 30s — если forum не отвечает, скип.
-            try:
-                from admin import api_peek_tradium_setups
-                tasks.append(_warm_one("tradium-setups",
-                                       lambda: api_peek_tradium_setups(48),
-                                       timeout=30.0))
-            except Exception:
-                pass
+            # tradium-setups prewarm удалён вместе с Tradium ingestion (2026-07-01)
 
             # Запускаем всё параллельно — не последовательно (быстрее в 5 раз)
             await _asyncio.gather(*tasks, return_exceptions=True)
@@ -3956,8 +3347,7 @@ async def _rsi_cache_loop():
             db = _get_db()
             since = _dt.now(_tz.utc) - _td(hours=24)
             pairs = set()
-            for col_name in ('supertrend_signals', 'cv_flip_signals',
-                             'new_strategy_signals'):
+            for col_name in ('supertrend_signals', 'new_strategy_signals'):
                 ts_field = ('flip_at' if col_name == 'supertrend_signals'
                             else 'created_at')
                 try:
@@ -4033,8 +3423,7 @@ async def _trend_cache_loop():
             db = _get_db()
             since = _dt.now(_tz.utc) - _td(hours=24)
             pairs = set()
-            for col_name in ('supertrend_signals', 'cv_flip_signals',
-                             'new_strategy_signals'):
+            for col_name in ('supertrend_signals', 'new_strategy_signals'):
                 ts_field = ('flip_at' if col_name == 'supertrend_signals'
                             else 'created_at')
                 try:
@@ -4133,7 +3522,7 @@ async def _cluster_delta_cache_loop():
             except Exception:
                 pass
             # cv_flip / new_strategy
-            for col_name in ('cv_flip_signals', 'new_strategy_signals'):
+            for col_name in ('new_strategy_signals',):
                 try:
                     for s in db[col_name].find(
                             {'created_at': {'$gte': since}},
