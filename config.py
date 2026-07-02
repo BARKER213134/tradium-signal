@@ -3,20 +3,12 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-# Telegram Userbot (Telethon)
-API_ID = int(os.getenv("API_ID", "0"))
-API_HASH = os.getenv("API_HASH", "")
-PHONE = os.getenv("PHONE", "")
+# Telethon userbot удалён — Telegram-сканирование отключено (2026-07-01)
 
 # Telegram Bot (Aiogram)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
 
-# Группа Tradium WORKSPACE (супергруппа)
-# Telethon: супергруппы = -100 + числовой ID
-SOURCE_GROUP_ID = int(os.getenv("SOURCE_GROUP_ID", "-1002423680272"))
-# Топик (форум) внутри группы с Trade Setup Screener — только отсюда парсим сетапы
-TRADIUM_SETUP_TOPIC_ID = int(os.getenv("TRADIUM_SETUP_TOPIC_ID", "3204"))
 # Топик для ✨ Verified Entries (Entry Checker автопроверка).
 # @topmonetabot = BOT9 (Top Picks) — verified сообщения шлются через него
 # в ADMIN_CHAT_ID. Если задан VERIFIED_TOPIC_ID — в конкретный топик форума,

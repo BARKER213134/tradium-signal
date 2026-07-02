@@ -6,75 +6,10 @@ import os
 import uvicorn
 
 from database import init_db
-from config import BOT_TOKEN, ADMIN_CHAT_ID, API_ID, API_HASH, BOT4_BOT_TOKEN
+from config import BOT_TOKEN, ADMIN_CHAT_ID, BOT4_BOT_TOKEN
 
 
-def _bootstrap_session():
-    """Session восстанавливается с приоритетом:
-    1) MongoDB collection 'system' документ _id='telethon_session' —
-       живое хранилище, авто-обновляется через _persist_session_to_mongo
-       при каждой успешной авторизации. Всегда свежее всех других
-       источников.
-    2) env TELETHON_SESSION_B64 — fallback когда Mongo пуст (первый запуск).
-
-    Было: env был приоритетом 1 → при устаревшем env'е Mongo-копия
-    игнорировалась и Railway поднимал сломанную сессию.
-    """
-    here = os.path.dirname(os.path.abspath(__file__))
-    session_path = os.path.join(here, "session_userbot.session")
-    if os.path.exists(session_path):
-        return
-
-    # 1) MongoDB (primary — всегда актуальнее env)
-    try:
-        from database import _get_db
-        col = _get_db().system
-        doc = col.find_one({"_id": "telethon_session"})
-        if doc and "data" in doc:
-            with open(session_path, "wb") as f:
-                f.write(doc["data"])
-            logging.info(f"✅ Session восстановлен из Mongo ({len(doc['data'])} bytes)")
-            return
-    except Exception as e:
-        logging.error(f"Mongo session load failed: {e}")
-
-    # 2) env var — fallback когда Mongo пуст (редко, только при первом
-    # деплое). При успешном старте userbot сохранит сессию в Mongo,
-    # и следующие рестарты пойдут через Mongo.
-    b64 = os.getenv("TELETHON_SESSION_B64")
-    if b64:
-        try:
-            with open(session_path, "wb") as f:
-                f.write(base64.b64decode(b64))
-            logging.info(f"✅ Session восстановлен из TELETHON_SESSION_B64 ({len(b64)} chars)")
-            return
-        except Exception as e:
-            logging.error(f"TELETHON_SESSION_B64 decode failed: {e}")
-
-
-def _persist_session_to_mongo():
-    """Сохраняет текущий session-файл в Mongo (вызывается после авторизации
-    или при старте если файл есть а в Mongo нет)."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    session_path = os.path.join(here, "session_userbot.session")
-    if not os.path.exists(session_path):
-        return
-    try:
-        from database import _get_db
-        col = _get_db().system
-        with open(session_path, "rb") as f:
-            data = f.read()
-        col.update_one(
-            {"_id": "telethon_session"},
-            {"$set": {"data": data, "size": len(data)}},
-            upsert=True,
-        )
-        logging.info(f"✅ Session сохранён в Mongo ({len(data)} bytes)")
-    except Exception as e:
-        logging.error(f"Mongo session save failed: {e}")
-
-
-_bootstrap_session()
+# Telethon session bootstrap удалён — Telegram-сканирование отключено (2026-07-01)
 
 
 def _migrate_charts_to_gridfs():
@@ -133,16 +68,13 @@ async def _serve_admin():
 
 async def main():
     # Проверяем обязательные переменные
-    if not API_ID or not API_HASH:
-        logger.error("Не заданы API_ID и API_HASH в .env!")
-        return
     if not BOT_TOKEN:
         logger.error("Не задан BOT_TOKEN в .env!")
         return
 
     # Threadpool для asyncio.to_thread() — Railway Pro (24 vCPU / 24GB) =>
     # 120 потоков для максимального concurrent throughput на I/O-bound операциях
-    # (ccxt API calls, MongoDB queries, Telethon iter).
+    # (ccxt API calls, MongoDB queries).
     try:
         from concurrent.futures import ThreadPoolExecutor
         loop = asyncio.get_running_loop()
@@ -155,10 +87,7 @@ async def main():
     logger.info("База данных инициализирована")
 
     from bot import bot, start_bot
-    from userbot import set_bot  # NOTE: userbot.py = no-op stub, CV/Tradium удалены
     from watcher import setup as setup_watcher, start_watcher
-
-    set_bot(bot, ADMIN_CHAT_ID)
 
     # BOT2 (Cryptovizor) удалён вместе с CV подпиской
     bot2 = None
@@ -176,7 +105,7 @@ async def main():
     setup_watcher(bot, ADMIN_CHAT_ID, bot2=bot2, bot4=bot4)
 
     logger.info("Запуск admin (watcher/bots стартуют через lifespan)…")
-    # Watcher, bots, userbot запускаются в lifespan event FastAPI
+    # Watcher и bots запускаются в lifespan event FastAPI
     # чтобы избежать deadlock с asyncio.gather + uvicorn
     await _serve_admin()
 

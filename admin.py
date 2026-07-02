@@ -52,12 +52,10 @@ async def lifespan(app):
             init_db()
 
             from bot import bot, start_bot
-            from userbot import set_bot  # no-op stub, CV/Tradium ingestion удалён
             from watcher import setup as setup_watcher, start_watcher, _bot as _wb
 
             bot2 = None  # BOT2 (Cryptovizor) удалён
             if _wb is None:
-                set_bot(bot, ADMIN_CHAT_ID)
                 bot4 = None
                 if BOT4_BOT_TOKEN:
                     try:
@@ -140,61 +138,6 @@ async def lifespan(app):
 
     for t in _bg_tasks:
         t.cancel()
-
-
-async def _userbot_health_watchdog(_bot):
-    """Алертит в ADMIN_CHAT_ID если userbot disconnected дольше DOWN_THRESHOLD.
-    Второй алерт — когда вернулся в connected. Один цикл проверки = 60 сек."""
-    import userbot as _ubm
-    from config import ADMIN_CHAT_ID
-    from datetime import timedelta
-    DOWN_THRESHOLD = timedelta(minutes=10)
-    disconnected_since = None
-    alerted = False
-    while True:
-        try:
-            await asyncio.sleep(60)
-            client = getattr(_ubm, "_tg_client", None)
-            is_conn = bool(client and client.is_connected())
-            now = datetime.utcnow()
-            if is_conn:
-                if alerted:
-                    # восстановился — шлём recovery
-                    try:
-                        await _bot.send_message(
-                            ADMIN_CHAT_ID,
-                            f"✅ <b>Userbot восстановлен</b> "
-                            f"(был disconnected {_human_duration(now - disconnected_since)})",
-                            parse_mode="HTML",
-                        )
-                    except Exception:
-                        pass
-                disconnected_since = None
-                alerted = False
-                continue
-            # disconnected
-            if disconnected_since is None:
-                disconnected_since = now
-            elif (not alerted) and (now - disconnected_since) >= DOWN_THRESHOLD:
-                det = _ubm.get_status_details()
-                err = det.get("last_setup_error") or "unknown"
-                try:
-                    await _bot.send_message(
-                        ADMIN_CHAT_ID,
-                        f"🚨 <b>Userbot disconnected &gt; 10 мин</b>\n"
-                        f"С: <code>{disconnected_since.strftime('%H:%M:%S UTC')}</code>\n"
-                        f"Последняя ошибка: <code>{err}</code>\n"
-                        f"Reconnect попыток: {det.get('reconnect_count', 0)}\n"
-                        f"Проверь Railway логи или Restart сервис.",
-                        parse_mode="HTML",
-                    )
-                    alerted = True
-                except Exception as e:
-                    logging.getLogger(__name__).warning(f"[userbot-watchdog] alert fail: {e}")
-        except asyncio.CancelledError:
-            return
-        except Exception:
-            logging.getLogger(__name__).exception("[userbot-watchdog] loop error")
 
 
 def _human_duration(delta) -> str:
@@ -570,12 +513,6 @@ def _health_sync() -> dict:
     except Exception as e:
         status["checks"]["db"] = f"fail: {str(e)[:100]}"
         status["ok"] = False
-    try:
-        from userbot import _tg_client
-        status["checks"]["userbot"] = ("connected" if _tg_client and _tg_client.is_connected()
-                                        else "disconnected")
-    except Exception as e:
-        status["checks"]["userbot"] = f"fail: {str(e)[:100]}"
     try:
         from database import _signals, _anomalies, _confluence
         now = _utcnow()
@@ -980,126 +917,9 @@ async def api_key_levels_stats():
 
 
 # Глобальный стейт прогресса KL backfill (не блокирует контейнер)
-_kl_backfill_state: dict = {"running": False, "started_at": None, "finished_at": None, "stats": None, "error": None}
 
 
-async def _run_kl_backfill(limit: int):
-    """Фоновая задача: тянет KL-сообщения из Telegram, парсит и пишет в MongoDB.
-    Прогресс пишется в _kl_backfill_state."""
-    from key_levels import parse_key_level
-    from database import _key_levels, utcnow as _unow
-    from datetime import datetime as _dt
-    TOPICS = {3086: "SUPPORT", 3088: "RANGES", 3091: "RESISTANCE"}
-    try:
-        from userbot import _tg_client
-        from config import SOURCE_GROUP_ID
-    except Exception as e:
-        _kl_backfill_state["error"] = f"import: {e}"
-        _kl_backfill_state["running"] = False
-        _kl_backfill_state["finished_at"] = _dt.utcnow().isoformat()
-        return
-    if _tg_client is None or not _tg_client.is_connected():
-        _kl_backfill_state["error"] = "Telethon not connected"
-        _kl_backfill_state["running"] = False
-        _kl_backfill_state["finished_at"] = _dt.utcnow().isoformat()
-        return
-    stats = {"fetched": 0, "parsed": 0, "saved": 0, "by_event": {}, "by_topic": {}}
-    _kl_backfill_state["stats"] = stats
-    try:
-        for tid, name in TOPICS.items():
-            count = 0
-            async for m in _tg_client.iter_messages(SOURCE_GROUP_ID, limit=limit, reply_to=tid):
-                stats["fetched"] += 1
-                count += 1
-                if not m.raw_text:
-                    continue
-                parsed = parse_key_level(m.raw_text, topic_id=tid)
-                if not parsed:
-                    continue
-                stats["parsed"] += 1
-                ev = parsed["event"]
-                stats["by_event"][ev] = stats["by_event"].get(ev, 0) + 1
-                try:
-                    existing = _key_levels().find_one({"message_id": m.id})
-                    if existing:
-                        continue
-                    _key_levels().insert_one({
-                        **parsed,
-                        "detected_at": m.date.replace(tzinfo=None) if m.date else _unow(),
-                        "message_id": m.id,
-                        "backfilled": True,
-                    })
-                    stats["saved"] += 1
-                except Exception:
-                    pass
-                # Кооперативная уступка event-loop'у каждые 50 сообщений,
-                # чтобы /healthz и другие эндпоинты отвечали
-                if stats["fetched"] % 50 == 0:
-                    await asyncio.sleep(0)
-            stats["by_topic"][f"{tid}_{name}"] = count
-    except Exception as e:
-        import traceback
-        _kl_backfill_state["error"] = f"{e}\n{traceback.format_exc()[-500:]}"
-    finally:
-        _kl_backfill_state["running"] = False
-        _kl_backfill_state["finished_at"] = _dt.utcnow().isoformat()
-
-
-@app.post("/api/key-levels/backfill")
-async def api_key_levels_backfill(payload: dict | None = None):
-    """Запускает фоновый бэкфилл KL. Возвращает сразу — прогресс смотреть через
-    /api/key-levels/backfill-status.
-    payload: {"limit_per_topic": 2000}"""
-    from datetime import datetime as _dt
-    if _kl_backfill_state.get("running"):
-        return {"ok": False, "error": "already running", "state": _kl_backfill_state}
-    limit = int((payload or {}).get("limit_per_topic", 2000))
-    _kl_backfill_state.update({
-        "running": True,
-        "started_at": _dt.utcnow().isoformat(),
-        "finished_at": None,
-        "stats": {"fetched": 0, "parsed": 0, "saved": 0, "by_event": {}, "by_topic": {}},
-        "error": None,
-        "limit_per_topic": limit,
-    })
-    asyncio.create_task(_run_kl_backfill(limit))
-    return {"ok": True, "started": True, "limit_per_topic": limit}
-
-
-@app.get("/api/key-levels/backfill-status")
-async def api_key_levels_backfill_status():
-    return _kl_backfill_state
-
-
-# ─── Бектест SuperTrend стратегий ───────────────────────────────
-_st_backtest_state: dict = {
-    "running": False,
-    "started_at": None,
-    "finished_at": None,
-    "progress": None,  # {processed, total, current_pair}
-    "result": None,
-    "error": None,
-}
-
-
-async def _run_st_backtest(days: int, top_n: int):
-    from datetime import datetime as _dt
-    from backtest_supertrend import run_backtest
-
-    def _on_progress(i, total, pair):
-        _st_backtest_state["progress"] = {
-            "processed": i, "total": total, "current_pair": pair,
-        }
-
-    try:
-        result = await asyncio.to_thread(run_backtest, days, top_n, _on_progress)
-        _st_backtest_state["result"] = result
-    except Exception as e:
-        import traceback
-        _st_backtest_state["error"] = f"{e}\n{traceback.format_exc()[-800:]}"
-    finally:
-        _st_backtest_state["running"] = False
-        _st_backtest_state["finished_at"] = _dt.utcnow().isoformat()
+# KL backfill удалён — источник (Tradium Telegram топики) отключён 2026-07-01
 
 
 @app.post("/api/backtest-st")
@@ -3750,79 +3570,6 @@ async def api_system_health():
     _SYSTEM_HEALTH_CACHE["ts"] = now
     _SYSTEM_HEALTH_CACHE["data"] = data
     return data
-
-
-@app.post("/api/userbot/login/start")
-async def api_userbot_login_start(payload: dict):
-    """Начать re-login flow Telethon. Шлёт код на phone через Telegram.
-    Используется когда session заблокирована/expired (сообщение
-    'authorization key was used under two different IP addresses')."""
-    phone = (payload or {}).get("phone", "").strip()
-    if not phone or not phone.startswith("+") or len(phone) < 8:
-        return {"ok": False, "error": "phone должен начинаться с + и содержать код страны"}
-    from userbot import login_start
-    return await login_start(phone)
-
-
-@app.post("/api/userbot/login/code")
-async def api_userbot_login_code(payload: dict):
-    """Шаг 2: завершить login кодом. Если 2FA включена — повторно с password."""
-    code = str((payload or {}).get("code", "")).strip()
-    password = (payload or {}).get("password", "") or None
-    if not code:
-        return {"ok": False, "error": "code обязателен"}
-    from userbot import login_complete
-    return await login_complete(code, password)
-
-
-@app.get("/api/userbot/login/state")
-async def api_userbot_login_state():
-    """Текущее состояние login flow (in_progress / needs_2fa / phone)."""
-    from userbot import get_login_state
-    return await asyncio.to_thread(get_login_state)
-
-
-@app.post("/api/userbot/reload-session")
-async def api_userbot_reload_session():
-    """Форсированная перезагрузка session_userbot.session из Mongo.
-    Использовать когда в Mongo залита свежая сессия, а файл в контейнере
-    устаревший — без этого нужен был бы полный redeploy.
-
-    После записи файла принудительно отключаем текущий клиент;
-    supervisor auto-reconnect'ится и подхватит обновлённую сессию."""
-    from database import _get_db
-    import os
-    here = os.path.dirname(os.path.abspath(__file__))
-    session_path = os.path.join(here, "session_userbot.session")
-    doc = _get_db().system.find_one({"_id": "telethon_session"})
-    if not doc or "data" not in doc:
-        return {"ok": False, "error": "No session document in Mongo"}
-    try:
-        with open(session_path, "wb") as f:
-            f.write(doc["data"])
-    except Exception as e:
-        return {"ok": False, "error": f"write failed: {e}"}
-    forced = False
-    try:
-        from userbot import _tg_client
-        if _tg_client and _tg_client.is_connected():
-            await _tg_client.disconnect()
-            forced = True
-    except Exception:
-        pass
-    return {"ok": True, "session_bytes": len(doc["data"]), "forced_reconnect": forced}
-
-
-@app.post("/api/userbot/force-restart")
-async def api_userbot_force_restart():
-    """Принудительно дисконнектит Telethon чтобы supervisor пересоздал клиент.
-    Используется когда userbot залип (channel handler dead, session weird state).
-    После disconnect supervisor через ~30с поднимет новую сессию."""
-    try:
-        from userbot import force_restart
-        return await force_restart()
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:300]}
 
 
 @app.get("/")
