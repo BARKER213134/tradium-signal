@@ -249,7 +249,7 @@ class StaticCacheMiddleware(BaseHTTPMiddleware):
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        if path in ("/login", "/health", "/healthz", "/api/setup-check", "/api/resonance-screenshot", "/api/resonance-status", "/api/key-levels/recent", "/api/key-levels/enrich", "/api/key-levels/stats", "/api/key-levels/backfill", "/api/key-levels/backfill-status", "/api/key-levels/coverage", "/api/backtest-st", "/api/backtest-st/status",
+        if path in ("/login", "/health", "/healthz", "/api/setup-check", "/api/resonance-screenshot", "/api/resonance-status", "/api/backtest-st", "/api/backtest-st/status",
             "/api/supertrend-signals", "/api/supertrend-signals/by-pair",
             "/api/supertrend-stats", "/api/st-enrich",
             "/api/new-strategies", "/api/new-strategies/by-pair",
@@ -664,293 +664,15 @@ def _cap_admin_cache(d: dict, max_size: int = 300) -> None:
 
 
 
-_kl_recent_cache: dict = {}
-_KL_RECENT_TTL = 30.0
 
 
-@app.get("/api/key-levels/recent")
-async def api_key_levels_recent(pair: str, hours: int = 48):
-    """Список активных Key Levels по паре для отрисовки зон на графиках.
-    Кеширование: 30с на сервере (много графиков на странице → один запрос)."""
-    from key_levels import get_recent_levels
-    key = f"{pair}_{hours}"
-    now = time.time()
-    hit = _kl_recent_cache.get(key)
-    if hit and (now - hit[0]) < _KL_RECENT_TTL:
-        return {"pair": pair, "hours": hours, "count": len(hit[1]), "items": hit[1], "cached": True}
-    items = await asyncio.to_thread(get_recent_levels, pair, hours)
-    _kl_recent_cache[key] = (now, items)
-    _cap_admin_cache(_kl_recent_cache, 500)
-    # Чистим старые записи (lazy eviction)
-    if len(_kl_recent_cache) > 500:
-        for k in [k for k, v in _kl_recent_cache.items() if (now - v[0]) > _KL_RECENT_TTL * 2]:
-            _kl_recent_cache.pop(k, None)
-    return {"pair": pair, "hours": hours, "count": len(items), "items": items}
 
 
-@app.post("/api/key-levels/enrich")
-async def api_key_levels_enrich(payload: dict):
-    """Батч-обогащение списка сигналов — для таблиц UI.
-    Оптимизация: ОДИН mongo-запрос на уникальную пару (вместо N запросов),
-    потом для каждого сигнала фильтруем in-memory по ±2h окну.
-    payload: {"signals": [{id, pair, direction, at}, ...]}
-    Возвращает: {"enrich": {id1: {emoji, label, ...}, id2: null}}
-    Кеш 30с по хешу payload — UI дергает этот endpoint после каждого
-    /api/journal (polling), а ответ меняется редко."""
-    from key_levels import _tf_power, ENRICH_WINDOW_H
-    from database import _key_levels
-    from datetime import datetime as _dt, timedelta as _td
-    from cache_utils import kl_enrich_cache
-    import hashlib as _hl, json as _json
-    signals = (payload or {}).get("signals", [])
-
-    # Кеш-ключ = хеш сигналов (id+pair+direction+at); при тех же сигналах ответ одинаковый
-    try:
-        _key_material = _json.dumps(
-            [(str(s.get("id")), s.get("pair") or s.get("symbol"),
-              s.get("direction"), s.get("at")) for s in signals],
-            sort_keys=True, default=str,
-        )
-        _cache_key = _hl.md5(_key_material.encode()).hexdigest()
-        _cached = kl_enrich_cache.get(_cache_key)
-        if _cached is not None:
-            return _cached
-    except Exception:
-        _cache_key = None
-    # 1) Парсим входные сигналы в нормализованную форму (теперь с entry_price)
-    norm = []
-    pair_times: dict[str, list[_dt]] = {}
-    for s in signals:
-        sig_id = s.get("id")
-        pair_raw = s.get("pair") or s.get("symbol") or ""
-        direction = (s.get("direction") or "").upper()
-        at_raw = s.get("at")
-        entry_price = s.get("entry") or s.get("entry_price")
-        try:
-            entry_price = float(entry_price) if entry_price is not None else None
-        except (TypeError, ValueError):
-            entry_price = None
-        at = None
-        if at_raw:
-            try:
-                if isinstance(at_raw, (int, float)):
-                    at = _dt.utcfromtimestamp(at_raw)
-                else:
-                    at = _dt.fromisoformat(str(at_raw).replace("Z", "+00:00"))
-                    if at.tzinfo:
-                        at = at.replace(tzinfo=None)
-            except Exception:
-                at = None
-        pair_norm = pair_raw.replace("/", "").upper()
-        if pair_norm and not pair_norm.endswith("USDT"):
-            pair_norm = pair_norm + "USDT"
-        norm.append((sig_id, pair_norm, direction, at, entry_price))
-        if pair_norm and at:
-            pair_times.setdefault(pair_norm, []).append(at)
-
-    # 2) По каждой паре — один запрос: все KL в широком окне [min(at)-W, max(at)+W]
-    def _fetch_pair(pair_norm: str, times: list[_dt]):
-        start = min(times) - _td(hours=ENRICH_WINDOW_H)
-        end = max(times) + _td(hours=ENRICH_WINDOW_H)
-        return pair_norm, list(_key_levels().find({
-            "pair_norm": pair_norm,
-            "detected_at": {"$gte": start, "$lte": end},
-        }, {"event": 1, "tf": 1, "age_days": 1, "zone_low": 1,
-            "zone_high": 1, "detected_at": 1, "current_price": 1}))
-
-    pair_cache: dict[str, list[dict]] = {}
-    if pair_times:
-        # Параллельно через thread-пул (MongoDB driver синхронный, но IO-bound)
-        results = await asyncio.gather(*[
-            asyncio.to_thread(_fetch_pair, p, times) for p, times in pair_times.items()
-        ])
-        for pair_norm, items in results:
-            pair_cache[pair_norm] = items
-
-    # 3) Для каждого сигнала — выбираем лучший KL из pair_cache по ±2h окну
-    # + price-proximity filter (entry_price близко к зоне).
-    MAX_DIST_PCT = 1.5  # entry within zone ИЛИ ≤1.5% от края
-
-    def _pick_best(pair_norm: str, direction: str, at: _dt,
-                    entry_price: float = None):
-        cands = pair_cache.get(pair_norm, [])
-        if not cands:
-            return None
-        lo = at - _td(hours=ENRICH_WINDOW_H)
-        hi = at + _td(hours=ENRICH_WINDOW_H)
-        filtered = [k for k in cands if k.get("detected_at")
-                    and lo <= k["detected_at"] <= hi]
-        if not filtered:
-            return None
-
-        # PRICE PROXIMITY: оставляем только KL зоны рядом с entry_price
-        if entry_price is not None and entry_price > 0:
-            proxim = []
-            for kl in filtered:
-                zl = kl.get("zone_low")
-                zh = kl.get("zone_high")
-                if zl is None or zh is None: continue
-                try:
-                    zl, zh = float(zl), float(zh)
-                except (TypeError, ValueError): continue
-                if zl <= entry_price <= zh:
-                    kl['_dist_pct'] = 0.0
-                    proxim.append(kl)
-                elif entry_price < zl:
-                    d = (zl - entry_price) / entry_price * 100
-                    if d <= MAX_DIST_PCT:
-                        kl['_dist_pct'] = -round(d, 2)
-                        proxim.append(kl)
-                else:
-                    d = (entry_price - zh) / entry_price * 100
-                    if d <= MAX_DIST_PCT:
-                        kl['_dist_pct'] = round(d, 2)
-                        proxim.append(kl)
-            if not proxim:
-                return None
-            filtered = proxim
-
-        is_long = direction in ("LONG", "BUY", "BULLISH")
-        strong, warning, confirming, range_ev = [], [], [], []
-        for kl in filtered:
-            ev = kl.get("event", "")
-            if is_long:
-                if ev == "entered_resistance":
-                    strong.append((kl, "🎢", "Breakout UP", "strong"))
-                elif ev == "entered_support":
-                    warning.append((kl, "🔪", "Falling knife через SUPPORT", "warning"))
-                elif ev == "new_support":
-                    confirming.append((kl, "⚓", "Новая SUPPORT снизу", "confirming"))
-                elif ev == "new_resistance":
-                    warning.append((kl, "🔪", "Новая RESISTANCE сверху (риск)", "warning"))
-                elif ev.startswith("range_"):
-                    range_ev.append((kl, "〰️", f"In range ({ev.replace('range_', '')})", "neutral"))
-            else:
-                if ev == "entered_support":
-                    strong.append((kl, "🧨", "Breakdown DOWN", "strong"))
-                elif ev == "entered_resistance":
-                    warning.append((kl, "🔪", "Против тренда через RESISTANCE", "warning"))
-                elif ev == "new_resistance":
-                    confirming.append((kl, "⚓", "Новая RESISTANCE сверху", "confirming"))
-                elif ev == "new_support":
-                    warning.append((kl, "🔪", "Новая SUPPORT снизу (риск)", "warning"))
-                elif ev.startswith("range_"):
-                    range_ev.append((kl, "〰️", f"In range ({ev.replace('range_', '')})", "neutral"))
-
-        def best_of(lst):
-            if not lst:
-                return None
-            rank = {"strong": 4, "warning": 3, "confirming": 2, "neutral": 1}
-            lst.sort(key=lambda x: (rank.get(x[3], 0), _tf_power(x[0].get("tf", "")), x[0].get("detected_at")), reverse=True)
-            return lst[0]
-
-        chosen = best_of(strong) or best_of(warning) or best_of(confirming) or best_of(range_ev)
-        if not chosen:
-            return None
-        kl, emoji, label_prefix, strength = chosen
-        tf = kl.get("tf", "?")
-        age = kl.get("age_days")
-        age_str = f", age {age}d" if age else ""
-        kt = kl.get("detected_at")
-        # Distance info (если был price-proximity фильтр)
-        dist_pct = kl.get("_dist_pct")
-        if dist_pct is not None:
-            if abs(dist_pct) < 0.05:
-                dist_str = ", in zone"
-            else:
-                dist_str = f", {abs(dist_pct):.1f}% {'below' if dist_pct < 0 else 'above'}"
-        else:
-            dist_str = ""
-        return {
-            "emoji": emoji,
-            "label": f"{label_prefix} {tf}{age_str}{dist_str}",
-            "strength": strength,
-            "event": kl.get("event"),
-            "tf": tf,
-            "age_days": age,
-            "zone_low": kl.get("zone_low"),
-            "zone_high": kl.get("zone_high"),
-            "kl_time": kt.isoformat() if hasattr(kt, "isoformat") else None,
-            "distance_pct": dist_pct,
-            "near_level": dist_pct is not None,
-            "current_price_at_kl": kl.get("current_price"),
-        }
-
-    out = {}
-    for sig_id, pair_norm, direction, at, entry_price in norm:
-        if sig_id is None:
-            continue
-        enrich = (_pick_best(pair_norm, direction, at, entry_price)
-                  if (pair_norm and at) else None)
-        out[str(sig_id)] = enrich
-    resp = {"enrich": out, "count": len(out), "pairs": len(pair_cache)}
-    if _cache_key:
-        try:
-            kl_enrich_cache.set(_cache_key, resp)
-        except Exception:
-            pass
-    return resp
 
 
-_kl_stats_cache: dict = {"ts": 0.0, "data": None}
 _KL_STATS_TTL = 60.0
 
 
-@app.get("/api/key-levels/stats")
-async def api_key_levels_stats():
-    """Количество записей в БД по типам.
-    Раньше: 4 sync calls (3× count_documents + 1× full collection scan для
-    by_event подсчёта) — 0.4-1с compute. Теперь: 1 aggregate с $facet — все
-    счётчики за один query, через to_thread, + cache 60s."""
-    import time as _t
-    now = _t.time()
-    if _kl_stats_cache["data"] is not None and now - _kl_stats_cache["ts"] < _KL_STATS_TTL:
-        return _kl_stats_cache["data"]
-
-    def _compute_stats():
-        from database import _key_levels, utcnow as _unow
-        from datetime import timedelta as _td
-        col = _key_levels()
-        since24h = _unow() - _td(hours=24)
-        since7d = _unow() - _td(days=7)
-        # Single aggregate via $facet — заменяет 4 query на 1.
-        pipeline = [{
-            "$facet": {
-                "total": [{"$count": "n"}],
-                "last_24h": [
-                    {"$match": {"detected_at": {"$gte": since24h}}},
-                    {"$count": "n"},
-                ],
-                "last_7d": [
-                    {"$match": {"detected_at": {"$gte": since7d}}},
-                    {"$count": "n"},
-                ],
-                "by_event": [
-                    {"$group": {"_id": "$event", "n": {"$sum": 1}}},
-                    {"$sort": {"n": -1}},
-                ],
-            }
-        }]
-        result = list(col.aggregate(pipeline))
-        if not result:
-            return {"total": 0, "last_24h": 0, "last_7d": 0, "by_event": {}}
-        f = result[0]
-        return {
-            "total": (f["total"][0]["n"] if f["total"] else 0),
-            "last_24h": (f["last_24h"][0]["n"] if f["last_24h"] else 0),
-            "last_7d": (f["last_7d"][0]["n"] if f["last_7d"] else 0),
-            "by_event": {b["_id"] or "?": b["n"] for b in f["by_event"]},
-        }
-    data = await asyncio.to_thread(_compute_stats)
-    _kl_stats_cache["ts"] = now
-    _kl_stats_cache["data"] = data
-    return data
-
-
-# Глобальный стейт прогресса KL backfill (не блокирует контейнер)
-
-
-# KL backfill удалён — источник (Tradium Telegram топики) отключён 2026-07-01
 
 
 _st_backtest_state: dict = {
@@ -2600,7 +2322,6 @@ async def api_admin_health_detail():
         cache_sizes["live_trader_err"] = str(e)
     try:
         cache_sizes["admin"] = {
-            "kl_recent": len(_kl_recent_cache),
             "st_by_pair": len(_st_by_pair_cache),
             "candles": len(_candles_cache),
         }
@@ -2976,49 +2697,6 @@ async def api_bots_status():
     }
 
 
-@app.get("/api/key-levels/coverage")
-async def api_key_levels_coverage(days: int = 14):
-    """Сравнивает множество уникальных пар из signals с множеством пар в key_levels
-    за окно N дней. Возвращает:
-      {
-        "signals_pairs": 380,     # сколько уникальных пар с сигналами
-        "kl_pairs": 340,          # сколько уникальных пар в KL
-        "covered": 320,           # пересечение
-        "missing": ["ABCUSDT", ...],  # пары с сигналами но БЕЗ KL
-        "orphan_kl": ["XYZUSDT"]  # пары в KL но без сигналов (информативно)
-      }
-    """
-    from database import _signals, _key_levels, utcnow as _unow
-    from datetime import timedelta as _td
-    since = _unow() - _td(days=days)
-    # Уникальные пары из signals за окно (все источники)
-    sig_pairs = set()
-    for s in _signals().find({"received_at": {"$gte": since}}, {"pair": 1}):
-        p = (s.get("pair") or "").replace("/", "").upper()
-        if not p:
-            continue
-        if not p.endswith("USDT"):
-            p = p + "USDT"
-        sig_pairs.add(p)
-    # Уникальные пары из key_levels за окно
-    kl_pairs = set()
-    for k in _key_levels().find({"detected_at": {"$gte": since}}, {"pair_norm": 1}):
-        p = (k.get("pair_norm") or "").upper()
-        if p:
-            kl_pairs.add(p)
-    covered = sig_pairs & kl_pairs
-    missing = sorted(sig_pairs - kl_pairs)
-    orphan = sorted(kl_pairs - sig_pairs)
-    return {
-        "days": days,
-        "signals_pairs": len(sig_pairs),
-        "kl_pairs": len(kl_pairs),
-        "covered": len(covered),
-        "missing_count": len(missing),
-        "missing": missing[:200],  # top 200
-        "orphan_count": len(orphan),
-        "orphan_sample": orphan[:30],
-    }
 
 
 @app.get("/api/clusters")

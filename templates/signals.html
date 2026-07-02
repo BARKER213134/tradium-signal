@@ -8804,7 +8804,7 @@ async function hotLoad() {
       const dirEm = s.direction === 'LONG' ? '🟢' : '🔴';
       const stack = (s._strategy_stack || []).map(x => sEmoji[x]||'•').join('');
       const pair = (s.pair || s.symbol || '').replace('/USDT', '');
-      const klBadge = (window._klBadge && s._kl) ? window._klBadge(s._kl) : '';
+      const klBadge = '';
       const entry = s.entry !== undefined && s.entry !== null ? Number(s.entry) : null;
       const sl = s.sl !== undefined && s.sl !== null ? Number(s.sl) : null;
       const tp = s.tp1 !== undefined && s.tp1 !== null ? Number(s.tp1) : null;
@@ -9541,16 +9541,10 @@ async function loadJournal() {
     const payload = JSON.stringify({signals: batch});
     const jopt = { method: 'POST', headers: {'Content-Type': 'application/json'}, body: payload };
     try {
-      const [er, sr] = await Promise.all([
-        fetch('/api/key-levels/enrich', jopt).catch(() => null),
-        fetch('/api/st-enrich', jopt).catch(() => null),
-      ]);
-      const ed = er ? await er.json().catch(() => ({})) : {};
+      const sr = await fetch('/api/st-enrich', jopt).catch(() => null);
       const sd = sr ? await sr.json().catch(() => ({})) : {};
-      const klEnrich = ed.enrich || {};
       const stEnrich = sd.enrich || {};
       items.forEach((s, i) => {
-        s._kl = klEnrich[`j_${i}`] || null;
         const e = stEnrich[`j_${i}`];
         s._stFlags = (e && e.flags) ? e.flags : [];
       });
@@ -9622,9 +9616,6 @@ function filterJournal() {
       if (!(isStrong || isTopPick || isStAllTiers || isCluster || isPaper || isAnomaly || isVerified || isNewStrategy)) return false;
     }
     // 🎯 Только у уровня — фильтр по price-proximity к KL зоне
-    if (window._journalNearLevelOnly) {
-      if (!s._kl || !s._kl.near_level) return false;
-    }
     // 🔥 HOT only — Quality Score >= 60
     if (window._journalHotOnly) {
       if ((s.q_score || 0) < 60) return false;
@@ -10224,7 +10215,7 @@ function renderJournal(items, startIdx) {
       <td class="mono text-accent fw-700">${pairCell}</td>
       <td>${dir}</td>
       <td class="mono">${s.entry || '—'}</td>
-      <td class="mono pattern-cell" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(s.pattern || '').replace(/"/g,'&quot;')}">${s.pattern || ''} ${s.score ? '<span style=\"color:var(--muted);font-size:11px;\">('+s.score+')</span>' : ''}${window._klBadge ? window._klBadge(s._kl) : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
+      <td class="mono pattern-cell" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(s.pattern || '').replace(/"/g,'&quot;')}">${s.pattern || ''} ${s.score ? '<span style=\"color:var(--muted);font-size:11px;\">('+s.score+')</span>' : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
       ${verdictCell}
       ${rsiCell}
       ${smaCell}

@@ -385,33 +385,9 @@ def _resolve_chart(p: str) -> str | None:
 
 def _kl_block(pair: str, direction: str, at=None,
               entry=None, tp=None, sl=None) -> str:
-    """Возвращает КОМПАКТНЫЙ блок Key Levels (1-2 строки, ≤250 chars)
-    чтобы не переполнять Telegram photo caption (лимит 1024 символа).
-
-    Формат:
-      📐 R 1h 0.03450 (+2.4%) · S 4h 0.03320 (-1.6%) · TP⚠️ SL✅
-
-    Fallback к get_signal_emoji если build_levels_alert_block крашится
-    или возвращает пустое.
-    """
-    try:
-        from key_levels import build_levels_compact
-        res = build_levels_compact(
-            pair or "", direction or "",
-            entry=entry, tp=tp, sl=sl,
-            at=at or utcnow(),
-        )
-        if res:
-            return res
-    except Exception:
-        pass
-    # Fallback на старый однострочный блок при KL-событии ±2h
-    try:
-        from key_levels import get_signal_emoji, format_tg_block
-        enrich = get_signal_emoji(pair or "", direction or "", at or utcnow())
-        return format_tg_block(enrich) if enrich else ""
-    except Exception:
-        return ""
+    """Key Levels удалены (источник — Telegram топики — отключён 2026-07-02).
+    Стаб чтобы не трогать 6 alert-билдеров, использующих _kl_block."""
+    return ""
 
 
 def _st_block(pair: str, direction: str, tf: str = "1h") -> str:
