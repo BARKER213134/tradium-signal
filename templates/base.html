@@ -3365,7 +3365,7 @@ function toggleReversalModal() {
   };
 
   modal.innerHTML = `
-    <div onclick="event.stopPropagation();" style="width:480px;max-width:92vw;max-height:80vh;overflow-y:auto;background:var(--dark);border:1px solid ${mainColor};border-radius:14px;padding:24px;font-family:var(--font-mono);box-shadow:0 20px 60px rgba(0,0,0,0.6);">
+    <div onclick="event.stopPropagation();" style="width:480px;max-width:92vw;max-height:80vh;overflow-y:auto;background:linear-gradient(180deg,#141828,#0d0f18);border:1px solid ${mainColor};border-radius:14px;padding:24px;font-family:var(--font-mono);box-shadow:0 20px 60px rgba(0,0,0,0.6);">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;">
         <div>
           <div style="font-size:11px;color:var(--muted);letter-spacing:0.1em;">🔄 REVERSAL METER</div>
@@ -3446,7 +3446,7 @@ async function openPendingChart(pair, direction) {
   const dirColor = direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
   const pairClean = (pair||'').replace('/USDT','');
   modal.innerHTML = `
-    <div onclick="event.stopPropagation();" style="width:1000px;max-width:94vw;height:75vh;background:var(--dark);border:1px solid ${dirColor};border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
+    <div onclick="event.stopPropagation();" style="width:1000px;max-width:94vw;height:75vh;background:linear-gradient(180deg,#141828,#0d0f18);border:1px solid ${dirColor};border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);">
         <div style="font-family:var(--font-mono);font-size:13px;font-weight:800;color:${dirColor};">
           ${dirEmoji} ${pairClean}/USDT · ${direction} · Pending Cluster

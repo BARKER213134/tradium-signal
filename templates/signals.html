@@ -660,7 +660,7 @@ async function openChartModal(symbol, pair, direction, pnl) {
   const pnlPart = !isNaN(pnlF) ? `<span style="color:${pnlF>=0?'var(--buy)':'var(--sell)'}">${pnlF>=0?'+':''}${pnlF}%</span>` : '';
 
   m.innerHTML = `
-    <div style="width:90vw;max-width:1100px;height:75vh;background:var(--dark);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);display:flex;flex-direction:column;" onclick="event.stopPropagation();">
+    <div style="width:90vw;max-width:1100px;height:75vh;background:linear-gradient(180deg,#141828,#0d0f18);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);display:flex;flex-direction:column;" onclick="event.stopPropagation();">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);">
         <div style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--text);">
           ${pairLabel}/USDT ${dirE ? dirE + ' ' + (direction||'') : ''} ${pnlPart}
@@ -2102,7 +2102,7 @@ function tpOpenChart(idx) {
   const nextDisabled = idx >= total - 1 ? 'disabled' : '';
 
   modal.innerHTML = `
-    <div onclick="event.stopPropagation();" style="width:1100px;max-width:96vw;height:82vh;background:var(--dark);border:1px solid ${dirColor};border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);display:flex;flex-direction:column;">
+    <div onclick="event.stopPropagation();" style="width:1100px;max-width:96vw;height:82vh;background:linear-gradient(180deg,#141828,#0d0f18);border:1px solid ${dirColor};border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.6);display:flex;flex-direction:column;">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--border);gap:10px;">
         <div style="font-family:var(--font-mono);font-size:13px;font-weight:800;display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;">
           <span style="color:#ffd23e;font-size:18px;">👑</span>
@@ -6808,7 +6808,7 @@ setTimeout(() => {
 
 <!-- Settings modal -->
 <div id="fvgSettingsModal" style="display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);">
-  <div onclick="event.stopPropagation();" style="width:520px;max-width:94vw;max-height:85vh;overflow-y:auto;background:var(--dark);border:1px solid var(--accent);border-radius:14px;padding:24px;font-family:var(--font-mono);">
+  <div onclick="event.stopPropagation();" style="width:520px;max-width:94vw;max-height:85vh;overflow-y:auto;background:linear-gradient(180deg,#141828,#0d0f18);border:1px solid var(--accent);border-radius:14px;padding:24px;font-family:var(--font-mono);">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
       <h3 style="margin:0;font-size:14px;color:var(--accent);">⚙ Forex FVG Настройки</h3>
       <button onclick="document.getElementById('fvgSettingsModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">×</button>
@@ -7266,7 +7266,7 @@ safeInterval(loadFvgSignals, 30000);
 
 <!-- Модалка с LWC-графиком -->
 <div id="fjChartModal" style="display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);">
-  <div onclick="event.stopPropagation();" style="width:1100px;max-width:96vw;height:80vh;background:var(--dark);border:1px solid var(--accent);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;">
+  <div onclick="event.stopPropagation();" style="width:1100px;max-width:96vw;height:80vh;background:linear-gradient(180deg,#141828,#0d0f18);border:1px solid var(--accent);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--border);">
       <div id="fjChartTitle" style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text);">—</div>
       <button onclick="document.getElementById('fjChartModal').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">×</button>
@@ -8163,7 +8163,7 @@ window.openPrepumpChart = async function(pair) {
   const sym = pair.replace('/','').toUpperCase();
 
   m.innerHTML = `
-    <div style="width:92vw;max-width:1200px;height:78vh;background:var(--dark);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);display:flex;flex-direction:column;" onclick="event.stopPropagation();">
+    <div style="width:92vw;max-width:1200px;height:78vh;background:linear-gradient(180deg,#141828,#0d0f18);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.5);display:flex;flex-direction:column;" onclick="event.stopPropagation();">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);">
         <div style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--text);">${pair}</div>
         <div style="display:flex;gap:6px;align-items:center;">
