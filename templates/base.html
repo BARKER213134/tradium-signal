@@ -2692,52 +2692,55 @@
       window._addComputedLevels = async function(chart, pair, tf, candles, opts) {
         opts = opts || {};
         if (!chart || !candles || !candles.length) return [];
-        // Уровни считаются только для этих TF; для прочих (30m/12h есть,
-        // 5m нет) — берём ближайший поддерживаемый.
         const SUPPORTED = ['15m', '30m', '1h', '4h', '12h', '1d'];
         const useTf = SUPPORTED.includes(tf) ? tf : '1h';
         const zones = await window._fetchComputedLevels(pair, useTf);
         if (!zones.length) return [];
 
-        const t0 = candles[0].time;
-        const t1 = candles[candles.length - 1].time;
-        const added = [];
-        const maxZones = opts.maxZones || 8;
-        for (const z of zones.slice(0, maxZones)) {
+        const priceNow = candles[candles.length - 1].close;
+        // Только уровни рядом с ценой (±12% по умолчанию) — далёкие не рисуем
+        const maxDist = opts.maxDistPct || 12;
+        const near = zones.filter(z => Math.abs(z.dist_pct) <= maxDist);
+        // top-3 с каждой стороны по силе + inside
+        const res = near.filter(z => z.kind === 'resistance')
+                        .sort((a, b) => b.strength - a.strength).slice(0, 3);
+        const sup = near.filter(z => z.kind === 'support')
+                        .sort((a, b) => b.strength - a.strength).slice(0, 3);
+        const ins = near.filter(z => z.kind === 'inside').slice(0, 1);
+        const show = [...res, ...sup, ...ins];
+        if (!show.length) return [];
+
+        // Один прозрачный series-держатель для priceLines (тонкие линии,
+        // не полосы — по фидбеку 'каша, слишком толсто')
+        let holder;
+        try {
+          holder = chart.addLineSeries({
+            color: 'rgba(0,0,0,0)', lineWidth: 1,
+            priceLineVisible: false, lastValueVisible: false,
+            crosshairMarkerVisible: false,
+          });
+          holder.setData([{ time: candles[candles.length - 1].time, value: priceNow }]);
+        } catch (e) { return []; }
+
+        for (const z of show) {
           const isRes = z.kind === 'resistance';
           const isIns = z.kind === 'inside';
-          // Цвета: сопротивление — красное, поддержка — зелёное,
-          // inside (цена в зоне) — жёлтое. Интенсивность от силы.
-          const alpha = Math.max(0.05, Math.min(0.16, z.strength / 600));
-          const fill = isIns ? `rgba(255,210,62,${alpha})`
-                     : isRes ? `rgba(251,93,125,${alpha})`
-                             : `rgba(52,211,153,${alpha})`;
-          const lineC = isIns ? 'rgba(255,210,62,0.55)'
-                      : isRes ? 'rgba(251,93,125,0.55)'
-                              : 'rgba(52,211,153,0.55)';
+          const strong = z.strength >= 75;
+          const color = isIns ? 'rgba(255,210,62,0.9)'
+                      : isRes ? (strong ? 'rgba(251,93,125,0.95)' : 'rgba(251,93,125,0.45)')
+                              : (strong ? 'rgba(52,211,153,0.95)' : 'rgba(52,211,153,0.45)');
           try {
-            // Зона: baseline series между z.low и z.high
-            const bs = chart.addBaselineSeries({
-              baseValue: { type: 'price', price: z.low },
-              topFillColor1: fill, topFillColor2: fill,
-              topLineColor: 'rgba(0,0,0,0)',
-              bottomFillColor1: 'rgba(0,0,0,0)', bottomFillColor2: 'rgba(0,0,0,0)',
-              bottomLineColor: 'rgba(0,0,0,0)',
-              lineWidth: 1,
-              priceLineVisible: false, lastValueVisible: false,
-              crosshairMarkerVisible: false,
+            holder.createPriceLine({
+              price: z.mid,
+              color: color,
+              lineWidth: strong ? 2 : 1,
+              lineStyle: strong ? 0 /* solid */ : 2 /* dashed */,
+              axisLabelVisible: true,
+              title: `${isIns ? '◈' : isRes ? 'R' : 'S'}×${z.touches}`,
             });
-            bs.setData([{ time: t0, value: z.high }, { time: t1, value: z.high }]);
-            added.push(bs);
-            // Midline с подписью на шкале: "R 1h ×3 (78)"
-            const label = `${isIns ? '◈' : isRes ? 'R' : 'S'} ${useTf} ×${z.touches}`;
-            bs.createPriceLine({
-              price: z.mid, color: lineC, lineWidth: 1,
-              lineStyle: 2 /* dashed */, axisLabelVisible: true, title: label,
-            });
-          } catch (e) { /* chart может быть уже disposed */ }
+          } catch (e) { /* disposed */ }
         }
-        return added;
+        return [holder];
       };
 
 
