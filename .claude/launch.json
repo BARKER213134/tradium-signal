@@ -3,14 +3,22 @@
   "configurations": [
     {
       "name": "kl-preview",
-      "runtimeExecutable": "C:\\Users\\супер\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
-      "runtimeArgs": ["-m", "http.server", "8765", "--directory", ".claude/preview"],
+      "runtimeExecutable": "C:\\Users\\super\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--directory",
+        ".claude/preview"
+      ],
       "port": 8765
     },
     {
       "name": "tradium-signal",
-      "runtimeExecutable": "C:\\Users\\супер\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
-      "runtimeArgs": ["main.py"],
+      "runtimeExecutable": "C:\\Users\\super\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "runtimeArgs": [
+        "main.py"
+      ],
       "port": 8000
     }
   ]

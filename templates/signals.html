@@ -273,7 +273,7 @@ setInterval(_sysHealthCheck, 30000);
   display: inline-flex;
   gap: 4px;
   padding: 6px;
-  background: linear-gradient(180deg, rgba(23,27,36,0.85), rgba(17,20,27,0.85));
+  background: linear-gradient(180deg, rgba(20,24,34,0.72), rgba(12,14,21,0.78));
   border: 1px solid var(--border);
   border-radius: 12px;
   margin-bottom: 22px;
@@ -300,9 +300,9 @@ setInterval(_sysHealthCheck, 30000);
 .tab:hover { color: var(--text-2); background: rgba(255,255,255,0.03); }
 .tab.active {
   color: var(--cyan);
-  background: rgba(0,102,255,0.12);
-  border-color: rgba(0,255,255,0.35);
-  box-shadow: 0 0 0 1px rgba(0,102,255,0.25), 0 0 16px rgba(0,102,255,0.2);
+  background: rgba(91,140,255,0.12);
+  border-color: rgba(76,201,240,0.35);
+  box-shadow: 0 0 0 1px rgba(91,140,255,0.25), 0 0 16px rgba(91,140,255,0.2);
 }
 .tab-badge {
   padding: 2px 8px;
@@ -314,7 +314,7 @@ setInterval(_sysHealthCheck, 30000);
   text-align: center;
 }
 .tab.active .tab-badge {
-  background: rgba(0,255,255,0.2);
+  background: rgba(76,201,240,0.2);
   color: var(--cyan);
 }
 .select-all {
@@ -348,7 +348,7 @@ setInterval(_sysHealthCheck, 30000);
 }
 .delete-btn:hover { background: rgba(255,77,109,0.2); }
 .table-wrap {
-  background: linear-gradient(180deg, rgba(23,27,36,0.85), rgba(17,20,27,0.85));
+  background: linear-gradient(180deg, rgba(20,24,34,0.72), rgba(12,14,21,0.78));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
@@ -356,7 +356,7 @@ setInterval(_sysHealthCheck, 30000);
   -webkit-backdrop-filter: blur(8px);
 }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-thead { background: rgba(0,102,255,0.06); }
+thead { background: rgba(91,140,255,0.06); }
 th {
   padding: 14px 18px;
   text-align: left;
@@ -376,7 +376,7 @@ td {
 }
 tr:last-child td { border-bottom: none; }
 tbody tr { transition: background 0.12s; }
-tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
+tbody tr:hover td { background: rgba(91,140,255,0.05); color: var(--text); }
 /* Journal: серая разделительная линия между сигналами (видна на фоне tier-подсветок) */
 #jBody > tr > td { border-bottom: 1px solid rgba(255,255,255,0.10); }
 #jBody > tr:last-child > td { border-bottom: none; }
@@ -393,8 +393,8 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 }
 .badge-buy { background: rgba(0,229,160,0.12); color: var(--buy); border: 1px solid rgba(0,229,160,0.3); }
 .badge-sell { background: rgba(255,77,109,0.12); color: var(--sell); border: 1px solid rgba(255,77,109,0.3); }
-.badge-status { background: rgba(0,102,255,0.15); color: var(--cyan); border: 1px solid rgba(0,255,255,0.35); }
-.badge-ai { background: rgba(0,255,255,0.1); color: var(--cyan); border: 1px solid rgba(0,255,255,0.3); }
+.badge-status { background: rgba(91,140,255,0.15); color: var(--cyan); border: 1px solid rgba(76,201,240,0.35); }
+.badge-ai { background: rgba(76,201,240,0.1); color: var(--cyan); border: 1px solid rgba(76,201,240,0.3); }
 .trend-cell { white-space: nowrap; }
 .dot-r, .dot-g {
   display: inline-block;
@@ -448,7 +448,7 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 .an-toolbar {
   display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   padding: 14px 18px; margin-bottom: 16px;
-  background: linear-gradient(180deg, rgba(23,27,36,0.85), rgba(17,20,27,0.85));
+  background: linear-gradient(180deg, rgba(20,24,34,0.72), rgba(12,14,21,0.78));
   border: 1px solid var(--border); border-radius: 12px;
   backdrop-filter: blur(8px);
 }
@@ -461,7 +461,7 @@ tbody tr:hover td { background: rgba(0,102,255,0.05); color: var(--text); }
 .an-toolbar select { min-width: 140px; }
 .an-filter-count {
   font-family: var(--font-mono); font-size: 10px; color: var(--cyan);
-  background: rgba(0,255,255,0.08); border: 1px solid rgba(0,255,255,0.2);
+  background: rgba(76,201,240,0.08); border: 1px solid rgba(76,201,240,0.2);
   padding: 4px 10px; border-radius: 6px;
 }
 .an-scan-bar {
@@ -1110,8 +1110,8 @@ safeInterval(loadAnomalies, 60000);
 <style>
 .cf-hero {
   padding: 20px 24px; margin-bottom: 16px;
-  background: linear-gradient(135deg, rgba(0,102,255,0.08), rgba(0,255,255,0.04));
-  border: 1px solid rgba(0,255,255,0.15); border-radius: 14px;
+  background: linear-gradient(135deg, rgba(91,140,255,0.08), rgba(76,201,240,0.04));
+  border: 1px solid rgba(76,201,240,0.15); border-radius: 14px;
 }
 .cf-hero-title { font-size: 16px; font-weight: 800; color: var(--text); margin-bottom: 6px; }
 .cf-hero-desc { font-size: 12px; color: var(--muted); line-height: 1.6; }
@@ -4537,7 +4537,7 @@ setInterval(_loadStrategyHeader, 30000);
     .trading-tabs { display:flex; gap:6px; margin-bottom:14px; padding:6px; background:linear-gradient(180deg,rgba(23,27,36,0.85),rgba(17,20,27,0.85)); border:1px solid var(--border); border-radius:12px; }
     .trading-tab { flex:1; padding:12px 18px; font-size:12px; font-weight:700; font-family:var(--font-mono); letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); cursor:pointer; border-radius:8px; border:1px solid transparent; background:transparent; transition:all 0.15s; display:flex; align-items:center; justify-content:center; gap:8px; }
     .trading-tab:hover { color:var(--text-2); background:rgba(255,255,255,0.03); }
-    .trading-tab.active[data-wallet="paper"] { color:#00d4ff; background:rgba(0,102,255,0.12); border-color:rgba(0,255,255,0.35); box-shadow:0 0 0 1px rgba(0,102,255,0.25), 0 0 16px rgba(0,102,255,0.2); }
+    .trading-tab.active[data-wallet="paper"] { color:#00d4ff; background:rgba(91,140,255,0.12); border-color:rgba(76,201,240,0.35); box-shadow:0 0 0 1px rgba(91,140,255,0.25), 0 0 16px rgba(91,140,255,0.2); }
     .trading-tab.active[data-wallet="real"] { color:#00e5a0; background:rgba(0,229,160,0.12); border-color:rgba(0,229,160,0.45); box-shadow:0 0 0 1px rgba(0,229,160,0.3), 0 0 20px rgba(0,229,160,0.2); }
     .trading-tab .tab-stat { font-size:11px; opacity:0.85; font-weight:500; }
   </style>
@@ -8056,8 +8056,8 @@ safeInterval(loadForexJournal, 30000);
 <style>
 .journal-hero {
   padding: 16px 20px; margin-bottom: 16px;
-  background: linear-gradient(135deg, rgba(0,102,255,0.06), rgba(0,255,255,0.03));
-  border: 1px solid rgba(0,255,255,0.12); border-radius: 12px;
+  background: linear-gradient(135deg, rgba(91,140,255,0.06), rgba(76,201,240,0.03));
+  border: 1px solid rgba(76,201,240,0.12); border-radius: 12px;
 }
 .journal-hero-title { font-size: 15px; font-weight: 800; color: var(--text); }
 .journal-hero-desc { font-size: 11px; color: var(--muted); margin-top: 4px; }
@@ -8083,7 +8083,7 @@ safeInterval(loadForexJournal, 30000);
 /* Journal notifications */
 .j-toast {
   position:fixed; top:20px; right:20px; z-index:9999;
-  background:linear-gradient(135deg, rgba(0,229,160,0.15), rgba(0,102,255,0.10));
+  background:linear-gradient(135deg, rgba(0,229,160,0.15), rgba(91,140,255,0.10));
   border:1px solid rgba(0,229,160,0.4); border-radius:12px;
   padding:14px 20px; min-width:280px; max-width:400px;
   font-family:var(--font-mono); color:var(--text);
@@ -12641,14 +12641,14 @@ async function saveCriteria() {
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
       <span id="btRunLabel">НАЧАТЬ БЕКТЕСТ</span>
     </button>
-    <button class="sync-btn" onclick="startAiBacktest()" id="btAiBtn" style="background:rgba(0,102,255,0.08);border-color:rgba(0,102,255,0.35);">
+    <button class="sync-btn" onclick="startAiBacktest()" id="btAiBtn" style="background:rgba(91,140,255,0.08);border-color:rgba(91,140,255,0.35);">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
       <span id="btAiLabel">БЕКТЕСТ AI</span>
     </button>
     <button class="delete-btn" onclick="clearProcessed()" id="clearBtn" style="display:none;">
       🗑 Очистить сигналы
     </button>
-    <button class="delete-btn" onclick="clearAiSignals()" id="clearAiBtn" style="display:none;background:rgba(0,102,255,0.1);border-color:rgba(0,102,255,0.4);color:var(--cyan);">
+    <button class="delete-btn" onclick="clearAiSignals()" id="clearAiBtn" style="display:none;background:rgba(91,140,255,0.1);border-color:rgba(91,140,255,0.4);color:var(--cyan);">
       🤖 Очистить AI сигналы
     </button>
   </div>
@@ -13528,7 +13528,7 @@ safeInterval(updatePricesAndPnl, 10000);
   margin-bottom: 24px;
 }
 .res-card {
-  background: linear-gradient(180deg, rgba(23,27,36,0.85), rgba(17,20,27,0.85));
+  background: linear-gradient(180deg, rgba(20,24,34,0.72), rgba(12,14,21,0.78));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px 20px;
@@ -13575,13 +13575,13 @@ safeInterval(updatePricesAndPnl, 10000);
 .btn-analyze {
   padding: 14px 28px; border-radius: 10px; font-size: 14px; font-weight: 700;
   font-family: var(--font-mono); letter-spacing: 0.05em; cursor: pointer;
-  background: linear-gradient(135deg, rgba(0,102,255,0.15), rgba(0,255,255,0.1));
-  border: 1px solid rgba(0,255,255,0.3); color: var(--cyan);
+  background: linear-gradient(135deg, rgba(91,140,255,0.15), rgba(76,201,240,0.1));
+  border: 1px solid rgba(76,201,240,0.3); color: var(--cyan);
   transition: all 0.2s;
 }
 .btn-analyze:hover {
-  background: linear-gradient(135deg, rgba(0,102,255,0.25), rgba(0,255,255,0.2));
-  box-shadow: 0 0 20px rgba(0,255,255,0.15); transform: scale(1.03);
+  background: linear-gradient(135deg, rgba(91,140,255,0.25), rgba(76,201,240,0.2));
+  box-shadow: 0 0 20px rgba(76,201,240,0.15); transform: scale(1.03);
 }
 
 .ai-analysis-card { padding: 20px 24px; font-size: 13px; line-height: 1.6; color: var(--text-2); }
@@ -13651,7 +13651,7 @@ safeInterval(updatePricesAndPnl, 10000);
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(0,102,255,0.15);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(91,140,255,0.15);
 }
 .modal-header {
   display: flex;
@@ -13744,8 +13744,8 @@ safeInterval(updatePricesAndPnl, 10000);
 .modal-ai {
   margin: 16px 20px;
   padding: 18px;
-  background: linear-gradient(180deg, rgba(0,102,255,0.08), rgba(0,255,255,0.03));
-  border: 1px solid rgba(0,102,255,0.25);
+  background: linear-gradient(180deg, rgba(91,140,255,0.08), rgba(76,201,240,0.03));
+  border: 1px solid rgba(91,140,255,0.25);
   border-radius: var(--radius-sm);
 }
 .modal-ai-head {
@@ -13770,7 +13770,7 @@ safeInterval(updatePricesAndPnl, 10000);
 .modal-ai-risks {
   margin-top: 14px;
   padding-top: 14px;
-  border-top: 1px solid rgba(0,102,255,0.2);
+  border-top: 1px solid rgba(91,140,255,0.2);
 }
 .modal-ai-risks-title {
   font-family: var(--font-mono);

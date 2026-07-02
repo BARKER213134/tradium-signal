@@ -7,17 +7,17 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --electric: #0066ff;
-            --cyan: #00ffff;
-            --dark: #0b0d12;
-            --dark-1: #11141b;
-            --dark-2: #171b24;
-            --border: #252a38;
-            --border-strong: #353a4a;
-            --text: #ffffff;
-            --text-2: #c6cad5;
-            --muted: #6b7180;
-            --sell: #ff4d6d;
+            --electric: #5b8cff;
+            --cyan: #4cc9f0;
+            --dark: #07080d;
+            --dark-1: #0c0e15;
+            --dark-2: #12141d;
+            --border: rgba(148,163,184,0.09);
+            --border-strong: rgba(148,163,184,0.18);
+            --text: #f4f6fb;
+            --text-2: #b9c0d0;
+            --muted: #697084;
+            --sell: #fb5d7d;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body {
@@ -29,24 +29,44 @@
         }
         body {
             background:
-              radial-gradient(1000px 500px at 80% -10%, rgba(0,102,255,0.15), transparent 60%),
-              radial-gradient(700px 400px at 10% 100%, rgba(0,255,255,0.08), transparent 60%),
+              radial-gradient(1000px 500px at 80% -10%, rgba(91,140,255,0.13), transparent 60%),
+              radial-gradient(800px 450px at 8% 105%, rgba(124,58,237,0.10), transparent 60%),
+              radial-gradient(600px 350px at 50% 50%, rgba(76,201,240,0.04), transparent 65%),
               var(--dark);
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 20px;
+            position: relative;
+        }
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+              linear-gradient(rgba(148,163,184,0.028) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(148,163,184,0.028) 1px, transparent 1px);
+            background-size: 44px 44px;
+            mask-image: radial-gradient(ellipse 80% 65% at 50% 40%, #000 25%, transparent 75%);
+            -webkit-mask-image: radial-gradient(ellipse 80% 65% at 50% 40%, #000 25%, transparent 75%);
         }
         .login-card {
             width: 100%;
             max-width: 420px;
-            background: linear-gradient(180deg, rgba(23,27,36,0.9), rgba(17,20,27,0.9));
+            background: linear-gradient(180deg, rgba(20,24,34,0.85), rgba(12,14,21,0.90));
             border: 1px solid var(--border-strong);
-            border-radius: 18px;
+            border-radius: 22px;
             padding: 40px 36px 32px;
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
-            box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 60px rgba(0,102,255,0.12);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            box-shadow: 0 24px 70px rgba(0,0,0,0.55), 0 0 70px rgba(91,140,255,0.10), inset 0 1px 0 rgba(255,255,255,0.05);
+            position: relative;
+            animation: cardIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+        }
+        @keyframes cardIn {
+            from { opacity: 0; transform: translateY(14px) scale(0.985); }
+            to   { opacity: 1; transform: none; }
         }
         .logo {
             text-align: center;
@@ -108,28 +128,31 @@
         }
         .field input:focus {
             border-color: var(--electric);
-            box-shadow: 0 0 0 3px rgba(0,102,255,0.2);
+            box-shadow: 0 0 0 3px rgba(91,140,255,0.18);
         }
         .btn {
             width: 100%;
             padding: 14px;
-            background: linear-gradient(135deg, var(--electric), var(--cyan));
-            color: var(--dark);
+            background: linear-gradient(135deg, var(--electric), #7c5cff);
+            color: #fff;
             border: none;
-            border-radius: 10px;
+            border-radius: 11px;
             font-family: 'Inter', sans-serif;
             font-size: 14px;
             font-weight: 700;
             letter-spacing: 0.05em;
             text-transform: uppercase;
             cursor: pointer;
-            transition: all 0.15s;
+            transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
             margin-top: 8px;
+            box-shadow: 0 4px 18px rgba(91,140,255,0.30), inset 0 1px 0 rgba(255,255,255,0.18);
         }
         .btn:hover {
-            filter: brightness(1.1);
-            box-shadow: 0 0 28px rgba(0,102,255,0.45);
+            filter: brightness(1.08);
+            transform: translateY(-1px);
+            box-shadow: 0 8px 30px rgba(91,140,255,0.45), inset 0 1px 0 rgba(255,255,255,0.2);
         }
+        .btn:active { transform: translateY(0) scale(0.995); }
         .error {
             background: rgba(255,77,109,0.1);
             border: 1px solid rgba(255,77,109,0.35);
@@ -177,7 +200,7 @@
                 <div style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1;color:rgba(11,13,18,0.7);letter-spacing:0.2em;margin-top:3px;">STA</div>
                 <div style="position:absolute;top:-14px;right:-14px;width:36px;height:36px;background:radial-gradient(circle,rgba(255,255,255,0.4) 0%,transparent 60%);"></div>
             </div>
-            <h1 style="margin:0;font-size:22px;font-weight:800;background:linear-gradient(135deg,#fff 0%,#00d4ff 50%,#7b5cff 100%);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:-0.01em;">1 MILLIARD<span style="margin-left:6px;color:#0066ff;-webkit-text-fill-color:#0066ff;font-weight:900;">STA</span></h1>
+            <h1 style="margin:0;font-size:22px;font-weight:800;background:linear-gradient(135deg,#fff 0%,#9db8ff 50%,#7b5cff 100%);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:-0.01em;">1 MILLIARD<span style="margin-left:6px;color:#5b8cff;-webkit-text-fill-color:#5b8cff;font-weight:900;">STA</span></h1>
             <p style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.3em;text-transform:uppercase;margin:0;">Screener</p>
         </div>
         <div class="title">Вход в систему</div>
