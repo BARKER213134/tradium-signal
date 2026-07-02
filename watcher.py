@@ -1173,6 +1173,25 @@ async def _check_once():
 
     # Cryptovizor bg task удалён вместе с CV ingestion (2026-07-01)
 
+_anomaly_batch_idx = 0
+_ANOMALY_INTERVAL = 10  # каждый 10-й тик (10×30с = 5 мин)
+_anomaly_tick = _ANOMALY_INTERVAL - 1  # первый скан на первом тике
+
+# Background tasks для тяжёлых scans/обработки — чтобы не блокировать tick.
+# Раньше await блокировал _check_once на 60-200с (anomaly/confluence 1000+
+# pairs sequential scan + cryptovizor 20 signals × render_chart × Claude AI);
+# tick застревал → /healthz timeout → графики не грузились.
+_anomaly_bg_task: "asyncio.Task | None" = None
+_confluence_bg_task: "asyncio.Task | None" = None
+
+# Состояние скана — читается из admin API
+anomaly_scan_state = {
+    "running": False, "progress": 0, "total": 0,
+    "found": 0, "batch": 0, "batches": 0, "current": "",
+    "next_at": 0,  # unix timestamp следующего скана
+}
+
+
 async def _check_anomalies():
     """Сканирует фьючерсные пары батчами. Полный цикл за 4 тика (20 мин)."""
     import time as _time

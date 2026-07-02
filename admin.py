@@ -556,6 +556,11 @@ async def health():
     return data
 
 
+_resonance_cache: dict = {}  # {(symbol, tf): (ts, png_bytes)}
+_RESONANCE_TTL_S = 900  # 15 мин
+_resonance_lock = asyncio.Lock()  # один Selenium процесс за раз
+
+
 @app.get("/api/resonance-screenshot")
 async def api_resonance_screenshot(symbol: str, tf: str = "H1", force: bool = False):
     """📊 Скриншот кластерного графика с Resonance.vision.
@@ -635,6 +640,32 @@ async def api_resonance_status():
     except Exception:
         logged_in = False
     return {"logged_in": logged_in, "cached": items, "lock_held": _resonance_lock.locked()}
+
+
+def _cap_admin_cache(d: dict, max_size: int = 300) -> None:
+    """Cap для admin кэшей. Большинство хранят (ts, value) tuple — удаляем
+    самые старые. Запускается inline после каждого write — защита от
+    неограниченного роста между _cache_cleanup_loop циклами (5 мин)."""
+    if len(d) <= max_size:
+        return
+    try:
+        items = []
+        for k, v in d.items():
+            ts = 0
+            if isinstance(v, tuple) and v:
+                if isinstance(v[0], (int, float)) and v[0] > 10**9:
+                    ts = v[0]
+            items.append((k, ts))
+        items.sort(key=lambda kv: kv[1])
+        for k, _ in items[:len(d) - max_size]:
+            d.pop(k, None)
+    except Exception:
+        pass
+
+
+
+_kl_recent_cache: dict = {}
+_KL_RECENT_TTL = 30.0
 
 
 @app.get("/api/key-levels/recent")
@@ -922,6 +953,38 @@ async def api_key_levels_stats():
 # KL backfill удалён — источник (Tradium Telegram топики) отключён 2026-07-01
 
 
+_st_backtest_state: dict = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "progress": None,  # {processed, total, current_pair}
+    "result": None,
+    "error": None,
+}
+
+
+
+
+async def _run_st_backtest(days: int, top_n: int):
+    from datetime import datetime as _dt
+    from backtest_supertrend import run_backtest
+
+    def _on_progress(i, total, pair):
+        _st_backtest_state["progress"] = {
+            "processed": i, "total": total, "current_pair": pair,
+        }
+
+    try:
+        result = await asyncio.to_thread(run_backtest, days, top_n, _on_progress)
+        _st_backtest_state["result"] = result
+    except Exception as e:
+        import traceback
+        _st_backtest_state["error"] = f"{e}\n{traceback.format_exc()[-800:]}"
+    finally:
+        _st_backtest_state["running"] = False
+        _st_backtest_state["finished_at"] = _dt.utcnow().isoformat()
+
+
 @app.post("/api/backtest-st")
 async def api_backtest_st(payload: dict | None = None):
     """Запускает фоновый бектест ST-стратегий.
@@ -996,6 +1059,10 @@ async def api_supertrend_signals(tier: str = "", pair: str = "",
     return await supertrend_signals_cache.get_or_compute(cache_key, _compute)
 
 
+
+
+_new_strat_cache: dict = {"ts": 0.0, "data": None}
+_NEW_STRAT_TTL = 30.0
 
 
 @app.get("/api/new-strategies")
@@ -1492,7 +1559,7 @@ async def api_paper_close(payload: dict):
             return {"ok": True, "result": result,
                     "mirror_synced": mirror_res.get("synced", 0) if isinstance(mirror_res, dict) else 0}
         except Exception as me:
-            logger.warning(f"[paper-close] instant mirror fail: {me}")
+            logging.getLogger(__name__).warning(f"[paper-close] instant mirror fail: {me}")
             return {"ok": True, "result": result, "mirror_warning": str(me)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -1510,7 +1577,7 @@ async def api_paper_close_all():
             mirror_res = await asyncio.wait_for(lt.paper_to_live_sync_check(), timeout=30.0)
             result["mirror_synced"] = mirror_res.get("synced", 0) if isinstance(mirror_res, dict) else 0
         except Exception as me:
-            logger.warning(f"[paper-close-all] instant mirror fail: {me}")
+            logging.getLogger(__name__).warning(f"[paper-close-all] instant mirror fail: {me}")
             result["mirror_warning"] = str(me)
         return {"ok": True, **result}
     except Exception as e:
@@ -2452,6 +2519,7 @@ async def api_admin_health_detail():
     Помогает диагностировать recurring hangs (28.04.2026 prod залипал
     через 1.5ч стабильной работы → подозрение на memory leak / task leak)."""
     import asyncio as _aio
+    from database import utcnow
     detail = {"ok": True, "at": utcnow().isoformat()}
 
     # Memory + CPU (psutil опциональный — может не быть установлен)
@@ -2532,8 +2600,6 @@ async def api_admin_health_detail():
         cache_sizes["live_trader_err"] = str(e)
     try:
         cache_sizes["admin"] = {
-            "tradium_setups": len(_tradium_setups_cache),
-            "tradium_forum": len(_tradium_forum_cache),
             "kl_recent": len(_kl_recent_cache),
             "st_by_pair": len(_st_by_pair_cache),
             "candles": len(_candles_cache),
@@ -9567,9 +9633,10 @@ def _compute_journal_sync(_fast_only: bool = False):
                 if last_alert and (now_m - int(last_alert.get('at_ts', 0)) < 3600):
                     continue  # уже алертили <1h назад
                 # Mark as alerted (insert)
+                from datetime import timezone as _tz_moon
                 moon_col.insert_one({
                     'pair': p,
-                    'at': datetime.now(timezone.utc),
+                    'at': datetime.now(_tz_moon.utc),
                     'at_ts': now_m,
                     'stack_distinct': it.get('stack_distinct'),
                     'stack_count': it.get('stack_count'),
