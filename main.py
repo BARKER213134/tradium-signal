@@ -155,14 +155,13 @@ async def main():
     logger.info("База данных инициализирована")
 
     from bot import bot, start_bot
-    from bot2 import bot2, start_bot2
-    from userbot import set_bot, start_userbot
+    from userbot import set_bot  # NOTE: userbot.py = no-op stub, CV/Tradium удалены
     from watcher import setup as setup_watcher, start_watcher
 
     set_bot(bot, ADMIN_CHAT_ID)
 
-    if bot2:
-        logger.info("✅ BOT2 (Cryptovizor) инициализирован")
+    # BOT2 (Cryptovizor) удалён вместе с CV подпиской
+    bot2 = None
     bot4 = None
     if BOT4_BOT_TOKEN:
         try:

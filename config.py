@@ -152,15 +152,13 @@ TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET", "tv_f9c3a8b2d4e7f6a1b8c5d9e2f
 
 # Список ботов для UI
 # category: 'crypto' | 'stocks' (forex/metals/indices/energy через FVG)
+# tradium / cryptovizor / cv_flip вкладки удалены — ingestion отключён (2026-07-01)
 BOTS = [
-    {"id": "tradium", "label": "Tradium", "category": "crypto"},
-    {"id": BOT2_NAME, "label": BOT2_LABEL, "category": "crypto"},
     {"id": "anomaly", "label": "Аномалии", "category": "crypto"},
     {"id": "confluence", "label": "Confluence", "category": "crypto"},
     {"id": "clusters", "label": "Кластеры", "category": "crypto"},
     {"id": "top_picks", "label": "👑 Top Picks", "category": "crypto"},
     {"id": "supertrend", "label": "🌀 SuperTrend", "category": "crypto"},
-    {"id": "cv_flip", "label": "⏳ Flip ST", "category": "crypto"},
     {"id": "new_strategies", "label": "🌊 New Strategy", "category": "crypto"},
     # {"id": "conflicts", "label": "⚠ Conflicts", "category": "crypto"},  # кнопка скрыта
     # — функционал остаётся: endpoint /api/conflicts, вкладка по прямому URL

@@ -351,26 +351,7 @@ def check_setup(pair_input: str) -> dict:
                 })
         except Exception: pass
 
-        # 6. cryptovizor + tradium (pattern_triggered)
-        try:
-            for s in db.signals.find({
-                'pair': pair,
-                'source': {'$in': ['cryptovizor', 'tradium']},
-                'pattern_triggered': True,
-                'pattern_triggered_at': {'$gte': since},
-            }, {'source':1,'direction':1,'entry':1,'pattern_price':1,'pattern_triggered_at':1,'ai_score':1,'pattern_name':1}).sort('pattern_triggered_at',-1).limit(10):
-                dt = s.get('pattern_triggered_at')
-                if dt and dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
-                all_sigs.append({
-                    'source': s.get('source'),
-                    'at': dt.isoformat() if dt else None,
-                    'at_ts': int(dt.timestamp()) if dt else 0,
-                    'direction': s.get('direction'),
-                    'entry': s.get('pattern_price') or s.get('entry'),
-                    'score': s.get('ai_score'),
-                    'tier': s.get('pattern_name'),
-                })
-        except Exception: pass
+        # CV + Tradium блок удалён вместе с ingestion (2026-07-01)
 
         # 7. clusters
         try:
@@ -389,30 +370,7 @@ def check_setup(pair_input: str) -> dict:
                 })
         except Exception: pass
 
-        # 8. 🔔 BIG BUY (Cryptovizor) — всегда LONG, high positive delta
-        # Бектест 30d (226 signals): solo WR 42.9% EV+0.43% — marginal alone.
-        # НО confluence-edge с st_mtf = WR 80%, WHALE = 62.5%, vol_surge 62.5%.
-        # Так что добавляем в recent_signals чтобы verdict видел и учитывал.
-        try:
-            for bb in db.bigbuy_signals.find({
-                **pair_or, 'received_at': {'$gte': since},
-            }, {
-                'received_at': 1, 'price': 1, 'delta_pct_30m': 1,
-                'vol_min_usdt': 1, 'rules': 1, 'state': 1,
-            }).sort('received_at', -1).limit(15):
-                dt = bb.get('received_at')
-                if dt and dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
-                all_sigs.append({
-                    'source': 'bigbuy',
-                    'at': dt.isoformat() if dt else None,
-                    'at_ts': int(dt.timestamp()) if dt else 0,
-                    'direction': 'LONG',  # BIG BUY = always LONG (positive delta)
-                    'entry': bb.get('price'),
-                    'score': bb.get('delta_pct_30m'),  # show delta as score
-                    'tier': 'BIG_BUY',
-                    'state': bb.get('state'),
-                })
-        except Exception: pass
+        # BIG BUY блок удалён вместе с Cryptovizor ingestion (2026-07-01)
 
         # Sort by time desc + add age_hours
         all_sigs.sort(key=lambda x: x.get('at_ts', 0), reverse=True)
@@ -537,26 +495,17 @@ def check_setup(pair_input: str) -> dict:
         except Exception: pass
 
         # === Signal cluster bias: подсчёт LONG vs SHORT за 72h ===
-        # TOP-7 backtest-validated sources + 🔔 bigbuy (как 1/2 weight т.к.
-        # marginal solo). BIG BUY всегда LONG → его учёт может усиливать
-        # LONG bias но не должен doминировать против strong SHORT signals.
+        # TOP-6 backtest-validated sources (cv_flip + bigbuy удалены 2026-07-01).
         top_sources = {'whale', 'shark', 'combo', 'triple_confluence',
-                       'st_vip', 'confluence', 'cv_flip'}
+                       'st_vip', 'confluence'}
         long_count = sum(1 for s in all_sigs
                          if s.get('direction') == 'LONG' and s.get('source') in top_sources)
         short_count = sum(1 for s in all_sigs
                           if s.get('direction') == 'SHORT' and s.get('source') in top_sources)
-        # 🔔 BIG BUY (LONG only) — half-weight (counts as 0.5 each)
-        # Бектест: BIG BUY solo WR 42.9%, EV +0.43% — недостаточно для full vote.
-        bb_count = sum(1 for s in all_sigs if s.get('source') == 'bigbuy'
-                                              and s.get('direction') == 'LONG')
-        long_count_bb = long_count + (bb_count // 2)  # half weight integer
-        result["cluster_long"] = long_count_bb
+        result["cluster_long"] = long_count
         result["cluster_short"] = short_count
-        result["cluster_long_strict"] = long_count  # без bigbuy bonus
-        result["cluster_bigbuy_count"] = bb_count
-        result["cluster_bias"] = ('LONG' if long_count_bb > short_count + 1
-                                   else 'SHORT' if short_count > long_count_bb + 1
+        result["cluster_bias"] = ('LONG' if long_count > short_count + 1
+                                   else 'SHORT' if short_count > long_count + 1
                                    else 'NEUTRAL')
 
         # ── Compose VERDICT ──
@@ -632,52 +581,7 @@ def check_setup(pair_input: str) -> dict:
             align_long_bonus -= 10
             long_penalties.append(f'cluster_72h дрейфует в SHORT ({short_cnt} vs {long_cnt})')
 
-        # ─── 🔔 BIG BUY confluence-edge (бектест 30d, 221 sigs) ───
-        # Solo BIG BUY = marginal (WR 42.9%, EV +0.43% — на грани).
-        # Confluence-edge:
-        #   + st_mtf  = WR 80.0% EV +3.4% (n=21) ★ best partner
-        #   + WHALE   = WR 62.5% EV +2.0% (n=13) ★ MFE p50 +5.13%
-        #   + vol_surge=WR 62.5% EV +2.0% (n=14)
-        #   + volcano = WR 50% но MFE 60% sigs ≥+5%
-        #   + tc/st_vip/combo/tradium = 0% WR (counter-signal, не плюс)
-        # → SOLO BIG BUY = +3 LONG (минимальный hint)
-        # → BIG BUY + strong partner за 24h = +15 LONG (как cluster bonus)
-        has_bigbuy_24h = False
-        bigbuy_partners = []
-        for sig in all_sigs:
-            if sig.get('source') != 'bigbuy':
-                continue
-            age_h = sig.get('age_hours') or 999
-            if age_h > 24:
-                continue
-            has_bigbuy_24h = True
-            # Ищем strong-partners в окне ±24h от BIG BUY
-            bb_ts = sig.get('at_ts', 0)
-            STRONG_PARTNERS = {'whale', 'vol_surge', 'volume_surge', 'volcano'}
-            ST_MTF_PARTNER = 'st_mtf'
-            for s2 in all_sigs:
-                if s2.get('source') == 'bigbuy': continue
-                if s2.get('direction') != 'LONG': continue
-                if abs((s2.get('at_ts', 0)) - bb_ts) > 86400: continue  # ±24h
-                src = s2.get('source')
-                if src == ST_MTF_PARTNER:
-                    bigbuy_partners.append('st_mtf')
-                elif src in STRONG_PARTNERS:
-                    bigbuy_partners.append(src)
-            break  # достаточно первого BIG BUY
-
-        if has_bigbuy_24h:
-            if 'st_mtf' in bigbuy_partners:
-                align_long_bonus += 18  # WR 80% — самая сильная комба
-                long_penalties.append('+18 🔔 BIG BUY + 🔱 st_mtf (бектест WR 80%, EV +3.4%)')
-            elif any(p in bigbuy_partners for p in ('whale', 'vol_surge', 'volume_surge', 'volcano')):
-                align_long_bonus += 12  # WR ~62.5% — сильная комба
-                long_penalties.append(f'+12 🔔 BIG BUY + {bigbuy_partners[0]} (бектест WR 62.5%, EV +2.0%)')
-            else:
-                # Solo BIG BUY — marginal, лёгкий hint без override
-                align_long_bonus += 3
-                long_penalties.append('+3 🔔 BIG BUY (solo, WR 42.9% — на грани)')
-            # SHORT alignment не трогаем — BIG BUY LONG-bias, не SHORT-anti
+        # BIG BUY confluence-bonus удалён вместе с Cryptovizor ingestion (2026-07-01)
 
         adj_long = result["long_score"] + align_long_bonus
         adj_short = result["short_score"] + align_short_bonus
@@ -828,33 +732,7 @@ def get_compact_verdict(pair_input: str) -> dict:
         emoji = '⏳'
         color = '#ffd23e'
 
-    # 🔔 BIG BUY presence + confluence-tier для UI badge
-    has_bb = False
-    bb_age_h = None
-    bb_tier = 'none'  # 'none' | 'solo' | 'partner' | 'st_mtf'
-    for s in full.get('recent_signals', []):
-        if s.get('source') == 'bigbuy':
-            age_h = s.get('age_hours') or 999
-            if age_h <= 24:
-                has_bb = True
-                bb_age_h = age_h
-                # Detect partner tier
-                bb_ts = s.get('at_ts', 0)
-                ST_MTF, STRONG = {'st_mtf'}, {'whale', 'vol_surge', 'volume_surge', 'volcano'}
-                partners = set()
-                for s2 in full.get('recent_signals', []):
-                    if s2.get('source') == 'bigbuy': continue
-                    if s2.get('direction') != 'LONG': continue
-                    if abs((s2.get('at_ts', 0)) - bb_ts) > 86400: continue
-                    if s2.get('source') in ST_MTF: partners.add('st_mtf')
-                    if s2.get('source') in STRONG: partners.add(s2['source'])
-                if 'st_mtf' in partners:
-                    bb_tier = 'st_mtf'  # WR 80%
-                elif partners:
-                    bb_tier = 'partner'  # WR 62.5%
-                else:
-                    bb_tier = 'solo'  # WR 42.9%
-                break
+    # BIG BUY presence удалён вместе с Cryptovizor ingestion (2026-07-01)
 
     compact = {
         'verdict': verdict,
@@ -872,9 +750,6 @@ def get_compact_verdict(pair_input: str) -> dict:
         'cluster_bias': full.get('cluster_bias'),
         'cluster_long': full.get('cluster_long'),
         'cluster_short': full.get('cluster_short'),
-        'bigbuy_24h': has_bb,
-        'bigbuy_age_h': bb_age_h,
-        'bigbuy_tier': bb_tier,  # 'none'/'solo'/'partner'/'st_mtf'
         'computed_at': now,
     }
     _verdict_cache[pair] = (now, compact)

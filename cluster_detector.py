@@ -85,35 +85,7 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
     start = end_at - timedelta(hours=window_h)
     out = []
 
-    # CV
-    for s in _signals().find({
-        "source": "cryptovizor", "pattern_triggered": True,
-        "pattern_triggered_at": {"$gte": start, "$lte": end_at},
-        "direction": direction, "pair": {"$in": list(sym_variants)},
-    }):
-        out.append({
-            "source": "cryptovizor",
-            "at": s["pattern_triggered_at"],
-            "price": s.get("pattern_price") or s.get("entry"),
-            "meta": {"pattern_name": s.get("pattern_name", ""),
-                     "ai_score": s.get("ai_score"),
-                     "is_top_pick": bool(s.get("is_top_pick"))},
-        })
-
-    # Tradium
-    for s in _signals().find({
-        "source": "tradium",
-        "received_at": {"$gte": start, "$lte": end_at},
-        "direction": direction, "pair": {"$in": list(sym_variants)},
-    }):
-        out.append({
-            "source": "tradium",
-            "at": s["received_at"],
-            "price": s.get("entry"),
-            "meta": {"ai_score": s.get("ai_score"),
-                     "setup_number": s.get("setup_number"),
-                     "is_top_pick": bool(s.get("is_top_pick"))},
-        })
+    # CV + Tradium удалены вместе с ingestion (2026-07-01)
 
     # Anomaly — symbol может быть ETHUSDT или pair ETH/USDT
     for a in _anomalies().find({
@@ -211,28 +183,7 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
         except Exception:
             pass  # mongo unavailable / коллекция отсутствует — не блокируем основной flow
 
-        # ─── 🔔 BIG BUY signals (Cryptovizor bot) — chart markers ───
-        # BIG BUY всегда LONG, поэтому только когда direction == LONG.
-        if direction == "LONG":
-            try:
-                from database import _get_db as _g_db_bb3
-                bb_col = _g_db_bb3().bigbuy_signals
-                for bb in bb_col.find({
-                    "received_at": {"$gte": start, "$lte": end_at},
-                    "$or": [{"symbol": norm.replace("/", "")}, {"pair": norm}],
-                }).sort("received_at", -1).limit(50):
-                    out.append({
-                        "source": "bigbuy",
-                        "at": bb["received_at"],
-                        "price": bb.get("price") or bb.get("entry"),
-                        "meta": {
-                            "delta_pct_30m": bb.get("delta_pct_30m"),
-                            "vol_min_usdt": bb.get("vol_min_usdt"),
-                            "rules": (bb.get("rules") or [])[:6],
-                        },
-                    })
-            except Exception:
-                pass
+        # BIG BUY блок удалён вместе с Cryptovizor ingestion (2026-07-01)
 
     out.sort(key=lambda x: x["at"])
     return out
@@ -267,16 +218,7 @@ def get_pending_clusters(limit: int = 50) -> list[dict]:
     since = now - timedelta(hours=cfg["window_h"])
     pairs_dirs: set = set()
 
-    # Projection — только нужные поля; limit — предохранитель
-    for s in _signals().find({
-        "source": {"$in": ["cryptovizor", "tradium"]},
-        "$or": [{"pattern_triggered_at": {"$gte": since}}, {"received_at": {"$gte": since}}],
-        "direction": {"$ne": None}, "pair": {"$ne": None},
-    }, {"pair": 1, "direction": 1}).limit(500):
-        pair = _norm_pair(s.get("pair"))
-        d = s.get("direction")
-        if pair and d in ("LONG", "SHORT"):
-            pairs_dirs.add((pair, d))
+    # CV + Tradium signals collection reader удалён (2026-07-01)
 
     for a in _anomalies().find({
         "detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]},
