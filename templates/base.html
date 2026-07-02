@@ -449,11 +449,10 @@
             flex: 1;
             position: relative;
             z-index: 1;
-            animation: contentIn 0.4s var(--ease) both;
-        }
-        @keyframes contentIn {
-            from { opacity: 0; transform: translateY(8px); }
-            to   { opacity: 1; transform: none; }
+            /* contentIn animation УДАЛЕНА (2026-07-02): на тяжёлых страницах
+               (журнал 3000+ строк) main thread блокируется JS-рендером и
+               CSS-анимация замерзала на opacity:0 → страница и модалка
+               графика оставались затемнёнными/невидимыми. */
         }
 
         /* ── Panels ── */
