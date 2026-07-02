@@ -742,6 +742,7 @@ async function openChartModal(symbol, pair, direction, pnl) {
       if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
       if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
       if (window._addSuperTrend) window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv });
+      window._addComputedLevels && window._addComputedLevels(chart, sym, tf, d.candles);
       if (window._addTrendEMA) window._addTrendEMA(chart, d.candles, { anchor: chartDiv });
       if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
@@ -3397,6 +3398,7 @@ async function _scRenderChart(d, tf) {
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, cD.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, cD.candles, tf);
     if (window._addSuperTrend) window._addSuperTrend(chart, cD.candles, tf, { anchor: chartDiv });
+    window._addComputedLevels && window._addComputedLevels(chart, symbol, tf, cD.candles);
     if (window._addTrendEMA) window._addTrendEMA(chart, cD.candles, { anchor: chartDiv });
     if (window._addRsiSma14) window._addRsiSma14(chart, cD.candles, { anchor: chartDiv });
     if (window._addRSI) window._addRSI(chart, cD.candles, { anchor: chartDiv });
@@ -5120,6 +5122,7 @@ async function _drawPaperHistChart(idx) {
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
     const _stResHist = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: chartDiv }) : null;
+    window._addComputedLevels && window._addComputedLevels(chart, sym, tf, d.candles);
     if (window._addTrendEMA) window._addTrendEMA(chart, d.candles, { anchor: chartDiv });
     if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
@@ -5432,6 +5435,7 @@ async function _renderPaperChart(idx, tf) {
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
     const _stResLive = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, tf, { anchor: area }) : null;
+    window._addComputedLevels && window._addComputedLevels(chart, sym, tf, d.candles);
     if (window._addTrendEMA) window._addTrendEMA(chart, d.candles, { anchor: area });
     if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: area });
     if (window._addRSI) window._addRSI(chart, d.candles, { anchor: area });
@@ -8227,6 +8231,7 @@ window.openPrepumpChart = async function(pair) {
       if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
       if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
       if (window._addSuperTrend) window._addSuperTrend(chart, d.candles, tf, { anchor: div });
+      window._addComputedLevels && window._addComputedLevels(chart, pair, tf, d.candles);
       if (window._addTrendEMA) window._addTrendEMA(chart, d.candles, { anchor: div });
       if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: div });
       if (window._addRSI) window._addRSI(chart, d.candles, { anchor: div });
@@ -9171,6 +9176,7 @@ async function loadCoinChart(coin) {
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _coinTF);
     const _stResCoin = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, _coinTF, { anchor: chartDiv }) : null;
+    window._addComputedLevels && window._addComputedLevels(chart, sym, _coinTF, d.candles);
     if (window._addTrendEMA) window._addTrendEMA(chart, d.candles, { anchor: chartDiv });
     if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: chartDiv });
   if (window._addRSI) window._addRSI(chart, d.candles, { anchor: chartDiv });
@@ -11683,6 +11689,7 @@ async function openJournalChart(idx, forceTF) {
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _modalTF);
     const _stResJ = window._addSuperTrend ? window._addSuperTrend(chart, d.candles, _modalTF, { anchor: container }) : null;
+    window._addComputedLevels && window._addComputedLevels(chart, sym, _modalTF, d.candles);
     if (window._addTrendEMA) window._addTrendEMA(chart, d.candles, { anchor: container });
     if (window._addRsiSma14) window._addRsiSma14(chart, d.candles, { anchor: container });
     if (window._addRSI) window._addRSI(chart, d.candles, { anchor: container });

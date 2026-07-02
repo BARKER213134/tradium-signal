@@ -3327,6 +3327,70 @@ async def _new_strategies_updater_loop():
         await _asyncio.sleep(300)  # каждые 5 минут
 
 
+
+async def _levels_refresher_loop():
+    """📐 Levels Engine: фоновый пересчёт S/R зон для активных пар.
+
+    Каждые 10 мин: пары со свежими сигналами (24h) из supertrend_signals /
+    new_strategy_signals / anomalies / confluence → refresh_pair_levels()
+    (4 TF × klines + свинги + кластеризация) → Mongo computed_levels.
+    UI (/api/levels) читает из Mongo мгновенно."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(180)  # не мешаем стартовым прогревам
+    while True:
+        try:
+            from database import _get_db
+            from datetime import timedelta as _td, datetime as _dt, timezone as _tz
+            from levels_engine import refresh_pair_levels
+            db = _get_db()
+            since = _dt.now(_tz.utc) - _td(hours=24)
+            pairs = set()
+            for col_name, ts_field in (('supertrend_signals', 'flip_at'),
+                                        ('new_strategy_signals', 'created_at')):
+                try:
+                    for s in db[col_name].find({ts_field: {'$gte': since}},
+                                                {'pair': 1}).limit(300):
+                        if s.get('pair'):
+                            pairs.add(s['pair'])
+                except Exception:
+                    pass
+            for col_name in ('anomalies', 'confluence'):
+                try:
+                    for s in db[col_name].find({'detected_at': {'$gte': since}},
+                                                {'pair': 1}).limit(200):
+                        if s.get('pair'):
+                            pairs.add(s['pair'])
+                except Exception:
+                    pass
+            pairs = list(pairs)[:400]  # cap
+            if not pairs:
+                await _asyncio.sleep(600)
+                continue
+            logger.info(f"[levels] refreshing {len(pairs)} pairs × 4 TF (12 workers)")
+            from concurrent.futures import ThreadPoolExecutor, as_completed as _ac
+            import time as _t
+            _t0 = _t.time()
+            ex_pool = ThreadPoolExecutor(max_workers=12)
+            try:
+                futs = [ex_pool.submit(refresh_pair_levels, p) for p in pairs]
+                try:
+                    for f in await _asyncio.to_thread(
+                        lambda: list(_ac(futs, timeout=240.0))
+                    ):
+                        try:
+                            f.result(timeout=0.05)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                logger.info(f"[levels] done {len(pairs)} pairs in {_t.time()-_t0:.0f}s")
+            finally:
+                ex_pool.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            logger.exception('[levels] loop error')
+        await _asyncio.sleep(600)  # 10 мин
+
+
 async def _rsi_cache_loop():
     """Background task: периодически наполняет signal_rsi_cache (Mongo)
     для всех 4 TF: 15m, 1h, 4h, 1d. Persistent, cross-worker.
@@ -4222,6 +4286,12 @@ async def start_watcher():
         logger.info("[trend-cache] background loop scheduled")
     except Exception:
         logger.exception("[trend-cache] failed to schedule")
+    # 📐 Levels Engine — собственные S/R зоны per-TF (замена Telegram KL)
+    try:
+        asyncio.create_task(_levels_refresher_loop())
+        logger.info("[levels] background refresher scheduled")
+    except Exception:
+        logger.exception("[levels] failed to schedule")
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())

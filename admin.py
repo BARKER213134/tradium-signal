@@ -11003,6 +11003,44 @@ def _find_compatible_cache(symbol: str, tf: str, limit: int):
     return (best_key, best_age, best_data[-limit:])
 
 
+@app.get("/api/levels")
+async def api_levels(pair: str, tf: str = "1h"):
+    """📐 Levels Engine: собственные S/R зоны для пары на TF.
+
+    Читает из Mongo computed_levels (фоновый refresher в watcher обновляет
+    активные пары каждые 10 мин). Если пары нет в кэше или данные старше
+    30 мин — считает on-demand (~0.5-1с: klines + свинги + кластеризация).
+
+    Ответ: {ok, pair, tf, zones: [{low, high, mid, kind, touches,
+            strength, dist_pct, ...}], source: 'cache'|'ondemand'}
+    """
+    from levels_engine import get_levels_cached, compute_levels, TF_CONFIG
+    p = (pair or "").upper().strip()
+    if "/" not in p:
+        p = p.replace("USDT", "") + "/USDT"
+    if tf not in TF_CONFIG:
+        return {"ok": False, "error": f"tf must be one of {list(TF_CONFIG)}"}
+
+    cached = await asyncio.to_thread(get_levels_cached, p, tf)
+    if cached is not None:
+        return {"ok": True, "pair": p, "tf": tf, "source": "cache", **cached}
+
+    zones = await asyncio.to_thread(compute_levels, p, tf)
+    # Сохраняем результат чтобы следующий запрос был из кэша
+    try:
+        def _save():
+            from database import _get_db, utcnow
+            _get_db().computed_levels.update_one(
+                {"pair": p, "tf": tf},
+                {"$set": {"zones": zones, "updated_at": utcnow()}},
+                upsert=True,
+            )
+        await asyncio.to_thread(_save)
+    except Exception:
+        pass
+    return {"ok": True, "pair": p, "tf": tf, "source": "ondemand", "zones": zones}
+
+
 @app.get("/api/journal-candles")
 async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100,
                                response: Response = None):
