@@ -1155,7 +1155,7 @@ async def ai_decide(signal_data: dict) -> dict:
                 aligned = signal_data.get("aligned_bots_count") or 0
                 if tier != "vip" or aligned < 2:
                     return {"enter": False, "reasoning": "⛔ VOLATILE phase: только VIP с 2+ aligned_bots или Cluster MEGA"}
-            elif source in ("cryptovizor", "anomaly"):
+            elif source in ("cryptovizor",):
                 return {"enter": False, "reasoning": f"⛔ VOLATILE phase: {source} блокируется (whipsaw)"}
 
     if phase == "CHOP":

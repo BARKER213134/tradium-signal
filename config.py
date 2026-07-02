@@ -37,8 +37,7 @@ MONGO_DB = os.getenv("MONGO_DB", "tradium")
 # Четвёртый бот — AI Signal (лучшие сигналы)
 BOT4_BOT_TOKEN = os.getenv("BOT4_BOT_TOKEN", "")
 
-# Третий бот — Anomaly Alerts
-BOT3_BOT_TOKEN = os.getenv("BOT3_BOT_TOKEN", "")
+# BOT3 (Anomaly Alerts) удалён вместе с источником (2026-07-02)
 
 # Пятый бот — Confluence Scanner
 BOT5_BOT_TOKEN = os.getenv("BOT5_BOT_TOKEN", "")
@@ -137,7 +136,6 @@ TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET", "tv_f9c3a8b2d4e7f6a1b8c5d9e2f
 # category: 'crypto' | 'stocks' (forex/metals/indices/energy через FVG)
 # tradium / cryptovizor / cv_flip вкладки удалены — ingestion отключён (2026-07-01)
 BOTS = [
-    {"id": "anomaly", "label": "Аномалии", "category": "crypto"},
     {"id": "confluence", "label": "Confluence", "category": "crypto"},
     {"id": "clusters", "label": "Кластеры", "category": "crypto"},
     {"id": "top_picks", "label": "👑 Top Picks", "category": "crypto"},

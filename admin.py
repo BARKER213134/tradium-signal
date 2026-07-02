@@ -518,7 +518,6 @@ def _health_sync() -> dict:
         now = _utcnow()
         for name, col, date_field in [
             ("signals", _signals(), "received_at"),
-            ("anomalies", _anomalies(), "detected_at"),
             ("confluence", _confluence(), "detected_at"),
         ]:
             last = col.find_one({}, sort=[(date_field, DESCENDING)])
@@ -2663,8 +2662,6 @@ async def api_bots_status():
         return _confluence().count_documents({"detected_at": {"$gte": since_24h}, "score": {"$gte": 5}, "st_passed": True})
     def _cnt_conf_alert_6h():
         return _confluence().count_documents({"detected_at": {"$gte": since_6h}, "score": {"$gte": 5}, "st_passed": True})
-    def _cnt_anom():
-        return _anomalies().count_documents({"detected_at": {"$gte": since_24h}})
     def _cnt_cluster():
         return _clusters().count_documents({"trigger_at": {"$gte": since_24h}})
     def _cnt_st():
@@ -2673,12 +2670,11 @@ async def api_bots_status():
         except Exception:
             return 0
 
-    (conf_all, conf_alertable_24h, conf_alertable_6h, anomaly_24h,
+    (conf_all, conf_alertable_24h, conf_alertable_6h,
      cluster_24h, st_24h) = await asyncio.gather(
         asyncio.to_thread(_cnt_conf_all),
         asyncio.to_thread(_cnt_conf_alert_24h),
         asyncio.to_thread(_cnt_conf_alert_6h),
-        asyncio.to_thread(_cnt_anom),
         asyncio.to_thread(_cnt_cluster),
         asyncio.to_thread(_cnt_st),
     )
@@ -2689,7 +2685,6 @@ async def api_bots_status():
             "confluence_all": conf_all,
             "confluence_alertable_score>=5_st_passed": conf_alertable_24h,
             "confluence_alertable_6h": conf_alertable_6h,
-            "anomaly": anomaly_24h,
             "cluster": cluster_24h,
             "supertrend": st_24h,
         },
@@ -2826,9 +2821,6 @@ async def _run_backfill_clusters(hours: int):
         since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
         all_sigs = []
         # CV + Tradium источники удалены (2026-07-01)
-        for a in _anomalies().find({"detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]}}):
-            pair = a.get("pair") or a.get("symbol", "").replace("USDT", "/USDT")
-            all_sigs.append({"pair": pair, "direction": a["direction"], "at": a["detected_at"]})
         for c in _confluence().find({"detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]}}):
             pair = c.get("pair") or c.get("symbol", "").replace("USDT", "/USDT")
             all_sigs.append({"pair": pair, "direction": c["direction"], "at": c["detected_at"]})
@@ -3344,7 +3336,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
     query = db.query(Signal).filter(Signal.source == bot)
 
     # Cryptovizor имеет свои вкладки
-    if bot in ("anomaly", "confluence", "journal", "autotrading"):
+    if bot in ("confluence", "journal", "autotrading"):
         return templates.TemplateResponse(request, "signals.html", {
             "signals": [],
             "total": 0,
@@ -3819,23 +3811,6 @@ async def api_analyze_result(payload: dict):
         return {"ok": False, "error": str(e)}
 
 
-@app.get("/api/anomalies")
-async def api_anomalies():
-    """Sync Mongo + sync httpx (_sync_eth_ctx) — выносим в to_thread,
-    чтобы polling UI не блокировал event loop."""
-    from database import _anomalies
-
-    def _sync():
-        docs = list(_anomalies().find().sort("detected_at", -1).limit(100))
-        for d in docs:
-            d["_id"] = str(d["_id"])
-            if d.get("detected_at"):
-                d["detected_at"] = d["detected_at"].isoformat() if hasattr(d["detected_at"], "isoformat") else str(d["detected_at"])
-        return {"items": docs, "eth_ctx": _sync_eth_ctx()}
-
-    return await asyncio.to_thread(_sync)
-
-
 @app.get("/api/watcher-heartbeat")
 async def api_watcher_heartbeat():
     """Состояние watcher main loop. Показывает stage (где сейчас находится
@@ -3865,19 +3840,6 @@ async def api_watcher_heartbeat():
     return await asyncio.to_thread(_sync)
 
 
-@app.post("/api/anomalies/force-scan")
-async def api_anomalies_force_scan():
-    """Запускает _check_anomalies прямо сейчас. Используется когда watcher
-    висит и сканы остановились."""
-    try:
-        import watcher
-        # Запускаем в фоне чтобы не держать HTTP запрос
-        asyncio.create_task(watcher._check_anomalies())
-        return {"ok": True, "started": True}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
 @app.post("/api/confluence/force-scan")
 async def api_confluence_force_scan():
     """Запускает _check_confluence прямо сейчас."""
@@ -3888,347 +3850,6 @@ async def api_confluence_force_scan():
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-
-@app.get("/api/anomalies/scan-status")
-async def api_scan_status():
-    """Читает состояние скана из watcher."""
-    import time as _time
-    try:
-        from watcher import anomaly_scan_state
-        s = dict(anomaly_scan_state)
-        next_at = s.pop("next_at", 0)
-        if next_at > 0:
-            s["next_in"] = max(0, int(next_at - _time.time()))
-        else:
-            s["next_in"] = 300  # watcher ещё не тикал, ~5 мин
-        return s
-    except ImportError:
-        return {"running": False, "progress": 0, "total": 0, "found": 0, "batch": 0, "batches": 0, "current": "", "next_in": 300}
-
-
-@app.get("/api/anomaly-cluster")
-async def api_anomaly_cluster(symbol: str):
-    """Возвращает кластерные данные (aggTrades) для символа."""
-    import httpx, time
-    FAPI = "https://fapi.binance.com"
-    now_ms = int(time.time() * 1000)
-    try:
-        r = await asyncio.to_thread(
-            lambda: httpx.get(f"{FAPI}/fapi/v1/aggTrades",
-                              params={"symbol": symbol, "startTime": now_ms - 15 * 60 * 1000, "limit": 1000},
-                              timeout=10).json()
-        )
-        if not r or not isinstance(r, list):
-            return {"ok": False, "error": "no trades"}
-
-        prices = [float(t["p"]) for t in r]
-        price_min, price_max = min(prices), max(prices)
-        price_range = price_max - price_min
-        if price_range <= 0:
-            return {"ok": False, "error": "no range"}
-
-        n_levels = 25
-        step = price_range / n_levels
-        clusters = {}
-        for t in r:
-            p = float(t["p"])
-            q = float(t["q"])
-            level = round((p - price_min) / step) * step + price_min
-            level = round(level, 8)
-            if level not in clusters:
-                clusters[level] = {"buy": 0.0, "sell": 0.0}
-            if t.get("m"):
-                clusters[level]["sell"] += q
-            else:
-                clusters[level]["buy"] += q
-
-        levels = []
-        for lv in sorted(clusters.keys()):
-            v = clusters[lv]
-            levels.append({
-                "price": round(lv, 8),
-                "buy": round(v["buy"], 4),
-                "sell": round(v["sell"], 4),
-                "delta": round(v["buy"] - v["sell"], 4),
-            })
-        current = prices[-1] if prices else 0
-        return {"ok": True, "symbol": symbol, "levels": levels, "current": current, "trades": len(r)}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@app.post("/api/anomaly-analyze")
-async def api_anomaly_analyze(payload: dict):
-    """AI анализ аномалии — расшифровка + вердикт."""
-    symbol = payload.get("symbol", "")
-    price = payload.get("price", 0)
-    score = payload.get("score", 0)
-    direction = payload.get("direction", "NEUTRAL")
-    anomalies = payload.get("anomalies", [])
-
-    # Формируем описание аномалий
-    anomaly_lines = []
-    type_names = {
-        "ftt": "FTT (Full Tail Turn) — разворотная свеча с длинной тенью и высоким объёмом",
-        "delta_cluster": "Delta Cluster — дисбаланс покупок/продаж на ценовом уровне",
-        "trade_speed": "Speed Print — резкое ускорение количества сделок",
-        "oi_spike": "OI Spike — резкое изменение открытого интереса",
-        "funding_extreme": "Funding Rate — экстремальная ставка финансирования",
-        "ls_extreme": "L/S Ratio — перекос лонг/шорт позиций",
-        "taker_imbalance": "Taker Imbalance — дисбаланс рыночных ордеров",
-        "wall": "Order Book Wall — крупная стена в стакане",
-    }
-    for a in anomalies:
-        t = a.get("type", "")
-        v = a.get("value", "")
-        desc = type_names.get(t, t)
-        anomaly_lines.append(f"- {desc}: значение={v}")
-        if t == "ftt":
-            anomaly_lines.append(f"  FTT score: {a.get('ftt_score',0)}/5, wick: {a.get('wick_ratio',0)}, vol: ×{a.get('vol_ratio',0)}, TF: {a.get('tf','1h')}")
-
-    anomaly_text = "\n".join(anomaly_lines)
-
-    import anthropic
-    from config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL_FAST as ANTHROPIC_MODEL
-
-    ectx = _sync_eth_ctx()
-    eth_info = f"ETH 1h: {ectx.get('eth_1h',0):+.2f}% | BTC 1h: {ectx.get('btc_1h',0):+.2f}% | ETH/BTC: {ectx.get('eth_btc','—')}"
-
-    prompt = (
-        f"Ты — профессиональный крипто-аналитик. Разбери аномалию на фьючерсном рынке.\n\n"
-        f"Монета: {symbol.replace('USDT','')}/USDT\n"
-        f"Цена: {price}\n"
-        f"Направление сигнала: {direction}\n"
-        f"Score аномалии: {score}/15\n"
-        f"Количество индикаторов: {len(anomalies)}\n"
-        f"Рынок: {eth_info}\n\n"
-        f"Обнаруженные аномалии:\n{anomaly_text}\n\n"
-        f"Ответь в формате:\n\n"
-        f"О МОНЕТЕ:\n"
-        f"Что за проект, ликвидность. 1-2 предложения.\n\n"
-        f"ВЕРДИКТ: ENTER или SKIP\n"
-        f"УВЕРЕННОСТЬ: HIGH, MEDIUM или LOW\n"
-        f"SCORE: X/10\n\n"
-        f"TP1: цена\n"
-        f"TP2: цена\n"
-        f"SL: цена\n"
-        f"R:R: соотношение\n\n"
-        f"АНАЛИЗ:\n"
-        f"Что означает совокупность этих аномалий. Почему цена может пойти в направлении {direction}. "
-        f"Расшифруй каждый индикатор простым языком — что он говорит о рынке. "
-        f"Как коррелирует с ETH/BTC — идёт ли монета с рынком или независимо. "
-        f"Вероятность отработки. 5-8 предложений.\n\n"
-        f"РИСКИ:\n"
-        f"⚠ Риск 1\n"
-        f"⚠ Риск 2\n"
-        f"⚠ Риск 3\n\n"
-        f"На русском. БЕЗ markdown, без ## и **. Только plain text."
-    )
-
-    try:
-        from ai_client import get_ai_client
-        client = get_ai_client()
-        message = await asyncio.to_thread(
-            client.messages.create,
-            model=ANTHROPIC_MODEL,
-            max_tokens=800,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        analysis = message.content[0].text
-
-        # Сохраняем в MongoDB
-        from database import _anomalies
-        _anomalies().update_one(
-            {"symbol": symbol, "score": score},
-            {"$set": {"comment": analysis}},
-        )
-
-        return {"ok": True, "analysis": analysis}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@app.post("/api/anomalies/clear")
-async def api_anomalies_clear():
-    def _sync():
-        from database import _anomalies
-        return _anomalies().delete_many({}).deleted_count
-    deleted = await asyncio.to_thread(_sync)
-    return {"ok": True, "deleted": deleted}
-
-
-@app.get("/api/anomalies/backtest")
-async def api_anomalies_backtest(st: int = 0):
-    """Бектест аномалий. st=1 — только прошедшие SuperTrend фильтр."""
-    from exchange import get_futures_prices_only
-
-    def _fetch():
-        from database import _anomalies
-        query = {}
-        if st:
-            query["st_passed"] = True
-        return list(_anomalies().find(query).sort("detected_at", -1).limit(200))
-    docs = await asyncio.to_thread(_fetch)
-    if not docs:
-        return {"ok": True, "results": [], "summary": {}, "st_filter": bool(st)}
-
-    # Текущие цены
-    symbols = list({d.get("symbol", "") for d in docs if d.get("symbol")})
-    pairs = [s.replace("USDT", "/USDT") for s in symbols]
-    prices = await asyncio.to_thread(get_futures_prices_only, pairs)
-
-    results = []
-    wins = 0
-    losses = 0
-    total_pnl = 0
-
-    for d in docs:
-        sym = d.get("symbol", "")
-        entry = d.get("price")
-        if not entry or not sym:
-            continue
-        current = prices.get(sym)
-        if not current:
-            continue
-
-        direction = d.get("direction", "NEUTRAL")
-        raw_pnl = ((current - entry) / entry) * 100
-        pnl = -raw_pnl if direction == "SHORT" else raw_pnl
-
-        is_win = pnl > 0
-        if is_win:
-            wins += 1
-        else:
-            losses += 1
-        total_pnl += pnl
-
-        types = [a["type"] for a in d.get("anomalies", [])]
-        results.append({
-            "symbol": sym,
-            "direction": direction,
-            "score": d.get("score", 0),
-            "entry": entry,
-            "current": current,
-            "pnl": round(pnl, 2),
-            "win": is_win,
-            "types": types,
-            "detected_at": d["detected_at"].isoformat() if hasattr(d.get("detected_at"), "isoformat") else str(d.get("detected_at", "")),
-        })
-
-    total = wins + losses
-    win_rate = round((wins / total * 100) if total else 0, 1)
-
-    # По типу аномалии
-    by_type = {}
-    for r in results:
-        for t in r["types"]:
-            if t not in by_type:
-                by_type[t] = {"wins": 0, "losses": 0, "pnl": 0}
-            if r["win"]:
-                by_type[t]["wins"] += 1
-            else:
-                by_type[t]["losses"] += 1
-            by_type[t]["pnl"] += r["pnl"]
-    for t in by_type:
-        total_t = by_type[t]["wins"] + by_type[t]["losses"]
-        by_type[t]["win_rate"] = round((by_type[t]["wins"] / total_t * 100) if total_t else 0, 1)
-        by_type[t]["avg_pnl"] = round(by_type[t]["pnl"] / total_t, 2) if total_t else 0
-
-    # По score
-    by_score = {}
-    for r in results:
-        s = int(r["score"])
-        if s not in by_score:
-            by_score[s] = {"wins": 0, "losses": 0, "pnl": 0}
-        if r["win"]:
-            by_score[s]["wins"] += 1
-        else:
-            by_score[s]["losses"] += 1
-        by_score[s]["pnl"] += r["pnl"]
-    for s in by_score:
-        total_s = by_score[s]["wins"] + by_score[s]["losses"]
-        by_score[s]["win_rate"] = round((by_score[s]["wins"] / total_s * 100) if total_s else 0, 1)
-
-    # По направлению
-    by_dir = {}
-    for r in results:
-        d = r["direction"]
-        if d not in by_dir:
-            by_dir[d] = {"wins": 0, "losses": 0, "pnl": 0}
-        if r["win"]:
-            by_dir[d]["wins"] += 1
-        else:
-            by_dir[d]["losses"] += 1
-        by_dir[d]["pnl"] += r["pnl"]
-    for d in by_dir:
-        total_d = by_dir[d]["wins"] + by_dir[d]["losses"]
-        by_dir[d]["win_rate"] = round((by_dir[d]["wins"] / total_d * 100) if total_d else 0, 1)
-        by_dir[d]["avg_pnl"] = round(by_dir[d]["pnl"] / total_d, 2) if total_d else 0
-
-    # По комбинациям (какие пары типов лучше отрабатывают)
-    by_combo = {}
-    for r in results:
-        key_types = sorted([t for t in r["types"] if t in ("ftt", "delta_cluster", "trade_speed", "oi_spike")])
-        if len(key_types) < 2:
-            continue
-        combo = " + ".join(key_types)
-        if combo not in by_combo:
-            by_combo[combo] = {"wins": 0, "losses": 0, "pnl": 0}
-        if r["win"]:
-            by_combo[combo]["wins"] += 1
-        else:
-            by_combo[combo]["losses"] += 1
-        by_combo[combo]["pnl"] += r["pnl"]
-    for c in by_combo:
-        total_c = by_combo[c]["wins"] + by_combo[c]["losses"]
-        by_combo[c]["win_rate"] = round((by_combo[c]["wins"] / total_c * 100) if total_c else 0, 1)
-        by_combo[c]["avg_pnl"] = round(by_combo[c]["pnl"] / total_c, 2) if total_c else 0
-        by_combo[c]["count"] = total_c
-
-    # Лучшие и худшие
-    sorted_results = sorted(results, key=lambda x: x["pnl"], reverse=True)
-    best_5 = sorted_results[:5]
-    worst_5 = sorted_results[-5:]
-
-    # По часу обнаружения
-    by_hour = {}
-    for r in results:
-        try:
-            h = int(r["detected_at"][11:13])
-        except Exception:
-            h = 0
-        if h not in by_hour:
-            by_hour[h] = {"wins": 0, "losses": 0, "pnl": 0}
-        if r["win"]:
-            by_hour[h]["wins"] += 1
-        else:
-            by_hour[h]["losses"] += 1
-        by_hour[h]["pnl"] += r["pnl"]
-    for h in by_hour:
-        total_h = by_hour[h]["wins"] + by_hour[h]["losses"]
-        by_hour[h]["win_rate"] = round((by_hour[h]["wins"] / total_h * 100) if total_h else 0, 1)
-
-    return {
-        "ok": True,
-        "summary": {
-            "total": total, "wins": wins, "losses": losses,
-            "win_rate": win_rate,
-            "total_pnl": round(total_pnl, 2),
-            "avg_pnl": round(total_pnl / total, 2) if total else 0,
-        },
-        "by_type": by_type,
-        "by_score": by_score,
-        "by_direction": by_dir,
-        "by_combo": by_combo,
-        "by_hour": {str(k): v for k, v in sorted(by_hour.items())},
-        "best": best_5,
-        "worst": worst_5,
-        "results": sorted(results, key=lambda x: -abs(x["pnl"]))[:50],
-        "st_filter": bool(st),
-    }
-
-
-# ── Confluence API ────────────────────────────────────────────────────
 
 @app.get("/api/confluence")
 async def api_confluence():
@@ -6599,7 +6220,7 @@ def _backtest_st_flips_sync(days: int, max_pairs: int,
       rsi_max_short — максимальный RSI(14) для SHORT (skip если выше)"""
     from exchange import get_klines_any
     from backtest_supertrend import compute_st_series
-    from anomaly_scanner import get_all_futures_pairs
+    from futures_data import get_all_futures_pairs
     import statistics as _stats
     import logging as _log
     import time as _time
@@ -6918,7 +6539,7 @@ def _backtest_triple_sync(days: int, max_pairs: int) -> dict:
     R = (exit - entry) / risk."""
     from exchange import get_klines_any
     from backtest_supertrend import compute_st_series
-    from anomaly_scanner import get_all_futures_pairs
+    from futures_data import get_all_futures_pairs
     from database import _signals, utcnow
     from datetime import timedelta
     import statistics as _stats
@@ -8322,11 +7943,7 @@ def _market_events_backfill_sync(days: int) -> dict:
              "direction": {"$ne": None}},
             {"symbol": 1, "direction": 1, "detected_at": 1, "_id": 0}
         ))
-        an_preload = list(_anomalies().find(
-            {"detected_at": {"$gte": since - _td(hours=3)},
-             "direction": {"$ne": None}},
-            {"symbol": 1, "direction": 1, "detected_at": 1, "score": 1, "_id": 0}
-        ))
+        an_preload = []  # anomaly удалён (2026-07-02)
 
         # Удаляем существующие Reversal backfill events в окне
         _market_events().delete_many({
@@ -8485,29 +8102,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
 
     # Tradium + Cryptovizor journal блоки удалены (2026-07-01)
 
-    # Anomalies
-    for a in _anomalies().find({"detected_at": {"$gte": since}, **pair_or}, {
-        "symbol":1, "pair":1, "direction":1, "price":1, "anomalies":1,
-        "score":1, "st_passed":1, "pump_score":1, "detected_at":1,
-        "is_top_pick":1, "top_pick_confirmations_count":1,
-    }).sort("detected_at", -1):
-        types = [x["type"] for x in a.get("anomalies", [])]
-        items.append({
-            "source": "anomaly",
-            "symbol": a.get("symbol", ""),
-            "pair": a.get("pair", ""),
-            "direction": a.get("direction", ""),
-            "entry": a.get("price"),
-            "tp1": None, "sl": None,
-            "pattern": ", ".join(types[:3]),
-            "score": a.get("score"),
-            "st_passed": a.get("st_passed"),
-            "pump_score": a.get("pump_score", 0),
-            "is_top_pick": bool(a.get("is_top_pick")),
-            "top_pick_confirmations_count": a.get("top_pick_confirmations_count", 0),
-            "at": a["detected_at"].isoformat() if hasattr(a.get("detected_at"), "isoformat") else None,
-            "at_ts": int(a["detected_at"].timestamp()) if hasattr(a.get("detected_at"), "timestamp") else 0,
-        })
+    # Anomalies удалены (2026-07-02)
 
     # Confluence
     for c in _confluence().find({"detected_at": {"$gte": since}, **pair_or}, {
@@ -8757,30 +8352,7 @@ def _compute_journal_sync(_fast_only: bool = False):
 
     # Tradium + Cryptovizor journal блоки удалены (2026-07-01)
 
-    # Anomalies (14 дней, cap 800)
-    for a in _anomalies().find({"detected_at": {"$gte": since_14d}}, {
-        "symbol":1, "pair":1, "direction":1, "price":1, "anomalies":1,
-        "score":1, "st_passed":1, "pump_score":1, "detected_at":1,
-        "is_top_pick":1, "top_pick_confirmations_count":1,
-    }).sort("detected_at", -1).limit(1500):
-        types = [x["type"] for x in a.get("anomalies", [])]
-        items.append({
-            "source": "anomaly",
-            "symbol": a.get("symbol", ""),
-            "pair": a.get("pair", ""),
-            "direction": a.get("direction", ""),
-            "entry": a.get("price"),
-            "tp1": None,
-            "sl": None,
-            "pattern": ", ".join(types[:3]),
-            "score": a.get("score"),
-            "st_passed": a.get("st_passed"),
-            "pump_score": a.get("pump_score", 0),
-            "is_top_pick": bool(a.get("is_top_pick")),
-            "top_pick_confirmations_count": a.get("top_pick_confirmations_count", 0),
-            "at": a["detected_at"].isoformat() if hasattr(a.get("detected_at"), "isoformat") else str(a.get("detected_at", "")),
-            "at_ts": int(a["detected_at"].timestamp()) if hasattr(a.get("detected_at"), "timestamp") else 0,
-        })
+    # Anomalies удалены (2026-07-02)
 
     # Confluence (14 дней, cap 1500 — их ~1500 за 14 дней)
     for c in _confluence().find({"detected_at": {"$gte": since_14d}}, {
@@ -10299,16 +9871,6 @@ async def api_cluster_delta_backfill_all(days: int = 14):
                                      {'pair': 1, 'received_at': 1,
                                       'pattern_triggered_at': 1}).limit(1000):
                 _add(s.get('pair'), s.get('pattern_triggered_at') or s.get('received_at'))
-        except Exception:
-            pass
-        # Anomalies
-        try:
-            for s in _anomalies().find({'detected_at': {'$gte': since}},
-                                       {'symbol': 1, 'detected_at': 1}).limit(2000):
-                pair = s.get('symbol', '')
-                if pair and not pair.endswith('/USDT'):
-                    pair = pair.replace('USDT', '/USDT') if pair.endswith('USDT') else pair
-                _add(pair, s.get('detected_at'))
         except Exception:
             pass
         # Confluence

@@ -93,7 +93,7 @@ def _btc_atr_pct(tf: str = "1h", period: int = 14) -> Optional[float]:
 def _avg_funding_top_pairs(n: int = 30) -> Optional[float]:
     """Средний funding по топ-N парам (из anomaly_scanner batch-кеша)."""
     try:
-        from anomaly_scanner import _batch_cache
+        from futures_data import _batch_cache
         funding_map = _batch_cache.get("funding") or {}
         if not funding_map:
             return None

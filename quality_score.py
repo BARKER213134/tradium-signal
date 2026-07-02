@@ -31,7 +31,6 @@ SOURCE_SCORE = {
     'confluence': 8,         # base; +12 if score>=5
     'verified': 20,
     'supertrend': 12,
-    'anomaly': 10,
 }
 
 ST_TIER_SCORE = {

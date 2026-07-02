@@ -311,7 +311,7 @@ def check_entry(pair: str, direction: str,
 
     # ── 6. Volume / OI ──
     try:
-        from anomaly_scanner import _batch_cache
+        from futures_data import _batch_cache
         vol_spike = (_batch_cache.get("volume_spike") or {}).get(pair_norm)
         oi_ch = (_batch_cache.get("oi_change") or {}).get(pair_norm)
         funding = (_batch_cache.get("funding") or {}).get(pair_norm)

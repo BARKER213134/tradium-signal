@@ -366,9 +366,9 @@ def detect_triple_confluence(pair: str, direction: str, entry: float, sl: float,
     """🐉 Triple Confluence: 2+ different source signals same pair + same dir
     within ±4h of ST flip timestamp.
 
-    Sources counted: cryptovizor, anomaly, confluence, cluster, supertrend (current).
+    Sources counted: confluence, cluster, supertrend (current).
     """
-    from database import _signals, _anomalies, _confluence, _clusters
+    from database import _signals, _confluence, _clusters
     pair_norm = pair.replace('/', '').upper()
     pair_slash = pair_norm[:-4] + '/USDT' if pair_norm.endswith('USDT') else pair
     window_lo = flip_ts - timedelta(hours=CROSS_SOURCE_WINDOW_H)
@@ -395,21 +395,7 @@ def detect_triple_confluence(pair: str, direction: str, entry: float, sl: float,
     except Exception as e:
         logger.debug(f'[triple] CV check fail: {e}')
 
-    # Check anomalies
-    try:
-        for a in _anomalies().find({
-            'detected_at': {'$gte': window_lo.replace(tzinfo=None),
-                           '$lte': window_hi.replace(tzinfo=None)},
-            '$or': [{'symbol': pair_norm}, {'pair': pair_slash}],
-            'direction': direction,
-        }, {'detected_at': 1}).limit(1):
-            sources_found.add('anomaly')
-            aligned_signals.append({
-                'source': 'anomaly',
-                'at': a.get('detected_at').isoformat() if a.get('detected_at') else None,
-            })
-    except Exception as e:
-        logger.debug(f'[triple] anomaly check fail: {e}')
+    # anomaly source удалён (2026-07-02)
 
     # Confluence
     try:

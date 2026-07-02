@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 import logging
 
-from database import _signals, _anomalies, _confluence, _clusters, _cluster_config, utcnow
+from database import _signals, _confluence, _clusters, _cluster_config, utcnow
 from pymongo import DESCENDING
 
 logger = logging.getLogger(__name__)
@@ -87,19 +87,7 @@ def collect_signals_for(pair: str, direction: str, end_at: datetime, window_h: i
 
     # CV + Tradium удалены вместе с ingestion (2026-07-01)
 
-    # Anomaly — symbol может быть ETHUSDT или pair ETH/USDT
-    for a in _anomalies().find({
-        "detected_at": {"$gte": start, "$lte": end_at},
-        "direction": direction,
-        "$or": [{"symbol": norm.replace("/", "")}, {"pair": norm}],
-    }):
-        out.append({
-            "source": "anomaly",
-            "at": a["detected_at"],
-            "price": a.get("price"),
-            "meta": {"score": a.get("score"),
-                     "types": [x.get("type") for x in a.get("anomalies") or []][:5]},
-        })
+    # Anomaly удалён (2026-07-02)
 
     # Confluence
     for c in _confluence().find({
@@ -220,13 +208,6 @@ def get_pending_clusters(limit: int = 50) -> list[dict]:
 
     # CV + Tradium signals collection reader удалён (2026-07-01)
 
-    for a in _anomalies().find({
-        "detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]},
-    }, {"pair": 1, "symbol": 1, "direction": 1}).limit(500):
-        pair = _norm_pair(a.get("pair") or a.get("symbol", "").replace("USDT", "/USDT"))
-        d = a.get("direction")
-        if pair:
-            pairs_dirs.add((pair, d))
 
     for c in _confluence().find({
         "detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]},

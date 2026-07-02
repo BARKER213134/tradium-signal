@@ -76,14 +76,7 @@ def collect_preceding_signals(db, pair: str, ts: int, direction: str) -> list:
                 tier = s.get('tier', 'mtf')
                 out.append((int(s['flip_at'].timestamp()), f'st_{tier}'))
     except Exception: pass
-    # anomaly
-    try:
-        for s in db.anomalies.find({
-            'pair': pair, 'detected_at': {'$gte': cutoff_dt, '$lt': end_dt},
-        }, {'direction':1, 'detected_at':1}):
-            if (s.get('direction','') or '').upper() == direction:
-                out.append((int(s['detected_at'].timestamp()), 'anomaly'))
-    except Exception: pass
+    # anomaly удалён (2026-07-02)
     # confluence
     try:
         for s in db.confluence.find({

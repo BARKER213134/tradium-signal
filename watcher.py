@@ -1130,15 +1130,8 @@ async def _check_once():
     # 60-200с каждая. При await tick застревал, /healthz timeout, графики не грузились.
     # Теперь tick завершается за ~5-10с, фоновые задачи работают параллельно.
     # Guard "уже запущен" — новый tick не запустит второй task если предыдущий ещё крутится.
-    global _anomaly_bg_task, _confluence_bg_task
-    if _anomaly_bg_task is None or _anomaly_bg_task.done():
-        async def _safe_anomaly():
-            try:
-                await _check_anomalies()
-            except Exception as e:
-                print(f"[ANOMALY] ERROR: {e}", flush=True)
-        _anomaly_bg_task = asyncio.create_task(_safe_anomaly())
-
+    global _confluence_bg_task
+    # Anomaly scanner удалён (2026-07-02) — источник выпилен по решению юзера
     if _confluence_bg_task is None or _confluence_bg_task.done():
         async def _safe_confluence():
             try:
@@ -1149,276 +1142,18 @@ async def _check_once():
 
     # Cryptovizor bg task удалён вместе с CV ingestion (2026-07-01)
 
-_anomaly_batch_idx = 0
-_ANOMALY_INTERVAL = 10  # каждый 10-й тик (10×30с = 5 мин)
-_anomaly_tick = _ANOMALY_INTERVAL - 1  # первый скан на первом тике
 
 # Background tasks для тяжёлых scans/обработки — чтобы не блокировать tick.
 # Раньше await блокировал _check_once на 60-200с (anomaly/confluence 1000+
 # pairs sequential scan + cryptovizor 20 signals × render_chart × Claude AI);
 # tick застревал → /healthz timeout → графики не грузились.
-_anomaly_bg_task: "asyncio.Task | None" = None
 _confluence_bg_task: "asyncio.Task | None" = None
 
-# Состояние скана — читается из admin API
-anomaly_scan_state = {
-    "running": False, "progress": 0, "total": 0,
-    "found": 0, "batch": 0, "batches": 0, "current": "",
-    "next_at": 0,  # unix timestamp следующего скана
-}
 
 
-async def _check_anomalies():
-    """Сканирует фьючерсные пары батчами. Полный цикл за 4 тика (20 мин)."""
-    import time as _time
-    global _anomaly_batch_idx, _anomaly_tick
-    _anomaly_tick += 1
-    ticks_left = _ANOMALY_INTERVAL - (_anomaly_tick % _ANOMALY_INTERVAL)
-    if ticks_left == _ANOMALY_INTERVAL:
-        ticks_left = 0
-    anomaly_scan_state["next_at"] = _time.time() + ticks_left * 30
-    if _anomaly_tick % _ANOMALY_INTERVAL != 0:
-        return
-
-    from anomaly_scanner import get_liquid_pairs, scan_symbol, _refresh_batch_cache
-    from database import _anomalies, utcnow
-
-    # Сразу показываем что скан идёт
-    anomaly_scan_state["running"] = True
-    anomaly_scan_state["current"] = "загрузка..."
-    anomaly_scan_state["found"] = 0
-    anomaly_scan_state["progress"] = 0
-
-    try:
-        await asyncio.to_thread(_refresh_batch_cache)
-    except Exception as e:
-        logger.error(f"Batch cache refresh failed: {e}")
-
-    pairs = await asyncio.to_thread(get_liquid_pairs, 5_000_000)
-    if not pairs:
-        anomaly_scan_state["running"] = False
-        anomaly_scan_state["current"] = ""
-        return
-
-    batch = pairs
-    anomaly_scan_state["total"] = len(pairs)
-    anomaly_scan_state["batch"] = 1
-    anomaly_scan_state["batches"] = 1
-
-    print(f"[ANOMALY] Scanning {len(batch)} pairs (chunked parallel)", flush=True)
-
-    now = utcnow()
-    results = []
-
-    # ── Phase 1: parallel scan_symbol через gather в чанках по 10 ──
-    # Раньше sequential await asyncio.to_thread(scan_symbol, symbol) на 1000+
-    # пар занимал 60-200с. Теперь chunks по 10 параллельно = ~12с.
-    # Chunk size 10 безопасен для Binance rate limit (1200 weight/min).
-    CHUNK_SIZE = 10
-    scanned = []  # list of (symbol, scan_result)
-    for chunk_start in range(0, len(batch), CHUNK_SIZE):
-        chunk = batch[chunk_start:chunk_start + CHUNK_SIZE]
-        anomaly_scan_state["current"] = chunk[0].replace("USDT", "")
-        anomaly_scan_state["progress"] = int((chunk_start / len(batch)) * 100)
-        try:
-            chunk_results = await asyncio.gather(
-                *[asyncio.to_thread(scan_symbol, sym) for sym in chunk],
-                return_exceptions=True,
-            )
-        except Exception as e:
-            logger.warning(f"[ANOMALY] chunk gather fail at idx {chunk_start}: {e}")
-            continue
-        for sym, r in zip(chunk, chunk_results):
-            if isinstance(r, Exception):
-                continue
-            scanned.append((sym, r))
-
-    # ── Phase 2: sequential обработка результатов (фильтрация + Mongo writes) ──
-    # Большинство отвалится по фильтрам, real Mongo work только для anomalies.
-    for symbol, r in scanned:
-        if not r or r["score"] < 10:
-            continue
-        if not r.get("has_ftt") and not r.get("has_delta"):
-            continue
-        if r.get("raw_count", 0) < 3:
-            continue
-
-        # Дедупликация — та же пара за последние 4 часа (обновляем время если повторно)
-        import datetime
-        existing = await asyncio.to_thread(
-            _anomalies().find_one,
-            {"symbol": r["symbol"], "detected_at": {"$gte": utcnow() - datetime.timedelta(hours=4)}},
-        )
-        if existing:
-            await asyncio.to_thread(
-                _anomalies().update_one,
-                {"_id": existing["_id"]},
-                {"$set": {"detected_at": now, "price": r["price"], "score": r["score"]}},
-            )
-            continue
-
-        # SuperTrend фильтр (через to_thread)
-        try:
-            st_passed, st_data = await asyncio.wait_for(
-                asyncio.to_thread(_check_keltner_filter, r["direction"]),
-                timeout=10.0,
-            )
-        except (asyncio.TimeoutError, Exception):
-            st_passed, st_data = True, {}
-
-        doc = {
-            "symbol": r["symbol"], "pair": r["pair"], "price": r["price"],
-            "score": r["score"], "direction": r["direction"],
-            "anomalies": r["anomalies"], "detected_at": now,
-            "st_passed": st_passed,
-        }
-        await asyncio.to_thread(_anomalies().insert_one, doc)
-        anomaly_scan_state["found"] += 1
-        results.append(r)
-        # Invalidate journal cache — anomaly сразу появляется в UI
-        try:
-            from cache_utils import journal_cache
-            journal_cache.invalidate("journal_all")
-        except Exception:
-            pass
-        logger.info(f"Anomaly: {r['symbol']} score={r['score']} dir={r['direction']} ST={'✅' if st_passed else '❌'}")
-
-        # Алерт только если ST подтверждён
-        if r["score"] >= 10 and st_passed:
-            r["_st"] = st_data
-            await _send_anomaly_alert(r)
-            await asyncio.sleep(1.5)  # Telegram rate limit protection
-
-    anomaly_scan_state["running"] = False
-    anomaly_scan_state["progress"] = 100
-    anomaly_scan_state["current"] = ""
-    print(f"[ANOMALY] Done: {len(results)} found (score>=10) from {len(batch)} pairs", flush=True)
-    if results:
-        _broadcast("anomaly_update", {"count": len(results)})
 
 
-_bot3 = None
 
-def setup_bot3():
-    """Инициализирует BOT3 для аномалий."""
-    global _bot3
-    from config import BOT3_BOT_TOKEN
-    if not BOT3_BOT_TOKEN:
-        return
-    try:
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-        _bot3 = Bot(token=BOT3_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        logger.info("BOT3 (Anomaly) initialized")
-    except Exception as e:
-        logger.error(f"BOT3 init fail: {e}")
-
-
-async def _send_anomaly_alert(r: dict):
-    """Отправляет алерт об аномалии в BOT3."""
-    if not _bot3:
-        setup_bot3()
-    if not _bot3 or not _admin_chat_id:
-        logger.warning("Anomaly alert: BOT3 not available")
-        return
-
-    dir_emoji = "🟢" if r["direction"] == "LONG" else "🔴" if r["direction"] == "SHORT" else "⚪"
-    pair = r["pair"].replace("/USDT", "")
-    ws = r.get("score", 0)
-    score_bar = "🔥" * min(int(ws / 2), 5)
-    price = r.get("price", 0)
-
-    # Собираем типы аномалий
-    types = [a["type"] for a in r["anomalies"]]
-    count = len(types)
-
-    # FTT инфо
-    ftt_info = ""
-    for a in r["anomalies"]:
-        if a["type"] == "ftt":
-            ftt_dir = "🟢 LONG" if a["value"] == "LONG" else "🔴 SHORT"
-            ftt_s = a.get("ftt_score", 0)
-            tf = a.get("tf", "1h")
-            ftt_info = f"\n🕯 <b>Разворот (FTT)</b>: {ftt_dir} · {ftt_s}/5 · {tf}"
-            ftt_info += f"\n   Тень: {int(a.get('wick_ratio', 0) * 100)}% свечи · Объём: ×{a.get('vol_ratio', 0)}"
-
-    # Delta инфо
-    delta_info = ""
-    for a in r["anomalies"]:
-        if a["type"] == "delta_cluster":
-            delta = a["value"]
-            side = "покупки" if delta > 0 else "продажи"
-            delta_info = f"\n📊 <b>Кластер</b>: {side} доминируют (delta {delta:+,.0f})"
-
-    # Остальные индикаторы одной строкой
-    indicators = []
-    for a in r["anomalies"]:
-        t, v = a["type"], a["value"]
-        if t == "oi_spike":
-            indicators.append(f"OI {v:+.1f}%")
-        elif t == "funding_extreme":
-            side = "лонги платят" if v > 0 else "шорты платят"
-            indicators.append(f"Funding {v:.3f}% ({side})")
-        elif t == "ls_extreme":
-            bias = "перевес лонгов" if v > 1.5 else "перевес шортов"
-            indicators.append(f"L/S {v:.1f} ({bias})")
-        elif t == "taker_imbalance":
-            bias = "агрессивные покупки" if v > 1 else "агрессивные продажи"
-            indicators.append(f"Taker {v:.1f} ({bias})")
-        elif t == "trade_speed":
-            indicators.append(f"Скорость ×{v:.0f}")
-        elif t == "wall":
-            side = "поддержка" if v.get("side") == "bid" else "сопротивление"
-            indicators.append(f"Стена {side} @ {v.get('price')}")
-
-    # Вывод — что это значит
-    if r["direction"] == "LONG":
-        conclusion = "Накопление объёма, возможен рост"
-    elif r["direction"] == "SHORT":
-        conclusion = "Распределение объёма, возможно падение"
-    else:
-        conclusion = "Высокая активность, направление неясно"
-
-    sym = r.get("symbol", "")
-    _st = r.get("_st", {})
-    _stp = True if _st else True
-    _pump = await _pump_check(sym)
-    hp = "🔥🔥🔥 <b>HIGH POTENTIAL</b> 🔥🔥🔥\n\n" if _pump.get("label") else ""
-
-    _kl = _kl_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), utcnow(),
-                    entry=r.get("price") or r.get("entry"), tp=r.get("tp") or r.get("tp1"), sl=r.get("sl"))
-    _stb = _st_block(r.get("pair") or r.get("symbol", ""), r.get("direction"), "1h")
-    text = (
-        f"{hp}"
-        f"⚠️ <b>АНОМАЛИЯ · {pair}/USDT</b>\n"
-        f"\n"
-        f"{dir_emoji} <b>{r['direction']}</b> · Цена: <code>{price}</code>\n"
-        f"<code>{sym}</code>\n"
-        f"Score: <b>{ws}</b>/15 {score_bar} · {count} индикаторов\n"
-        f"{_kl}{_stb}"
-        f"\n"
-        f"─── Аномалии ───"
-    )
-    text += ftt_info
-    text += delta_info
-    if indicators:
-        text += "\n" + "\n".join(f"  · {ind}" for ind in indicators)
-    text += f"\n\n💡 <i>{conclusion}</i>"
-    text += f"\n\n{_market_block(_pump, _stp, _st or {})}"
-    text += await _reversal_block(r.get("direction"))
-    text += await _pending_cluster_block(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
-
-    from database import _anomalies as _anc
-    _anc().update_one({"symbol": r["symbol"], "score": r["score"]}, {"$set": {"pump_score": _pump.get("score", 0), "pump_factors": _pump.get("factors", [])}})
-
-    try:
-        await _bot3.send_message(_admin_chat_id, text, parse_mode="HTML")
-        logger.info(f"Anomaly alert sent: {r.get('symbol')}")
-        await _paper_on_signal({"symbol": r["symbol"], "direction": r["direction"], "entry": r.get("price",0), "source": "anomaly", "score": r.get("score",0), "pump_vol": _pump.get("volume_spike",0), "pump_oi": _pump.get("oi_change",0)})
-        await _cluster_check_on_signal(r.get("pair") or r["symbol"].replace("USDT","/USDT"), r.get("direction"))
-    except Exception as e:
-        logger.error(f"Anomaly alert fail: {e}")
 
 
 # ── Confluence Scanner ────────────────────────────────────────────────
@@ -1443,7 +1178,7 @@ async def _check_confluence():
     if _confluence_tick % _CONFLUENCE_INTERVAL != 0:
         return
 
-    from anomaly_scanner import get_liquid_pairs, _refresh_batch_cache
+    from futures_data import get_liquid_pairs, _refresh_batch_cache
     from confluence_scanner import scan_confluence
     from database import _confluence, utcnow
     import datetime
@@ -2161,8 +1896,8 @@ async def _send_cluster_alert(cl: dict):
     sl_pct = abs((cl["sl_price"] - cl["trigger_price"]) / cl["trigger_price"] * 100)
 
     # Участники
-    src_icons = {"anomaly": "⚠️", "confluence": "🎯"}
-    src_names = {"anomaly": "Anomaly", "confluence": "Confluence"}
+    src_icons = {"confluence": "🎯"}
+    src_names = {"confluence": "Confluence"}
     participants = []
     for s in cl["signals_in_cluster"]:
         icon = src_icons.get(s["source"], "•")
@@ -2172,8 +1907,6 @@ async def _send_cluster_alert(cl: dict):
         extra = ""
         if s["source"] == "confluence":
             extra = f" (score {meta.get('score','?')})"
-        elif s["source"] == "anomaly" and meta.get("types"):
-            extra = f" {','.join(meta['types'][:2])}"
         participants.append(f"{icon} {t} @ {price}{extra}")
 
     # Reversal combo
@@ -2645,7 +2378,7 @@ async def _paper_on_signal(signal_data: dict):
         _src_ee = signal_data.get("source", "")
         _dir_ee = (signal_data.get("direction", "") or "").upper()
         # Только для информативных источников (CV/ST/anomaly/confluence + new strategies)
-        _ee_eligible = _src_ee in ('supertrend', 'anomaly', 'confluence',
+        _ee_eligible = _src_ee in ('supertrend', 'confluence',
                                     'vol_accum', 'triple_confluence', 'volume_surge',
                                     'second_flip', 'volcano', 'cluster')
         if _pair_ee and _ee_eligible:
@@ -3354,7 +3087,7 @@ async def _levels_refresher_loop():
                             pairs.add(s['pair'])
                 except Exception:
                     pass
-            for col_name in ('anomalies', 'confluence'):
+            for col_name in ('confluence',):
                 try:
                     for s in db[col_name].find({'detected_at': {'$gte': since}},
                                                 {'pair': 1}).limit(200):
@@ -3601,17 +3334,6 @@ async def _cluster_delta_cache_loop():
                          'pattern_triggered_at': 1}).limit(500):
                     p = s.get('pair')
                     ts = s.get('pattern_triggered_at') or s.get('received_at')
-                    if p and ts:
-                        wanted.add((p, int(ts.timestamp() * 1000)))
-            except Exception:
-                pass
-            # anomalies
-            try:
-                for a in db.anomalies.find(
-                        {'detected_at': {'$gte': since}},
-                        {'pair': 1, 'detected_at': 1}).limit(300):
-                    p = a.get('pair')
-                    ts = a.get('detected_at')
                     if p and ts:
                         wanted.add((p, int(ts.timestamp() * 1000)))
             except Exception:

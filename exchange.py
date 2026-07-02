@@ -428,7 +428,7 @@ def check_pump_potential(symbol: str) -> dict:
                         result["factors"].append(f"📈 OI {change:+.1f}%")
 
         # 3. Funding Rate
-        from anomaly_scanner import _batch_cache
+        from futures_data import _batch_cache
         funding = _batch_cache.get("funding", {}).get(symbol)
         if funding is not None:
             result["funding"] = round(funding, 4)

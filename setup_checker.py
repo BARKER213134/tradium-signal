@@ -334,22 +334,7 @@ def check_setup(pair_input: str) -> dict:
                 })
         except Exception: pass
 
-        # 5. anomalies
-        try:
-            for a in db.anomalies.find({
-                **pair_or, 'detected_at': {'$gte': since},
-            }, {'direction':1,'price':1,'detected_at':1,'score':1}).sort('detected_at',-1).limit(15):
-                dt = a.get('detected_at')
-                if dt and dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
-                all_sigs.append({
-                    'source': 'anomaly',
-                    'at': dt.isoformat() if dt else None,
-                    'at_ts': int(dt.timestamp()) if dt else 0,
-                    'direction': a.get('direction'),
-                    'entry': a.get('price'),
-                    'score': a.get('score'),
-                })
-        except Exception: pass
+        # 5. anomalies удалены (2026-07-02)
 
         # CV + Tradium блок удалён вместе с ingestion (2026-07-01)
 
@@ -422,7 +407,7 @@ def check_setup(pair_input: str) -> dict:
 
         # 3. Funding rate (из anomaly_scanner batch cache, если есть)
         try:
-            from anomaly_scanner import _batch_cache as ab_cache, _refresh_batch_cache
+            from futures_data import _batch_cache as ab_cache, _refresh_batch_cache
             # try refresh non-blocking
             _refresh_batch_cache()
             sym = pair.replace('/', '')
@@ -443,7 +428,7 @@ def check_setup(pair_input: str) -> dict:
 
         # 4. 24h volume (из batch cache)
         try:
-            from anomaly_scanner import _batch_cache as ab_cache
+            from futures_data import _batch_cache as ab_cache
             sym = pair.replace('/', '')
             t = (ab_cache.get('ticker') or {}).get(sym)
             if t:
