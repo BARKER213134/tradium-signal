@@ -2766,39 +2766,10 @@
       //   const added = window._addMarketStateMarkers(candles, events.events);
       //   series.setMarkers([...existingMarkers, ...added]);
       window._addMarketStateMarkers = function(candles, events) {
-        if (!candles || !candles.length || !events || !events.length) return [];
-        const firstTs = candles[0].time;
-        const lastTs = candles[candles.length - 1].time;
-        const nearest = (ts) => {
-          let mc = candles[candles.length - 1], minD = Infinity;
-          for (const c of candles) {
-            const diff = Math.abs(c.time - ts);
-            if (diff < minD) { minD = diff; mc = c; }
-          }
-          return mc;
-        };
-        const out = [];
-        for (const ev of events) {
-          const ts = ev.at_ts || 0;
-          if (!ts || ts < firstTs || ts > lastTs) continue;
-          const mc = nearest(ts);
-          if (ev.type === 'kc') {
-            // Keltner ETH: только 🛡 (цвет = направление, без доп. эмоджи)
-            const to = (ev.to || '').toUpperCase();
-            const color = to === 'LONG' ? '#00e5a0' : to === 'SHORT' ? '#ff4d6d' : '#888';
-            out.push({
-              time: mc.time,
-              position: 'aboveBar',
-              color: color,
-              shape: 'square',
-              text: '🛡',
-              size: 0,
-            });
-          }
-          // Reversal Meter маркеры отключены — забивали график.
-          // Состояние Reversal видно в отдельном виджете на странице.
-        }
-        return out;
+        // 🛡 Keltner-флип маркеры ОТКЛЮЧЕНЫ (2026-07-02, фидбек: «убери
+        // маленькие значки») — колонки полупрозрачных щитов забивали график.
+        // Состояние KC видно в топбаре. Reversal-маркеры были отключены ранее.
+        return [];
       };
 
       // Fetch helper — кешируется на 90 сек
