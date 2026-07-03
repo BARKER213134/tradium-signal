@@ -2713,9 +2713,8 @@
         };
         const res = pick(near.filter(z => z.kind === 'resistance'));
         const sup = pick(near.filter(z => z.kind === 'support'));
-        const ins = near.filter(z => z.kind === 'inside').slice(0, 1)
-                        .map(z => ({ ...z, major: false }));
-        const show = [...res, ...sup, ...ins];
+        // 'inside' (жёлтая линия) убрана по фидбеку — только чистые R/S
+        const show = [...res, ...sup];
         if (!show.length) return [];
 
         // Один прозрачный series-держатель для priceLines (тонкие линии,
@@ -2732,20 +2731,17 @@
 
         for (const z of show) {
           const isRes = z.kind === 'resistance';
-          const isIns = z.kind === 'inside';
-          // МАЖОР: толстая (3px) сплошная яркая. Второстепенный: 1px пунктир
-          // приглушённый. Inside: жёлтая 2px пунктир.
-          const color = isIns ? 'rgba(255,210,62,0.9)'
-                      : isRes ? (z.major ? 'rgba(251,93,125,1)' : 'rgba(251,93,125,0.35)')
+          // МАЖОР: толстая (3px) сплошная яркая. Второстепенный: 1px пунктир.
+          const color = isRes ? (z.major ? 'rgba(251,93,125,1)' : 'rgba(251,93,125,0.35)')
                               : (z.major ? 'rgba(52,211,153,1)' : 'rgba(52,211,153,0.35)');
           try {
             holder.createPriceLine({
               price: z.mid,
               color: color,
-              lineWidth: z.major ? 3 : (isIns ? 2 : 1),
+              lineWidth: z.major ? 3 : 1,
               lineStyle: z.major ? 0 /* solid */ : 2 /* dashed */,
               axisLabelVisible: true,
-              title: `${isIns ? '◈' : isRes ? 'R' : 'S'}×${z.touches}`,
+              title: `${isRes ? 'R' : 'S'}×${z.touches}`,
             });
           } catch (e) { /* disposed */ }
         }
