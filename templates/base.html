@@ -2698,23 +2698,31 @@
         if (!zones.length) return [];
 
         const priceNow = candles[candles.length - 1].close;
-        // Только уровни рядом с ценой (±12% по умолчанию) — далёкие не рисуем
-        const maxDist = opts.maxDistPct || 12;
-        const near = zones.filter(z => Math.abs(z.dist_pct) <= maxDist);
-        // ГЛАВНЫЙ уровень каждой стороны (top-1 по силе) — мажор, толстый.
-        // Плюс максимум 1 второстепенный (сила >= 60) — тонкий пунктир.
-        // Итого максимум 5 линий (2R + 2S + inside) — было слишком много.
-        const pick = (arr) => {
-          const sorted = arr.sort((a, b) => b.strength - a.strength);
-          const out = [];
-          if (sorted[0]) out.push({ ...sorted[0], major: true });
-          if (sorted[1] && sorted[1].strength >= 60) out.push({ ...sorted[1], major: false });
-          return out;
+        // Уровни в ГРАНИЦАХ ГРАФИКА (по хай/лоу свечей + 2% запас) —
+        // фикс 'не определяются самые нижние и верхние': раньше жёсткий
+        // фильтр ±12% от цены прятал уровни у краёв диапазона.
+        const chartLow = Math.min(...candles.map(c => c.low)) * 0.98;
+        const chartHigh = Math.max(...candles.map(c => c.high)) * 1.02;
+        const inChart = zones.filter(z => z.mid >= chartLow && z.mid <= chartHigh
+                                          && z.kind !== 'inside');
+        // Отбор: главный (сильнейший) каждой стороны + КРАЙНИЙ каждой
+        // стороны (самое верхнее сопротивление / самая нижняя поддержка).
+        const resAll = inChart.filter(z => z.kind === 'resistance');
+        const supAll = inChart.filter(z => z.kind === 'support');
+        const byStr = (arr) => [...arr].sort((a, b) => b.strength - a.strength);
+        const show = [];
+        const seen = new Set();
+        const add = (z, major) => {
+          if (!z) return;
+          const k = z.mid.toFixed(10);
+          if (seen.has(k)) return;
+          seen.add(k);
+          show.push({ ...z, major });
         };
-        const res = pick(near.filter(z => z.kind === 'resistance'));
-        const sup = pick(near.filter(z => z.kind === 'support'));
-        // 'inside' (жёлтая линия) убрана по фидбеку — только чистые R/S
-        const show = [...res, ...sup];
+        add(byStr(resAll)[0], true);                                  // главный R
+        add(byStr(supAll)[0], true);                                  // главный S
+        add(resAll.reduce((m, z) => (!m || z.mid > m.mid) ? z : m, null), false);  // самый верхний R
+        add(supAll.reduce((m, z) => (!m || z.mid < m.mid) ? z : m, null), false);  // самый нижний S
         if (!show.length) return [];
 
         // Один прозрачный series-держатель для priceLines (тонкие линии,
@@ -2732,13 +2740,13 @@
         for (const z of show) {
           const isRes = z.kind === 'resistance';
           // МАЖОР: толстая (3px) сплошная яркая. Второстепенный: 1px пунктир.
-          const color = isRes ? (z.major ? 'rgba(251,93,125,1)' : 'rgba(251,93,125,0.35)')
-                              : (z.major ? 'rgba(52,211,153,1)' : 'rgba(52,211,153,0.35)');
+          const color = isRes ? (z.major ? 'rgba(251,93,125,1)' : 'rgba(251,93,125,0.55)')
+                              : (z.major ? 'rgba(52,211,153,1)' : 'rgba(52,211,153,0.55)');
           try {
             holder.createPriceLine({
               price: z.mid,
               color: color,
-              lineWidth: z.major ? 3 : 1,
+              lineWidth: z.major ? 4 : 2,
               lineStyle: z.major ? 0 /* solid */ : 2 /* dashed */,
               axisLabelVisible: true,
               title: `${isRes ? 'R' : 'S'}×${z.touches}`,

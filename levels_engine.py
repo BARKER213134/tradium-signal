@@ -175,13 +175,23 @@ def compute_levels(pair: str, tf: str, candles: Optional[list[dict]] = None) -> 
             "tf": tf,
         })
 
-    # top-N с каждой стороны: сначала по силе, из равных — ближе к цене
+    # top-N с каждой стороны по силе + ВСЕГДА крайние зоны (самое верхнее
+    # сопротивление и самая нижняя поддержка) — иначе края диапазона
+    # оставались без уровней (фидбек 2026-07-02).
     res = [z for z in out if z["kind"] == "resistance"]
     sup = [z for z in out if z["kind"] == "support"]
     ins = [z for z in out if z["kind"] == "inside"]
     res.sort(key=lambda z: (-z["strength"], abs(z["dist_pct"])))
     sup.sort(key=lambda z: (-z["strength"], abs(z["dist_pct"])))
     final = res[:MAX_ZONES_PER_SIDE] + sup[:MAX_ZONES_PER_SIDE] + ins[:2]
+    if res:
+        top_res = max(res, key=lambda z: z["mid"])
+        if top_res not in final:
+            final.append(top_res)
+    if sup:
+        bot_sup = min(sup, key=lambda z: z["mid"])
+        if bot_sup not in final:
+            final.append(bot_sup)
     final.sort(key=lambda z: z["mid"], reverse=True)
     return final
 
