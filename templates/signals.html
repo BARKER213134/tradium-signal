@@ -1674,7 +1674,7 @@ async function _nsLoad() {
       tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted);">Нет сигналов в этом окне</td></tr>';
       return;
     }
-    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', combo:'🧠', whale:'🐋', shark:'🦈', bigbuy:'🔔'};
+    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', combo:'🧠', whale:'🐋', shark:'🦈', stack:'🧩'};
     const sLabel = {volume_surge:'Volume Surge', triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano Breakout', second_flip:'Second Flip', combo:'COMBO', whale:'WHALE', shark:'SHARK', bigbuy:'BIG BUY'};
     const stEmoji = {WAITING:'⏳', TP:'✅', SL:'⛔', MANUAL:'📍', TIMEOUT:'⏱'};
     let html = '';
@@ -2439,6 +2439,94 @@ setTimeout(_cbLoad, 500);
 </script>
 
 
+{% elif bot == 'stack' %}
+<!-- ════════════ 🧩 STACK — семейные группы сигналов ════════════ -->
+<div class="strategy-box">
+  <div class="strat-icon">🧩</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · STACK (семейная группировка)</div>
+    Один флип SuperTrend порождает эхо в 4-6 детекторах (supertrend, second_flip,
+    vol_accum, volume_surge, combo, triple_confluence, verified — всё семейство <b>🌀 trend</b>).
+    STACK схлопывает цепочки 2+ сигналов (пара+направление, разрыв ≤30 мин) в одну строку
+    и считает <b>независимые семейства</b>: 🌀 trend · 🎯 levels (confluence) · 🐋 whale · 🦈 shark · 💠 cluster.
+    <b>3+ семейства = MOONSHOT</b> — независимые взгляды сходятся (алерт в BOT12).
+  </div>
+</div>
+
+<div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;">
+  <select id="stkFam" onchange="loadStacks()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="0">Все стеки</option>
+    <option value="2">2+ семейства</option>
+    <option value="3" selected>3+ семейства (MOONSHOT)</option>
+  </select>
+  <select id="stkDir" onchange="loadStacks()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="">LONG + SHORT</option>
+    <option value="LONG">🟢 LONG</option>
+    <option value="SHORT">🔴 SHORT</option>
+  </select>
+  <span id="stkStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th style="padding:12px 14px;">Время</th>
+      <th style="padding:12px 14px;">Пара</th>
+      <th style="padding:12px 14px;">Напр.</th>
+      <th style="padding:12px 14px;text-align:center;">Сигналов</th>
+      <th style="padding:12px 14px;text-align:center;">Семейства</th>
+      <th style="padding:12px 14px;">Состав</th>
+      <th style="padding:12px 14px;">Entry</th>
+    </tr></thead>
+    <tbody id="stkBody">
+      <tr><td colspan="7" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function loadStacks() {
+  const tb = document.getElementById('stkBody');
+  try {
+    const r = await fetch('/api/journal');
+    const d = await r.json();
+    const minFam = parseInt(document.getElementById('stkFam').value || '0');
+    const dir = document.getElementById('stkDir').value;
+    let rows = (d.items || []).filter(x => x.source === 'stack');
+    const total = rows.length;
+    if (minFam) rows = rows.filter(x => (x.stack_families || 0) >= minFam);
+    if (dir) rows = rows.filter(x => x.direction === dir);
+    document.getElementById('stkStats').textContent = `${rows.length} из ${total} стеков (14д)`;
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;" class="text-muted">Нет стеков под фильтр</td></tr>';
+      return;
+    }
+    const famE = {trend:'🌀', levels:'🎯', whale:'🐋', shark:'🦈', cluster:'💠'};
+    tb.innerHTML = rows.slice(0, 200).map(x => {
+      const t = x.at ? new Date(x.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+      const pair = (x.pair || '').replace('/USDT', '');
+      const dirB = x.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
+      const fams = (x.families || []).map(f => famE[f] || '•').join(' ');
+      const comp = (x.stack_members || []).map(m => m.source).join(', ');
+      const famColor = (x.stack_families||0) >= 3 ? '#ffd23e' : 'var(--text-2)';
+      return `<tr>
+        <td class="mono" style="font-size:12px;">${t}</td>
+        <td class="mono fw-700" style="color:var(--text);cursor:copy;" onclick="navigator.clipboard && navigator.clipboard.writeText('${pair}USDT')" title="Клик — скопировать ${pair}USDT">${pair}</td>
+        <td>${dirB}</td>
+        <td class="mono" style="text-align:center;">×${x.stack_size || '?'}</td>
+        <td class="mono" style="text-align:center;color:${famColor};font-weight:700;">${fams} <span style="font-size:11px;">(${x.stack_families||0})</span></td>
+        <td style="font-size:11px;color:var(--muted);max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${comp}">${comp}</td>
+        <td class="mono">${x.entry ?? '—'}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--sell);">Ошибка: ' + e.message + '</td></tr>';
+  }
+}
+loadStacks();
+safeInterval(loadStacks, 60000);
+</script>
+
 {% elif bot == 'setup_check' %}
 <!-- ════════════ 🎰 SETUP CHECKER — paste pair → ENTER LONG/SHORT/WAIT ════════════ -->
 <div class="strategy-box" style="border-color:rgba(255,210,62,0.45);background:linear-gradient(135deg,rgba(255,210,62,0.10),rgba(255,140,80,0.05));">
@@ -2520,7 +2608,7 @@ function _renderSetupResult(d) {
                     st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', cv_flip:'⏳',
                     anomaly:'⚠', cryptovizor:'🚀', tradium:'📡', cluster:'💠',
                     volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
-                    second_flip:'♻️', bigbuy:'🔔'};
+                    second_flip:'♻️', stack:'🧩'};
   const longCnt = d.cluster_long || 0;
   const shortCnt = d.cluster_short || 0;
   const clusterBias = d.cluster_bias || 'NEUTRAL';
@@ -2758,7 +2846,7 @@ async function _scRenderChart(d, tf) {
       st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', cv_flip:'⏳',
       anomaly:'⚠', cryptovizor:'🚀', tradium:'📡', cluster:'💠',
       volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
-      second_flip:'♻️', bigbuy:'🔔', supertrend:'🌀',
+      second_flip:'♻️', stack:'🧩', supertrend:'🌀',
     };
     const markers = [];
     const byTime = new Map();
@@ -4783,7 +4871,7 @@ async function _renderPaperChart(idx, tf) {
       for (const c of d.candles) { const diff = Math.abs(c.time - ts); if (diff < minD) { minD = diff; mc = c; } }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', bigbuy:'🔔'};
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', stack:'🧩'};
     const entryTs = p.opened_at ? Math.floor(new Date(p.opened_at).getTime()/1000) : 0;
     const mainMc = nearestP(entryTs);
     const isLong = p.direction === 'LONG';
@@ -7021,6 +7109,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="combo">🧠 COMBO (st_vip / TC + good preceding)</option>
     <option value="whale">🐋 WHALE (ST flip 2H UP + vol spike + amplifiers, LONG)</option>
     <option value="shark">🦈 SHARK (ST flip 2H DOWN + distribution top + multi-top, SHORT)</option>
+    <option value="stack">🧩 STACK (семейная группа 2+ сигналов)</option>
     <option value="rsi_cross_12h">⚡ RSI/SMA cross 12h + vol≥2×</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
@@ -7200,7 +7289,7 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('rsi4h_match')" id="jSort4h" title="RSI/SMA(RSI) на 4h: ✓ = state в направлении сделки. Faster reaction than 12h." style="text-align:center;padding:14px 6px;">4h</th>
         <th class="sortable" onclick="jSort('rsi12h_match')" id="jSort12h" title="RSI/SMA(RSI) на 12h: ✓ = RSI>SMA для LONG или RSI<SMA для SHORT (state в направлении сделки). По backtest 14d: +14-17 WR пп. Click для sort." style="text-align:center;padding:14px 6px;">12h</th>
         <th class="sortable" onclick="jSort('ema_cross_match')" id="jSortEmaCross" title="EMA50/EMA200 cross на 1h ДО прихода сигнала. 🟢 GOLDEN (EMA50>EMA200, bull regime) / 🔴 DEATH (EMA50<EMA200, bear regime). Bars ago — сколько 1h-баров назад был cross. По бэктесту 7d: 80% WR на DEATH SHORT в bear-неделе." style="text-align:center;padding:14px 6px;">EMA Cross</th>
-        <th class="sortable" onclick="jSort('stack_distinct')" id="jSortStack" title="Stack — кол-во distinct (source × direction) на паре в окне ±3h (6h всего). 4+ = MOONSHOT (multiple sources align — pre-pump signature). Squeeze score 0-100 — BB сжатие, 80+ = готовится breakout." style="text-align:center;padding:14px 6px;">Stack</th>
+        <th class="sortable" onclick="jSort('stack_distinct')" id="jSortStack" title="Stack — кол-во НЕЗАВИСИМЫХ СЕМЕЙСТВ (trend/levels/whale/shark/cluster) × направление на паре в окне ±3h. 3+ = MOONSHOT (независимые взгляды сходятся). Squeeze 0-100 — BB сжатие, 80+ = готовится breakout." style="text-align:center;padding:14px 6px;">Stack</th>
       </tr>
     </thead>
     <tbody id="jBody">
@@ -8133,7 +8222,7 @@ async function hotLoad() {
     const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️',
                     cluster:'💠', confluence:'🎯', cryptovizor:'🚀', tradium:'📡',
                     paper:'🤖', verified:'✨', supertrend:'🌀', whale:'🐋', shark:'🦈',
-                    combo:'🧠', bigbuy:'🔔'};
+                    combo:'🧠', stack:'🧩'};
     const html = items.map((s, idx) => {
       const sc = s.q_score || 0;
       const scColor = sc >= 70 ? '#00e5a0' : sc >= 60 ? '#88d8a3' : sc >= 45 ? '#ffd23e' : '#ff8c50';
@@ -9772,7 +9861,7 @@ window._verdictInfo = function(s) {
   // Quality sources (top-7 backtest + acceptable mid-tier sources)
   // Все они получают LONG/SHORT по direction
   const goodSources = new Set([
-    'whale', 'shark', 'triple_confluence', 'combo', 'bigbuy',
+    'whale', 'shark', 'triple_confluence', 'combo', 'stack',
     'confluence', 'tradium', 'cluster', 'anomaly', 'cryptovizor',
   ]);
   const stTierIsVip = src === 'supertrend' && s.st_tier === 'vip';
@@ -11100,7 +11189,7 @@ async function openJournalChart(idx, forceTF) {
       }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', bigbuy:'🔔'};
+    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', stack:'🧩'};
     const modalMarkerMap = new Map();
 
     // Базовая строка для сопоставления символа: нормализуем к "BTCUSDT"

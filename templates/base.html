@@ -737,6 +737,7 @@
           combo:'🧠',        // 🧠 COMBO (st_vip / TC + precondition positives)
           whale:'🐋',        // 🐋 WHALE (ST flip 2H UP + vol spike + amplifiers, WR 53.8%)
           shark:'🦈',        // 🦈 SHARK (ST flip 2H DOWN + distribution top + multi-top, WR 60.4%)
+          stack:'🧩',        // 🧩 STACK (семейная группа: 2+ сигналов за 30 мин)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
         return prefix + base;
@@ -763,6 +764,7 @@
         if (src === 'combo') return '🧠';
         if (src === 'whale') return '🐋';
         if (src === 'shark') return '🦈';
+        if (src === 'stack') return '🧩';
         return ({anomaly:'⚠', paper:'🤖', cluster:'💠'})[src] || '•';
       };
 

@@ -8282,6 +8282,13 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
 
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
 
+    # 🧩 Семейная группировка для chart markers — один 🧩 вместо колонны
+    try:
+        from signal_families import collapse_stacks
+        items = collapse_stacks(items)
+    except Exception:
+        pass
+
     # 🎰 Inject setup_verdict из pair_verdicts (single pair lookup)
     try:
         pv = _get_db().pair_verdicts.find_one({'pair': pair_slash}, {'verdict': 1})
@@ -8785,11 +8792,23 @@ def _compute_journal_sync(_fast_only: bool = False):
             hi = bisect.bisect_right(times, ts + STACK_WINDOW_S)
             window = sigs[lo:hi]
             it['stack_count'] = len(window)
-            it['stack_distinct'] = len(set((s[1], s[2]) for s in window))
+            # 🧩 distinct = НЕЗАВИСИМЫЕ СЕМЕЙСТВА × направление (было source ×
+            # direction — ST-эхо надувало счёт: один флип = 5-6 "источников").
+            from signal_families import family_of as _fam
+            it['stack_distinct'] = len(set((_fam(s[1]), s[2]) for s in window))
             it['stack_long']  = sum(1 for s in window if s[2] == 'LONG')
             it['stack_short'] = sum(1 for s in window if s[2] == 'SHORT')
     except Exception as _se:
         logging.getLogger(__name__).warning(f"[journal] stack_count enrich fail: {_se}")
+
+    # 🧩 Семейная группировка: цепочки эхо-сигналов (пара+направление,
+    # разрыв <=30 мин) схлопываются в одну строку source='stack'.
+    # По анализу 56д: один ST-флип порождал 4-6 строк — теперь одна.
+    try:
+        from signal_families import collapse_stacks
+        items = collapse_stacks(items)
+    except Exception as _cse:
+        logging.getLogger(__name__).warning(f"[journal] collapse fail: {_cse}")
 
     # ⚡ FAST EXIT: для /api/journal/fast endpoint — UI получает данные мгновенно,
     # все enrichments ниже (squeeze/divergence/rsi4h/rsi12h/top_movers/delta/rsi/trend)
@@ -8871,7 +8890,9 @@ def _compute_journal_sync(_fast_only: bool = False):
         for it in items:
             p = it.get('pair') or ''
             d = it.get('stack_distinct') or 0
-            if d < 4 or not p: continue
+            # 🧩 порог 3 независимых СЕМЕЙСТВА (после family-дедупа 4 старых
+            # source-голоса ≈ 2 семейства; 3 fam = настоящий multi-confirm)
+            if d < 3 or not p: continue
             ts = it.get('at_ts') or 0
             cur = pair_latest.get(p)
             if not cur or ts > cur.get('at_ts', 0):
