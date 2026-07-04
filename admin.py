@@ -2775,18 +2775,34 @@ async def api_pair_signals(pair: str, direction: str = "", window_h: int = 8):
     now = utcnow()
     out = {"pair": norm, "direction": direction, "window_h": window_h, "items": {}}
     dirs = [direction] if direction else ["LONG", "SHORT"]
+    from signal_families import collapse_stacks
     for d in dirs:
         sigs = collect_signals_for(norm, d, now, window_h, include_clusters=True)
-        out["items"][d] = [
+        rows = [
             {
                 "source": s["source"],
+                "pair": norm,
+                "direction": d,
                 "at": s["at"].isoformat() if hasattr(s["at"], "isoformat") else str(s["at"]),
                 "at_ts": int(s["at"].timestamp()) if hasattr(s["at"], "timestamp") else 0,
                 "price": s.get("price"),
+                "entry": s.get("price"),
                 "meta": s.get("meta", {}),
             }
             for s in sigs
         ]
+        # 🧩 семейная группировка — на pending-chart один маркер вместо колонны
+        try:
+            rows = collapse_stacks(rows)
+            for r in rows:
+                if r.get("source") == "stack" and r.get("price") is None:
+                    r["price"] = r.get("entry")
+                r.setdefault("meta", {"size": r.get("stack_size"),
+                                       "families": r.get("families")})
+            rows.sort(key=lambda x: x.get("at_ts", 0))
+        except Exception:
+            pass
+        out["items"][d] = rows
     return out
 
 

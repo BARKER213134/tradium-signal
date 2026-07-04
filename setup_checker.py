@@ -364,7 +364,14 @@ def check_setup(pair_input: str) -> dict:
             if s.get('at_ts'):
                 s['age_hours'] = round((now_ts - s['at_ts']) / 3600, 1)
 
-        result["recent_signals"] = all_sigs
+        # 🧩 семейная группировка для отображения (bias ниже считается
+        # по RAW списку all_sigs — до схлопывания)
+        try:
+            from signal_families import collapse_stacks
+            _display = [dict(x, pair=pair) for x in all_sigs]
+            result["recent_signals"] = collapse_stacks(_display)
+        except Exception:
+            result["recent_signals"] = all_sigs
 
         # ════════ MAX VERIFICATION — все данные платформы ════════
 
