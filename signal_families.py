@@ -24,7 +24,6 @@ FAMILY_OF = {
     "second_flip": "trend",
     "vol_accum": "trend",
     "volume_surge": "trend",
-    "combo": "trend",
     "triple_confluence": "trend",
     "volcano": "trend",
     "rsi_cross_12h": "trend",
@@ -32,7 +31,6 @@ FAMILY_OF = {
     "confluence": "levels",  # уровни + свечные паттерны — независимый взгляд
     "whale": "whale",        # структура базы + vol spike
     "shark": "shark",        # distribution top
-    "cluster": "cluster",    # композит (сам агрегат)
     "paper": "paper",
 }
 

@@ -808,15 +808,7 @@ async def _check_patterns(db):
             message=f"Паттерн {pattern} подтвердил вход",
         )
         _broadcast("signal_update", {"id": s.id, "status": "ПАТТЕРН"})
-        # Top Pick check — pattern + STRONG Confluence ≤ 48h в том же направлении
-        try:
-            from top_picks import tag_signal
-            if tag_signal(s.id, s.source):
-                await _send_top_pick_alert({"type": s.source, "pair": s.pair, "direction": s.direction,
-                                            "entry": current, "pattern": pattern, "signal_id": s.id,
-                                            "tp": s.tp1, "sl": s.sl})
-        except Exception as e:
-            logger.warning(f"[top_pick] {e}", exc_info=True)
+        # Top Picks удалены (2026-07-02)
 
 
 async def _send_close_alert(signal: Signal, result: str, exit_price: float, pnl: float):
@@ -1102,7 +1094,6 @@ async def _check_once():
             # не грузились. Теперь tick проходит быстро, cryptovizor
             # работает фоном с собственной DB session.
             ("paper_positions", lambda: _check_paper_positions()),
-            ("cluster_outcomes", lambda: _check_cluster_outcomes()),
             ("fvg_scan", lambda: _check_forex_fvg_scan()),
             ("fvg_monitor", lambda: _check_forex_fvg_monitor()),
         ]:
@@ -1287,18 +1278,7 @@ async def _check_confluence():
             await _send_confluence_alert(r)
             await asyncio.sleep(1.5)  # Telegram rate limit protection
 
-        # Top Pick check — Confluence STRONG + cluster/tradium/CV ≤ 48h
-        if r["score"] >= 5:
-            try:
-                from top_picks import tag_confluence
-                if tag_confluence(insert_res.inserted_id):
-                    await _send_top_pick_alert({
-                        "type": "confluence", "pair": r["pair"], "direction": r["direction"],
-                        "entry": r["price"], "tp": r.get("r1"), "sl": r.get("s1"),
-                        "pattern": r.get("pattern"),
-                    })
-            except Exception as e:
-                logger.warning(f"[top_pick-conf] {e}", exc_info=True)
+        # Top Picks удалены (2026-07-02)
 
     confluence_scan_state["running"] = False
     confluence_scan_state["progress"] = 100
@@ -1311,7 +1291,6 @@ async def _check_confluence():
 
 
 _bot5 = None
-_bot7 = None
 _bot8 = None
 _bot9 = None  # Top Picks alerts
 
@@ -1331,19 +1310,6 @@ def _setup_bot5():
         logger.error(f"BOT5 init fail: {e}")
 
 
-def _setup_bot7():
-    global _bot7
-    from config import BOT7_BOT_TOKEN
-    if not BOT7_BOT_TOKEN:
-        return
-    try:
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-        _bot7 = Bot(token=BOT7_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        logger.info("BOT7 (Cluster Alerts) initialized")
-    except Exception as e:
-        logger.error(f"BOT7 init fail: {e}")
 
 
 def _setup_bot8():
@@ -1521,125 +1487,6 @@ def _fmt_price(v):
     return f"{v:.{decimals}f}".rstrip("0").rstrip(".")
 
 
-async def _send_top_pick_alert(sig: dict):
-    """👑 Top Pick alert — сигнал подтверждён STRONG Confluence ≤ 48h."""
-    if not _bot9:
-        _setup_bot9()
-    if not _bot9 or not _admin_chat_id:
-        return
-    try:
-        from datetime import datetime, timezone as _tz
-
-        t_type = sig.get("type", "signal")
-        type_map = {
-            "cluster":     ("💠", "Cluster"),
-            "confluence":  ("🎯", "Confluence"),
-        }
-        type_emoji, type_label = type_map.get(t_type, ("📍", t_type.title()))
-        pair = (sig.get("pair") or "").replace("/USDT", "")
-        direction = sig.get("direction", "LONG")
-        is_long = direction in ("LONG", "BUY")
-        dir_e = "🟢" if is_long else "🔴"
-        entry = sig.get("entry")
-        tp = sig.get("tp")
-        sl = sig.get("sl")
-
-        # Расчёт TP%, SL%, R:R
-        tp_pct = sl_pct = rr = None
-        try:
-            if entry and tp:
-                tp_pct = (tp - entry) / entry * 100 if is_long else (entry - tp) / entry * 100
-            if entry and sl:
-                sl_pct = (sl - entry) / entry * 100 if is_long else (entry - sl) / entry * 100
-            if entry and tp and sl:
-                reward = abs(tp - entry)
-                risk = abs(entry - sl)
-                if risk > 0: rr = reward / risk
-        except Exception:
-            pass
-
-        # (убрано по запросу: сессия, текущая цена, сноска про базу бектеста)
-
-        # Подтверждения
-        confirmations = sig.get("confirmations") or []
-        n_conf = sig.get("confirmations_count") or len(confirmations) or 1
-        confs_lines = []
-        for c in confirmations[:5]:
-            c_src = c.get("source", "")
-            c_emoji = {"confluence":"🎯","cluster":"💠"}.get(c_src, "•")
-            at = c.get("at", "")
-            age_str = ""
-            try:
-                dt = datetime.fromisoformat(at.replace("Z", "+00:00")) if at else None
-                if dt:
-                    # naive сравнение — убираем tz
-                    dt_naive = dt.replace(tzinfo=None) if dt.tzinfo else dt
-                    now_naive = utcnow()
-                    age_h = (now_naive - dt_naive).total_seconds() / 3600
-                    if age_h < 1: age_str = f"{int(age_h*60)}м назад"
-                    elif age_h < 24: age_str = f"{int(age_h)}ч назад"
-                    else: age_str = f"{int(age_h/24)}д назад"
-            except Exception:
-                pass
-            score = c.get("score")
-            strength = c.get("strength")
-            label = f"score <b>{score}</b>" if score else (f"<b>{strength}</b>" if strength else "")
-            confs_lines.append(f"  {c_emoji} {label}  <i>{age_str}</i>")
-        confs_block = "\n".join(confs_lines)
-        if len(confirmations) > 5:
-            confs_block += f"\n  ... +{len(confirmations)-5}"
-
-        conf_header = (f"Подтверждён <b>{n_conf}</b> сигналом{'ами' if n_conf!=1 else ''} других типов"
-                       if t_type == "confluence"
-                       else f"Подтверждён <b>{n_conf}</b> STRONG Confluence ≤ 48ч")
-
-        # Cluster-специфичные доп поля (если есть)
-        cluster_info = ""
-        if t_type == "cluster":
-            sources_n = sig.get("sources_count")
-            signals_n = sig.get("signals_count")
-            strength = sig.get("strength")
-            extras = []
-            if strength: extras.append(f"<b>{strength}</b>")
-            if signals_n and sources_n: extras.append(f"<b>{signals_n}</b> сигналов / <b>{sources_n}</b> источников")
-            if extras: cluster_info = "\n⚡ " + " · ".join(extras)
-
-        # Dist to TP/SL percentages
-        def _pct_str(pct, good_sign):
-            if pct is None: return ""
-            sign = "+" if pct >= 0 else ""
-            return f" <b>({sign}{pct:.2f}%)</b>"
-
-        _kl = _kl_block(sig.get("pair") or (pair + "/USDT"), direction, utcnow(),
-                        entry=entry, tp=tp, sl=sl)
-        _stb = _st_block(sig.get("pair") or (pair + "/USDT"), direction, "1h")
-        text = (
-            f"👑 <b>TOP PICK</b> · {type_emoji} {type_label}\n"
-            f"\n"
-            f"{dir_e} <b>{pair}/USDT</b> · <b>{direction}</b>"
-            + (f" · R:R <b>1:{rr:.1f}</b>" if rr else "")
-            + cluster_info
-            + _kl
-            + _stb
-            + "\n\n"
-        )
-        text += f"✨ {conf_header}:\n{confs_block}\n\n"
-        text += (
-            f"📍 Entry <code>{_fmt_price(entry)}</code>\n"
-            f"🎯 TP    <code>{_fmt_price(tp)}</code>{_pct_str(tp_pct, 1)}\n"
-            f"🛑 SL    <code>{_fmt_price(sl)}</code>{_pct_str(sl_pct, -1)}\n"
-        )
-        if sig.get("pattern"):
-            text += f"📋 Pattern: <i>{sig.get('pattern')}</i>\n"
-
-        # Компактная сводка по бектесту
-        text += f"\n📊 Backtest: WR <b>75%</b> · Avg <b>+0.75%</b> · PF <b>3.00</b>"
-
-        await _bot9.send_message(_admin_chat_id, text, parse_mode="HTML")
-        await asyncio.sleep(0.5)
-        logger.info(f"[TOP PICK] 👑 alert sent: {t_type} {pair} {direction}")
-    except Exception as e:
-        logger.exception(f"top_pick alert: {e}")
 
 
 # ── BOT8: Forex FVG alerts ──────────────────────────────────
@@ -1859,176 +1706,19 @@ async def _check_forex_fvg_monitor():
 
 
 async def _pending_cluster_block(pair: str, direction: str, triggered: bool = False) -> str:
-    """Блок 'Cluster Status' для обычных алертов.
-    triggered=True если этот сигнал только что триггернул кластер."""
-    try:
-        from cluster_detector import compute_pending_state
-        st = compute_pending_state(pair, direction)
-        if triggered or st["state"] == "ready":
-            return (
-                "\n─── ⚡⚡⚡ CLUSTER TRIGGERED ⚡⚡⚡ ───\n"
-                f"🚀 {st['count']}/{st['min']} сигналов по {pair} {direction}\n"
-                "→ Отправлено в BOT7 Cluster Alerts"
-            )
-        if st["state"] == "pending" and st["count"] >= 1:
-            return (
-                "\n─── ⚡ Cluster Status ───\n"
-                f"🔔 {st['count']}/{st['min']} · ждём ещё {st['min'] - st['count']} {direction} "
-                f"(окно {st['time_left_h']}ч)"
-            )
-    except Exception as e:
-        logger.warning(f"[pending-block] {e}", exc_info=True)
+    """Кластеры удалены (2026-07-02) — стаб для alert-билдеров."""
     return ""
 
 
-async def _send_cluster_alert(cl: dict):
-    """Отправляет cluster алерт в BOT7."""
-    if not _bot7:
-        _setup_bot7()
-    if not _bot7 or not _admin_chat_id:
-        return
-    direction = cl["direction"]
-    dir_emoji = "🟢" if direction == "LONG" else "🔴"
-    strength = cl.get("strength", "NORMAL")
-    strength_emoji = {"MEGA": "🔥🔥🔥", "STRONG": "⚡⚡", "NORMAL": "⚡", "RISKY": "⚠️"}.get(strength, "⚡")
-    pair = cl["pair"].replace("/USDT", "")
-    tp_pct = abs((cl["tp_price"] - cl["trigger_price"]) / cl["trigger_price"] * 100)
-    sl_pct = abs((cl["sl_price"] - cl["trigger_price"]) / cl["trigger_price"] * 100)
 
-    # Участники
-    src_icons = {"confluence": "🎯"}
-    src_names = {"confluence": "Confluence"}
-    participants = []
-    for s in cl["signals_in_cluster"]:
-        icon = src_icons.get(s["source"], "•")
-        t = s["at"].strftime("%H:%M") if hasattr(s["at"], "strftime") else str(s["at"])[11:16]
-        price = s.get("price", "?")
-        meta = s.get("meta", {}) or {}
-        extra = ""
-        if s["source"] == "confluence":
-            extra = f" (score {meta.get('score','?')})"
-        participants.append(f"{icon} {t} @ {price}{extra}")
-
-    # Reversal combo
-    rev_score = cl.get("reversal_score", 0)
-    rev_dir = cl.get("reversal_direction", "NEUTRAL")
-    if strength == "MEGA":
-        combo_line = f"🔥 <b>MEGA</b> — Cluster + Strong Reversal ({rev_score:+d})"
-    elif strength == "STRONG":
-        combo_line = f"⚡ <b>STRONG</b> — Cluster + Reversal aligned ({rev_score:+d})"
-    elif strength == "RISKY":
-        combo_line = f"⚠️ <b>RISKY</b> — Cluster ПРОТИВ Reversal ({rev_score:+d}) — снизить размер"
-    else:
-        combo_line = f"⚡ NORMAL · Reversal {rev_score:+d} {rev_dir.lower()}"
-
-    # Рекомендация leverage
-    from cluster_detector import get_config
-    cfg = get_config()
-    if strength == "MEGA":
-        lev_rec = f"Leverage ×{cfg['strong_boost']:.0f} recommended"
-    elif strength == "STRONG":
-        lev_rec = f"Leverage ×{cfg['leverage_boost']:.0f} recommended"
-    else:
-        lev_rec = "Leverage ×1-2 (обычный)"
-
-    text = (
-        f"{strength_emoji} <b>CLUSTER SIGNAL · {strength}</b> {strength_emoji}\n"
-        f"\n"
-        f"<b>{pair}/USDT</b> · {dir_emoji} <b>{direction}</b>\n"
-        f"📍 Цена сейчас: <code>{cl['trigger_price']}</code>\n"
-        f"\n"
-        f"📊 <b>{cl['signals_count']} сигналов</b> из <b>{cl['sources_count']} источников</b>\n"
-        f"\n"
-        f"─── Участники ───\n"
-        + "\n".join(participants) + "\n"
-        + _kl_block(cl.get("pair") or cl.get("symbol", ""), cl.get("direction"), utcnow())
-        + f"\n"
-        f"─── Cluster + Reversal ───\n"
-        f"{combo_line}\n"
-        f"\n"
-        f"💡 <i>Backtest WR: 78.6%</i>"
-    )
-
-    try:
-        await _bot7.send_message(_admin_chat_id, text, parse_mode="HTML")
-        logger.info(f"Cluster alert sent: {pair} {direction} strength={strength}")
-        # Paper Trading pickup
-        try:
-            await _paper_on_signal({
-                "symbol": cl["symbol"], "pair": cl["pair"],
-                "direction": direction, "entry": cl["trigger_price"],
-                "tp1": cl["tp_price"], "sl": cl["sl_price"],
-                "source": "cluster",
-                "is_cluster": True,
-                "cluster_strength": strength,
-                "sources_count": cl["sources_count"],
-                "reversal_score": rev_score,
-            })
-        except Exception as e:
-            logger.warning(f"[paper-cluster] {e}", exc_info=True)
-    except Exception as e:
-        logger.error(f"Cluster alert fail: {e}")
-
-
-async def _send_cluster_close_alert(cl: dict):
-    """NO-OP: пользователь просил в BOT7 только сигналы, без TP/SL уведомлений.
-    Статус закрытия виден в UI и в БД, но в Telegram не шлём."""
-    return
 
 
 async def _cluster_check_on_signal(pair: str, direction: str, at=None):
-    """Вызывается после save каждого сигнала (CV/Anom/Conf/Tradium).
-    Если сработал триггер — создаёт кластер и шлёт в BOT7."""
-    try:
-        from cluster_detector import should_trigger_cluster, create_cluster
-        import datetime as _dt
-        at = at or _dt.datetime.utcnow()
-        trigger, sigs, count = should_trigger_cluster(pair, direction, at)
-        if not trigger:
-            return None
-        cl = create_cluster(pair, direction, sigs, at)
-        if cl:
-            await _send_cluster_alert(cl)
-            # Top Pick alert если кластер подтверждён STRONG Confluence
-            if cl.get("is_top_pick"):
-                await _send_top_pick_alert({
-                    "type": "cluster", "pair": cl.get("pair"), "direction": direction,
-                    "entry": cl.get("trigger_price"), "tp": cl.get("tp_price"), "sl": cl.get("sl_price"),
-                    "confirmations": cl.get("top_pick_confirmations", []),
-                    "confirmations_count": cl.get("top_pick_confirmations_count", 0),
-                })
-            # WebSocket broadcast
-            try:
-                _broadcast("cluster_new", {"id": cl["id"], "pair": cl["pair"], "direction": direction})
-            except Exception:
-                pass
-        return cl
-    except Exception as e:
-        logger.warning(f"[cluster-check] {e}", exc_info=True)
-        return None
+    """Кластеры удалены (2026-07-02) — стаб (вызывается из alert-потоков)."""
+    return None
 
 
-async def _check_cluster_outcomes():
-    """Периодическая проверка открытых кластеров на TP/SL."""
-    try:
-        from cluster_detector import check_cluster_outcomes
-        from database import _clusters
-        open_clusters = await asyncio.to_thread(
-            lambda: list(_clusters().find({"status": "OPEN"}))
-        )
-        if not open_clusters:
-            return
-        pairs = list({c.get("pair") for c in open_clusters if c.get("pair")})
-        prices = await get_prices_any(pairs)
-        closed = await asyncio.to_thread(check_cluster_outcomes, prices)
-        for cl in closed:
-            await _send_cluster_close_alert(cl)
-            try:
-                _broadcast("cluster_close", {"id": cl["id"], "status": cl["status"]})
-            except Exception:
-                pass
-    except Exception as e:
-        logger.warning(f"[cluster-outcomes] {e}", exc_info=True)
+
 
 
 async def _send_confluence_alert(r: dict):
@@ -2443,16 +2133,7 @@ async def _paper_on_signal(signal_data: dict):
             # Fire-and-forget (не блокируем _paper_on_signal)
             asyncio.create_task(_check_early_entry())
 
-    # ── 🧠 COMBO detector ──
-    # Composite signal — основан на backtest precondition analysis 14d.
-    # Fired когда target (st_vip / triple_confluence) приходит И в 24h preceding
-    # window есть достаточно "win markers" минус "anti markers" (см. combo_detector.WEIGHTS).
-    # Threshold 30. Storage в new_strategy_signals с strategy='combo' (emoji 🧠).
-    try:
-        from combo_detector import maybe_fire_combo
-        asyncio.create_task(asyncio.to_thread(maybe_fire_combo, signal_data))
-    except Exception as _ce:
-        logger.debug(f"[combo] schedule fail: {_ce}")
+    # COMBO удалён (2026-07-02): бэктест EV -0.31%, дублировал ST-семейство
 
     # ── 🐋 WHALE detector (LONG) ──
     # Range Breakout pattern на основе 20-chart manual analysis.
@@ -2649,11 +2330,7 @@ async def _ui_prewarm_loop():
                 __import__("market_phase").get_market_phase, False
             )))
 
-            # pending-clusters (90s TTL)
-            async def _pc():
-                from cluster_detector import get_pending_clusters
-                await _asyncio.to_thread(get_pending_clusters, 50)
-            tasks.append(_warm_one("pending-clusters", _pc))
+            # pending-clusters prewarm удалён (кластеры удалены 2026-07-02)
 
             # reversal-meter (~60s TTL)
             try:
@@ -3854,7 +3531,7 @@ async def start_watcher():
     logger.info(f"Price watcher запущен (интервал {POLL_INTERVAL}s)")
     # Прогрев ВСЕХ ботов сразу на старте (раньше была ленивая init только при первом алерте —
     # если init падал молча, алерты терялись тихо до рестарта)
-    for name, fn in [("bot5", _setup_bot5), ("bot7", _setup_bot7),
+    for name, fn in [("bot5", _setup_bot5),
                      ("bot8", _setup_bot8), ("bot9", _setup_bot9),
                      ("bot10", _setup_bot10)]:
         try:

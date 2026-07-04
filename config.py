@@ -45,8 +45,7 @@ BOT5_BOT_TOKEN = os.getenv("BOT5_BOT_TOKEN", "")
 # Шестой бот — Paper Trading
 BOT6_BOT_TOKEN = os.getenv("BOT6_BOT_TOKEN", "")
 
-# Седьмой бот — Cluster Alerts
-BOT7_BOT_TOKEN = os.getenv("BOT7_BOT_TOKEN", "")
+# BOT7 (Cluster Alerts) удалён вместе с источником (2026-07-02)
 
 # Восьмой бот — Forex FVG Alerts
 BOT8_BOT_TOKEN = os.getenv("BOT8_BOT_TOKEN", "")
@@ -137,8 +136,6 @@ TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET", "tv_f9c3a8b2d4e7f6a1b8c5d9e2f
 # tradium / cryptovizor / cv_flip вкладки удалены — ingestion отключён (2026-07-01)
 BOTS = [
     {"id": "confluence", "label": "Confluence", "category": "crypto"},
-    {"id": "clusters", "label": "Кластеры", "category": "crypto"},
-    {"id": "top_picks", "label": "👑 Top Picks", "category": "crypto"},
     {"id": "supertrend", "label": "🌀 SuperTrend", "category": "crypto"},
     {"id": "new_strategies", "label": "🌊 New Strategy", "category": "crypto"},
     # {"id": "conflicts", "label": "⚠ Conflicts", "category": "crypto"},  # кнопка скрыта
@@ -148,7 +145,6 @@ BOTS = [
     {"id": "entry_checker", "label": "🎯 Entry Checker", "category": "crypto"},
     {"id": "whale", "label": "🐋 WHALE", "category": "crypto"},
     {"id": "shark", "label": "🦈 SHARK", "category": "crypto"},
-    {"id": "combo", "label": "🧠 COMBO", "category": "crypto"},
     {"id": "stack", "label": "🧩 Stack", "category": "crypto"},
     {"id": "setup_check", "label": "🎰 Setup Check", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},

@@ -368,7 +368,7 @@ def detect_triple_confluence(pair: str, direction: str, entry: float, sl: float,
 
     Sources counted: confluence, cluster, supertrend (current).
     """
-    from database import _signals, _confluence, _clusters
+    from database import _signals, _confluence
     pair_norm = pair.replace('/', '').upper()
     pair_slash = pair_norm[:-4] + '/USDT' if pair_norm.endswith('USDT') else pair
     window_lo = flip_ts - timedelta(hours=CROSS_SOURCE_WINDOW_H)
@@ -413,21 +413,7 @@ def detect_triple_confluence(pair: str, direction: str, entry: float, sl: float,
     except Exception as e:
         logger.debug(f'[triple] confluence check fail: {e}')
 
-    # Cluster
-    try:
-        for cl in _clusters().find({
-            'trigger_at': {'$gte': window_lo.replace(tzinfo=None),
-                          '$lte': window_hi.replace(tzinfo=None)},
-            'pair': pair_slash,
-            'direction': direction,
-        }, {'trigger_at': 1}).limit(1):
-            sources_found.add('cluster')
-            aligned_signals.append({
-                'source': 'cluster',
-                'at': cl.get('trigger_at').isoformat() if cl.get('trigger_at') else None,
-            })
-    except Exception as e:
-        logger.debug(f'[triple] cluster check fail: {e}')
+    # cluster источник удалён (2026-07-02)
 
     # Need at least 2 different sources (including supertrend current)
     if len(sources_found) < TRIPLE_CONFLUENCE_MIN_SOURCES:

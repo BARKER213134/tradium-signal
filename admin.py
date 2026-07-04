@@ -2694,168 +2694,6 @@ async def api_bots_status():
 
 
 
-@app.get("/api/clusters")
-async def api_clusters(status: str = "all", limit: int = 200):
-    """Список кластеров для UI вкладки "Кластеры".
-    Cache 30s — sync Mongo find+aggregate ~3с при лагах Atlas.
-    UI polling каждые 30с — кеш мгновенно, нагрузка снижается."""
-    from cache_utils import clusters_cache
-    from database import _clusters
-    from pymongo import DESCENDING
-
-    def _sync():
-        q = {}
-        if status and status != "all":
-            q["status"] = status.upper()
-        docs = list(_clusters().find(q).sort("trigger_at", DESCENDING).limit(limit))
-        out = []
-        for d in docs:
-            d.pop("_id", None)
-            for k in ("trigger_at", "closed_at", "created_at"):
-                v = d.get(k)
-                if hasattr(v, "isoformat"): d[k] = v.isoformat()
-            for s in d.get("signals_in_cluster", []):
-                if hasattr(s.get("at"), "isoformat"):
-                    s["at"] = s["at"].isoformat()
-            out.append(d)
-        # Aggregate pipeline вместо list(find({})) — всё считается на сервере Mongo
-        pipe = [{"$group": {
-            "_id": None,
-            "total": {"$sum": 1},
-            "wins": {"$sum": {"$cond": [{"$eq": ["$status", "TP"]}, 1, 0]}},
-            "losses": {"$sum": {"$cond": [{"$eq": ["$status", "SL"]}, 1, 0]}},
-            "open": {"$sum": {"$cond": [{"$eq": ["$status", "OPEN"]}, 1, 0]}},
-            "mega": {"$sum": {"$cond": [{"$eq": ["$strength", "MEGA"]}, 1, 0]}},
-            "strong": {"$sum": {"$cond": [{"$eq": ["$strength", "STRONG"]}, 1, 0]}},
-            "sum_pnl": {"$sum": {"$cond": [
-                {"$in": ["$status", ["TP", "SL"]]},
-                {"$ifNull": ["$pnl_percent", 0]}, 0]}},
-        }}]
-        agg = list(_clusters().aggregate(pipe))
-        if agg:
-            a = agg[0]
-            stats = {
-                "total": a.get("total", 0),
-                "wins": a.get("wins", 0),
-                "losses": a.get("losses", 0),
-                "open": a.get("open", 0),
-                "mega": a.get("mega", 0),
-                "strong": a.get("strong", 0),
-                "wr": round(a.get("wins", 0) / max(a.get("wins", 0) + a.get("losses", 0), 1) * 100, 1),
-                "sum_pnl": round(a.get("sum_pnl", 0), 1),
-            }
-        else:
-            stats = {"total": 0, "wins": 0, "losses": 0, "open": 0, "mega": 0, "strong": 0, "wr": 0, "sum_pnl": 0}
-        return {"items": out, "stats": stats}
-
-    async def _compute():
-        return await asyncio.to_thread(_sync)
-    return await clusters_cache.get_or_compute(f"clusters|{status}|{limit}", _compute)
-
-
-@app.get("/api/cluster-config")
-async def api_cluster_config_get():
-    from cluster_detector import get_config
-    return await asyncio.to_thread(get_config)
-
-
-@app.post("/api/cluster-config")
-async def api_cluster_config_post(payload: dict):
-    from cluster_detector import save_config
-    return await asyncio.to_thread(save_config, payload or {})
-
-
-@app.get("/api/pair-signals")
-async def api_pair_signals(pair: str, direction: str = "", window_h: int = 8):
-    """Все сигналы по паре + (опциональное) направление за окно.
-    Для модалки pending cluster → показать график с маркерами всех сигналов."""
-    from cluster_detector import collect_signals_for, _norm_pair
-    from database import utcnow
-    norm = _norm_pair(pair)
-    now = utcnow()
-    out = {"pair": norm, "direction": direction, "window_h": window_h, "items": {}}
-    dirs = [direction] if direction else ["LONG", "SHORT"]
-    from signal_families import collapse_stacks
-    for d in dirs:
-        sigs = collect_signals_for(norm, d, now, window_h, include_clusters=True)
-        rows = [
-            {
-                "source": s["source"],
-                "pair": norm,
-                "direction": d,
-                "at": s["at"].isoformat() if hasattr(s["at"], "isoformat") else str(s["at"]),
-                "at_ts": int(s["at"].timestamp()) if hasattr(s["at"], "timestamp") else 0,
-                "price": s.get("price"),
-                "entry": s.get("price"),
-                "meta": s.get("meta", {}),
-            }
-            for s in sigs
-        ]
-        # 🧩 семейная группировка — на pending-chart один маркер вместо колонны
-        try:
-            rows = collapse_stacks(rows)
-            for r in rows:
-                if r.get("source") == "stack" and r.get("price") is None:
-                    r["price"] = r.get("entry")
-                r.setdefault("meta", {"size": r.get("stack_size"),
-                                       "families": r.get("families")})
-            rows.sort(key=lambda x: x.get("at_ts", 0))
-        except Exception:
-            pass
-        out["items"][d] = rows
-    return out
-
-
-@app.get("/api/pending-clusters")
-async def api_pending_clusters():
-    """Монеты которые сейчас 1/N — ждут второго сигнала. Cache 90s."""
-    from cache_utils import pending_clusters_cache
-    async def _compute():
-        from cluster_detector import get_pending_clusters, get_config
-        pending = await asyncio.to_thread(get_pending_clusters, 50)
-        cfg = await asyncio.to_thread(get_config)
-        return {"items": pending, "config": cfg}
-    return await pending_clusters_cache.get_or_compute("pending", _compute)
-
-
-@app.post("/api/backfill-clusters")
-async def api_backfill_clusters(payload: dict | None = None):
-    """Пробежать по истории и создать кластеры."""
-    payload = payload or {}
-    hours = int(payload.get("hours") or 96)
-    asyncio.create_task(_run_backfill_clusters(hours))
-    return {"ok": True, "started": True, "hours": hours}
-
-
-async def _run_backfill_clusters(hours: int):
-    import logging as _log
-    from datetime import datetime, timezone, timedelta
-    log = _log.getLogger("backfill-clusters")
-    try:
-        from cluster_detector import should_trigger_cluster, create_cluster
-        from database import _signals, _anomalies, _confluence
-        since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
-        all_sigs = []
-        # CV + Tradium источники удалены (2026-07-01)
-        for c in _confluence().find({"detected_at": {"$gte": since}, "direction": {"$in": ["LONG", "SHORT"]}}):
-            pair = c.get("pair") or c.get("symbol", "").replace("USDT", "/USDT")
-            all_sigs.append({"pair": pair, "direction": c["direction"], "at": c["detected_at"]})
-        all_sigs.sort(key=lambda x: x["at"])
-        log.info(f"[backfill-clusters] {len(all_sigs)} signals")
-        created = 0
-        for sig in all_sigs:
-            trigger, in_cluster, cnt = await asyncio.to_thread(
-                should_trigger_cluster, sig["pair"], sig["direction"], sig["at"]
-            )
-            if not trigger:
-                continue
-            cl = await asyncio.to_thread(create_cluster, sig["pair"], sig["direction"], in_cluster, sig["at"])
-            if cl: created += 1
-        log.info(f"[backfill-clusters] Created {created}")
-    except Exception:
-        log.exception("[backfill-clusters] crashed")
-
-
 @app.get("/api/fvg-signals")
 async def api_fvg_signals(status: str = "all", limit: int = 200, tf: str = ""):
     """Forex FVG сигналы (active + history).
@@ -3143,34 +2981,6 @@ async def api_td_quota():
     from fvg_scanner import get_td_quota_stats
     stats = await asyncio.to_thread(get_td_quota_stats)
     return stats
-
-
-@app.get("/api/top-picks")
-async def api_top_picks(hours: int = 96, limit: int = 200):
-    """👑 Top Picks — сигналы подтверждённые STRONG Confluence ≤ 48h.
-    Cache 60s (async-lock safe).
-
-    items + stats считаются параллельно через gather — раньше sequential
-    await давал 3+ сек на cold cache (8 Mongo counts в stats последовательно).
-    """
-    from cache_utils import top_picks_cache
-    async def _compute():
-        from top_picks import get_all_top_picks, get_top_picks_stats
-        items, stats = await asyncio.gather(
-            asyncio.to_thread(get_all_top_picks, hours, limit),
-            asyncio.to_thread(get_top_picks_stats, 720),
-        )
-        return {"items": items, "stats": stats, "total": len(items)}
-    return await top_picks_cache.get_or_compute(f"tp_{hours}_{limit}", _compute)
-
-
-@app.post("/api/top-picks/backfill")
-async def api_top_picks_backfill(payload: dict | None = None):
-    """Пройти по истории и проставить is_top_pick на всех существующих сигналах."""
-    from top_picks import backfill_top_picks
-    days = int((payload or {}).get("days", 30))
-    stats = await asyncio.to_thread(backfill_top_picks, days)
-    return {"ok": True, "stats": stats}
 
 
 @app.post("/api/ai-coin-analysis")
@@ -7494,25 +7304,6 @@ async def api_prepump_candidates(tier: str = "", limit: int = 200, hours: int = 
     return {'items': deduped, 'count': len(deduped)}
 
 
-@app.post("/api/combo/backfill")
-async def api_combo_backfill(payload: dict | None = None):
-    """Backfill COMBO signals за N дней (default 30). Запускается async.
-    Status через GET /api/combo/backfill/status."""
-    days = int((payload or {}).get('days', 30))
-    import combo_detector as cd
-    state = cd.get_backfill_state()
-    if state.get('running'):
-        return {'started': False, 'state': state}
-    asyncio.create_task(asyncio.to_thread(cd.backfill_combo, days))
-    return {'started': True, 'days': days}
-
-
-@app.get("/api/combo/backfill/status")
-async def api_combo_backfill_status():
-    import combo_detector as cd
-    return cd.get_backfill_state()
-
-
 @app.post("/api/precondition-analysis/start")
 async def api_precondition_analysis_start():
     import precondition_analysis as pa
@@ -8145,31 +7936,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "at_ts": int(c["detected_at"].timestamp()) if hasattr(c.get("detected_at"), "timestamp") else 0,
         })
 
-    # Clusters
-    for cl in _clusters().find({"trigger_at": {"$gte": since}, **pair_or}).sort("trigger_at", -1):
-        at_dt = cl.get("trigger_at")
-        strength = cl.get("strength", "NORMAL")
-        items.append({
-            "source": "cluster",
-            "symbol": (cl.get("pair") or cl.get("symbol") or "").replace("/", "").upper(),
-            "pair": cl.get("pair", ""),
-            "direction": cl.get("direction", ""),
-            "entry": cl.get("trigger_price"),
-            "tp1": cl.get("tp_price"),
-            "sl": cl.get("sl_price"),
-            "pattern": f"{strength} · {cl.get('signals_count',0)}×{cl.get('sources_count',0)}",
-            "score": abs(cl.get("reversal_score") or 0),
-            "cluster_strength": strength,
-            "cluster_status": cl.get("status", "OPEN"),
-            "cluster_pnl": round(cl.get("pnl_percent") or 0, 2) if cl.get("pnl_percent") is not None else None,
-            "cluster_id": cl.get("id"),
-            "is_top_pick": bool(cl.get("is_top_pick")),
-            "top_pick_confirmations_count": cl.get("top_pick_confirmations_count", 0),
-            "sources_count": cl.get("sources_count", 0),
-            "signals_count": cl.get("signals_count", 0),
-            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else None,
-            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
-        })
+    # Clusters удалены (2026-07-02)
 
     # SuperTrend signals для этой монеты (исключаем daily)
     import calendar as _cal
@@ -8427,43 +8194,7 @@ def _compute_journal_sync(_fast_only: bool = False):
             "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
         })
 
-    # Clusters (композитные сигналы) — полноценные записи с TP/SL
-    for c in _clusters().find({}).sort("trigger_at", -1).limit(100):
-        at_dt = c.get("trigger_at")
-        strength = c.get("strength", "NORMAL")
-        status = c.get("status", "OPEN")
-        signals_count = c.get("signals_count", 0)
-        sources_count = c.get("sources_count", 0)
-        pnl = c.get("pnl_percent")
-        # Строковый pattern: "MEGA · 4×3 · +1.5R" (если закрыт — добавляем PnL)
-        pattern_parts = [strength, f"{signals_count}×{sources_count}"]
-        if status == "TP":
-            pattern_parts.append("✅")
-        elif status == "SL":
-            pattern_parts.append("❌")
-        items.append({
-            "source": "cluster",
-            "symbol": (c.get("pair") or c.get("symbol") or "").replace("/", "").upper(),
-            "pair": c.get("pair", ""),
-            "direction": c.get("direction", ""),
-            "entry": c.get("trigger_price"),
-            "tp1": c.get("tp_price"),
-            "sl": c.get("sl_price"),
-            "pattern": " · ".join(pattern_parts),
-            "score": abs(c.get("reversal_score") or 0),  # reversal confirmation
-            "st_passed": None,
-            "pump_score": 0,
-            "cluster_strength": strength,
-            "cluster_status": status,
-            "cluster_pnl": round(pnl, 2) if pnl is not None else None,
-            "cluster_id": c.get("id"),
-            "is_top_pick": bool(c.get("is_top_pick")),
-            "top_pick_confirmations_count": c.get("top_pick_confirmations_count", 0),
-            "sources_count": sources_count,
-            "signals_count": signals_count,
-            "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
-            "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
-        })
+    # Clusters удалены (2026-07-02)
 
     # SuperTrend signals (14 дней) — источник 'supertrend' с tier в pattern
     # Включаем все 3 tier (vip, mtf, daily) — юзер хочет видеть Daily 🧭 в журнале.

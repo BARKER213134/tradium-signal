@@ -338,22 +338,7 @@ def check_setup(pair_input: str) -> dict:
 
         # CV + Tradium блок удалён вместе с ingestion (2026-07-01)
 
-        # 7. clusters
-        try:
-            for cl in db.clusters.find({
-                **pair_or, 'trigger_at': {'$gte': since},
-            }, {'direction':1,'trigger_price':1,'trigger_at':1,'strength':1}).sort('trigger_at',-1).limit(10):
-                dt = cl.get('trigger_at')
-                if dt and dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
-                all_sigs.append({
-                    'source': 'cluster',
-                    'at': dt.isoformat() if dt else None,
-                    'at_ts': int(dt.timestamp()) if dt else 0,
-                    'direction': cl.get('direction'),
-                    'entry': cl.get('trigger_price'),
-                    'tier': cl.get('strength'),
-                })
-        except Exception: pass
+        # 7. clusters удалены (2026-07-02)
 
         # BIG BUY блок удалён вместе с Cryptovizor ingestion (2026-07-01)
 
