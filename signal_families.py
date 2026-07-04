@@ -29,12 +29,15 @@ FAMILY_OF = {
     "rsi_cross_12h": "trend",
     "verified": "trend",     # verified проверяет те же ST-сигналы
     "confluence": "levels",  # уровни + свечные паттерны — независимый взгляд
+    "impulse": "momentum",   # rocket: higher-TF RSI momentum (research 07-02)
+    "fade": "momentum",      # short rally in downtrend
     "whale": "whale",        # структура базы + vol spike
     "shark": "shark",        # distribution top
     "paper": "paper",
 }
 
 FAMILY_EMOJI = {
+    "momentum": "\U0001F680",
     "trend": "🌀", "levels": "🎯", "whale": "🐋", "shark": "🦈",
     "cluster": "💠", "paper": "🤖",
 }

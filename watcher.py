@@ -1376,6 +1376,65 @@ def _setup_bot16():
         logger.error(f"BOT16 init fail: {e}")
 
 
+async def _momentum_send_telegram(sig: dict):
+    """IMPULSE/FADE alert в BOT16 (общий канал сильных сигналов)."""
+    global _bot16
+    from config import WHALE_CHAT_ID
+    st = sig.get('strategy')
+    ind = sig.get('indicators') or {}
+    pair = sig.get('pair', '?')
+    if st == 'impulse':
+        header = "\U0001F680 <b>IMPULSE - LONG momentum</b>\n"
+        stats = "backtest 62d: WR 82%, EV +5.9%/trade, median MFE24 +17.7%"
+        exit_line = "TP +8% / SL -4% / time-stop 12h"
+    else:
+        header = "\U0001F3A3 <b>FADE - SHORT rally</b>\n"
+        stats = "backtest 62d: WR 54%, EV +1.4%/trade (BTC-filter)"
+        exit_line = "TP -6% / SL +4% / horizon 24h"
+    btc_line = f" | BTC-RSI4h {ind.get('btc_rsi_4h')}" if st == 'fade' else ''
+    txt = (header +
+           "----------------------\n" +
+           f"<b>{pair}</b> | {sig.get('direction')}\n" +
+           f"<b>Entry:</b> {sig.get('entry')}\n" +
+           f"<b>Exit:</b> {exit_line}\n" +
+           "----------------------\n" +
+           f"RSI4h {ind.get('rsi_4h')} | RSI1d {ind.get('rsi_1d')} | " +
+           f"ST4h {ind.get('st4')} | ATR {ind.get('atr_pct')}%" + btc_line + "\n" +
+           f"{stats}\n" +
+           f"<a href='https://www.binance.com/en/futures/{pair.replace('/', '')}'>Chart</a>")
+    target_bot = _bot16 or _bot
+    if not target_bot:
+        return
+    try:
+        await target_bot.send_message(chat_id=WHALE_CHAT_ID, text=txt,
+                                       disable_web_page_preview=True)
+    except Exception as e:
+        logger.warning(f'[momentum] send fail: {e}')
+
+
+async def _momentum_scan_loop():
+    """IMPULSE/FADE: скан ликвидных пар каждые 20 мин (кулдаун 12ч в
+    store_signal). Правила из research 2026-07-02 (см. impulse_detector.py)."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(240)
+    while True:
+        try:
+            from impulse_detector import scan_universe
+            fired = await _asyncio.to_thread(scan_universe, 300)
+            if fired:
+                logger.info(f"[momentum] fired {len(fired)}: "
+                            f"{[(s['strategy'], s['pair']) for s in fired]}")
+                for s in fired:
+                    try:
+                        await _momentum_send_telegram(s)
+                        await _asyncio.sleep(1.2)
+                    except Exception:
+                        pass
+        except Exception:
+            logger.exception('[momentum] scan error')
+        await _asyncio.sleep(1200)
+
+
 async def _whale_send_telegram(doc: dict):
     """Шлёт WHALE alert в BOT16. Fallback на основной BOT если BOT16 нет.
     Шлёт BOTH STANDARD + PREMIUM (MARGINAL уже отрезан в maybe_fire_whale)."""
@@ -3691,6 +3750,12 @@ async def start_watcher():
         logger.info("[levels] background refresher scheduled")
     except Exception:
         logger.exception("[levels] failed to schedule")
+    # 🚀🎣 IMPULSE/FADE momentum detector (research 2026-07-02)
+    try:
+        asyncio.create_task(_momentum_scan_loop())
+        logger.info("[momentum] scan loop scheduled")
+    except Exception:
+        logger.exception("[momentum] failed to schedule")
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())
