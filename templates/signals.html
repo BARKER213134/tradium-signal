@@ -7173,7 +7173,6 @@ async function _pollDeltaBackfill() {
       <col style="width:7%;">    <!-- Вердикт -->
       <col style="width:9%;">    <!-- RSI 4 TF -->
       <col style="width:6%;">    <!-- SMA vs RSI -->
-      <col style="width:8%;">    <!-- Аномалия -->
       <col style="width:7%;">    <!-- Trend -->
       <col style="width:5%;">    <!-- 4h state -->
       <col style="width:6%;">    <!-- 12h state -->
@@ -7197,7 +7196,6 @@ async function _pollDeltaBackfill() {
           <span onclick="event.stopPropagation();window._toggleRsiHelp(event)" style="display:inline-block;margin-left:4px;width:14px;height:14px;line-height:14px;text-align:center;background:rgba(178,139,255,0.2);border:1px solid #b28bff;border-radius:50%;color:#b28bff;font-size:9px;font-weight:700;cursor:pointer;vertical-align:middle;" title="Backtest best RSI buckets">ⓘ</span>
         </th>
         <th id="jSortSma" title="SMA(14) of RSI per TF. 🟢 = RSI выше SMA (bullish momentum), 🔴 = ниже (bearish)" style="text-align:center;padding:14px 6px;">SMA</th>
-        <th id="jSortAnomaly" title="Аномалия дельты — z-score delta_pct сигнальной свечи vs последних 30 свечей до неё. 🔥 z>2.5 = экстремум (как SKYAI 26.04), ⚡ z>1.5 = повышенный приток, ⚪ норма" style="text-align:center;padding:14px 6px;">Аномалия</th>
         <th id="jSortTrend" title="Тренд по EMA20 vs EMA50 на close per TF. ▲ зелёный = UP, ▼ красный = DOWN, ◆ серый = FLAT" style="text-align:center;padding:14px 6px;">Тренд</th>
         <th class="sortable" onclick="jSort('rsi4h_match')" id="jSort4h" title="RSI/SMA(RSI) на 4h: ✓ = state в направлении сделки. Faster reaction than 12h." style="text-align:center;padding:14px 6px;">4h</th>
         <th class="sortable" onclick="jSort('rsi12h_match')" id="jSort12h" title="RSI/SMA(RSI) на 12h: ✓ = RSI>SMA для LONG или RSI<SMA для SHORT (state в направлении сделки). По backtest 14d: +14-17 WR пп. Click для sort." style="text-align:center;padding:14px 6px;">12h</th>
@@ -7206,7 +7204,7 @@ async function _pollDeltaBackfill() {
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="15" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="14" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -9535,9 +9533,6 @@ function renderJournal(items, startIdx) {
     // SMA(RSI) position vs RSI per TF — green/red circles
     const smaCell = window._renderSmaCell ? window._renderSmaCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
-    // Delta anomaly z-score (15m/1h) — 🔥/⚡/⚪
-    const anomalyCell = window._renderAnomalyCell ? window._renderAnomalyCell(s) :
-      '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     // Trend EMA20 vs EMA50 per TF
     const trendCell = window._renderTrendCell ? window._renderTrendCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
@@ -9560,7 +9555,6 @@ function renderJournal(items, startIdx) {
       ${verdictCell}
       ${rsiCell}
       ${smaCell}
-      ${anomalyCell}
       ${trendCell}
       ${rsi4hCell}
       ${rsi12hCell}
