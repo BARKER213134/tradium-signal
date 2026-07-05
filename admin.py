@@ -3426,62 +3426,6 @@ async def api_delete_signals(payload: dict):
     return {"ok": True, "deleted": deleted, "events_deleted": events}
 
 
-@app.post("/api/signals/clear-processed")
-async def api_clear_processed():
-    """Удаляет отработанные Cryptovizor сигналы + сохраняет summary в историю."""
-    from database import utcnow
-
-    def _fetch():
-        from database import _signals as _sc
-        return list(_sc().find(
-            {"source": "cryptovizor", "status": {"$in": ["ПАТТЕРН", "VOLUME"]}},
-            {"pair": 1, "direction": 1, "pattern_name": 1, "entry": 1, "pattern_price": 1, "ai_score": 1}
-        ))
-    signals = await asyncio.to_thread(_fetch)
-
-    if not signals:
-        return {"ok": True, "deleted": 0}
-
-    # Краткое summary
-    coins = []
-    for s in signals:
-        entry = s.get("entry") or 0
-        current = s.get("pattern_price") or entry
-        pnl = ((current - entry) / entry * 100) if entry > 0 else 0
-        if s.get("direction") in ("SHORT", "SELL"):
-            pnl = -pnl
-        coins.append({
-            "pair": (s.get("pair") or "").replace("/USDT", ""),
-            "dir": s.get("direction", ""),
-            "pattern": s.get("pattern_name", ""),
-            "pnl": round(pnl, 2),
-        })
-
-    wins = sum(1 for c in coins if c["pnl"] > 0)
-    total_pnl = sum(c["pnl"] for c in coins)
-
-    summary = {
-        "date": str(utcnow()),
-        "count": len(coins),
-        "win_rate": round(wins / len(coins) * 100, 1) if coins else 0,
-        "total_pnl": round(total_pnl, 2),
-        "avg_pnl": round(total_pnl / len(coins), 2) if coins else 0,
-        "coins": coins,
-    }
-
-    def _commit():
-        from database import _signals as _sc, _get_db
-        _get_db().backtest_history.insert_one(summary)
-        return _sc().delete_many({
-            "source": "cryptovizor",
-            "status": {"$in": ["ПАТТЕРН", "VOLUME"]},
-        }).deleted_count
-    deleted = await asyncio.to_thread(_commit)
-
-    broadcast_event("signal_deleted", {"count": deleted})
-    return {"ok": True, "deleted": deleted, "summary": summary}
-
-
 @app.get("/api/backtest/history")
 async def api_backtest_history():
     """Возвращает историю бектестов."""
@@ -4139,23 +4083,7 @@ def _backtest_yesterday_sync(hours: int, forward_hours: int) -> dict:
     since = utcnow() - timedelta(hours=hours)
     raw: list[dict] = []
 
-    # 1. Tradium
-    for s in _signals().find({"source": "tradium", "received_at": {"$gte": since}}):
-        at = s.get("pattern_triggered_at") or s.get("received_at")
-        raw.append({"source": "tradium", "pair": s.get("pair"),
-                    "symbol": (s.get("pair") or "").replace("/", "").upper(),
-                    "direction": s.get("direction"),
-                    "entry": s.get("entry"), "tp1": s.get("tp1"), "sl": s.get("sl"),
-                    "at": at, "score": s.get("ai_score")})
-    # 2. Cryptovizor
-    for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True,
-                              "pattern_triggered_at": {"$gte": since}}):
-        raw.append({"source": "cryptovizor", "pair": s.get("pair"),
-                    "symbol": (s.get("pair") or "").replace("/", "").upper(),
-                    "direction": s.get("direction"),
-                    "entry": s.get("pattern_price") or s.get("entry"),
-                    "tp1": s.get("dca2"), "sl": s.get("dca1"),
-                    "at": s.get("pattern_triggered_at"), "score": s.get("ai_score")})
+    # Tradium/Cryptovizor источники удалены (2026-07-05)
     # 3. Anomaly — топ-200 по score
     for a in _anomalies().find({"detected_at": {"$gte": since}}).sort("score", -1).limit(200):
         sym = (a.get("symbol") or "").upper()
@@ -4466,19 +4394,7 @@ def _backtest_optimize_sync(source: str, hours: int, forward_hours: int) -> dict
                 "types": [x.get("type") for x in a.get("anomalies", [])],
                 "types_count": len(a.get("anomalies", [])),
             })
-    elif source == "cryptovizor":
-        for s in _signals().find({"source": "cryptovizor", "pattern_triggered": True,
-                                  "pattern_triggered_at": {"$gte": since}}):
-            raw.append({
-                "pair": s.get("pair"),
-                "direction": s.get("direction"),
-                "entry": s.get("pattern_price") or s.get("entry"),
-                "tp1": s.get("dca2"), "sl": s.get("dca1"),
-                "at": s.get("pattern_triggered_at"),
-                "pattern_name": s.get("pattern_name", "?"),
-                "ai_score": s.get("ai_score") or 0,
-                "st_passed": bool(s.get("st_passed")),
-            })
+    # cryptovizor ветка удалена (2026-07-05)
     else:
         return {"error": f"unknown source {source}"}
 
@@ -4613,23 +4529,7 @@ def _backtest_optimize_sync(source: str, hours: int, forward_hours: int) -> dict
             _apply("LONG only", lambda s: s["direction"] == "LONG"),
             _apply("SHORT only", lambda s: s["direction"] == "SHORT"),
         ]
-    elif source == "cryptovizor":
-        # Топ паттернов из данных
-        from collections import Counter
-        pat_counts = Counter(s.get("pattern_name", "?") for s in good)
-        top_patterns = [p for p, _ in pat_counts.most_common(6)]
-        rows += [
-            _apply("st_passed", lambda s: s["st_passed"]),
-            _apply("ai_score>=60", lambda s: s["ai_score"] >= 60),
-            _apply("ai_score>=70", lambda s: s["ai_score"] >= 70),
-            _apply("ai_score>=80", lambda s: s["ai_score"] >= 80),
-            _apply("LONG only", lambda s: s["direction"] == "LONG"),
-            _apply("SHORT only", lambda s: s["direction"] == "SHORT"),
-            _apply("st_passed+score70", lambda s: s["st_passed"] and s["ai_score"] >= 70),
-            _apply("st_passed+score80", lambda s: s["st_passed"] and s["ai_score"] >= 80),
-        ]
-        for p in top_patterns:
-            rows.append(_apply(f"pattern={p[:14]}", lambda s, pp=p: s.get("pattern_name") == pp))
+    # cryptovizor ветка удалена (2026-07-05)
 
     # 5. Возвращаем отсортированное по sum_r убыв (baseline в начале)
     def _key(r):
@@ -5968,40 +5868,6 @@ async def _run_backtest_cv_st30m(days: int):
         _bcst_state["finished_at"] = _dt.utcnow().isoformat()
 
 
-@app.post("/api/backtest-cv-st30m")
-async def api_backtest_cv_st30m_start(payload: dict | None = None):
-    """Бектест CV сигналов × ST 30m confirm. Read-only, прод не трогаем.
-    payload: {days: 7, timeout_h: 24} — таймаут ожидания flip ST 30m."""
-    from datetime import datetime as _dt
-    if _bcst_state.get("running"):
-        return {"ok": False, "error": "already running", "state": _bcst_state}
-    days = int((payload or {}).get("days", 7))
-    timeout_h = int((payload or {}).get("timeout_h", 10))
-    st_tf = str((payload or {}).get("st_tf", "30m")).lower()
-    if st_tf not in ("30m", "1h"):
-        st_tf = "30m"
-    _bcst_state.update({
-        "running": True, "started_at": _dt.utcnow().isoformat(),
-        "finished_at": None,
-        "progress": {"processed": 0, "total": 0, "current": ""},
-        "result": None, "error": None,
-        "timeout_h": timeout_h,
-        "st_tf": st_tf,
-    })
-    asyncio.create_task(_run_backtest_cv_st30m(days))
-    return {"ok": True, "started": True, "days": days, "timeout_h": timeout_h, "st_tf": st_tf}
-
-
-@app.get("/api/backtest-cv-st30m/status")
-async def api_backtest_cv_st30m_status():
-    return _bcst_state
-
-
-# ═══════════════════════════════════════════════════════════════════
-# BACKTEST ST FLIPS — чистая стратегия "вход на flip UP, выход на flip DOWN"
-# Тестируем 5 TF (15m/30m/1h/4h/1d) на всех фьючерсных парах
-# за N дней. Цель: найти самый стабильный TF.
-# ═══════════════════════════════════════════════════════════════════
 _bstf_state: dict = {
     "running": False, "started_at": None, "finished_at": None,
     "progress": {"processed": 0, "total": 0, "current": ""},

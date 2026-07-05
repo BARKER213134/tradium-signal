@@ -525,8 +525,7 @@ function toggleConfluenceRow(rowId, symbol) {
       score: conf.score,
       pattern: conf.pattern,
       source: 'confluence',
-      fetchPairSignals: true, windowH: 96,
-    });
+      fetchPairSignals: true, windowH: 96});
   }
 }
 
@@ -541,9 +540,7 @@ async function loadConfluenceAnalysis(symbol, idx, direction, price, score) {
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         symbol: symbol, price: parseFloat(price), score: parseFloat(score),
-        direction: direction, anomalies: cfData ? cfData.factors : [],
-      }),
-    });
+        direction: direction, anomalies: cfData ? cfData.factors : []})});
     const d = await r.json();
     container.innerHTML = d.ok ? renderAnalysisCard(d.analysis, symbol) : `<span class="text-sell">Ошибка: ${d.error||''}</span>`;
   } catch(e) {
@@ -733,8 +730,7 @@ function _switchStSub(tier) {
     const colors = {
       vip:   { bg: 'linear-gradient(135deg,rgba(255,215,0,0.2),rgba(255,180,0,0.08))', c: '#ffd700', bd: 'rgba(255,215,0,0.6)' },
       mtf:   { bg: 'linear-gradient(135deg,rgba(0,229,160,0.2),rgba(0,200,140,0.08))', c: '#00e5a0', bd: 'rgba(0,229,160,0.55)' },
-      daily: { bg: 'linear-gradient(135deg,rgba(58,160,255,0.2),rgba(0,120,215,0.08))', c: '#3aa0ff', bd: 'rgba(58,160,255,0.55)' },
-    };
+      daily: { bg: 'linear-gradient(135deg,rgba(58,160,255,0.2),rgba(0,120,215,0.08))', c: '#3aa0ff', bd: 'rgba(58,160,255,0.55)' }};
     const cfg = colors[tier];
     activeBtn.style.background = cfg.bg;
     activeBtn.style.color = cfg.c;
@@ -793,7 +789,7 @@ function _stRow(s) {
 
   let alignedStr = '';
   if (s.tier === 'vip' && s.aligned_bots && s.aligned_bots.length) {
-    const botEmoji = { tradium:'📡', cryptovizor:'🚀', anomaly:'⚠', confluence:'🎯', cluster:'💠', paper:'🤖' };
+    const botEmoji = { anomaly:'⚠', confluence:'🎯', paper:'🤖' };
     alignedStr = s.aligned_bots.slice(0, 3).map(ab => botEmoji[ab.source] || '•').join('');
     if (s.aligned_bots.length > 3) alignedStr += ` +${s.aligned_bots.length - 3}`;
   } else if (s.aligned_tfs && s.aligned_tfs.length) {
@@ -936,7 +932,7 @@ async function _nsLoad() {
       tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted);">Нет сигналов в этом окне</td></tr>';
       return;
     }
-    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', combo:'🧠', whale:'🐋', shark:'🦈', stack:'🧩', impulse:'🚀', fade:'🎣'};
+    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', whale:'🐋', shark:'🦈', stack:'🧩', impulse:'🚀', fade:'🎣'};
     const sLabel = {volume_surge:'Volume Surge', triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano Breakout', second_flip:'Second Flip', combo:'COMBO', whale:'WHALE', shark:'SHARK', bigbuy:'BIG BUY'};
     const stEmoji = {WAITING:'⏳', TP:'✅', SL:'⛔', MANUAL:'📍', TIMEOUT:'⏱'};
     let html = '';
@@ -1171,9 +1167,7 @@ setTimeout(_nsLoad, 500);
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
           pair: d.pair, direction: d.direction,
-          checks: d.checks, market: d.market, signal: d.signal,
-        }),
-      });
+          checks: d.checks, market: d.market, signal: d.signal})});
       const ai = await r.json();
       if (!ai.ok) {
         resBox.innerHTML = `<div style="color:#ff4d6d;">❌ Ошибка AI: ${ai.error || '?'}</div>`;
@@ -1631,7 +1625,7 @@ async function loadStacks() {
       tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;" class="text-muted">Нет стеков под фильтр</td></tr>';
       return;
     }
-    const famE = {trend:'🌀', levels:'🎯', whale:'🐋', shark:'🦈', cluster:'💠'};
+    const famE = {trend:'🌀', levels:'🎯', whale:'🐋', shark:'🦈'};
     tb.innerHTML = rows.slice(0, 200).map(x => {
       const t = x.at ? new Date(x.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
       const pair = (x.pair || '').replace('/USDT', '');
@@ -1734,10 +1728,8 @@ function _renderSetupResult(d) {
   const cb = bias.bias === 'LONG' ? '#00e5a0' : (bias.bias === 'SHORT' ? '#ff4d6d' : '#888');
 
   // ── Recent signals list (ALL sources за 72h) + cluster bias header ──
-  const srcEmoji = {whale:'🐋', shark:'🦈', combo:'🧠', triple_confluence:'🐉',
-                    st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', cv_flip:'⏳',
-                    anomaly:'⚠', cryptovizor:'🚀', tradium:'📡', cluster:'💠',
-                    volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
+  const srcEmoji = {whale:'🐋', shark:'🦈', triple_confluence:'🐉',
+                    st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', anomaly:'⚠', volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
                     second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣'};
   const longCnt = d.cluster_long || 0;
   const shortCnt = d.cluster_short || 0;
@@ -1940,13 +1932,11 @@ async function _scRenderChart(d, tf) {
       rightPriceScale: { borderColor: '#1a1e2a' },
       timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
       width: chartDiv.clientWidth,
-      height: 450,
-    });
+      height: 450});
     const series = chart.addCandlestickSeries({
       upColor: '#00e5a0', downColor: '#ff4d6d',
       borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
-      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
-    });
+      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d'});
     series.setData(cD.candles);
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, cD.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, cD.candles, tf);
@@ -1972,12 +1962,9 @@ async function _scRenderChart(d, tf) {
     const inRange = (ts) => ts >= firstTs - tfSec && ts <= lastTs + tfSec * 2;
 
     const srcEmoji = {
-      whale:'🐋', shark:'🦈', combo:'🧠', triple_confluence:'🐉',
-      st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', cv_flip:'⏳',
-      anomaly:'⚠', cryptovizor:'🚀', tradium:'📡', cluster:'💠',
-      volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
-      second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', supertrend:'🌀',
-    };
+      whale:'🐋', shark:'🦈', triple_confluence:'🐉',
+      st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', anomaly:'⚠', volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
+      second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', supertrend:'🌀'};
     const markers = [];
     const byTime = new Map();
     for (const s of (d.recent_signals || [])) {
@@ -1999,8 +1986,7 @@ async function _scRenderChart(d, tf) {
         color: g.isLong ? '#00e5a0' : '#ff4d6d',
         shape: g.isLong ? 'arrowUp' : 'arrowDown',
         text: emojis + (g.items.length > 1 ? ` ×${g.items.length}` : ''),
-        size: g.items.length >= 3 ? 2 : 1,
-      });
+        size: g.items.length >= 3 ? 2 : 1});
     }
     if (markers.length && series.setMarkers) {
       markers.sort((a, b) => a.time - b.time);
@@ -2251,7 +2237,7 @@ setTimeout(() => { const i = document.getElementById('sc-pair'); if (i) i.focus(
     <div class="cfl-legend-item"><span class="cfl-legend-dot" style="background:#ff4d6d;box-shadow:0 0 8px #ff4d6d;"></span><b style="color:#ff4d6d">NUCLEAR</b> — Anomaly veto, разворот начался</div>
     <div class="cfl-legend-item"><span class="cfl-legend-dot" style="background:#ff9500"></span><b style="color:#ff9500">STRONG</b> — силы равны (ratio ≥ 0.5)</div>
     <div class="cfl-legend-item"><span class="cfl-legend-dot" style="background:#ffd23e"></span><b style="color:#ffd23e">WEAK</b> — одна сторона доминирует (ratio ≥ 0.3)</div>
-    <div class="cfl-legend-item" style="opacity:0.6;"><span style="font-size:12px;">Веса:</span> ⚠ Anomaly ×2.0 · 🎯 Confluence ×1.3 · 📡🚀 Tradium/CV ×1.0</div>
+    <div class="cfl-legend-item" style="opacity:0.6;"><span style="font-size:12px;">Веса:</span> ⚠ Anomaly ×2.0 · 🎯 Confluence ×1.3</div>
   </div>
 </div>
 
@@ -2325,19 +2311,17 @@ setTimeout(() => { const i = document.getElementById('sc-pair'); if (i) i.focus(
 
 <script>
 let _cflData = [];
-const _cflSrcIcon = {tradium:'📡', cryptovizor:'🚀', anomaly:'⚠', confluence:'🎯', paper:'🤖', cluster:'💠'};
+const _cflSrcIcon = {anomaly:'⚠', confluence:'🎯', paper:'🤖'};
 // Для конфликтов: source от /api/conflicts включает score в meta
 function _cflIcon(s) {
   if (!window.sigIcon) return _cflSrcIcon[s.source] || '•';
   const _strong = window.isStrongSignal ? window.isStrongSignal({
     source: s.source,
     score: s.meta?.score,
-    pattern: s.meta?.pattern,
-  }) : false;
+    pattern: s.meta?.pattern}) : false;
   return window.sigIcon(s.source, s.meta?.score || 0, {
     is_top_pick: !!s.meta?.is_top_pick,
-    strong: _strong,
-  });
+    strong: _strong});
 }
 
 async function loadConflicts() {
@@ -3135,8 +3119,7 @@ async function closeLivePosition(tradeId, pair, accountId, pnl) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({trade_id: tradeId}),
-      signal: ctrl.signal,
-    });
+      signal: ctrl.signal});
     clearTimeout(tid);
     const d = await r.json();
     if (d.ok) {
@@ -3169,8 +3152,7 @@ async function closeAllLivePositions() {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({}),
-      signal: ctrl.signal,
-    });
+      signal: ctrl.signal});
     clearTimeout(tid);
     const d = await r.json();
     alert(d.ok ? `✅ Закрыто ${d.closed_count}, ошибок ${d.failed_count}` : `❌ ${d.error}`);
@@ -3243,8 +3225,7 @@ async function refreshExchangeSymbols(exchange) {
     const r = await fetch('/api/binance-symbols/refresh', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({exchange: exchange}),
-    });
+      body: JSON.stringify({exchange: exchange})});
     const d = await r.json();
     if (d.ok) {
       const a = (d.added || []).length;
@@ -3267,8 +3248,7 @@ async function setDefaultExchange(exchange) {
     const r = await fetch('/api/exchange-symbols/set-default', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({exchange: exchange}),
-    });
+      body: JSON.stringify({exchange: exchange})});
     const d = await r.json();
     if (d.ok) {
       alert(`✅ Default биржа теперь: ${d.default_exchange.toUpperCase()}\nPaper будет фильтровать по парам этой биржи.`);
@@ -3486,8 +3466,7 @@ async function loadPaperStatus() {
           const styles = {
             BULL:  {emoji:'🚀', bg:'rgba(0,229,160,0.12)', border:'rgba(0,229,160,0.45)', color:'#00e5a0', label:'BULL'},
             BEAR:  {emoji:'📉', bg:'rgba(255,77,109,0.12)', border:'rgba(255,77,109,0.45)', color:'#ff4d6d', label:'BEAR'},
-            CHOP:  {emoji:'🌀', bg:'rgba(122,139,166,0.15)', border:'rgba(122,139,166,0.45)', color:'#a8b6c8', label:'CHOP'},
-          };
+            CHOP:  {emoji:'🌀', bg:'rgba(122,139,166,0.15)', border:'rgba(122,139,166,0.45)', color:'#a8b6c8', label:'CHOP'}};
           const st = styles[regime] || styles.CHOP;
           regimeWrap.style.display = 'flex';
           regimeBadge.textContent = `${st.emoji} ${st.label}`;
@@ -3664,13 +3643,11 @@ async function _drawPaperHistChart(idx) {
       rightPriceScale: { borderColor: '#1a1e2a' },
       timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
       width: chartDiv.clientWidth,
-      height: 400,
-    });
+      height: 400});
     const series = chart.addCandlestickSeries({
       upColor: '#00e5a0', downColor: '#ff4d6d',
       borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
-      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
-    });
+      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d'});
     series.setData(d.candles);
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
@@ -3697,7 +3674,7 @@ async function _drawPaperHistChart(idx) {
     };
     const inRange = (ts) => ts >= firstTs - tfSec && ts <= lastTs + tfSec * 2;
 
-    // 1. Все сигналы (CV/Tradium/Anom/Conf/Cluster) — мелкие иконки
+    // 1. Все сигналы — мелкие иконки
     const byTime = new Map();
     for (const s of allSigs) {
       const ts = s.at_ts || 0;
@@ -3724,8 +3701,7 @@ async function _drawPaperHistChart(idx) {
         color: isMoonshot ? '#ff8c50' : (g.isLong ? '#00e5a0' : '#ff4d6d'),
         shape: g.isLong ? 'arrowUp' : 'arrowDown',
         text: icons + (g.items.length > 1 ? ` ×${g.items.length}` : ''),
-        size: isMoonshot ? 2 : 0,
-      });
+        size: isMoonshot ? 2 : 0});
       // Moonshot emoji marker on opposite side
       if (isMoonshot) {
         markers.push({
@@ -3734,8 +3710,7 @@ async function _drawPaperHistChart(idx) {
           color: '#ff8c50',
           shape: 'circle',
           text: isDiamond ? `💎${maxStack}` : `🚀${maxStack}`,
-          size: 0,
-        });
+          size: 0});
       }
     }
 
@@ -3751,16 +3726,14 @@ async function _drawPaperHistChart(idx) {
       color: '#ffd23e',
       shape: isL ? 'arrowUp' : 'arrowDown',
       text: `🤖 ${h.entry || ''}`,
-      size: 2,
-    });
+      size: 2});
     if (outMc) markers.push({
       time: outMc.time,
       position: 'inBar',
       color: win ? '#00e5a0' : '#ff4d6d',
       shape: win ? 'circle' : 'square',
       text: win ? `✅ ${pnlStr}` : `❌ ${pnlStr}`,
-      size: 2,
-    });
+      size: 2});
     markers.sort((a, b) => a.time - b.time);
     // Накопительные маркеры: KC и KL не затирают друг друга, ST flip-стрелки сразу, + ST-signals
     let _msM = [], _klM = [], _stSigM = [], _verM = [], _cvFlipM = [], _nsM = [], _hotM = [];
@@ -3977,13 +3950,11 @@ async function _renderPaperChart(idx, tf) {
       grid: { vertLines: { color: '#1a1e2a' }, horzLines: { color: '#1a1e2a' } },
       rightPriceScale: { borderColor: '#1a1e2a' },
       timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
-      width: area.clientWidth, height: 260,
-    });
+      width: area.clientWidth, height: 260});
     const series = chart.addCandlestickSeries({
       upColor: '#00e5a0', downColor: '#ff4d6d',
       borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
-      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
-    });
+      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d'});
     series.setData(d.candles);
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
@@ -4001,7 +3972,7 @@ async function _renderPaperChart(idx, tf) {
       for (const c of d.candles) { const diff = Math.abs(c.time - ts); if (diff < minD) { minD = diff; mc = c; } }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣'};
+    const srcIconMap = {anomaly:'⚠', confluence:'🎯', paper:'🤖', whale:'🐋', shark:'🦈', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣'};
     const entryTs = p.opened_at ? Math.floor(new Date(p.opened_at).getTime()/1000) : 0;
     const mainMc = nearestP(entryTs);
     const isLong = p.direction === 'LONG';
@@ -4030,8 +4001,7 @@ async function _renderPaperChart(idx, tf) {
       if (!byKey.has(key)) byKey.set(key, {time: mcc.time, isLong: isL, icons: new Set(), items: []});
       const g = byKey.get(key);
       const _pMeta = Object.assign({}, m.meta || {}, {
-        strong: window.isStrongSignal ? window.isStrongSignal(m) : false,
-      });
+        strong: window.isStrongSignal ? window.isStrongSignal(m) : false});
       g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, _pMeta));
       g.items.push(m);
       if (!paperMarkerMap.has(mcc.time)) paperMarkerMap.set(mcc.time, m);
@@ -4045,8 +4015,7 @@ async function _renderPaperChart(idx, tf) {
         color: g.isLong ? '#00e5a0' : '#ff4d6d',
         shape: g.isLong ? 'arrowUp' : 'arrowDown',
         text: g.main ? `🤖 ${p.entry}` : icons + (g.items.length > 1 ? ` ×${g.items.length}` : ''),
-        size: 0,
-      });
+        size: 0});
     }
     markers.sort((a,b) => a.time - b.time);
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу + ST-signals
@@ -4136,8 +4105,7 @@ async function resetPaper() {
     const r = await fetch('/api/paper/reset', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({amount: amt}),
-    });
+      body: JSON.stringify({amount: amt})});
     const d = await r.json();
     if (!d.ok) { alert('Ошибка: ' + (d.error || '?')); return; }
     loadPaperStatus();
@@ -4224,8 +4192,7 @@ async function submitPaperBalance() {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({amount: amt}),
-      signal: ctrl.signal,
-    });
+      signal: ctrl.signal});
     clearTimeout(tid);
     const d = await r.json();
     if (!d.ok) {
@@ -4258,8 +4225,7 @@ async function loadPaperMode() {
       'conservative': {bg:'linear-gradient(135deg,rgba(0,212,255,0.18),rgba(0,180,255,0.06))', c:'#00d4ff', bd:'rgba(0,212,255,0.55)', emoji:'🛡️', label:'CONSERVATIVE'},
       'aggressive':   {bg:'linear-gradient(135deg,rgba(255,77,109,0.22),rgba(255,140,50,0.1))', c:'#ff8c32', bd:'rgba(255,140,50,0.6)',  emoji:'🔥', label:'AGGRESSIVE'},
       'hyper':        {bg:'linear-gradient(135deg,rgba(255,0,128,0.28),rgba(190,0,230,0.14))', c:'#ff4cc4', bd:'rgba(255,76,196,0.7)', emoji:'💎', label:'HYPER'},
-      'turbo':        {bg:'linear-gradient(135deg,rgba(255,222,0,0.30),rgba(255,128,0,0.18))', c:'#ffde00', bd:'rgba(255,222,0,0.75)', emoji:'🚀', label:'TURBO'},
-    };
+      'turbo':        {bg:'linear-gradient(135deg,rgba(255,222,0,0.30),rgba(255,128,0,0.18))', c:'#ffde00', bd:'rgba(255,222,0,0.75)', emoji:'🚀', label:'TURBO'}};
     const s = styles[name] || styles.aggressive;
     btn.style.background = s.bg;
     btn.style.color = s.c;
@@ -4280,8 +4246,7 @@ async function togglePaperMode() {
     await fetch('/api/paper/mode', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({name: next}),
-    });
+      body: JSON.stringify({name: next})});
     loadPaperMode();
   } catch (e) { alert('Не удалось переключить режим: ' + e.message); }
 }
@@ -4335,8 +4300,7 @@ async function closePaperPosition(tradeId, pair, direction, pnlPct) {
     const r = await fetch('/api/paper/close', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({trade_id: tid}),
-    });
+      body: JSON.stringify({trade_id: tid})});
     const d = await r.json();
     console.log('[closePaperPosition] response', d);
     if (!d.ok) { alert('Ошибка закрытия: ' + (d.error || JSON.stringify(d))); return; }
@@ -4506,8 +4470,7 @@ async function loadAIPrompt() {
       dynamic: { border: 'rgba(0,212,255,0.35)', bg: 'rgba(0,212,255,0.04)',   tag: '🔄 dynamic' },
       memory:  { border: 'rgba(0,229,160,0.55)', bg: 'rgba(0,229,160,0.07)',   tag: '🧠 memory' },
       static:  { border: 'rgba(255,255,255,0.12)', bg: 'rgba(255,255,255,0.02)', tag: '📌 static' },
-      rules:   { border: 'rgba(255,210,62,0.35)', bg: 'rgba(255,210,62,0.05)',  tag: '📏 rules' },
-    };
+      rules:   { border: 'rgba(255,210,62,0.35)', bg: 'rgba(255,210,62,0.05)',  tag: '📏 rules' }};
 
     const sections = d.sections || [];
     const html = sections.map(s => {
@@ -4683,8 +4646,7 @@ async function submitAddAccount() {
     mode: document.getElementById('acc_mode').value,
     api_key: document.getElementById('acc_api_key').value.trim(),
     api_secret: document.getElementById('acc_api_secret').value.trim(),
-    safety_preset: document.getElementById('acc_preset').value,
-  };
+    safety_preset: document.getElementById('acc_preset').value};
   if (!payload.id) {
     alert('❌ ID обязателен.\nРазрешены только латинские буквы, цифры, _ и -');
     return;
@@ -4715,8 +4677,7 @@ async function submitAddAccount() {
     const r = await fetch('/api/live/accounts', {
       method:'POST', headers:{'Content-Type':'application/json'},
       credentials:'include', body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
+      signal: controller.signal});
     clearTimeout(timeoutId);
     const d = await r.json();
     if (!d.ok) {
@@ -4747,8 +4708,7 @@ async function submitAddAccount() {
 async function testAccountConnection(id) {
   try {
     const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/test-connection`, {
-      method:'POST', credentials:'include',
-    });
+      method:'POST', credentials:'include'});
     const d = await r.json();
     if (d.ok) {
       alert(`✅ ${id}\nMode: ${d.mode}\nUSDT total: $${d.usdt_total}\nFree: $${d.usdt_free}\nUsed: $${d.usdt_used}`);
@@ -4808,8 +4768,7 @@ async function setAccountVirtBalance(id, current) {
   try {
     const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/balance`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      credentials:'include', body: JSON.stringify({balance: bal}),
-    });
+      credentials:'include', body: JSON.stringify({balance: bal})});
     const d = await r.json();
     if (!d.ok) alert('Ошибка: ' + d.error);
     await loadAccounts();
@@ -4827,8 +4786,7 @@ async function toggleAccountEnabled(id, enabled) {
   try {
     const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/enable`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      credentials:'include', body: JSON.stringify({enabled: enabled}),
-    });
+      credentials:'include', body: JSON.stringify({enabled: enabled})});
     const d = await r.json();
     if (!d.ok) alert('❌ ' + d.error);
     await loadAccounts();
@@ -4844,8 +4802,7 @@ async function killAccount(id) {
   try {
     const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/kill`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      credentials:'include', body: JSON.stringify({kill: true}),
-    });
+      credentials:'include', body: JSON.stringify({kill: true})});
     const d = await r.json();
     if (!d.ok) alert('❌ ' + d.error);
     await loadAccounts();
@@ -4856,8 +4813,7 @@ async function resetAccountKill(id) {
   try {
     const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}/kill`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      credentials:'include', body: JSON.stringify({kill: false}),
-    });
+      credentials:'include', body: JSON.stringify({kill: false})});
     const d = await r.json();
     if (!d.ok) alert('❌ ' + d.error);
     await loadAccounts();
@@ -4872,8 +4828,7 @@ async function deleteAccount(id) {
   if (!ok) return;
   try {
     const r = await fetch(`/api/live/accounts/${encodeURIComponent(id)}`, {
-      method:'DELETE', credentials:'include',
-    });
+      method:'DELETE', credentials:'include'});
     const d = await r.json();
     if (!d.ok) alert('❌ ' + d.error);
     await loadAccounts();
@@ -4948,9 +4903,8 @@ async function loadAccepts() {
       return;
     }
     const srcEmoji = {
-      tradium:'📡', cryptovizor:'🚀', anomaly:'⚠', confluence:'🎯',
-      cluster:'💠', paper:'🤖', supertrend:'🌀', ai_signal:'🧠',
-    };
+      anomaly:'⚠', confluence:'🎯',
+      paper:'🤖', supertrend:'🌀', ai_signal:'🧠'};
     body.innerHTML = items.map(it => {
       const when = it.opened_at ? new Date(it.opened_at).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '';
       const pair = (it.symbol || '').replace('USDT','');
@@ -4993,8 +4947,7 @@ async function loadAccepts() {
         const regStyles = {
           BULL: {bg:'rgba(0,229,160,0.18)', border:'#00e5a0', color:'#00e5a0', emoji:'🚀'},
           BEAR: {bg:'rgba(255,77,109,0.18)', border:'#ff4d6d', color:'#ff4d6d', emoji:'📉'},
-          CHOP: {bg:'rgba(122,139,166,0.15)', border:'#a8b6c8', color:'#a8b6c8', emoji:'🌀'},
-        };
+          CHOP: {bg:'rgba(122,139,166,0.15)', border:'#a8b6c8', color:'#a8b6c8', emoji:'🌀'}};
         const rs = regStyles[regime] || regStyles.CHOP;
         v3Badges += `<span style="padding:1px 7px;background:${rs.bg};border:1px solid ${rs.border};color:${rs.color};border-radius:8px;font-size:9px;font-weight:700;letter-spacing:0.03em;">${rs.emoji} ${regime}</span>`;
       }
@@ -5170,8 +5123,7 @@ window._reasonColors = {
   reject:  {bg:'rgba(255,77,109,0.08)', border:'#ff4d6d',  text:'#ff4d6d'},
   pause:   {bg:'rgba(255,210,62,0.10)', border:'#ffd23e',  text:'#ffd23e'},
   risk:    {bg:'rgba(178,139,255,0.10)',border:'#b28bff',  text:'#b28bff'},
-  neutral: {bg:'rgba(255,255,255,0.04)',border:'#7a8ba6',  text:'#aaa'},
-};
+  neutral: {bg:'rgba(255,255,255,0.04)',border:'#7a8ba6',  text:'#aaa'}};
 
 // 🛑 Отказы AI — гармошка (почему не вошёл в сделку)
 async function toggleRejections() {
@@ -5205,9 +5157,8 @@ async function loadRejections() {
     }
     // Компактный вид: пара · direction · источник · score · краткая причина
     const srcEmoji = {
-      tradium:'📡', cryptovizor:'🚀', anomaly:'⚠', confluence:'🎯',
-      cluster:'💠', paper:'🤖', supertrend:'🌀', ai_signal:'🧠',
-    };
+      anomaly:'⚠', confluence:'🎯',
+      paper:'🤖', supertrend:'🌀', ai_signal:'🧠'};
     body.innerHTML = items.map(it => {
       const when = it.at ? new Date(it.at).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '';
       const pair = (it.symbol || '').replace('USDT','');
@@ -6094,10 +6045,9 @@ safeInterval(loadForexJournal, 30000);
   <div class="strat-icon">📓</div>
   <div class="strat-body">
     <div class="strat-title">Стратегия · Журнал (все источники)</div>
-    Единая лента сигналов из <b>6 источников</b>: Tradium, Cryptovizor, Anomaly,
-    Confluence, Cluster, Paper. Маркеры: <b>👑</b> = Top Pick (двойное подтверждение),
-    <b>⭐</b> = Strong (CV ai≥50, Cluster MEGA/STRONG, Tradium triggered, Conf≥5, Anom≥70).
-    Фильтры: только Strong, только Top Picks, по источнику, паре, направлению, KC/Pump.
+    Единая лента всех собственных сигналов: SuperTrend + NEW Strategy (семейство
+    trend), Confluence, WHALE, SHARK, Verified, 🚀 IMPULSE, 🎣 FADE и 🧩 STACK
+    (семейные группы). Фильтры: по источнику, паре, направлению, времени, силе.
     Кликабельные графики с маркерами всех источников по монете.
   </div>
 </div>
@@ -6207,7 +6157,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <button class="tf-btn" onclick="_setCoinTF('1d')">1D</button>
   </div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px;font-size:10px;color:var(--muted);font-family:var(--font-mono);">
-    <span>📡 Tradium</span><span>🚀 CV</span><span>⚠ Аном</span><span>🎯 Conf</span><span>🤖 Paper</span>
+    <span>🌀 ST</span><span>🎯 Conf</span><span>🐋 WHALE</span><span>🦈 SHARK</span><span>🚀 IMPULSE</span><span>🧩 STACK</span>
     <span style="color:var(--buy);">▲ LONG</span><span style="color:var(--sell);">▼ SHORT</span>
   </div>
 </div>
@@ -6556,8 +6506,8 @@ function _renderEarlyEntries() {
   list.innerHTML = _ppEarlyData.slice(0, 10).map(ee => {
     const dt = new Date(ee.at).toLocaleString('ru-RU', {dateStyle:'short', timeStyle:'short'});
     const dirEmoji = ee.direction === 'LONG' ? '🟢' : '🔴';
-    const sources = {'cryptovizor':'🚀', 'supertrend':'🌀', 'anomaly':'⚠', 'confluence':'🎯',
-      'cluster':'💠', 'vol_accum':'🔋', 'triple_confluence':'🐉', 'volume_surge':'🌊',
+    const sources = {'supertrend':'🌀', 'anomaly':'⚠', 'confluence':'🎯',
+      'vol_accum':'🔋', 'triple_confluence':'🐉', 'volume_surge':'🌊',
       'second_flip':'♻️', 'volcano':'🌋'};
     const srcE = sources[ee.source] || '•';
     return `
@@ -6614,8 +6564,7 @@ function _tierBadge(tier) {
   const m = {
     'PRIME':  {emoji:'🔥', bg:'rgba(255,140,80,0.18)', col:'#ff8c50', bd:'#ff8c50'},
     'STRONG': {emoji:'🟡', bg:'rgba(255,210,62,0.15)', col:'#ffd23e', bd:'#ffd23e'},
-    'WATCH':  {emoji:'🟢', bg:'rgba(136,216,163,0.12)', col:'#88d8a3', bd:'#88d8a3'},
-  }[tier] || {emoji:'⚪', bg:'transparent', col:'#888', bd:'var(--border)'};
+    'WATCH':  {emoji:'🟢', bg:'rgba(136,216,163,0.12)', col:'#88d8a3', bd:'#88d8a3'}}[tier] || {emoji:'⚪', bg:'transparent', col:'#888', bd:'var(--border)'};
   return `<span style="background:${m.bg};border:1.5px solid ${m.bd};color:${m.col};
           padding:3px 10px;border-radius:6px;font-size:11px;font-weight:800;letter-spacing:0.05em;">
           ${m.emoji} ${tier}
@@ -6772,13 +6721,11 @@ window.openPrepumpChart = async function(pair) {
         crosshair: { mode: 0 },
         rightPriceScale: { borderColor: '#1a1e2a' },
         timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
-        width: div.clientWidth, height: div.clientHeight,
-      });
+        width: div.clientWidth, height: div.clientHeight});
       const series = chart.addCandlestickSeries({
         upColor: '#00e5a0', downColor: '#ff4d6d',
         borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
-        wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
-      });
+        wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d'});
       series.setData(d.candles);
       if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
       if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, tf);
@@ -6819,13 +6766,11 @@ window.openPrepumpChart = async function(pair) {
 
         // Сначала наши сигналы (CV/ST/anomaly/confluence/etc) — мелкие стрелки
         const srcEmoji = {
-          'cryptovizor': '🚀', 'tradium': '📡', 'supertrend': '🌀',
-          'anomaly': '⚠', 'confluence': '🎯', 'cluster': '💠',
-          'paper': '🤖', 'cv_flip': '⏳', 'verified': '✨',
+          'supertrend': '🌀',
+          'anomaly': '⚠', 'confluence': '🎯', 'paper': '🤖', 'verified': '✨',
           'volume_surge': '🌊', 'triple_confluence': '🐉',
           'vol_accum': '🔋', 'volcano': '🌋', 'second_flip': '♻️',
-          'rsi_cross_12h': '⚡',
-        };
+          'rsi_cross_12h': '⚡'};
         const byTime = new Map();
         for (const s of allSigs) {
           const ts = s.at_ts || 0;
@@ -6844,8 +6789,7 @@ window.openPrepumpChart = async function(pair) {
             color: g.isLong ? '#00e5a0' : '#ff4d6d',
             shape: g.isLong ? 'arrowUp' : 'arrowDown',
             text: g.items.length > 1 ? `×${g.items.length} ${emojis}` : emojis,
-            size: 1,
-          });
+            size: 1});
         }
 
         // 🎯 EARLY ENTRY markers — БОЛЬШИЕ жёлтые arrowUp (точка реального входа)
@@ -6861,8 +6805,7 @@ window.openPrepumpChart = async function(pair) {
             color: '#ffd23e',
             shape: isL ? 'arrowUp' : 'arrowDown',
             text: `🎯 EARLY (${ee.prepump_tier || ''})`,
-            size: 2,
-          });
+            size: 2});
         }
 
         // Pre-Pump composite triggers (PRIME/STRONG/WATCH) — менее приоритетные
@@ -6887,8 +6830,7 @@ window.openPrepumpChart = async function(pair) {
             color: tierConfig.color,
             shape: 'circle',
             text: `${tierConfig.emoji}${c.composite_score.toFixed(0)}`,
-            size: tierConfig.size,
-          });
+            size: tierConfig.size});
         }
 
         if (markers.length && series.setMarkers) {
@@ -7350,8 +7292,7 @@ async function hotLoad() {
     }
     statsEl.textContent = `${items.length} HOT / ${d.count || 0} total`;
     const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️',
-                    cluster:'💠', confluence:'🎯', cryptovizor:'🚀', tradium:'📡',
-                    paper:'🤖', verified:'✨', supertrend:'🌀', whale:'🐋', shark:'🦈',
+                    confluence:'🎯', paper:'🤖', verified:'✨', supertrend:'🌀', whale:'🐋', shark:'🦈',
                     stack:'🧩', impulse:'🚀', fade:'🎣'};
     const html = items.map((s, idx) => {
       const sc = s.q_score || 0;
@@ -7556,20 +7497,18 @@ function _setModalTF(tf) {
 }
 
 function _srcLabel(src) {
-  if (src === 'tradium')           return '📡 Tradium';
   if (src === 'anomaly')           return '⚠️ Аномалия';
   if (src === 'confluence')        return '🎯 Confluence';
   if (src === 'paper')             return '🤖 Paper Trade';
   if (src === 'cluster')           return '💠 Cluster';
   if (src === 'supertrend')        return '🌀 SuperTrend';
   if (src === 'verified')          return '✨ Verified';
-  if (src === 'cv_flip')           return '⏳ Flip Supertrend';
   if (src === 'volume_surge')      return '🌊 Volume Surge';
   if (src === 'triple_confluence') return '🐉 Triple Confluence';
   if (src === 'vol_accum')         return '🔋 Vol Accumulation';
   if (src === 'volcano')           return '🌋 Volcano Breakout';
   if (src === 'second_flip')       return '♻️ Second Flip';
-  return '🚀 Cryptovizor';
+  return src || '—';
 }
 function _cvFlipStateIcon(state) {
   // CV+ST Flip lifecycle icon для бейджа в journal
@@ -7717,13 +7656,11 @@ async function loadCoinChart(coin) {
       crosshair: { mode: 0 },
       rightPriceScale: { borderColor: '#1a1e2a' },
       timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
-      width: chartDiv.clientWidth, height: 400,
-    });
+      width: chartDiv.clientWidth, height: 400});
     const series = chart.addCandlestickSeries({
       upColor: '#00e5a0', downColor: '#ff4d6d',
       borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
-      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
-    });
+      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d'});
     series.setData(d.candles);
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _coinTF);
@@ -7767,8 +7704,7 @@ async function loadCoinChart(coin) {
         isLong,
         srcIcon,
         entry: s.entry,
-        source: s.source,
-      });
+        source: s.source});
       coinMarkerMap.set(mc.time, s);
     }
     if (skippedOutOfRange > 0) {
@@ -7806,8 +7742,7 @@ async function loadCoinChart(coin) {
         color: g.isLong ? '#00e5a0' : '#ff4d6d',
         shape: g.isLong ? 'arrowUp' : 'arrowDown',
         text,
-        size: 0,
-      });
+        size: 0});
     }
     unique.sort((a, b) => a.time - b.time);
     // Накопительные маркеры: KC/KL async, ST-flip стрелки сразу, + ST-signals
@@ -7968,8 +7903,7 @@ async function loadJournalRegime() {
     const styles = {
       BULL: {bg:'rgba(0,229,160,0.15)', border:'#00e5a0', color:'#00e5a0', emoji:'🚀', desc:'LONG STRICT, full size'},
       BEAR: {bg:'rgba(255,77,109,0.15)', border:'#ff4d6d', color:'#ff4d6d', emoji:'📉', desc:'SHORT STRICT, be_at_1R'},
-      CHOP: {bg:'rgba(255,215,0,0.13)', border:'#ffd23e', color:'#ffd23e', emoji:'🌀', desc:'both dirs GOOD+, be_at_1R'},
-    };
+      CHOP: {bg:'rgba(255,215,0,0.13)', border:'#ffd23e', color:'#ffd23e', emoji:'🌀', desc:'both dirs GOOD+, be_at_1R'}};
     const s = styles[reg] || {bg:'rgba(255,255,255,0.04)', border:'rgba(255,255,255,0.1)', color:'var(--muted)', emoji:'?', desc:'unknown'};
     el.style.background = s.bg;
     el.style.borderColor = s.border;
@@ -8094,8 +8028,7 @@ async function loadJournal() {
     // Key Levels + SuperTrend enrich — параллельно, перерисовка один раз после.
     const batch = items.slice(0, 300).map((s, i) => ({
       id: `j_${i}`, pair: s.pair || s.symbol, direction: s.direction, at: s.at,
-      entry: s.entry,
-    }));
+      entry: s.entry}));
     const payload = JSON.stringify({signals: batch});
     const jopt = { method: 'POST', headers: {'Content-Type': 'application/json'}, body: payload };
     try {
@@ -8128,9 +8061,8 @@ function filterJournal() {
     // Юзер: "когда выбираешь CV — не все сигналы внутри" — потому что
     // default time = 24h отрезал старые. Явный выбор источника = "хочу всё
     // по этому источнику", time filter перекрываем.
-    // Tradium и Cluster всегда показываем (их мало, они ценные).
     const sourceExplicit = !!src;
-    if (minTs && !sourceExplicit && !['tradium','cluster'].includes(s.source) && (s.at_ts || 0) < minTs) return false;
+    if (minTs && !sourceExplicit && (s.at_ts || 0) < minTs) return false;
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
       if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade'].includes(s.source)) return false;
@@ -8150,7 +8082,6 @@ function filterJournal() {
         // fallback для старых правил (если isStrongSignal не загружен)
         if (s.source === 'confluence' && (s.score || 0) < 5) return false;
         if (s.source === 'anomaly' && (s.score || 0) < 70) return false;
-        if (s.source === 'cryptovizor' && !s.pattern) return false;
       }
     }
     if (window._journalTopPickOnly && !s.is_top_pick) return false;
@@ -8295,7 +8226,7 @@ function filterJournal() {
       else conf_medium++;
     }
   }
-  const names = {tradium: '📡 Tradium', cryptovizor: '🚀 CV', anomaly: '⚠ Аном', confluence: '🎯 Conf', paper: '🤖 Paper', cluster: '💠 Cluster', supertrend: '🌀 ST', verified: '✨ Verified'};
+  const names = {confluence: '🎯 Conf', paper: '🤖 Paper', supertrend: '🌀 ST', verified: '✨ Verified', whale: '🐋 WHALE', shark: '🦈 SHARK', stack: '🧩 STACK', impulse: '🚀 IMPULSE', fade: '🎣 FADE'};
   const statsEl = document.getElementById('jSourceStats');
   if (statsEl) {
     statsEl.innerHTML = Object.entries(stats).map(([k, v]) => {
@@ -8352,8 +8283,7 @@ function _toggleStTier(tier) {
             border: 'rgba(0,229,160,0.6)', color: '#00e5a0' },
     daily: { btnId: 'jStDailyBtn', on: '🧭 Daily · ON', off: '🧭 Daily · OFF',
             bg: 'linear-gradient(135deg, rgba(0,212,255,0.22), rgba(0,150,200,0.08))',
-            border: 'rgba(0,212,255,0.6)', color: '#00d4ff' },
-  };
+            border: 'rgba(0,212,255,0.6)', color: '#00d4ff' }};
 
   // Сбрасываем все в off, потом активный включаем
   for (const t of ['vip', 'mtf', 'daily']) {
@@ -8468,19 +8398,12 @@ window._isWorthSignal = function(s) {
   if ((s.stack_distinct || 0) >= 4) return true;
   if (s.is_top_pick) return true;
   // +12h state match = strong promotion (+14-17 WR per backtest)
-  if (s.rsi12h_match === true && (s.source === 'second_flip' || s.source === 'cryptovizor' ||
+  if (s.rsi12h_match === true && (s.source === 'second_flip' ||
                                    s.source === 'supertrend' || s.source === 'triple_confluence')) {
     return true;
   }
   // TIER 2
   if (s.source === 'second_flip' && (s.align_tier === 'match' || s._align === 'match')) return true;
-  if (s.source === 'cryptovizor') {
-    if (window._verdictInfo) {
-      const info = window._verdictInfo(s);
-      const v = (info.original_tier || info.tier || '').toUpperCase();
-      if (v === 'STRONG' || v === 'ELITE') return true;
-    }
-  }
   if (s.source === 'supertrend' && s.st_tier === 'vip') return true;
   if (s.divergence && s.divergence.strength >= 40) return true;
   if (s.is_top_mover && (s.change_24h || 0) > 8) return true;
@@ -8574,8 +8497,7 @@ function _toggleSourceOnly(src) {
     bigbuy: {emoji:'🔔', label:'BIG BUY',
              onBg:'linear-gradient(135deg, rgba(0,229,160,0.35), rgba(0,200,100,0.20))',
              offBg:'linear-gradient(135deg, rgba(0,229,160,0.18), rgba(0,200,100,0.10))',
-             color:'#00e5a0', onBorder:'#00e5a0', offBorder:'rgba(0,229,160,0.55)'},
-  }[src];
+             color:'#00e5a0', onBorder:'#00e5a0', offBorder:'rgba(0,229,160,0.55)'}}[src];
   window[key] = !window[key];
   const btn = document.getElementById(btnId);
   if (btn && cfg) {
@@ -8700,12 +8622,10 @@ function renderJournal(items, startIdx) {
     const srcBadge = window.sigIcon
       ? window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: isStrong})
       : ((s.is_top_pick ? '👑 ' : (isStrong ? '⭐ ' : '')) +
-         ({tradium:'📡', anomaly:'⚠', paper:'🤖', cryptovizor:'🚀', cluster:'💠', confluence:'🎯', supertrend:'🌀', verified:'✨'}[s.source] || '•'));
-    const srcName = s.source === 'tradium' ? 'Tradium'
-      : s.source === 'anomaly' ? 'Аномалия'
+         ({anomaly:'⚠', paper:'🤖', confluence:'🎯', supertrend:'🌀', verified:'✨'}[s.source] || '•'));
+    const srcName = s.source === 'anomaly' ? 'Аномалия'
       : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐' : 'Confluence')
       : s.source === 'paper' ? 'Paper'
-      : s.source === 'cluster' ? 'Cluster'
       : s.source === 'supertrend' ? ('ST ' + (s.st_tier ? s.st_tier.toUpperCase() : ''))
       : s.source === 'verified' ? 'Verified'
       : 'CV';
@@ -8853,26 +8773,6 @@ window._rsiEdgeInfo = function(s, rsi_4h, rsi_1h) {
   if (rsi_4h == null && rsi_1h == null) {
     return {tier:'medium', emoji:'', label:'нет данных RSI'};
   }
-  // 🥇 TOP SHORT
-  if (src === 'cryptovizor' && dir === 'SHORT') {
-    if (rsi_1h != null && rsi_1h >= 30 && rsi_1h < 50)
-      return {tier:'top', emoji:'🥇', label:'TOP SHORT (+5.90R 1h RSI 30-40)'};
-    if (rsi_4h != null && rsi_4h >= 30 && rsi_4h < 50)
-      return {tier:'top', emoji:'🥇', label:'TOP SHORT (+3.66R 4h RSI 30-50)'};
-    if (rsi_4h != null && rsi_4h > 70)
-      return {tier:'warn', emoji:'⚠', label:'CV SHORT в overbought 4h'};
-    return {tier:'good', emoji:'✅', label:'CV SHORT (good)'};
-  }
-  // 🥇 TOP LONG
-  if (src === 'cryptovizor' && dir === 'LONG') {
-    if (rsi_4h != null && rsi_4h >= 60 && rsi_4h < 70)
-      return {tier:'top', emoji:'🥇', label:'TOP LONG (+1.45R 4h RSI 60-70)'};
-    if (rsi_4h != null && rsi_4h >= 50 && rsi_4h < 70)
-      return {tier:'good', emoji:'✅', label:'CV LONG good (4h RSI 50-70)'};
-    if (rsi_4h != null && rsi_4h < 40)
-      return {tier:'warn', emoji:'⚠', label:'CV LONG в oversold 4h'};
-    return {tier:'medium', emoji:'⚪', label:'CV LONG (нейтральная зона)'};
-  }
   // ✅ GOOD secondary
   if (src === 'second_flip' && dir === 'LONG' && rsi_4h != null && rsi_4h >= 60 && rsi_4h < 70)
     return {tier:'good', emoji:'✅', label:'SF LONG (+0.54R 4h RSI 60-70)'};
@@ -8969,8 +8869,7 @@ window._verdictInfo = function(s) {
       verdict: sv.verdict || 'WAIT',
       tierLower: tier.toLowerCase(),
       label: `${sv.emoji} ${tier.replace('_', ' ')} · Setup Checker conf ${sv.confidence}%`,
-      v3_accept: !isWait,
-    };
+      v3_accept: !isWait};
   }
 
   // ━━━ Fallback: client-side только 3 states — LONG / SHORT / WAIT ━━━
@@ -8992,7 +8891,7 @@ window._verdictInfo = function(s) {
   // Все они получают LONG/SHORT по direction
   const goodSources = new Set([
     'whale', 'shark', 'triple_confluence', 'stack', 'impulse', 'fade',
-    'confluence', 'tradium', 'cluster', 'anomaly', 'cryptovizor',
+    'confluence',
   ]);
   const stTierIsVip = src === 'supertrend' && s.st_tier === 'vip';
   const stTierIsMtf = src === 'supertrend' && s.st_tier === 'mtf';
@@ -9060,8 +8959,7 @@ window._verdictInfo = function(s) {
       color: isPrem ? '#ffd700' : '#00e5a0',
       bg: isPrem ? 'rgba(255,215,0,0.20)' : 'rgba(0,229,160,0.15)',
       expR: isPrem ? '+1.5 .. +2.5R' : '+0.8 .. +1.5R',
-      verdict: 'ENTER_LONG',
-    };
+      verdict: 'ENTER_LONG'};
   } else if (src === 'shark' && (s.shark_tier === 'PREMIUM' || s.shark_tier === 'STANDARD')) {
     const isPrem = s.shark_tier === 'PREMIUM';
     base = {
@@ -9071,8 +8969,7 @@ window._verdictInfo = function(s) {
       color: isPrem ? '#ffd700' : '#ff4d6d',
       bg: isPrem ? 'rgba(255,215,0,0.20)' : 'rgba(255,77,109,0.15)',
       expR: isPrem ? '+1.5 .. +2.5R' : '+0.8 .. +1.5R',
-      verdict: 'ENTER_SHORT',
-    };
+      verdict: 'ENTER_SHORT'};
   }
   // 2. Triple Confluence (WR 61.1% — top in 14d backtest)
   else if (src === 'triple_confluence') {
@@ -9083,8 +8980,7 @@ window._verdictInfo = function(s) {
       color: isLong ? '#00e5a0' : '#ff4d6d',
       bg: isLong ? 'rgba(0,229,160,0.15)' : 'rgba(255,77,109,0.15)',
       expR: '+0.8 .. +1.5R',
-      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT',
-    };
+      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT'};
   }
   // 3. SuperTrend VIP (WR 60.1%)
   else if (src === 'supertrend' && s.st_tier === 'vip') {
@@ -9095,8 +8991,7 @@ window._verdictInfo = function(s) {
       color: isLong ? '#00e5a0' : '#ff4d6d',
       bg: isLong ? 'rgba(0,229,160,0.15)' : 'rgba(255,77,109,0.15)',
       expR: '+0.7 .. +1.3R',
-      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT',
-    };
+      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT'};
   }
   // 4. Confluence (≥5 = strong; WR 55%)
   else if (src === 'confluence' && (s.score || 0) >= 5) {
@@ -9107,8 +9002,7 @@ window._verdictInfo = function(s) {
       color: isLong ? '#00e5a0' : '#ff4d6d',
       bg: isLong ? 'rgba(0,229,160,0.15)' : 'rgba(255,77,109,0.15)',
       expR: '+0.6 .. +1.2R',
-      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT',
-    };
+      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT'};
   }
   // 5. COMBO (WR 52.5%)
   else if (src === 'combo') {
@@ -9119,8 +9013,7 @@ window._verdictInfo = function(s) {
       color: isLong ? '#00e5a0' : '#ff4d6d',
       bg: isLong ? 'rgba(0,229,160,0.15)' : 'rgba(255,77,109,0.15)',
       expR: '+0.5 .. +1.0R',
-      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT',
-    };
+      verdict: isLong ? 'ENTER_LONG' : 'ENTER_SHORT'};
   }
   // 6. CV flip (FLIPPED state — WR 43.5% но решение пограничное)
   else if (src === 'cv_flip') {
@@ -9131,8 +9024,7 @@ window._verdictInfo = function(s) {
       color: '#ffd23e',
       bg: 'rgba(255,210,62,0.12)',
       expR: '+0.2 .. +0.6R',
-      verdict: 'WAIT',
-    };
+      verdict: 'WAIT'};
   }
   // 7. ST MTF (WR 36.9% низковато но всё ещё signal) → OK
   else if (src === 'supertrend' && s.st_tier === 'mtf') {
@@ -9143,8 +9035,7 @@ window._verdictInfo = function(s) {
       color: '#88d8a3',
       bg: 'rgba(136,216,163,0.12)',
       expR: '+0.2 .. +0.6R',
-      verdict: isLong ? 'ENTER_LONG' : isShort ? 'ENTER_SHORT' : 'WAIT',
-    };
+      verdict: isLong ? 'ENTER_LONG' : isShort ? 'ENTER_SHORT' : 'WAIT'};
   }
   // 8. Confluence weak (<5), anomaly, tradium, cluster, cryptovizor pattern_triggered — OK tier
   // cryptovizor в journal API уже filtered to pattern_triggered=true (admin.py),
@@ -9159,8 +9050,7 @@ window._verdictInfo = function(s) {
       color: '#88d8a3',
       bg: 'rgba(136,216,163,0.12)',
       expR: '+0.2 .. +0.6R',
-      verdict: isLong ? 'ENTER_LONG' : isShort ? 'ENTER_SHORT' : 'WAIT',
-    };
+      verdict: isLong ? 'ENTER_LONG' : isShort ? 'ENTER_SHORT' : 'WAIT'};
   }
   // 9. Прочее (volume_surge / vol_accum / volcano / second_flip / rsi_cross_12h / st_daily / etc)
   else {
@@ -9171,8 +9061,7 @@ window._verdictInfo = function(s) {
       color: '#888',
       bg: '',
       expR: '~0R',
-      verdict: 'WAIT',
-    };
+      verdict: 'WAIT'};
   }
 
   // Apply counter-trend penalty
@@ -9185,8 +9074,7 @@ window._verdictInfo = function(s) {
       color: '#ffd23e',
       bg: 'rgba(255,210,62,0.12)',
       expR: '~0R (counter-trend)',
-      verdict: 'WAIT',
-    };
+      verdict: 'WAIT'};
   } else if (counterPenalty >= 10) {
     base.qualityLabel += ` · ⚠ ${counterReasons.join(', ')}`;
   }
@@ -9202,8 +9090,7 @@ window._verdictInfo = function(s) {
     ...base,
     tierLower: base.tier.toLowerCase(),
     label: `${base.emoji} ${base.verdict || base.tier} — ${base.qualityLabel}`,
-    v3_accept: true,
-  };
+    v3_accept: true};
 };
 window._verdictInfo._version = 'v5-only-3-states';
 console.log('[verdictInfo] loaded', window._verdictInfo._version);
@@ -10225,14 +10112,12 @@ async function openJournalChart(idx, forceTF) {
       rightPriceScale: { borderColor: '#1a1e2a' },
       timeScale: { borderColor: '#1a1e2a', timeVisible: true, rightOffset: 12 },
       width: container.clientWidth,
-      height: container.clientHeight,
-    });
+      height: container.clientHeight});
 
     const series = chart.addCandlestickSeries({
       upColor: '#00e5a0', downColor: '#ff4d6d',
       borderUpColor: '#00e5a0', borderDownColor: '#ff4d6d',
-      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d',
-    });
+      wickUpColor: '#00e5a0', wickDownColor: '#ff4d6d'});
     series.setData(d.candles);
     if (window._clampCandleAutoscale) window._clampCandleAutoscale(series, d.candles);
     if (window._addVolumeSeries) window._addVolumeSeries(chart, d.candles, _modalTF);
@@ -10297,8 +10182,7 @@ async function openJournalChart(idx, forceTF) {
       setTimeout(function(){
         window.renderAccumZones(chart, container, series, d.candles, {
           lookback: 12, maxBBPct: 4.0, maxRangePct: 5.0,
-          volMult: 8.0, bodyAtr: 1.0,
-        });
+          volMult: 8.0, bodyAtr: 1.0});
       }, 250);
     }
     const _accumBtn = document.getElementById('accumToggleBtn');
@@ -10319,7 +10203,7 @@ async function openJournalChart(idx, forceTF) {
       }
       return mc;
     };
-    const srcIconMap = {tradium:'📡', anomaly:'⚠', confluence:'🎯', paper:'🤖', cryptovizor:'🚀', cluster:'💠', cv_flip:'⏳', whale:'🐋', shark:'🦈', combo:'🧠', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣'};
+    const srcIconMap = {anomaly:'⚠', confluence:'🎯', paper:'🤖', whale:'🐋', shark:'🦈', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣'};
     const modalMarkerMap = new Map();
 
     // Базовая строка для сопоставления символа: нормализуем к "BTCUSDT"
@@ -10343,8 +10227,7 @@ async function openJournalChart(idx, forceTF) {
         pattern: x.pattern, score: x.score, status: x.status,
         // is_top_pick в _journalData = верхнеуровневое поле; в meta помещаем для sigIcon
         meta: {is_top_pick: !!x.is_top_pick, score: x.score},
-        is_top_pick: !!x.is_top_pick,
-      });
+        is_top_pick: !!x.is_top_pick});
     }
 
     // 2. Дополнительно /api/pair-signals за 72ч — вдруг что-то не попало в журнал
@@ -10373,8 +10256,7 @@ async function openJournalChart(idx, forceTF) {
       const _mMeta = Object.assign({}, m.meta || {}, {
         strong: window.isStrongSignal ? window.isStrongSignal(m) : false,
         whale_tier: m.whale_tier || (m.meta && m.meta.tier),
-        shark_tier: m.shark_tier || (m.meta && m.meta.tier),
-      });
+        shark_tier: m.shark_tier || (m.meta && m.meta.tier)});
       g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, _mMeta));
       g.items.push(m);
       modalMarkerMap.set(mc.time, m);
@@ -10388,8 +10270,7 @@ async function openJournalChart(idx, forceTF) {
         color: g.isLong ? '#00e5a0' : '#ff4d6d',
         shape: g.isLong ? 'arrowUp' : 'arrowDown',
         text: icons + (g.items.length > 1 ? ` ×${g.items.length}` : ''),
-        size: 0,
-      });
+        size: 0});
     }
     // ─── Verdict marker для текущего сигнала s (на свече сигнала) ───
     // Большой emoji-marker под/над баром показывающий вердикт по 4 edges.
@@ -10414,8 +10295,7 @@ async function openJournalChart(idx, forceTF) {
             color: tierColor,
             shape: 'circle',
             text: verdict.emoji + ' ' + verdict.tier.toUpperCase(),
-            size: 2,
-          });
+            size: 2});
         }
       }
     } catch(_e) {}
