@@ -2795,48 +2795,9 @@
 </head>
 <body>
 
-<!-- ═══ MARKET PHASE BANNER ═══ -->
-<div id="mpBanner" style="display:none;position:sticky;top:0;z-index:100;padding:10px 24px;background:linear-gradient(90deg,rgba(11,13,18,0.95),rgba(17,21,28,0.92));backdrop-filter:blur(8px);border-bottom:2px solid #333;font-family:var(--font-mono,monospace);font-size:13px;cursor:pointer;transition:all 0.3s;"
-     onclick="window._mpToggleDetail && window._mpToggleDetail()"
-     title="Кликни чтобы развернуть детали">
-  <div style="max-width:1600px;margin:0 auto;display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
-    <!-- Phase emoji + label -->
-    <div style="display:flex;align-items:center;gap:10px;">
-      <span id="mpEmoji" style="font-size:22px;line-height:1;">❓</span>
-      <div>
-        <div id="mpLabel" style="font-weight:800;font-size:14px;letter-spacing:0.05em;">LOADING…</div>
-        <div id="mpConf" style="font-size:10px;color:#7a8ba6;letter-spacing:0.1em;">confidence —</div>
-      </div>
-    </div>
-    <!-- Metrics -->
-    <div id="mpMetrics" style="display:flex;gap:14px;font-size:11px;color:#aab3c2;flex-wrap:wrap;">
-      <span id="mpBtcSt">BTC: —</span>
-      <span id="mpAtr">ATR%: —</span>
-      <span id="mpFunding">Funding: —</span>
-      <span id="mpEthBtc">ETH/BTC 1h: —</span>
-    </div>
-    <!-- Recommendations inline -->
-    <div id="mpRec" style="margin-left:auto;font-size:11px;color:#7a8ba6;"></div>
-    <!-- Updated-at + refresh -->
-    <span id="mpUpdatedAt" style="font-size:10px;color:#556677;font-family:var(--font-mono,monospace);"></span>
-    <button onclick="event.stopPropagation();window._mpForceRefresh&&window._mpForceRefresh()"
-            title="Моментальный пересчёт фазы"
-            style="background:rgba(0,229,160,0.08);color:#00e5a0;border:1px solid rgba(0,229,160,0.3);border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer;font-family:var(--font-mono,monospace);">↻ Обновить</button>
-  </div>
-  <!-- Details (expand on click) -->
-  <div id="mpDetail" style="display:none;max-width:1600px;margin:10px auto 0;padding:12px;background:rgba(0,0,0,0.3);border-radius:8px;">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;font-size:12px;">
-      <div>
-        <div style="color:#00e5a0;font-weight:700;margin-bottom:6px;">✅ Что брать в этой фазе:</div>
-        <ul id="mpTake" style="margin:0;padding-left:18px;color:#c8d0dc;"></ul>
-      </div>
-      <div>
-        <div style="color:#ff6b6b;font-weight:700;margin-bottom:6px;">❌ Что НЕ брать:</div>
-        <ul id="mpAvoid" style="margin:0;padding-left:18px;color:#c8d0dc;"></ul>
-      </div>
-    </div>
-  </div>
-</div>
+<!-- ═══ MARKET PHASE BANNER (скрипт; сам div перенесён внутрь <main> —
+     body это flex-row, и баннер как прямой ребёнок body вставал колонкой
+     на пол-экрана слева, 2026-07-05) ═══ -->
 <script>
   // Market phase refresh — fetch /api/market-phase каждые 3 мин
   (function(){
@@ -2934,6 +2895,49 @@
 <!-- ═══ END HOT NOW counter ═══ -->
 
 <main class="main" style="margin-left:0;">
+<!-- ═══ MARKET PHASE BANNER (внутри <main>: он flex-column, баннер занимает
+     всю ширину сверху; как прямой ребёнок flex-row body вставал колонкой) ═══ -->
+<div id="mpBanner" style="display:none;position:sticky;top:0;z-index:100;width:100%;padding:10px 24px;background:linear-gradient(90deg,rgba(11,13,18,0.95),rgba(17,21,28,0.92));backdrop-filter:blur(8px);border-bottom:2px solid #333;font-family:var(--font-mono,monospace);font-size:13px;cursor:pointer;transition:all 0.3s;"
+     onclick="window._mpToggleDetail && window._mpToggleDetail()"
+     title="Кликни чтобы развернуть детали">
+  <div style="max-width:1600px;margin:0 auto;display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
+    <!-- Phase emoji + label -->
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span id="mpEmoji" style="font-size:22px;line-height:1;">❓</span>
+      <div>
+        <div id="mpLabel" style="font-weight:800;font-size:14px;letter-spacing:0.05em;">LOADING…</div>
+        <div id="mpConf" style="font-size:10px;color:#7a8ba6;letter-spacing:0.1em;">confidence —</div>
+      </div>
+    </div>
+    <!-- Metrics -->
+    <div id="mpMetrics" style="display:flex;gap:14px;font-size:11px;color:#aab3c2;flex-wrap:wrap;">
+      <span id="mpBtcSt">BTC: —</span>
+      <span id="mpAtr">ATR%: —</span>
+      <span id="mpFunding">Funding: —</span>
+      <span id="mpEthBtc">ETH/BTC 1h: —</span>
+    </div>
+    <!-- Recommendations inline -->
+    <div id="mpRec" style="margin-left:auto;font-size:11px;color:#7a8ba6;"></div>
+    <!-- Updated-at + refresh -->
+    <span id="mpUpdatedAt" style="font-size:10px;color:#556677;font-family:var(--font-mono,monospace);"></span>
+    <button onclick="event.stopPropagation();window._mpForceRefresh&&window._mpForceRefresh()"
+            title="Моментальный пересчёт фазы"
+            style="background:rgba(0,229,160,0.08);color:#00e5a0;border:1px solid rgba(0,229,160,0.3);border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer;font-family:var(--font-mono,monospace);">↻ Обновить</button>
+  </div>
+  <!-- Details (expand on click) -->
+  <div id="mpDetail" style="display:none;max-width:1600px;margin:10px auto 0;padding:12px;background:rgba(0,0,0,0.3);border-radius:8px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;font-size:12px;">
+      <div>
+        <div style="color:#00e5a0;font-weight:700;margin-bottom:6px;">✅ Что брать в этой фазе:</div>
+        <ul id="mpTake" style="margin:0;padding-left:18px;color:#c8d0dc;"></ul>
+      </div>
+      <div>
+        <div style="color:#ff6b6b;font-weight:700;margin-bottom:6px;">❌ Что НЕ брать:</div>
+        <ul id="mpAvoid" style="margin:0;padding-left:18px;color:#c8d0dc;"></ul>
+      </div>
+    </div>
+  </div>
+</div>
     <header class="topbar" style="padding:22px 40px;">
         <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
             <a href="/" style="text-decoration:none;display:flex;align-items:center;gap:12px;" title="1 Milliard STA · Screener">
