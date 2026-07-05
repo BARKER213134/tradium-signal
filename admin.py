@@ -7931,6 +7931,34 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
 
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
 
+    # ✨ Verified Entries per-coin (для chart markers; было только в главном журнале)
+    try:
+        from database import _get_db as _gdb_v
+        vcol = _gdb_v().verified_signals
+        for v in vcol.find({"created_at": {"$gte": since},
+                            "$or": [{"pair": pair_slash}, {"pair_norm": sym_clean}],
+                            }).sort("created_at", -1).limit(200):
+            at_dt = v.get("created_at")
+            verdict = v.get("verdict", "go")
+            emoji = "⚠️✨" if verdict == "caution" else "✨"
+            items.append({
+                "source": "verified",
+                "symbol": v.get("pair_norm") or sym_clean,
+                "pair": v.get("pair") or pair_slash,
+                "direction": v.get("direction", ""),
+                "entry": v.get("entry"),
+                "tp1": v.get("tp1"), "sl": v.get("sl"),
+                "pattern": f"{emoji} VERIFIED ({v.get('signal_source') or '?'})",
+                "score": v.get("signal_score"),
+                "st_passed": None, "pump_score": 0,
+                "is_top_pick": False, "top_pick_confirmations_count": 0,
+                "verified_verdict": verdict,
+                "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else None,
+                "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+            })
+    except Exception:
+        pass
+
     # 🧩 Семейная группировка для chart markers — один 🧩 вместо колонны
     try:
         from signal_families import collapse_stacks

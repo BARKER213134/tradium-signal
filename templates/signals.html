@@ -3745,7 +3745,7 @@ async function _drawPaperHistChart(idx) {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
-        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsHist, ..._stSigM, ..._verM, ..._cvFlipM, ..._nsM, ..._hotM].sort((a,b) => a.time - b.time));
+        series.setMarkers([...markers, ..._msM, ..._stFlipsHist].sort((a,b) => a.time - b.time));
       }, 300);
     };
     _applyAll();
@@ -3753,51 +3753,6 @@ async function _drawPaperHistChart(idx) {
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
         _msM = window._addMarketStateMarkers(d.candles, events) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // Key Levels — зоны S/R + маркеры Entered событий
-    if (window._fetchKeyLevels && window._drawKeyLevelZones && h.symbol && d.candles.length) {
-      window._fetchKeyLevels(h.symbol, 168).then(klItems => {
-        if (!klItems || !klItems.length) return;
-        window._drawKeyLevelZones(chart, series, d.candles, klItems);
-        _klM = window._addKeyLevelMarkers(d.candles, klItems, h.direction) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // ST-signals (VIP/MTF/Daily) — маркеры 🏆🔱🧭
-    if (window._fetchStSignals && window._addStSignalMarkers && h.symbol && d.candles.length) {
-      window._fetchStSignals(h.symbol, 336).then(stSigs => {
-        if (!stSigs || !stSigs.length) return;
-        _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // CV+ST Flip markers (⏳/💥)
-    if (window._fetchNewStrategies && window._addNewStrategyMarkers && h.symbol && d.candles.length) {
-      window._fetchNewStrategies(h.symbol, 72).then(nsf => {
-        _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
-        _applyAll();
-      }).catch(()=>{});
-    }
-    if (window._fetchHotSignals && window._addHotMarkers && h.symbol && d.candles.length) {
-      window._fetchHotSignals(h.symbol, 3).then(hotItems => {
-        _hotM = window._addHotMarkers(d.candles, hotItems) || [];
-        _applyAll();
-      }).catch(()=>{});
-    }
-    if (window._fetchCvFlips && window._addCvFlipMarkers && h.symbol && d.candles.length) {
-      window._fetchCvFlips(h.symbol, 72).then(cvf => {
-        if (!cvf || !cvf.length) return;
-        _cvFlipM = window._addCvFlipMarkers(d.candles, cvf) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // Verified Entries (✨) — маркеры от Entry Checker автоматической проверки
-    if (window._fetchVerifiedSignals && window._addVerifiedMarkers && h.symbol && d.candles.length) {
-      window._fetchVerifiedSignals(h.symbol, 168).then(verItems => {
-        if (!verItems || !verItems.length) return;
-        _verM = window._addVerifiedMarkers(d.candles, verItems) || [];
         _applyAll();
       }).catch(() => {});
     }
@@ -4026,7 +3981,7 @@ async function _renderPaperChart(idx, tf) {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
-        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsLive, ..._stSigM, ..._verM, ..._cvFlipM, ..._nsM, ..._hotM].sort((a,b) => a.time - b.time));
+        series.setMarkers([...markers, ..._msM, ..._stFlipsLive].sort((a,b) => a.time - b.time));
       }, 300);
     };
     _applyAll();
@@ -4034,50 +3989,6 @@ async function _renderPaperChart(idx, tf) {
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
         _msM = window._addMarketStateMarkers(d.candles, events) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // Key Levels — зоны S/R
-    if (window._fetchKeyLevels && window._drawKeyLevelZones && p.symbol && d.candles.length) {
-      window._fetchKeyLevels(p.symbol, 168).then(klItems => {
-        if (!klItems || !klItems.length) return;
-        window._drawKeyLevelZones(chart, series, d.candles, klItems);
-        _klM = window._addKeyLevelMarkers(d.candles, klItems, p.direction) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // ST-signals markers
-    if (window._fetchStSignals && window._addStSignalMarkers && p.symbol && d.candles.length) {
-      window._fetchStSignals(p.symbol, 336).then(stSigs => {
-        if (!stSigs || !stSigs.length) return;
-        _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    if (window._fetchNewStrategies && window._addNewStrategyMarkers && p.symbol && d.candles.length) {
-      window._fetchNewStrategies(p.symbol, 72).then(nsf => {
-        _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
-        _applyAll();
-      }).catch(()=>{});
-    }
-    if (window._fetchHotSignals && window._addHotMarkers && p.symbol && d.candles.length) {
-      window._fetchHotSignals(p.symbol, 3).then(hotItems => {
-        _hotM = window._addHotMarkers(d.candles, hotItems) || [];
-        _applyAll();
-      }).catch(()=>{});
-    }
-    if (window._fetchCvFlips && window._addCvFlipMarkers && p.symbol && d.candles.length) {
-      window._fetchCvFlips(p.symbol, 72).then(cvf => {
-        if (!cvf || !cvf.length) return;
-        _cvFlipM = window._addCvFlipMarkers(d.candles, cvf) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // Verified Entries (✨) — маркеры от Entry Checker автоматической проверки
-    if (window._fetchVerifiedSignals && window._addVerifiedMarkers && p.symbol && d.candles.length) {
-      window._fetchVerifiedSignals(p.symbol, 168).then(verItems => {
-        if (!verItems || !verItems.length) return;
-        _verM = window._addVerifiedMarkers(d.candles, verItems) || [];
         _applyAll();
       }).catch(() => {});
     }
@@ -6174,9 +6085,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   </select>
   <select id="jFilterSrc" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все источники</option>
-    <option value="anomaly">⚠ Аномалии</option>
     <option value="confluence">🎯 Confluence</option>
-    <option value="cluster">💠 Cluster</option>
     <option value="paper">🤖 Paper Trade</option>
     <option value="supertrend">🌀 SuperTrend</option>
     <option value="verified">✨ Verified</option>
@@ -7753,58 +7662,14 @@ async function loadCoinChart(coin) {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
-        series.setMarkers([...unique, ..._msM, ..._klM, ..._stFlipsCoin, ..._stSigM, ..._verM, ..._cvFlipM, ..._nsM, ..._hotM].sort((a,b) => a.time - b.time));
+        series.setMarkers([...unique, ..._msM, ..._stFlipsCoin].sort((a,b) => a.time - b.time));
       }, 300);
     };
     _applyAll();
-    // ST-signals markers
-    if (window._fetchStSignals && window._addStSignalMarkers && sym && d.candles.length) {
-      window._fetchStSignals(sym, 336).then(stSigs => {
-        if (!stSigs || !stSigs.length) return;
-        _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    if (window._fetchNewStrategies && window._addNewStrategyMarkers && sym && d.candles.length) {
-      window._fetchNewStrategies(sym, 72).then(nsf => {
-        _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
-        _applyAll();
-      }).catch(()=>{});
-    }
-    if (window._fetchHotSignals && window._addHotMarkers && sym && d.candles.length) {
-      window._fetchHotSignals(sym, 3).then(hotItems => {
-        _hotM = window._addHotMarkers(d.candles, hotItems) || [];
-        _applyAll();
-      }).catch(()=>{});
-    }
-    if (window._fetchCvFlips && window._addCvFlipMarkers && sym && d.candles.length) {
-      window._fetchCvFlips(sym, 72).then(cvf => {
-        if (!cvf || !cvf.length) return;
-        _cvFlipM = window._addCvFlipMarkers(d.candles, cvf) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // Verified Entries (✨) — маркеры от Entry Checker автоматической проверки
-    if (window._fetchVerifiedSignals && window._addVerifiedMarkers && sym && d.candles.length) {
-      window._fetchVerifiedSignals(sym, 168).then(verItems => {
-        if (!verItems || !verItems.length) return;
-        _verM = window._addVerifiedMarkers(d.candles, verItems) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
     // Market state overlay (KC + Reversal)
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
         _msM = window._addMarketStateMarkers(d.candles, events) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // Key Levels — зоны S/R + маркеры
-    if (window._fetchKeyLevels && window._drawKeyLevelZones && sym && d.candles.length) {
-      window._fetchKeyLevels(sym, 168).then(klItems => {
-        if (!klItems || !klItems.length) return;
-        window._drawKeyLevelZones(chart, series, d.candles, klItems);
-        _klM = window._addKeyLevelMarkers(d.candles, klItems, null) || [];
         _applyAll();
       }).catch(() => {});
     }
@@ -10308,7 +10173,7 @@ async function openJournalChart(idx, forceTF) {
       if (_applyTimer) return;
       _applyTimer = setTimeout(() => {
         _applyTimer = null;
-        series.setMarkers([...markers, ..._msM, ..._klM, ..._stFlipsJ, ..._stSigM, ..._verM, ..._cvFlipM, ..._nsM, ..._hotM].sort((a,b) => a.time - b.time));
+        series.setMarkers([...markers, ..._msM, ..._stFlipsJ].sort((a,b) => a.time - b.time));
       }, 300);
     };
     _applyAll();
@@ -10316,50 +10181,6 @@ async function openJournalChart(idx, forceTF) {
     if (window._fetchMarketEvents && window._addMarketStateMarkers && d.candles.length) {
       window._fetchMarketEvents(d.candles[0].time, d.candles[d.candles.length-1].time).then(events => {
         _msM = window._addMarketStateMarkers(d.candles, events) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // Key Levels — зоны S/R + маркеры событий
-    if (window._fetchKeyLevels && window._drawKeyLevelZones && sym && d.candles.length) {
-      window._fetchKeyLevels(sym, 168).then(klItems => {
-        if (!klItems || !klItems.length) return;
-        window._drawKeyLevelZones(chart, series, d.candles, klItems);
-        _klM = window._addKeyLevelMarkers(d.candles, klItems, s.direction) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // ST-signals markers (🏆/🔱/🧭) — gated by _histMarkersEnabled
-    if (window._histMarkersEnabled && window._fetchStSignals && window._addStSignalMarkers && sym && d.candles.length) {
-      window._fetchStSignals(sym, 336).then(stSigs => {
-        if (!stSigs || !stSigs.length) return;
-        _stSigM = window._addStSignalMarkers(d.candles, stSigs) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    if (window._histMarkersEnabled && window._fetchNewStrategies && window._addNewStrategyMarkers && sym && d.candles.length) {
-      window._fetchNewStrategies(sym, 72).then(nsf => {
-        _nsM = window._addNewStrategyMarkers(d.candles, nsf) || [];
-        _applyAll();
-      }).catch(()=>{});
-    }
-    if (window._histMarkersEnabled && window._fetchHotSignals && window._addHotMarkers && sym && d.candles.length) {
-      window._fetchHotSignals(sym, 3).then(hotItems => {
-        _hotM = window._addHotMarkers(d.candles, hotItems) || [];
-        _applyAll();
-      }).catch(()=>{});
-    }
-    if (window._histMarkersEnabled && window._fetchCvFlips && window._addCvFlipMarkers && sym && d.candles.length) {
-      window._fetchCvFlips(sym, 72).then(cvf => {
-        if (!cvf || !cvf.length) return;
-        _cvFlipM = window._addCvFlipMarkers(d.candles, cvf) || [];
-        _applyAll();
-      }).catch(() => {});
-    }
-    // Verified Entries (✨) — маркеры от Entry Checker автоматической проверки
-    if (window._histMarkersEnabled && window._fetchVerifiedSignals && window._addVerifiedMarkers && sym && d.candles.length) {
-      window._fetchVerifiedSignals(sym, 168).then(verItems => {
-        if (!verItems || !verItems.length) return;
-        _verM = window._addVerifiedMarkers(d.candles, verItems) || [];
         _applyAll();
       }).catch(() => {});
     }
