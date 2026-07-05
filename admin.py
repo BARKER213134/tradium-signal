@@ -3139,6 +3139,46 @@ async def root():
     return RedirectResponse(url="/signals")
 
 
+# ── 🚀🎣 IMPULSE / FADE (momentum detector, research 2026-07-02) ─────────────
+
+@app.get("/api/momentum-signals")
+async def api_momentum_signals(hours: int = 336):
+    """Сигналы impulse_detector (new_strategy_signals, strategy in impulse/fade)
+    + статусы аутком-трекера (WAITING/TP/SL/TIMEOUT, pnl_pct)."""
+    def _sync():
+        from database import _get_db, utcnow
+        from datetime import timedelta
+        since = utcnow() - timedelta(hours=max(1, min(hours, 2160)))
+        col = _get_db().new_strategy_signals
+        items = []
+        for n in col.find(
+            {"strategy": {"$in": ["impulse", "fade"]},
+             "created_at": {"$gte": since}},
+            {"strategy": 1, "pair": 1, "direction": 1, "entry": 1, "tp": 1,
+             "sl": 1, "horizon_h": 1, "indicators": 1, "state": 1,
+             "pnl_pct": 1, "exit_price": 1, "exit_at": 1, "created_at": 1},
+        ).sort("created_at", -1).limit(500):
+            at = n.get("created_at")
+            ex = n.get("exit_at")
+            items.append({
+                "strategy": n.get("strategy"),
+                "pair": n.get("pair"),
+                "direction": n.get("direction"),
+                "entry": n.get("entry"),
+                "tp": n.get("tp"),
+                "sl": n.get("sl"),
+                "horizon_h": n.get("horizon_h"),
+                "indicators": n.get("indicators") or {},
+                "state": n.get("state", "WAITING"),
+                "pnl_pct": n.get("pnl_pct"),
+                "exit_price": n.get("exit_price"),
+                "exit_at": ex.isoformat() if hasattr(ex, "isoformat") else None,
+                "at": at.isoformat() if hasattr(at, "isoformat") else None,
+            })
+        return {"items": items, "count": len(items)}
+    return await asyncio.to_thread(_sync)
+
+
 # ── Signals list ─────────────────────────────────────────────────────────────
 
 @app.get("/signals", response_class=HTMLResponse)
@@ -7860,12 +7900,14 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
         STRAT_EMOJI = {"volume_surge": "🌊", "triple_confluence": "🐉",
                         "vol_accum": "🔋", "volcano": "🌋",
                         "second_flip": "♻️", "combo": "🧠",
-                        "whale": "🐋", "shark": "🦈"}
+                        "whale": "🐋", "shark": "🦈",
+                        "impulse": "🚀", "fade": "🎣"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
                        "second_flip": "Second Flip", "combo": "COMBO",
-                       "whale": "WHALE", "shark": "SHARK"}
+                       "whale": "WHALE", "shark": "SHARK",
+                       "impulse": "IMPULSE", "fade": "FADE"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -8220,11 +8262,12 @@ def _compute_journal_sync(_fast_only: bool = False):
         STRAT_EMOJI = {"volume_surge": "🌊", "triple_confluence": "🐉",
                         "vol_accum": "🔋", "volcano": "🌋",
                         "second_flip": "♻️", "combo": "🧠", "whale": "🐋",
-                        "shark": "🦈"}
+                        "shark": "🦈", "impulse": "🚀", "fade": "🎣"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
-                       "whale": "WHALE", "shark": "SHARK"}
+                       "whale": "WHALE", "shark": "SHARK",
+                       "impulse": "IMPULSE", "fade": "FADE"}
         for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(2000):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")

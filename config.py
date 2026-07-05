@@ -146,6 +146,7 @@ BOTS = [
     {"id": "whale", "label": "🐋 WHALE", "category": "crypto"},
     {"id": "shark", "label": "🦈 SHARK", "category": "crypto"},
     {"id": "stack", "label": "🧩 Stack", "category": "crypto"},
+    {"id": "momentum", "label": "🚀 Impulse·Fade", "category": "crypto"},
     {"id": "setup_check", "label": "🎰 Setup Check", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     # Pre-Pump удалён — backtest показал что edge только в triple_confluence
