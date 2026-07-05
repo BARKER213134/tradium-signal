@@ -8488,12 +8488,19 @@ function renderJournal(items, startIdx) {
       ? window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: isStrong})
       : ((s.is_top_pick ? '👑 ' : (isStrong ? '⭐ ' : '')) +
          ({anomaly:'⚠', paper:'🤖', confluence:'🎯', supertrend:'🌀', verified:'✨'}[s.source] || '•'));
-    const srcName = s.source === 'anomaly' ? 'Аномалия'
-      : s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐' : 'Confluence')
-      : s.source === 'paper' ? 'Paper'
-      : s.source === 'supertrend' ? ('ST ' + (s.st_tier ? s.st_tier.toUpperCase() : ''))
-      : s.source === 'verified' ? 'Verified'
-      : 'CV';
+    const srcName = ({
+      confluence: (s.score >= 5 ? 'Confluence ⭐' : 'Confluence'),
+      paper: 'Paper',
+      supertrend: 'ST ' + (s.st_tier ? s.st_tier.toUpperCase() : ''),
+      verified: 'Verified',
+      whale: 'WHALE' + (s.whale_tier ? ' ' + s.whale_tier : ''),
+      shark: 'SHARK' + (s.shark_tier ? ' ' + s.shark_tier : ''),
+      stack: 'STACK ×' + (s.stack_size || '?'),
+      impulse: 'IMPULSE', fade: 'FADE',
+      volume_surge: 'Vol Surge', triple_confluence: 'Triple Conf',
+      vol_accum: 'Vol Accum', volcano: 'Volcano',
+      second_flip: '2nd Flip', rsi_cross_12h: 'RSI×12h',
+    })[s.source] || (s.source || '—');
     const stFail = s.st_passed === false;
     const stPass = s.st_passed === true;
     const pumpHigh = (s.pump_score || 0) >= 2;
