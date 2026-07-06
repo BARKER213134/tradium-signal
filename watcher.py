@@ -1387,6 +1387,11 @@ async def _momentum_send_telegram(sig: dict):
         header = "\U0001F680 <b>IMPULSE - LONG momentum</b>\n"
         stats = "backtest 62d: WR 82%, EV +5.9%/trade, median MFE24 +17.7%"
         exit_line = "TP +8% / SL -4% / time-stop 12h"
+    elif st == 'ignition':
+        header = "\U0001F4A5 <b>IGNITION - ранний LONG (начало роста)</b>\n"
+        stats = ("backtest 52d: WR 70%, EV +2.8%/trade, вход ~+5% от лоу "
+                 "(3x раньше IMPULSE)")
+        exit_line = "TP +6% / SL -3% / time-stop 24h"
     else:
         header = "\U0001F3A3 <b>FADE - SHORT rally</b>\n"
         stats = "backtest 62d: WR 54%, EV +1.4%/trade (BTC-filter)"

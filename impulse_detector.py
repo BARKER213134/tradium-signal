@@ -1,4 +1,4 @@
-"""🚀🎣 IMPULSE / FADE — сигналы из research 2026-07-02.
+"""🚀💥🎣 IMPULSE / IGNITION / FADE — сигналы из research 2026-07-02/06.
 
 Исследование: 240 пар × 62 дня × 1h (295k баров, 48 индикаторов),
 single-factor скан → перебор комбо (C(18,2..3) × 2 стороны) → 12h-кулдаун
@@ -15,6 +15,23 @@ single-factor скан → перебор комбо (C(18,2..3) × 2 сторо
 Бэктест: WR 82% (n=102), EV +5.9%/сделку; OOS 84%→77%; все 8 недель
 WR 71-94%; 66 уникальных пар, без топ-3 пар WR 81%. ~2-3 сигнала/день.
 Медианный MFE24 +17.7% при MAE −2.0%.
+
+═══ 💥 IGNITION (LONG, ранний вход в начале роста) ═══
+Research 2026-07-06 по фидбеку «сигнал всегда приходит после роста»:
+IMPULSE стреляет когда цена уже +16% от суточного лоу (медиана). IGNITION
+ловит момент «зажигания» моментума — вход на ~+5% от лоу, в 3 раза раньше.
+Условия (все одновременно, на закрытии 1h-бара):
+  • RSI14(4h) в зоне 58–68     — моментум разогрелся, но НЕ перегрет
+  • RSI14(4h) прошлой 4h-свечи < 55 — кросс только что произошёл
+  • SuperTrend(10,3) 4h UP     — структурный аптренд
+  • EMA10(1d) > EMA20(1d)      — дневной тренд вверх
+  • ATR%(1h) 0.7–6.0
+Выход: TP +6% / SL −3%, тайм-стоп 24ч.
+Бэктест 52д: WR 70% (n=167, dedup 12h), EV +2.75%/сделку; OOS 70%→68%;
+8/8 недель > breakeven; 82 пары, топ-пара 6.4%; медиана MFE12 +7.05% при
+MAE24 −1.67%. Соседние пороги (55-70/60-66, prev<52..58) дают WR 60-84% —
+не knife-edge. В 32/171 случаев за IGNITION в ≤48ч следует IMPULSE на той
+же паре (медиана опережения 12ч).
 
 ═══ 🎣 FADE (SHORT, отскок в даунтренде) ═══
 Условия:
@@ -40,6 +57,8 @@ logger = logging.getLogger(__name__)
 ATR_GATE = (0.7, 6.0)
 COOLDOWN_H = 12
 IMPULSE_TP, IMPULSE_SL, IMPULSE_HORIZON_H = 8.0, 4.0, 12
+IGNITION_TP, IGNITION_SL, IGNITION_HORIZON_H = 6.0, 3.0, 24
+IGNITION_RSI4_LO, IGNITION_RSI4_HI, IGNITION_RSI4_PREV_MAX = 58.0, 68.0, 55.0
 FADE_TP, FADE_SL, FADE_HORIZON_H = 6.0, 4.0, 24
 BTC_RSI4H_MAX_FOR_FADE = 45.0
 
@@ -62,6 +81,16 @@ def _rsi(closes: list[float], period: int = 14) -> Optional[float]:
     if avg_l == 0:
         return 100.0
     return 100 - 100 / (1 + avg_g / avg_l)
+
+
+def _ema_last(values: list[float], span: int) -> Optional[float]:
+    if len(values) < span:
+        return None
+    k = 2.0 / (span + 1)
+    e = sum(values[:span]) / span
+    for v in values[span:]:
+        e = v * k + e * (1 - k)
+    return e
 
 
 def _atr_pct(candles: list[dict], period: int = 14) -> Optional[float]:
@@ -196,6 +225,27 @@ def check_pair(pair: str, candles_1h: Optional[list[dict]] = None,
                 "horizon_h": IMPULSE_HORIZON_H,
                 "indicators": ind,
             }
+
+        # ── 💥 IGNITION (LONG, ранний вход) ──
+        # RSI4h только вошёл в 58-68 (прошлая 4h-свеча < 55) при аптренде
+        # 4h + 1d. Ловит начало движения: ~+5% от лоу против +16% у IMPULSE.
+        if (IGNITION_RSI4_LO <= rsi_4h <= IGNITION_RSI4_HI and st4 == "UP"
+                and len(c4) > 30):
+            rsi4_prev = _rsi([c["c"] for c in c4[:-1]])
+            if rsi4_prev is not None and rsi4_prev < IGNITION_RSI4_PREV_MAX:
+                closes_d = [c["c"] for c in cd]
+                e10 = _ema_last(closes_d, 10)
+                e20 = _ema_last(closes_d, 20)
+                if e10 is not None and e20 is not None and e10 > e20:
+                    return {
+                        "strategy": "ignition", "direction": "LONG",
+                        "pair": pair, "symbol": pair.replace("/", "").upper(),
+                        "entry": price,
+                        "tp": price * (1 + IGNITION_TP / 100),
+                        "sl": price * (1 - IGNITION_SL / 100),
+                        "horizon_h": IGNITION_HORIZON_H,
+                        "indicators": {**ind, "rsi_4h_prev": round(rsi4_prev, 1)},
+                    }
 
         # ── 🎣 FADE (SHORT) ──
         last20 = candles_1h[-20:]

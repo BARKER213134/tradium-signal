@@ -738,7 +738,7 @@
           whale:'🐋',        // 🐋 WHALE (ST flip 2H UP + vol spike + amplifiers, WR 53.8%)
           shark:'🦈',        // 🦈 SHARK (ST flip 2H DOWN + distribution top + multi-top, WR 60.4%)
           stack:'🧩',
-          impulse:'🚀', fade:'🎣',  // momentum research 07-02        // 🧩 STACK (семейная группа: 2+ сигналов за 30 мин)
+          impulse:'🚀', fade:'🎣', ignition:'💥',  // momentum research 07-02/06        // 🧩 STACK (семейная группа: 2+ сигналов за 30 мин)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
         return prefix + base;
@@ -768,6 +768,7 @@
         if (src === 'stack') return '🧩';
         if (src === 'impulse') return '🚀';
         if (src === 'fade') return '🎣';
+        if (src === 'ignition') return '💥';
         return ({anomaly:'⚠', paper:'🤖', cluster:'💠'})[src] || '•';
       };
 

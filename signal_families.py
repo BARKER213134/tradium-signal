@@ -30,6 +30,7 @@ FAMILY_OF = {
     "verified": "trend",     # verified проверяет те же ST-сигналы
     "confluence": "levels",  # уровни + свечные паттерны — независимый взгляд
     "impulse": "momentum",   # rocket: higher-TF RSI momentum (research 07-02)
+    "ignition": "momentum",  # ранний вход: RSI4h кросс в 58-68 (research 07-06)
     "fade": "momentum",      # short rally in downtrend
     "whale": "whale",        # структура базы + vol spike
     "shark": "shark",        # distribution top
