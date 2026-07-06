@@ -653,7 +653,13 @@ async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,
 
 async def update_waiting_outcomes() -> dict:
     """Background updater: проверяет WAITING сигналы — попала ли цена в TP/SL.
-    Вызывается периодически из watcher loop. Lookback 24h max — старее = TIMEOUT.
+    Вызывается периодически из watcher loop.
+
+    Окно 72ч (было 24ч): сигналы, не закрытые за первые сутки (рестарт
+    деплоя, limit-старвация), выпадали из выборки НАВСЕГДА и висели
+    WAITING — к 2026-07-06 накопилось 9.5k застрявших. Старые добиты
+    one-off скриптом; окно 72ч + oldest-first не даёт застревать новым.
+    Тайм-аут по horizon_h стратегии (impulse 12ч), default 24ч.
     """
     from database import _get_db, utcnow
     from datetime import timedelta
@@ -661,11 +667,11 @@ async def update_waiting_outcomes() -> dict:
 
     def _load_waiting():
         col = _get_db().new_strategy_signals
-        cutoff = utcnow() - timedelta(hours=24)
+        cutoff = utcnow() - timedelta(hours=72)
         return list(col.find({
             'state': 'WAITING',
             'created_at': {'$gte': cutoff},
-        }).limit(100))
+        }).sort('created_at', 1).limit(200))
 
     waiting = await asyncio.to_thread(_load_waiting)
     if not waiting:
@@ -680,7 +686,7 @@ async def update_waiting_outcomes() -> dict:
     timeouts = 0
     for pair, sigs in by_pair.items():
         try:
-            candles = await asyncio.to_thread(get_klines_any, pair, '1h', 30)
+            candles = await asyncio.to_thread(get_klines_any, pair, '1h', 90)
         except Exception:
             continue
         if not candles or len(candles) < 5:
@@ -697,12 +703,18 @@ async def update_waiting_outcomes() -> dict:
             sig_ts = int(created_at.replace(tzinfo=timezone.utc).timestamp() * 1000) \
                 if created_at.tzinfo is None else int(created_at.timestamp() * 1000)
             # Find first candle at or after sig_ts and walk forward
+            # (только в пределах горизонта стратегии — TP за горизонтом
+            # не считается)
+            hz_h = sig.get('horizon_h') or 24
+            hz_end = sig_ts + hz_h * 3600 * 1000
             outcome = None
             outcome_price = None
             outcome_at = None
             for c in candles:
                 if c['t'] < sig_ts:
                     continue
+                if c['t'] >= hz_end:
+                    break
                 if direction == 'LONG':
                     if c['l'] <= sl:
                         outcome = 'SL'; outcome_price = sl
@@ -717,13 +729,18 @@ async def update_waiting_outcomes() -> dict:
                     if c['l'] <= tp:
                         outcome = 'TP'; outcome_price = tp
                         outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
-            # Timeout: 24h passed without outcome
+            # Timeout: горизонт стратегии прошёл без TP/SL — закрытие по
+            # close последней свечи В ПРЕДЕЛАХ горизонта (не по цене «сейчас»)
             age_h = (utcnow() - (created_at if created_at.tzinfo else
                                  created_at.replace(tzinfo=timezone.utc))).total_seconds() / 3600
-            if outcome is None and age_h >= 24:
+            if outcome is None and age_h >= hz_h:
+                in_hz = [c for c in candles if sig_ts <= c['t'] < hz_end]
                 outcome = 'TIMEOUT'
-                outcome_price = candles[-1]['c'] if candles else None
-                outcome_at = utcnow()
+                outcome_price = (in_hz[-1]['c'] if in_hz
+                                 else candles[-1]['c'] if candles else None)
+                outcome_at = (datetime.fromtimestamp(in_hz[-1]['t'] / 1000 + 3600,
+                                                     tz=timezone.utc)
+                              if in_hz else utcnow())
             if outcome is None:
                 continue
             # Compute pnl_pct
