@@ -932,7 +932,7 @@ async function _nsLoad() {
       tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted);">Нет сигналов в этом окне</td></tr>';
       return;
     }
-    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', whale:'🐋', shark:'🦈', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥'};
+    const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', whale:'🐋', shark:'🦈', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', rider_short:'🏄'};
     const sLabel = {volume_surge:'Volume Surge', triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano Breakout', second_flip:'Second Flip', combo:'COMBO', whale:'WHALE', shark:'SHARK', bigbuy:'BIG BUY'};
     const stEmoji = {WAITING:'⏳', TP:'✅', SL:'⛔', MANUAL:'📍', TIMEOUT:'⏱'};
     let html = '';
@@ -1666,7 +1666,11 @@ safeInterval(loadStacks, 60000);
     Backtest 52д: <b>WR 70%</b>, EV +2.75%/сделку, 8/8 недель, 82 пары.<br>
     <b>🎣 FADE (SHORT)</b>: RSI 1d &lt; 35 + цена у верха 20-барного канала (&gt;0.85) +
     ST 4h DOWN + BTC RSI 4h &lt; 45 — шорт ралли в даунтренде. Выход: <b>TP −6% / SL +4% / 24ч</b>.
-    Backtest 62д: WR 54%, EV +1.4%. Скан 300 ликвидных пар каждые 20 мин · кулдаун 12ч · алерты в BOT16.
+    Backtest 62д: WR 54%, EV +1.4%. Скан 300 ликвидных пар каждые 20 мин · кулдаун 12ч · алерты в BOT16.<br>
+    <b>🏄 RIDER SHORT (тренд до конца)</b>: close 4h ломает 55-барный лоу + BTC ST4h DOWN + ATR 0.7–6 —
+    без фикс-TP, <b>выход по трейлу</b> (close 4h выше 20-барного хая), позиция живёт дни-недели.
+    Backtest 6мес: PF 1.29, +1.3%/сделку, WR 45%, медианный выигрыш +8.8%. Профиль тренд-фолловинга:
+    зарабатывает в фазах дампа, в росте молчит (BTC-гейт) или платит мелкими минусами.
   </div>
 </div>
 
@@ -1764,6 +1768,8 @@ async function loadMomentum() {
         ? '<span style="color:#4cc9f0;font-weight:700;">🚀 IMPULSE</span>'
         : x.strategy === 'ignition'
         ? '<span style="color:#ffd23e;font-weight:700;">💥 IGNITION</span>'
+        : x.strategy === 'rider_short'
+        ? '<span style="color:#c084fc;font-weight:700;">🏄 RIDER</span>'
         : '<span style="color:#ff8c50;font-weight:700;">🎣 FADE</span>';
       const dirB = x.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
       const pnl = x.pnl_pct;
@@ -1872,7 +1878,7 @@ function _renderSetupResult(d) {
   // ── Recent signals list (ALL sources за 72h) + cluster bias header ──
   const srcEmoji = {whale:'🐋', shark:'🦈', triple_confluence:'🐉',
                     st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', anomaly:'⚠', volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
-                    second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥'};
+                    second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', rider_short:'🏄'};
   const longCnt = d.cluster_long || 0;
   const shortCnt = d.cluster_short || 0;
   const clusterBias = d.cluster_bias || 'NEUTRAL';
@@ -2106,7 +2112,7 @@ async function _scRenderChart(d, tf) {
     const srcEmoji = {
       whale:'🐋', shark:'🦈', triple_confluence:'🐉',
       st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', anomaly:'⚠', volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
-      second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', supertrend:'🌀'};
+      second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', rider_short:'🏄', supertrend:'🌀'};
     const markers = [];
     const byTime = new Map();
     for (const s of (d.recent_signals || [])) {
@@ -4069,7 +4075,7 @@ async function _renderPaperChart(idx, tf) {
       for (const c of d.candles) { const diff = Math.abs(c.time - ts); if (diff < minD) { minD = diff; mc = c; } }
       return mc;
     };
-    const srcIconMap = {anomaly:'⚠', confluence:'🎯', paper:'🤖', whale:'🐋', shark:'🦈', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥'};
+    const srcIconMap = {anomaly:'⚠', confluence:'🎯', paper:'🤖', whale:'🐋', shark:'🦈', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', rider_short:'🏄'};
     const entryTs = p.opened_at ? Math.floor(new Date(p.opened_at).getTime()/1000) : 0;
     const mainMc = nearestP(entryTs);
     const isLong = p.direction === 'LONG';
@@ -6241,6 +6247,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="shark">🦈 SHARK (ST flip 2H DOWN + distribution top + multi-top, SHORT)</option>
     <option value="impulse">🚀 IMPULSE (LONG momentum, WR 82%)</option>
     <option value="ignition">💥 IGNITION (ранний LONG, WR 70%)</option>
+    <option value="rider_short">🏄 RIDER SHORT (тренд до конца)</option>
     <option value="fade">🎣 FADE (SHORT отскока, WR 54%)</option>
     <option value="stack">🧩 STACK (семейная группа 2+ сигналов)</option>
     <option value="rsi_cross_12h">⚡ RSI/SMA cross 12h + vol≥2×</option>
@@ -7345,7 +7352,7 @@ async function hotLoad() {
     statsEl.textContent = `${items.length} HOT / ${d.count || 0} total`;
     const sEmoji = {volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️',
                     confluence:'🎯', paper:'🤖', verified:'✨', supertrend:'🌀', whale:'🐋', shark:'🦈',
-                    stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥'};
+                    stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', rider_short:'🏄'};
     const html = items.map((s, idx) => {
       const sc = s.q_score || 0;
       const scColor = sc >= 70 ? '#00e5a0' : sc >= 60 ? '#88d8a3' : sc >= 45 ? '#ffd23e' : '#ff8c50';
@@ -8073,7 +8080,7 @@ function filterJournal() {
     if (minTs && !sourceExplicit && (s.at_ts || 0) < minTs) return false;
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
-      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition'].includes(s.source)) return false;
+      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','rider_short'].includes(s.source)) return false;
     } else if (src && s.source !== src) return false;
     if (dir && s.direction !== dir) return false;
     if (kc === 'pass' && s.st_passed !== true) return false;
@@ -8109,7 +8116,7 @@ function filterJournal() {
       const isPaper = s.source === 'paper';
       const isAnomaly = s.source === 'anomaly';
       const isVerified = s.source === 'verified';
-      const isNewStrategy = ['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition'].includes(s.source);
+      const isNewStrategy = ['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','rider_short'].includes(s.source);
       if (!(isStrong || isTopPick || isStAllTiers || isCluster || isPaper || isAnomaly || isVerified || isNewStrategy)) return false;
     }
     // 🎯 Только у уровня — фильтр по price-proximity к KL зоне
@@ -8234,7 +8241,7 @@ function filterJournal() {
       else conf_medium++;
     }
   }
-  const names = {confluence: '🎯 Conf', paper: '🤖 Paper', supertrend: '🌀 ST', verified: '✨ Verified', whale: '🐋 WHALE', shark: '🦈 SHARK', stack: '🧩 STACK', impulse: '🚀 IMPULSE', fade: '🎣 FADE', ignition: '💥 IGNITION'};
+  const names = {confluence: '🎯 Conf', paper: '🤖 Paper', supertrend: '🌀 ST', verified: '✨ Verified', whale: '🐋 WHALE', shark: '🦈 SHARK', stack: '🧩 STACK', impulse: '🚀 IMPULSE', fade: '🎣 FADE', ignition: '💥 IGNITION', rider_short: '🏄 RIDER'};
   const statsEl = document.getElementById('jSourceStats');
   if (statsEl) {
     statsEl.innerHTML = Object.entries(stats).map(([k, v]) => {
@@ -8640,6 +8647,7 @@ function renderJournal(items, startIdx) {
       shark: 'SHARK' + (s.shark_tier ? ' ' + s.shark_tier : ''),
       stack: 'STACK ×' + (s.stack_size || '?'),
       impulse: 'IMPULSE', fade: 'FADE', ignition: 'IGNITION',
+      rider_short: 'RIDER SHORT',
       volume_surge: 'Vol Surge', triple_confluence: 'Triple Conf',
       vol_accum: 'Vol Accum', volcano: 'Volcano',
       second_flip: '2nd Flip', rsi_cross_12h: 'RSI×12h',
@@ -8905,7 +8913,7 @@ window._verdictInfo = function(s) {
   // Quality sources (top-7 backtest + acceptable mid-tier sources)
   // Все они получают LONG/SHORT по direction
   const goodSources = new Set([
-    'whale', 'shark', 'triple_confluence', 'stack', 'impulse', 'fade', 'ignition',
+    'whale', 'shark', 'triple_confluence', 'stack', 'impulse', 'fade', 'ignition', 'rider_short',
     'confluence',
   ]);
   const stTierIsVip = src === 'supertrend' && s.st_tier === 'vip';
@@ -10218,7 +10226,7 @@ async function openJournalChart(idx, forceTF) {
       }
       return mc;
     };
-    const srcIconMap = {anomaly:'⚠', confluence:'🎯', paper:'🤖', whale:'🐋', shark:'🦈', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥'};
+    const srcIconMap = {anomaly:'⚠', confluence:'🎯', paper:'🤖', whale:'🐋', shark:'🦈', volume_surge:'🌊', triple_confluence:'🐉', vol_accum:'🔋', volcano:'🌋', second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', rider_short:'🏄'};
     const modalMarkerMap = new Map();
 
     // Базовая строка для сопоставления символа: нормализуем к "BTCUSDT"

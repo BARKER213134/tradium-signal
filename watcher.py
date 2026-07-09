@@ -1417,6 +1417,39 @@ async def _momentum_send_telegram(sig: dict):
         logger.warning(f'[momentum] send fail: {e}')
 
 
+async def _rider_send_telegram(sig: dict, kind: str = 'entry'):
+    """🏄 RIDER SHORT алерты в BOT16 (вход и выход по трейлу)."""
+    from config import WHALE_CHAT_ID
+    pair = sig.get('pair', '?')
+    ind = sig.get('indicators') or {}
+    if kind == 'entry':
+        txt = ("\U0001F3C4 <b>RIDER SHORT - вход (тренд до конца)</b>\n"
+               "----------------------\n"
+               f"<b>{pair}</b> | SHORT\n"
+               f"<b>Entry:</b> {sig.get('entry')} (слом 55-бар лоу 4h)\n"
+               f"<b>Выход:</b> трейлинг — close 4h выше 20-бар хая "
+               f"(сейчас {sig.get('trail_hi20')})\n"
+               "----------------------\n"
+               f"ATR {ind.get('atr_pct')}% | BTC ST4h DOWN\n"
+               "backtest 6мес: PF 1.29, +1.3%/сделку, медиана выигрыша +8.8%, "
+               "держим дни-недели\n"
+               f"<a href='https://www.binance.com/en/futures/{pair.replace('/', '')}'>Chart</a>")
+    else:
+        pnl = sig.get('pnl_pct', 0)
+        emoji = "✅" if pnl > 0 else "❌"
+        txt = (f"\U0001F3C4 <b>RIDER SHORT - выход</b> {emoji}\n"
+               f"<b>{pair}</b> | закрыт по трейлу @ {sig.get('exit_price')}\n"
+               f"<b>PnL: {pnl:+.2f}%</b> (вход {sig.get('entry')})")
+    target_bot = _bot16 or _bot
+    if not target_bot:
+        return
+    try:
+        await target_bot.send_message(chat_id=WHALE_CHAT_ID, text=txt,
+                                      disable_web_page_preview=True)
+    except Exception as e:
+        logger.warning(f'[rider] send fail: {e}')
+
+
 async def _momentum_scan_loop():
     """IMPULSE/FADE: скан ликвидных пар каждые 20 мин (кулдаун 12ч в
     store_signal). Правила из research 2026-07-02 (см. impulse_detector.py)."""
@@ -1437,6 +1470,26 @@ async def _momentum_scan_loop():
                         pass
         except Exception:
             logger.exception('[momentum] scan error')
+        # 🏄 RIDER SHORT — тренд-райдер (research 2026-07-09): входы только
+        # при BTC ST4h DOWN, выходы по трейлу 20-бар хая — в том же лупе.
+        try:
+            from rider_detector import scan_entries, check_open_riders
+            r_fired = await _asyncio.to_thread(scan_entries, 300)
+            for s in r_fired:
+                try:
+                    await _rider_send_telegram(s, kind='entry')
+                    await _asyncio.sleep(1.2)
+                except Exception:
+                    pass
+            r_closed = await _asyncio.to_thread(check_open_riders)
+            for s in r_closed:
+                try:
+                    await _rider_send_telegram(s, kind='exit')
+                    await _asyncio.sleep(1.2)
+                except Exception:
+                    pass
+        except Exception:
+            logger.exception('[rider] loop error')
         await _asyncio.sleep(1200)
 
 
