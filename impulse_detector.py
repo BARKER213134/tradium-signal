@@ -57,6 +57,11 @@ logger = logging.getLogger(__name__)
 ATR_GATE = (0.7, 6.0)
 COOLDOWN_H = 12
 IMPULSE_TP, IMPULSE_SL, IMPULSE_HORIZON_H = 8.0, 4.0, 12
+# 💰 TEN (research 2026-07-10, 90д × 30m × 206 пар): то же состояние, что
+# IMPULSE (rsi4h>70 + rsi1d>65 + st4 UP + ATR gate), но цель +10% / SL -5%
+# / горизонт 96ч. WR 64.9% (n=504, dedup 24h), EV +4.73%/сделку; OOS 79.2%;
+# 13/13 недель > BE 33%; месяцы 64/62/73/80%; топ-пара 2%. Кулдаун 24ч.
+TEN_TP, TEN_SL, TEN_HORIZON_H, TEN_COOLDOWN_H = 10.0, 5.0, 96, 24
 IGNITION_TP, IGNITION_SL, IGNITION_HORIZON_H = 6.0, 3.0, 24
 IGNITION_RSI4_LO, IGNITION_RSI4_HI, IGNITION_RSI4_PREV_MAX = 58.0, 68.0, 55.0
 FADE_TP, FADE_SL, FADE_HORIZON_H = 6.0, 4.0, 24
@@ -273,14 +278,15 @@ def check_pair(pair: str, candles_1h: Optional[list[dict]] = None,
         return None
 
 
-def store_signal(sig: dict) -> bool:
-    """Сохраняет в new_strategy_signals с 12h-кулдауном на пару+strategy."""
+def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
+    """Сохраняет в new_strategy_signals с кулдауном на пару+strategy
+    (default COOLDOWN_H=12; TEN использует 24)."""
     try:
         from database import _get_db, utcnow
         from datetime import timedelta
         db = _get_db()
         col = db.new_strategy_signals
-        cutoff = utcnow() - timedelta(hours=COOLDOWN_H)
+        cutoff = utcnow() - timedelta(hours=cooldown_h or COOLDOWN_H)
         dup = col.find_one({"strategy": sig["strategy"], "pair": sig["pair"],
                             "created_at": {"$gte": cutoff}})
         if dup:
@@ -312,6 +318,21 @@ def scan_universe(max_pairs: int = 300) -> list[dict]:
             sig = check_pair(pair, btc_rsi4h=btc)
             if sig and store_signal(sig):
                 fired.append(sig)
+            # 💰 TEN — двойник IMPULSE-состояния с целью +10%/SL-5%/96ч и
+            # своим 24ч-кулдауном. Условие то же => если check_pair вернул
+            # impulse, состояние TEN тоже активно.
+            if sig and sig["strategy"] == "impulse":
+                ten = {
+                    "strategy": "ten", "direction": "LONG",
+                    "pair": sig["pair"], "symbol": sig["symbol"],
+                    "entry": sig["entry"],
+                    "tp": sig["entry"] * (1 + TEN_TP / 100),
+                    "sl": sig["entry"] * (1 - TEN_SL / 100),
+                    "horizon_h": TEN_HORIZON_H,
+                    "indicators": sig["indicators"],
+                }
+                if store_signal(ten, cooldown_h=TEN_COOLDOWN_H):
+                    fired.append(ten)
         except Exception:
             continue
     return fired

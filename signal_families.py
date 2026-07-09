@@ -31,6 +31,7 @@ FAMILY_OF = {
     "confluence": "levels",  # уровни + свечные паттерны — независимый взгляд
     "impulse": "momentum",   # rocket: higher-TF RSI momentum (research 07-02)
     "ignition": "momentum",  # ранний вход: RSI4h кросс в 58-68 (research 07-06)
+    "ten": "momentum",       # 💰 LONG до +10%: IMPULSE-состояние, TP10/SL5/96ч (07-10)
     "rider_short": "trend",  # 🏄 тренд-райдер: слом 55-лоу 4h, трейл-выход (07-09)
     "fade": "momentum",      # short rally in downtrend
     "whale": "whale",        # структура базы + vol spike

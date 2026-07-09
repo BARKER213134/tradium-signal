@@ -667,7 +667,8 @@ async def update_waiting_outcomes() -> dict:
 
     def _load_waiting():
         col = _get_db().new_strategy_signals
-        cutoff = utcnow() - timedelta(hours=72)
+        # 120ч: TEN живёт до 96ч горизонта — 72ч-окно его теряло
+        cutoff = utcnow() - timedelta(hours=120)
         return list(col.find({
             'state': 'WAITING',
             'created_at': {'$gte': cutoff},
@@ -686,7 +687,7 @@ async def update_waiting_outcomes() -> dict:
     timeouts = 0
     for pair, sigs in by_pair.items():
         try:
-            candles = await asyncio.to_thread(get_klines_any, pair, '1h', 90)
+            candles = await asyncio.to_thread(get_klines_any, pair, '1h', 150)
         except Exception:
             continue
         if not candles or len(candles) < 5:

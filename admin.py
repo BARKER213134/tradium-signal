@@ -3152,7 +3152,7 @@ async def api_momentum_signals(hours: int = 336):
         col = _get_db().new_strategy_signals
         items = []
         for n in col.find(
-            {"strategy": {"$in": ["impulse", "fade", "ignition", "rider_short"]},
+            {"strategy": {"$in": ["impulse", "fade", "ignition", "rider_short", "ten"]},
              "created_at": {"$gte": since}},
             {"strategy": 1, "pair": 1, "direction": 1, "entry": 1, "tp": 1,
              "sl": 1, "horizon_h": 1, "indicators": 1, "state": 1,
@@ -7902,14 +7902,14 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "second_flip": "♻️", "combo": "🧠",
                         "whale": "🐋", "shark": "🦈",
                         "impulse": "🚀", "fade": "🎣", "ignition": "💥",
-                        "rider_short": "🏄"}
+                        "rider_short": "🏄", "ten": "💰"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
                        "second_flip": "Second Flip", "combo": "COMBO",
                        "whale": "WHALE", "shark": "SHARK",
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
-                       "rider_short": "RIDER SHORT"}
+                       "rider_short": "RIDER SHORT", "ten": "TEN"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -8265,13 +8265,13 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "vol_accum": "🔋", "volcano": "🌋",
                         "second_flip": "♻️", "combo": "🧠", "whale": "🐋",
                         "shark": "🦈", "impulse": "🚀", "fade": "🎣", "ignition": "💥",
-                        "rider_short": "🏄"}
+                        "rider_short": "🏄", "ten": "💰"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
                        "whale": "WHALE", "shark": "SHARK",
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
-                       "rider_short": "RIDER SHORT"}
+                       "rider_short": "RIDER SHORT", "ten": "TEN"}
         for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(2000):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
