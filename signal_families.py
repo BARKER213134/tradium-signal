@@ -62,7 +62,7 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
 
     Возвращает НОВЫЙ список (сортировка by at_ts desc сохраняется снаружи).
     """
-    NO_GROUP = {"paper", "stack"}
+    NO_GROUP = {"paper", "stack", "accum"}  # accum — инфо-событие, не голос
     from collections import defaultdict
 
     groupable = [it for it in items

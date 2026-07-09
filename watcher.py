@@ -1429,8 +1429,9 @@ async def _accum_scan_loop():
     await _asyncio.sleep(360)
     while True:
         try:
-            from accum_detector import scan_universe, store_snapshot
+            from accum_detector import scan_universe, store_snapshot, track_resolutions
             items = await _asyncio.to_thread(scan_universe, 300)
+            await _asyncio.to_thread(track_resolutions, items)
             await _asyncio.to_thread(store_snapshot, items)
             logger.info(f"[accum] в накоплении {len(items)} пар")
         except Exception:

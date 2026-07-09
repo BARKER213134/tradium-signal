@@ -7910,6 +7910,32 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
     except Exception:
         pass
 
+    # 🧊 ACCUM — разрешившиеся базы по монете (для chart markers)
+    try:
+        from database import _get_db as _gdb_ac2
+        for a in _gdb_ac2().accum_events.find(
+                {"resolved_at": {"$gte": since},
+                 "$or": [{"pair": pair_slash}, {"symbol": sym_clean}]}
+        ).sort("resolved_at", -1).limit(100):
+            rat = a.get("resolved_at")
+            arrow = "ВВЕРХ" if a.get("resolution") == "UP" else "ВНИЗ"
+            items.append({
+                "source": "accum",
+                "symbol": (a.get("pair") or "").replace("/", "").upper(),
+                "pair": a.get("pair", ""),
+                "direction": a.get("direction", ""),
+                "entry": a.get("res_price"),
+                "tp1": None, "sl": None,
+                "pattern": (f"🧊 База {a.get('rng_pct')}% × {a.get('hours')}ч "
+                            f"→ пробой {arrow}"),
+                "score": 0, "st_passed": None, "pump_score": 0,
+                "is_top_pick": False, "top_pick_confirmations_count": 0,
+                "at": rat.isoformat() if hasattr(rat, "isoformat") else None,
+                "at_ts": int(rat.timestamp()) if hasattr(rat, "timestamp") else 0,
+            })
+    except Exception:
+        pass
+
     # New Strategy Signals — whale/shark/combo/volume_surge/triple_confluence/
     # vol_accum/volcano/second_flip. Без этого блока эмодзи 🐋/🦈/🧠 etc
     # не отображались на per-coin chart журнала.
@@ -8275,6 +8301,33 @@ def _compute_journal_sync(_fast_only: bool = False):
             })
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] verified fetch fail: {e}")
+
+    # 🧊 ACCUM — разрешившиеся базы (инфо-событие: база → ВВЕРХ/ВНИЗ).
+    # Живые базы висят в панели журнала, сюда попадают только пробои.
+    try:
+        from database import _get_db as _gdb_ac, utcnow as _ac_now
+        from datetime import timedelta as _ac_td
+        for a in _gdb_ac().accum_events.find(
+                {"resolved_at": {"$gte": _ac_now() - _ac_td(hours=336)}}
+        ).sort("resolved_at", -1).limit(500):
+            rat = a.get("resolved_at")
+            arrow = "ВВЕРХ" if a.get("resolution") == "UP" else "ВНИЗ"
+            items.append({
+                "source": "accum",
+                "symbol": (a.get("pair") or "").replace("/", "").upper(),
+                "pair": a.get("pair", ""),
+                "direction": a.get("direction", ""),
+                "entry": a.get("res_price"),
+                "tp1": None, "sl": None,
+                "pattern": (f"🧊 База {a.get('rng_pct')}% × {a.get('hours')}ч "
+                            f"→ пробой {arrow}"),
+                "score": 0, "st_passed": None, "pump_score": 0,
+                "is_top_pick": False, "top_pick_confirmations_count": 0,
+                "at": rat.isoformat() if hasattr(rat, "isoformat") else None,
+                "at_ts": int(rat.timestamp()) if hasattr(rat, "timestamp") else 0,
+            })
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] accum fetch fail: {e}")
 
     # 🌊🐉🔋 New Strategies — последние сигналы 3 backtest-validated стратегий
     try:

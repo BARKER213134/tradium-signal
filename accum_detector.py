@@ -99,6 +99,49 @@ def scan_universe(max_pairs: int = 300) -> list[dict]:
     return out
 
 
+def track_resolutions(new_items: list[dict]) -> list[dict]:
+    """Пары, вышедшие из базы с пробоем границы, пишутся в accum_events
+    (source='accum' в журнале: 🧊 база → ВВЕРХ/ВНИЗ). Вызывать ДО
+    store_snapshot — сравнивает с прошлым снапшотом."""
+    events = []
+    try:
+        from database import _get_db, utcnow
+        from exchange import get_klines_any
+        db = _get_db()
+        prev = {d["pair"]: d for d in db.accum_state.find()}
+        cur = {it["pair"] for it in new_items}
+        for pair, d in prev.items():
+            if pair in cur:
+                continue
+            try:
+                kl = get_klines_any(pair, "1h", 3)
+                price = kl[-1]["c"] if kl else None
+            except Exception:
+                price = None
+            if not price or not d.get("base_hi") or not d.get("base_lo"):
+                continue
+            if price > d["base_hi"]:
+                resolution, direction = "UP", "LONG"
+            elif price < d["base_lo"]:
+                resolution, direction = "DOWN", "SHORT"
+            else:
+                continue    # растворилась без пробоя — не событие
+            events.append({
+                "pair": pair, "symbol": d.get("symbol"),
+                "direction": direction, "resolution": resolution,
+                "base_hi": d["base_hi"], "base_lo": d["base_lo"],
+                "rng_pct": d.get("rng_pct"), "hours": d.get("hours"),
+                "res_price": price, "resolved_at": utcnow(),
+            })
+        if events:
+            db.accum_events.insert_many(events)
+            logger.info(f"[accum] разрешений: "
+                        f"{[(e['pair'], e['resolution']) for e in events]}")
+    except Exception:
+        logger.exception("[accum] resolutions fail")
+    return events
+
+
 def store_snapshot(items: list[dict]) -> None:
     """Полная замена снапшота (актуальный список баз)."""
     try:
