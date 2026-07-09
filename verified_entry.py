@@ -40,8 +40,11 @@ def check_entry(pair: str, direction: str,
     Кеш 10с на (pair, direction) — убирает дубль вызова из paper_trader
     и verified_entry параллельно.
     """
+    # _key_levels удалён из database 2026-07-02 вместе с Telegram KL —
+    # его импорт ронял КАЖДЫЙ verified-чек ImportError'ом (verified молчал
+    # 02-09.07). Уровни теперь свои: levels_engine (см. блок 4).
     from database import (_signals, _anomalies, _confluence, _clusters,
-                          _supertrend_signals, _key_levels, utcnow)
+                          _supertrend_signals, utcnow)
     from supertrend import supertrend_state
     import market_phase as mp
     import paper_trader as pt
@@ -242,37 +245,45 @@ def check_entry(pair: str, direction: str,
         checks.append({"name": "ST 1h aligned", "status": "bad",
                        "comment": f"⛔ ST 1h = {st_state} — вход против тренда 1h", "value": ""})
 
-    # ── 4. Key Levels ──
+    # ── 4. Levels (свои S/R из levels_engine, замена Telegram KL) ──
     try:
-        kl_since = utcnow() - timedelta(hours=168)
-        kls = list(_key_levels().find({"pair_norm": pair_norm, "detected_at": {"$gte": kl_since}}))
+        zones = []
+        try:
+            from levels_engine import get_levels_cached, compute_levels
+            for _tf in ("4h", "1h"):
+                cached = get_levels_cached(pair_slash, _tf, max_age_min=45)
+                if cached and cached.get("zones"):
+                    zones.extend(cached["zones"])
+            if not zones:
+                zones = compute_levels(pair_slash, "4h")
+        except Exception:
+            zones = []
+        kls = zones
         has_sl_protected = False
         tp_warning = False
         if kls and sig_entry and sig_sl and sig_tp:
+            supports = [z for z in kls if z.get("kind") == "support"]
+            resistances = [z for z in kls if z.get("kind") == "resistance"]
             if direction == "LONG":
-                supports = [k for k in kls if k.get("event") in ("new_support", "entered_support")]
-                resistances = [k for k in kls if k.get("event") in ("new_resistance", "entered_resistance")]
-                for k in supports:
-                    lvl = k.get("zone_low") or k.get("current_price") or 0
+                for z in supports:
+                    lvl = z.get("low") or 0
                     if sig_sl < lvl < sig_entry + (sig_entry * 0.005):
                         has_sl_protected = True; break
-                for k in resistances:
-                    lvl = k.get("zone_high") or k.get("current_price") or 0
+                for z in resistances:
+                    lvl = z.get("low") or 0
                     if sig_entry < lvl < sig_tp:
                         tp_warning = True; break
             else:
-                resistances = [k for k in kls if k.get("event") in ("new_resistance", "entered_resistance")]
-                supports = [k for k in kls if k.get("event") in ("new_support", "entered_support")]
-                for k in resistances:
-                    lvl = k.get("zone_high") or k.get("current_price") or 0
+                for z in resistances:
+                    lvl = z.get("high") or 0
                     if sig_entry - (sig_entry * 0.005) < lvl < sig_sl:
                         has_sl_protected = True; break
-                for k in supports:
-                    lvl = k.get("zone_low") or k.get("current_price") or 0
+                for z in supports:
+                    lvl = z.get("high") or 0
                     if sig_tp < lvl < sig_entry:
                         tp_warning = True; break
         if not kls:
-            checks.append({"name": "Key Levels", "status": "warn", "comment": "Нет KL данных", "value": ""})
+            checks.append({"name": "Key Levels", "status": "warn", "comment": "Нет данных уровней", "value": ""})
         elif has_sl_protected and not tp_warning:
             checks.append({"name": "Key Levels", "status": "ok",
                            "comment": f"SL защищён ✅ TP до R ✅ ({len(kls)} ур.)", "value": ""})
