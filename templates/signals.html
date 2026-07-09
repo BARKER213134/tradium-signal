@@ -6115,6 +6115,40 @@ safeInterval(loadForexJournal, 30000);
     Кликабельные графики с маркерами всех источников по монете.
   </div>
 </div>
+
+<!-- ── 🧊 ACCUMULATION watchlist (не сигнал: базы >=12ч, ход <5% за 48ч) ── -->
+<div id="accumPanel" style="display:none;margin-bottom:16px;padding:12px 16px;background:linear-gradient(135deg,rgba(76,201,240,0.05),rgba(91,140,255,0.03));border:1px solid rgba(76,201,240,0.25);border-radius:12px;">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <span style="font-family:var(--font-mono);font-size:12px;font-weight:800;color:#4cc9f0;letter-spacing:0.08em;">🧊 НАКОПЛЕНИЕ СЕЙЧАС</span>
+    <span id="accumMeta" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
+    <span style="font-size:10px;color:var(--muted);">watchlist, не сигнал — вход по 💥/💰 на разрешении</span>
+  </div>
+  <div id="accumChips" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;"></div>
+</div>
+<script>
+async function loadAccum() {
+  try {
+    const r = await fetch('/api/accumulation');
+    const d = await r.json();
+    const panel = document.getElementById('accumPanel');
+    const chips = document.getElementById('accumChips');
+    if (!d.items || !d.items.length) { panel.style.display = 'none'; return; }
+    panel.style.display = 'block';
+    document.getElementById('accumMeta').textContent = `${d.items.length} монет`;
+    chips.innerHTML = d.items.slice(0, 40).map(x => {
+      const p = (x.pair || '').replace('/USDT', '');
+      const days = x.hours >= 48 ? (x.hours/24).toFixed(1) + 'д' : x.hours + 'ч';
+      return `<span onclick="navigator.clipboard && navigator.clipboard.writeText('${p}USDT')"
+        title="в базе ${days} · ширина ${x.rng_pct}% · до пробоя вверх ${x.dist_up_pct}% · до низа ${x.dist_dn_pct}% (клик — скопировать)"
+        style="cursor:copy;font-family:var(--font-mono);font-size:11px;padding:4px 10px;border-radius:7px;background:rgba(76,201,240,0.08);border:1px solid rgba(76,201,240,0.28);color:var(--text);">
+        <b>${p}</b> <span style="color:#4cc9f0;">${days}</span> <span style="color:var(--muted);">±${(x.rng_pct/2).toFixed(1)}%</span>
+      </span>`;
+    }).join('');
+  } catch (e) { /* тихо */ }
+}
+loadAccum();
+safeInterval(loadAccum, 300000);
+</script>
 <!-- ── Журнал ─────────────────────────────────────────────────────── -->
 <style>
 .journal-hero {

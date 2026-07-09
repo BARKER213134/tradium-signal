@@ -1422,6 +1422,22 @@ async def _momentum_send_telegram(sig: dict):
         logger.warning(f'[momentum] send fail: {e}')
 
 
+async def _accum_scan_loop():
+    """🧊 ACCUMULATION watchlist: скан баз каждые 30 мин, снапшот в Mongo.
+    Не торговый сигнал — только подсветка кандидатов (панель в журнале)."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(360)
+    while True:
+        try:
+            from accum_detector import scan_universe, store_snapshot
+            items = await _asyncio.to_thread(scan_universe, 300)
+            await _asyncio.to_thread(store_snapshot, items)
+            logger.info(f"[accum] в накоплении {len(items)} пар")
+        except Exception:
+            logger.exception('[accum] scan error')
+        await _asyncio.sleep(1800)
+
+
 async def _rider_send_telegram(sig: dict, kind: str = 'entry'):
     """🏄 RIDER SHORT алерты в BOT16 (вход и выход по трейлу)."""
     from config import WHALE_CHAT_ID
@@ -3819,6 +3835,12 @@ async def start_watcher():
         logger.info("[momentum] scan loop scheduled")
     except Exception:
         logger.exception("[momentum] failed to schedule")
+    # 🧊 ACCUMULATION watchlist (research 2026-07-10, не торговый сигнал)
+    try:
+        asyncio.create_task(_accum_scan_loop())
+        logger.info("[accum] scan loop scheduled")
+    except Exception:
+        logger.exception("[accum] failed to schedule")
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())

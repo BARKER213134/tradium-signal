@@ -3179,6 +3179,27 @@ async def api_momentum_signals(hours: int = 336):
     return await asyncio.to_thread(_sync)
 
 
+# ── 🧊 ACCUMULATION watchlist ────────────────────────────────────────────────
+
+@app.get("/api/accumulation")
+async def api_accumulation():
+    """Монеты в фазе накопления сейчас (снапшот из watcher, обновление 30 мин).
+    Не торговый сигнал — watchlist (research 2026-07-10)."""
+    def _sync():
+        from database import _get_db
+        items = []
+        upd = None
+        for d in _get_db().accum_state.find().sort("hours", -1).limit(100):
+            u = d.get("updated_at")
+            if u is not None and upd is None:
+                upd = u.isoformat() if hasattr(u, "isoformat") else None
+            items.append({k: d.get(k) for k in
+                          ("pair", "symbol", "price", "base_hi", "base_lo",
+                           "rng_pct", "hours", "dist_up_pct", "dist_dn_pct")})
+        return {"items": items, "count": len(items), "updated_at": upd}
+    return await asyncio.to_thread(_sync)
+
+
 # ── Signals list ─────────────────────────────────────────────────────────────
 
 @app.get("/signals", response_class=HTMLResponse)
