@@ -6300,8 +6300,14 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   </select>
   <select id="jFilterTrend" onchange="filterJournal()" title="Отбор по тренду монеты (EMA20/50 per TF) на момент сигнала" style="background:var(--dark);color:var(--text);border:1px solid rgba(0,229,160,0.35);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Тренд: все</option>
+    <option value="15m_up">15m ▲</option>
+    <option value="15m_down">15m ▼</option>
+    <option value="1h_up">1h ▲</option>
+    <option value="1h_down">1h ▼</option>
     <option value="4h_up">4h ▲</option>
     <option value="4h_down">4h ▼</option>
+    <option value="1d_up">1d ▲</option>
+    <option value="1d_down">1d ▼</option>
     <option value="4h1d_up">4h+1d ▲</option>
     <option value="4h1d_down">4h+1d ▼</option>
     <option value="all_up">1h+4h+1d ▲ (все вверх)</option>
@@ -8138,8 +8144,14 @@ function filterJournal() {
     // ── Отбор по тренду монеты (EMA20/50 per TF на момент сигнала) ──
     const trendF = (document.getElementById('jFilterTrend') || {}).value || '';
     if (trendF) {
-      const t1 = s.trend_1h, t4 = s.trend_4h, td = s.trend_1d;
+      const t15 = s.trend_15m, t1 = s.trend_1h, t4 = s.trend_4h, td = s.trend_1d;
       const pass = {
+        '15m_up':    t15 === 'UP',
+        '15m_down':  t15 === 'DOWN',
+        '1h_up':     t1 === 'UP',
+        '1h_down':   t1 === 'DOWN',
+        '1d_up':     td === 'UP',
+        '1d_down':   td === 'DOWN',
         '4h_up':     t4 === 'UP',
         '4h_down':   t4 === 'DOWN',
         '4h1d_up':   t4 === 'UP' && td === 'UP',
