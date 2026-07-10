@@ -1436,7 +1436,10 @@ async def _accum_scan_loop():
             logger.info(f"[accum] в накоплении {len(items)} пар")
         except Exception:
             logger.exception('[accum] scan error')
-        await _asyncio.sleep(1800)
+            items = []
+        # пустой результат = скорее всего холодный универсум после рестарта —
+        # ретрай через 3 мин вместо 30 (2026-07-10)
+        await _asyncio.sleep(1800 if items else 180)
 
 
 async def _rider_send_telegram(sig: dict, kind: str = 'entry'):

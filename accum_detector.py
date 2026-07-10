@@ -146,10 +146,23 @@ def scan_universe(max_pairs: int = 300) -> list[dict]:
     _last_scan["started"] = utcnow().isoformat()
     try:
         pairs = get_liquid_pairs(min_volume_usd=5_000_000)[:max_pairs]
+        # На 6-й минуте после рестарта ticker-кэш бывает пуст -> 0 пар и
+        # пустой снапшот на 30 мин (2026-07-10). Ретрай + фолбэк на полный
+        # список фьючерсных пар.
+        if not pairs:
+            time.sleep(30)
+            pairs = get_liquid_pairs(min_volume_usd=5_000_000)[:max_pairs]
+        if not pairs:
+            from futures_data import get_all_futures_pairs
+            pairs = get_all_futures_pairs()[:max_pairs]
+            _last_scan["fallback"] = "all_futures_pairs"
     except Exception as e:
         _last_scan["error"] = f"pairs: {e}"
         return out
     _last_scan["pairs"] = len(pairs)
+    if not pairs:
+        _last_scan["error"] = "universe empty"
+        return out
     checked = errors = short = 0
     first_err = None
     for sym in pairs:
@@ -165,9 +178,11 @@ def scan_universe(max_pairs: int = 300) -> list[dict]:
                 first_err = f"{pair}: {e}"
     # sample: сколько пар вообще дали свечи (диагностика get_klines_any)
     try:
-        from exchange import get_klines_any
-        kl = get_klines_any(pairs[0].replace("USDT", "/USDT") if "/" not in pairs[0] else pairs[0], "1h", 320)
-        _last_scan["sample_klines"] = len(kl) if kl else 0
+        if pairs:
+            from exchange import get_klines_any
+            p0 = pairs[0].replace("USDT", "/USDT") if "/" not in pairs[0] else pairs[0]
+            kl = get_klines_any(p0, "1h", 320)
+            _last_scan["sample_klines"] = len(kl) if kl else 0
     except Exception as e:
         _last_scan["sample_klines"] = f"err: {e}"
     _last_scan.update(checked=checked, errors=errors, found=len(out),
