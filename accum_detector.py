@@ -110,10 +110,12 @@ def check_pair(pair: str, candles_1h: Optional[list[dict]] = None) -> Optional[d
         base_hi = max(x["h"] for x in win)
         base_lo = min(x["l"] for x in win)
         price = candles_1h[last]["c"]
-        # 🟢/🔴 кто внутри базы — тайкер-дельта (info, research 07-10)
+        # 🟢/🔴 кто внутри базы — тайкер-дельта (info, research 07-10).
+        # Если свечи пришли уже с полем tb (из scan_universe) — без дозапроса.
         dz = None
         try:
-            kd = _fetch_klines_delta(pair)
+            kd = (candles_1h if candles_1h and "tb" in candles_1h[0]
+                  else _fetch_klines_delta(pair))
             if kd and len(kd) > hours + 60:
                 dz = _delta_z(kd, len(kd) - hours)
         except Exception:
@@ -164,19 +166,35 @@ def scan_universe(max_pairs: int = 300) -> list[dict]:
     if not pairs:
         _last_scan["error"] = "universe empty"
         return out
-    checked = errors = short = 0
+    checked = errors = 0
     first_err = None
+    delta_map = []
     for sym in pairs:
         pair = sym.replace("USDT", "/USDT") if "/" not in sym else sym
         try:
-            st = check_pair(pair)
+            # один фьючерсный запрос на пару: и база, и текущая 24ч-дельта
+            kd = _fetch_klines_delta(pair, 320)
             checked += 1
+            if kd and len(kd) >= 260:
+                dz24 = _delta_z(kd, len(kd) - 24)
+                if dz24 is not None:
+                    delta_map.append({"pair": pair,
+                                      "symbol": pair.replace("/", "").upper(),
+                                      "dz24": dz24})
+                st = check_pair(pair, candles_1h=kd)
+            else:
+                st = check_pair(pair)
             if st:
                 out.append(st)
         except Exception as e:
             errors += 1
             if first_err is None:
                 first_err = f"{pair}: {e}"
+    try:
+        store_delta_map(delta_map)
+        _last_scan["delta_map"] = len(delta_map)
+    except Exception:
+        pass
     # sample: сколько пар вообще дали свечи (диагностика get_klines_any)
     try:
         if pairs:
@@ -234,6 +252,20 @@ def track_resolutions(new_items: list[dict]) -> list[dict]:
     except Exception:
         logger.exception("[accum] resolutions fail")
     return events
+
+
+def store_delta_map(rows: list[dict]) -> None:
+    """Текущая фьючерсная 24ч-дельта по всем сканируемым парам (для колонки
+    Δ в скринере). Полная замена снапшота."""
+    try:
+        from database import _get_db, utcnow
+        col = _get_db().delta_state
+        col.delete_many({})
+        now = utcnow()
+        if rows:
+            col.insert_many([{**r, "updated_at": now} for r in rows])
+    except Exception:
+        logger.exception("[accum] delta_map store fail")
 
 
 def store_snapshot(items: list[dict]) -> None:

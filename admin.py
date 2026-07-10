@@ -3214,6 +3214,23 @@ async def api_accumulation():
     return await asyncio.to_thread(_sync)
 
 
+@app.get("/api/delta-map")
+async def api_delta_map():
+    """Текущая фьючерсная тайкер-дельта 24ч (z-норм.) по сканируемым парам.
+    Источник: fapi klines поле 9, обновление вместе с 🧊-сканом (30 мин)."""
+    def _sync():
+        from database import _get_db
+        mp = {}
+        upd = None
+        for d in _get_db().delta_state.find():
+            mp[d.get("symbol") or ""] = d.get("dz24")
+            if upd is None:
+                u = d.get("updated_at")
+                upd = u.isoformat() if hasattr(u, "isoformat") else None
+        return {"map": mp, "count": len(mp), "updated_at": upd}
+    return await asyncio.to_thread(_sync)
+
+
 # ── Signals list ─────────────────────────────────────────────────────────────
 
 @app.get("/signals", response_class=HTMLResponse)
