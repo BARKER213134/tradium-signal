@@ -200,19 +200,62 @@ def _apply_cookies(driver) -> bool:
         return False
 
 
+_last_switch_debug: dict = {}
+
+
 def _current_pair(driver) -> Optional[str]:
-    """Какая пара сейчас на графике (кнопка 'XXX/USDT' в топбаре)."""
+    """Какая пара сейчас на графике. Ищем 'XXX/USDT' в кнопках, затем в
+    ticker/symbol-элементах, затем в document.title."""
+    import re
     from selenium.webdriver.common.by import By
+    pat = re.compile(r"\b([A-Z0-9]{1,15}/USDT)\b")
     try:
         for b in driver.find_elements(By.TAG_NAME, "button"):
             t = (b.text or "").strip()
-            if "/USDT" in t and len(t) <= 20 and b.is_displayed():
-                for tok in t.split():
-                    if "/USDT" in tok:
-                        return tok
+            if "/USDT" in t and len(t) <= 24 and b.is_displayed():
+                m = pat.search(t)
+                if m:
+                    return m.group(1)
+        for el in driver.find_elements(By.CSS_SELECTOR,
+                '[class*="ticker"], [class*="Ticker"], [class*="symbol"], '
+                '[class*="Symbol"], [class*="pair"], [class*="Pair"], header'):
+            try:
+                t = (el.text or "").strip()
+                if el.is_displayed() and t and len(t) <= 60:
+                    m = pat.search(t)
+                    if m:
+                        return m.group(1)
+            except Exception:
+                continue
+        m = pat.search(driver.title or "")
+        if m:
+            return m.group(1)
     except Exception:
         pass
     return None
+
+
+def _collect_debug(driver, target: str, cur, stage: str):
+    """Снимок DOM-состояния для /api/resonance-status (диагностика)."""
+    from selenium.webdriver.common.by import By
+    try:
+        btns = []
+        for b in driver.find_elements(By.TAG_NAME, "button")[:40]:
+            try:
+                t = (b.text or "").strip().replace("\n", " ")[:40]
+                if t and b.is_displayed():
+                    btns.append(t)
+            except Exception:
+                continue
+        _last_switch_debug.clear()
+        _last_switch_debug.update({
+            "stage": stage, "target": target, "detected": cur,
+            "title": (driver.title or "")[:120],
+            "url": (driver.current_url or "")[:120],
+            "buttons": btns[:25],
+        })
+    except Exception:
+        pass
 
 
 def _switch_pair_ui(driver, sym_base: str) -> bool:
@@ -285,6 +328,7 @@ def _switch_pair(driver, sym_base: str) -> bool:
             if _current_pair(driver) == target:
                 return True
         got = _current_pair(driver)
+        _collect_debug(driver, target, got, "after-ui-switch")
         logger.warning(f"[resonance] switch_pair: хотели {target}, на графике {got}")
         return got == target
     except Exception as e:

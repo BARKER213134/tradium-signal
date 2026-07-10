@@ -638,7 +638,14 @@ async def api_resonance_status():
         logged_in = bool(_session_cookies)
     except Exception:
         logged_in = False
-    return {"logged_in": logged_in, "cached": items, "lock_held": _resonance_lock.locked()}
+    try:
+        from resonance_chart import _last_switch_debug
+        switch_debug = dict(_last_switch_debug)
+    except Exception:
+        switch_debug = {}
+    return {"logged_in": logged_in, "cached": items,
+            "lock_held": _resonance_lock.locked(),
+            "switch_debug": switch_debug}
 
 
 def _cap_admin_cache(d: dict, max_size: int = 300) -> None:
