@@ -109,19 +109,28 @@ def _get_driver():
 
 
 def _clear_popups(driver):
-    """Удаляет все модали/туториалы/попапы которые могут блокировать UI."""
+    """Прячет туториалы/баннеры НЕразрушающе.
+
+    ВАЖНО (2026-07-10): раньше делали element.remove() — у Next.js/React
+    это ломает reconciliation и приложение падает в «Application error»
+    (это и был главный источник крашей, а не локаль). Теперь только
+    visibility/pointer-events, и НЕ трогаем SymbolSearch* (наш поиск пары).
+    """
     try:
         driver.execute_script("""
-            // Modal/Tour/Onboarding selectors
             document.querySelectorAll(
-                '[class*="Modal"], [class*="Tour"], [class*="Onboarding"], ' +
+                '[class*="Tour"], [class*="Onboarding"], ' +
                 '[class*="cookie"], [class*="Cookie"], [class*="Welcome"], ' +
-                '[class*="Ticker_modal"], [class*="Search_modal"], ' +
-                '[class*="overlay"], [class*="Overlay"], [class*="popup"], ' +
-                '[class*="Popup"], [class*="dialog"], [class*="Dialog"], ' +
                 '[class*="Notification"], [class*="banner"], [class*="Banner"], ' +
-                '[class*="LanguageSuggestion"]'
-            ).forEach(e => { try { e.remove(); } catch(_) {} });
+                '[class*="LanguageSuggestion"], [class*="checklist"], [class*="Checklist"]'
+            ).forEach(e => {
+                try {
+                    const cls = (e.className || '').toString();
+                    if (cls.includes('SymbolSearch')) return;
+                    e.style.visibility = 'hidden';
+                    e.style.pointerEvents = 'none';
+                } catch(_) {}
+            });
         """)
     except Exception:
         pass
@@ -133,21 +142,19 @@ def _login(driver):
     from selenium.webdriver.common.by import By
 
     logger.info("[resonance] Starting login flow…")
-    driver.get("https://resonance.vision/auth/login")
+    driver.get("https://resonance.vision/ru/auth/login")
     time.sleep(6)
     _clear_popups(driver)
     time.sleep(1)
 
-    # Switch to email login (default is OAuth tabs)
+    # 2026-07-10: логин-страница переделана — email-форма спрятана за кнопкой
+    # 'Email' (текст с иконкой = 'mail\nEmail', точное сравнение не ловило —
+    # форма не открывалась, логин молча падал, кластеры для анонима крашились).
     try:
-        driver.execute_script("""
-            document.querySelectorAll('span, button, div').forEach(s => {
-                const t = (s.textContent || '').trim();
-                if (t === 'Email' || t === 'Email/Password' || t === 'Email & Password') {
-                    try { s.click(); } catch(_) {}
-                }
-            });
-        """)
+        for b in driver.find_elements(By.TAG_NAME, "button"):
+            if "email" in (b.text or "").lower() and b.is_displayed():
+                driver.execute_script("arguments[0].click();", b)
+                break
     except Exception:
         pass
     time.sleep(3)
@@ -280,53 +287,75 @@ def _collect_debug(driver, target: str, cur, stage: str):
 
 
 def _switch_pair_ui(driver, sym_base: str) -> bool:
-    """Переключение через UI: клик по кнопке пары → поиск → клик результата."""
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.common.keys import Keys
-    target_full = f"{sym_base.upper()}/USDT"
-    clicked = False
-    for b in driver.find_elements(By.TAG_NAME, "button"):
-        try:
-            if "/USDT" in (b.text or "") and b.is_displayed():
-                driver.execute_script("arguments[0].click();", b)
-                clicked = True
-                break
-        except Exception:
-            continue
-    if not clicked:
-        for el in driver.find_elements(By.CSS_SELECTOR,
-                '[class*="search"], [class*="Search"], [class*="ticker"], [class*="Ticker"]'):
-            try:
-                if el.is_displayed():
-                    driver.execute_script("arguments[0].click();", el)
-                    clicked = True
-                    break
-            except Exception:
-                continue
-    time.sleep(2)
-    for inp in driver.find_elements(By.TAG_NAME, "input"):
-        try:
-            if inp.is_displayed():
-                inp.clear()
-                inp.send_keys(sym_base.upper())
-                time.sleep(3)
-                break
-        except Exception:
-            continue
-    for r in driver.find_elements(By.XPATH, f"//*[contains(text(), '{target_full}')]"):
-        try:
-            if r.is_displayed() and r.tag_name not in ("input", "html", "body"):
-                driver.execute_script("arguments[0].click();", r)
-                time.sleep(3)
-                return True
-        except Exception:
-            continue
+    """Переключение пары целиком через JS (React перерисовывает DOM —
+    Selenium-элементы протухают, stale element).
+
+    1) клик по кнопке текущей пары → открывается SymbolSearchModal
+    2) React-совместимый ввод 'XXX/USDT' в поиск (native setter + input event)
+    3) клик по ВИДИМОЙ строке результата (в DOM два списка: узкий скрытый
+       под оверлеем и настоящий — фильтруем по elementFromPoint), приоритет
+       binance perpetual-future; полный pointer-каскад в координаты строки.
+    """
+    target = f"{sym_base.upper()}/USDT"
     try:
-        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+        opened = driver.execute_script("""
+            for (const b of document.querySelectorAll('button')) {
+                if ((b.textContent||'').includes('/USDT') && b.offsetParent) { b.click(); return true; }
+            }
+            for (const el of document.querySelectorAll('[class*="search"], [class*="Search"]')) {
+                if (el.offsetParent) { el.click(); return true; }
+            }
+            return false;""")
+        if not opened:
+            return False
+        time.sleep(2.5)
+        typed = driver.execute_script("""
+            const inp = [...document.querySelectorAll('input')].find(
+                i => i.offsetParent && (i.type === 'text' || (i.placeholder||'').toLowerCase().includes('оиск') ||
+                     (i.placeholder||'').toLowerCase().includes('search')));
+            if (!inp) return false;
+            inp.focus();
+            Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+                  .set.call(inp, arguments[0]);
+            inp.dispatchEvent(new Event('input', {bubbles: true}));
+            return true;""", target)
+        if not typed:
+            return False
+        time.sleep(4)
+        clicked = driver.execute_script("""
+            const TARGET = arguments[0];
+            const cands = [];
+            for (const el of document.querySelectorAll('[data-index]')) {
+                const t = (el.textContent||'').trim();
+                if (!t.includes(TARGET)) continue;
+                const b = el.getBoundingClientRect();
+                if (b.width < 300 || b.top < 0 || b.top > window.innerHeight - 20) continue;
+                const px = b.left + b.width/2, py = b.top + Math.min(28, b.height/2);
+                const top = document.elementFromPoint(px, py);
+                if (!top || !el.contains(top)) continue;
+                cands.push({top, t, px, py});
+            }
+            if (!cands.length) return null;
+            const score = c => ((c.t.includes('perpetual') || c.t.includes('futures')) ? 2 : 0)
+                             + (c.t.toLowerCase().includes('binance') ? 1 : 0);
+            cands.sort((a, b) => score(b) - score(a));
+            const c = cands[0];
+            for (const type of ['pointerover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'])
+                c.top.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true,
+                                                          view: window, clientX: c.px, clientY: c.py}));
+            return c.t.slice(0, 60);""", target)
+        if clicked:
+            logger.info(f"[resonance] выбран результат: {clicked}")
+            time.sleep(4)
+            return True
+        # закрыть поиск, чтобы не мешал следующей попытке
+        driver.execute_script("""
+            document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));""")
         time.sleep(1)
-    except Exception:
-        pass
-    return False
+        return False
+    except Exception as e:
+        logger.warning(f"[resonance] switch_ui fail: {e}")
+        return False
 
 
 def _switch_pair(driver, sym_base: str) -> bool:
