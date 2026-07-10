@@ -3228,7 +3228,7 @@ async def api_accum_momentum(hours: int = 24):
         # 1. активные базы (снапшот) + недавние разрешения
         active = {d["pair"]: d for d in db.accum_state.find()}
         recent_res = {}
-        for e in db.accum_events.find({"resolved_at": {"$gte": since - timedelta(hours=6)}}):
+        for e in db.accum_events.find({"resolved_at": {"$gte": since - timedelta(hours=24)}}):
             recent_res.setdefault(e["pair"], []).append(e)
         # 2. momentum-сигналы за окно
         items = []
@@ -3249,8 +3249,10 @@ async def api_accum_momentum(hours: int = 24):
             if base is None:
                 for e in recent_res.get(pair, []):
                     b_start = e["resolved_at"] - timedelta(hours=e.get("hours") or 0)
+                    # сигнал в интервале базы либо ≤24ч после пробоя —
+                    # монета «из накопления» ещё сутки (по запросу 10.07)
                     if b_start - timedelta(hours=2) <= s["created_at"] <= \
-                       e["resolved_at"] + timedelta(hours=6):
+                       e["resolved_at"] + timedelta(hours=24):
                         base = {"hours": e.get("hours"), "rng_pct": e.get("rng_pct"),
                                 "delta_dz": e.get("delta_dz"),
                                 "status": f"пробой {'ВВЕРХ' if e.get('resolution') == 'UP' else 'ВНИЗ'}"}
