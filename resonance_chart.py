@@ -81,6 +81,8 @@ def _get_driver():
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option('useAutomationExtension', False)
+    # Консоль браузера — для диагностики client-side crash'ей SPA
+    opts.set_capability("goog:loggingPrefs", {"browser": "ALL"})
     opts.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
     chrome_bin = os.environ.get("CHROME_BIN")
@@ -247,12 +249,22 @@ def _collect_debug(driver, target: str, cur, stage: str):
                     btns.append(t)
             except Exception:
                 continue
+        console = []
+        try:
+            for entry in (driver.get_log("browser") or [])[-12:]:
+                msg = str(entry.get("message", ""))[:300]
+                lvl = entry.get("level", "")
+                if lvl in ("SEVERE", "ERROR", "WARNING"):
+                    console.append(f"{lvl}: {msg}")
+        except Exception:
+            pass
         _last_switch_debug.clear()
         _last_switch_debug.update({
             "stage": stage, "target": target, "detected": cur,
             "title": (driver.title or "")[:120],
             "url": (driver.current_url or "")[:120],
             "buttons": btns[:25],
+            "console": console[-8:],
         })
     except Exception:
         pass
