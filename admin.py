@@ -3214,6 +3214,63 @@ async def api_accumulation():
     return await asyncio.to_thread(_sync)
 
 
+@app.get("/api/accum-momentum")
+async def api_accum_momentum(hours: int = 24):
+    """🧊💥 База→Вход: momentum-сигналы (ignition/ten) по монетам, которые
+    были в накоплении на момент сигнала (или база разрешилась ≤6ч до него).
+    Окно 24ч — сетап «висит день»."""
+    def _sync():
+        from database import _get_db, utcnow
+        from datetime import timedelta
+        db = _get_db()
+        now = utcnow()
+        since = now - timedelta(hours=max(1, min(hours, 96)))
+        # 1. активные базы (снапшот) + недавние разрешения
+        active = {d["pair"]: d for d in db.accum_state.find()}
+        recent_res = {}
+        for e in db.accum_events.find({"resolved_at": {"$gte": since - timedelta(hours=6)}}):
+            recent_res.setdefault(e["pair"], []).append(e)
+        # 2. momentum-сигналы за окно
+        items = []
+        for s in db.new_strategy_signals.find(
+                {"strategy": {"$in": ["ignition", "ten"]},
+                 "created_at": {"$gte": since}}).sort("created_at", -1):
+            pair = s.get("pair")
+            base = None
+            src = None
+            a = active.get(pair)
+            if a:
+                # база активна сейчас — сигнал должен попадать в её интервал
+                started = now - timedelta(hours=a.get("hours") or 0)
+                if s["created_at"] >= started - timedelta(hours=2):
+                    base = {"hours": a.get("hours"), "rng_pct": a.get("rng_pct"),
+                            "delta_dz": a.get("delta_dz"), "status": "в базе"}
+                    src = "active"
+            if base is None:
+                for e in recent_res.get(pair, []):
+                    b_start = e["resolved_at"] - timedelta(hours=e.get("hours") or 0)
+                    if b_start - timedelta(hours=2) <= s["created_at"] <= \
+                       e["resolved_at"] + timedelta(hours=6):
+                        base = {"hours": e.get("hours"), "rng_pct": e.get("rng_pct"),
+                                "delta_dz": e.get("delta_dz"),
+                                "status": f"пробой {'ВВЕРХ' if e.get('resolution') == 'UP' else 'ВНИЗ'}"}
+                        src = "resolved"
+                        break
+            if base is None:
+                continue
+            at = s.get("created_at")
+            items.append({
+                "pair": pair, "strategy": s.get("strategy"),
+                "direction": s.get("direction"), "entry": s.get("entry"),
+                "tp": s.get("tp"), "sl": s.get("sl"),
+                "state": s.get("state", "WAITING"), "pnl_pct": s.get("pnl_pct"),
+                "at": at.isoformat() if hasattr(at, "isoformat") else None,
+                "base": base, "base_src": src,
+            })
+        return {"items": items, "count": len(items)}
+    return await asyncio.to_thread(_sync)
+
+
 @app.get("/api/delta-map")
 async def api_delta_map():
     """Текущая фьючерсная тайкер-дельта 24ч (z-норм.) по сканируемым парам.

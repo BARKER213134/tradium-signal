@@ -1804,6 +1804,91 @@ loadMomentum();
 safeInterval(loadMomentum, 60000);
 </script>
 
+{% elif bot == 'accum_entry' %}
+<!-- ════════════ 🧊💥 БАЗА→ВХОД — накопление + momentum-сигнал ════════════ -->
+<div class="strategy-box" style="border-color:rgba(76,201,240,0.4);">
+  <div class="strat-icon">🧊</div>
+  <div class="strat-body">
+    <div class="strat-title" style="color:#4cc9f0;">Стратегия · База → Вход (накопление + сигнал)</div>
+    Логика сетапа: монета стоит в <b>🧊 накоплении</b> (база ≥12ч, ход &lt;5% за 48ч) →
+    приходит вход <b>💥 IGNITION</b> (ранний momentum) или <b>💰 TEN</b> (цель +10%) —
+    выход из базы с подтверждением. Дельта в базе (🟢 покупатель) добавляет уверенности:
+    по бэктесту базы с покупателем выходят вверх в ~77%.
+    Сетап висит здесь <b>24 часа</b> после сигнала. Клик по паре — скопировать.
+  </div>
+</div>
+
+<div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;">
+  <span id="aeStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th style="padding:12px 14px;">Время сигнала</th>
+      <th style="padding:12px 14px;">Сигнал</th>
+      <th style="padding:12px 14px;">Пара</th>
+      <th style="padding:12px 14px;">Entry</th>
+      <th style="padding:12px 14px;">TP / SL</th>
+      <th style="padding:12px 14px;text-align:center;">Статус</th>
+      <th style="padding:12px 14px;text-align:right;">PnL</th>
+      <th style="padding:12px 14px;">База</th>
+      <th style="padding:12px 14px;text-align:center;">Δ в базе</th>
+    </tr></thead>
+    <tbody id="aeBody">
+      <tr><td colspan="9" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function loadAccumEntries() {
+  const tb = document.getElementById('aeBody');
+  try {
+    const r = await fetch('/api/accum-momentum?hours=24');
+    const d = await r.json();
+    const rows = d.items || [];
+    document.getElementById('aeStats').textContent =
+      `${rows.length} сетапов за 24ч (💥 IGNITION / 💰 TEN из накопления)`;
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;" class="text-muted">' +
+        'Пока пусто: ждём выхода монеты из 🧊 базы с сигналом 💥/💰 (сетап редкий по дизайну)</td></tr>';
+      return;
+    }
+    const SB = {ignition: '<span style="color:#ffd23e;font-weight:700;">💥 IGNITION</span>',
+                ten: '<span style="color:#00e5a0;font-weight:700;">💰 TEN</span>'};
+    const ST = {WAITING: '<span style="color:#ffd23e;">⏳</span>', TP: '<span style="color:var(--buy);">✅ TP</span>',
+                SL: '<span style="color:var(--sell);">❌ SL</span>', TIMEOUT: '<span style="color:var(--muted);">⌛</span>'};
+    tb.innerHTML = rows.map(x => {
+      const t = x.at ? new Date(x.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+      const p = (x.pair || '').replace('/USDT', '');
+      const b = x.base || {};
+      const dz = b.delta_dz;
+      const dzTxt = dz == null ? '—' :
+        `<span style="color:${dz > 1 ? 'var(--buy)' : dz < -1 ? 'var(--sell)' : 'var(--muted)'};font-weight:700;">${dz > 1 ? '🟢' : dz < -1 ? '🔴' : '⚪'} ${dz > 0 ? '+' : ''}${dz}</span>`;
+      const pnl = x.pnl_pct;
+      const pnlTxt = pnl == null ? '—' : `<span style="color:${pnl >= 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${pnl >= 0 ? '+' : ''}${(+pnl).toFixed(2)}%</span>`;
+      const fmt = v => v == null ? '—' : (+v >= 1 ? (+v).toFixed(4) : (+v).toPrecision(4));
+      return `<tr>
+        <td class="mono" style="font-size:12px;">${t}</td>
+        <td>${SB[x.strategy] || x.strategy}</td>
+        <td class="mono fw-700" style="cursor:copy;" onclick="navigator.clipboard && navigator.clipboard.writeText('${p}USDT')" title="Клик — скопировать">${p}</td>
+        <td class="mono">${fmt(x.entry)}</td>
+        <td class="mono" style="font-size:11px;"><span style="color:var(--buy);">${fmt(x.tp)}</span> / <span style="color:var(--sell);">${fmt(x.sl)}</span></td>
+        <td style="text-align:center;">${ST[x.state] || x.state}</td>
+        <td class="mono" style="text-align:right;">${pnlTxt}</td>
+        <td style="font-size:11px;color:var(--muted);">${b.hours || '?'}ч · ${b.rng_pct || '?'}% · ${b.status || ''}</td>
+        <td class="mono" style="text-align:center;">${dzTxt}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--sell);">Ошибка: ' + e.message + '</td></tr>';
+  }
+}
+loadAccumEntries();
+safeInterval(loadAccumEntries, 120000);
+</script>
+
 {% elif bot == 'setup_check' %}
 <!-- ════════════ 🎰 SETUP CHECKER — paste pair → ENTER LONG/SHORT/WAIT ════════════ -->
 <div class="strategy-box" style="border-color:rgba(255,210,62,0.45);background:linear-gradient(135deg,rgba(255,210,62,0.10),rgba(255,140,80,0.05));">
