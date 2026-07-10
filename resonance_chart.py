@@ -200,20 +200,95 @@ def _apply_cookies(driver) -> bool:
         return False
 
 
-def _switch_pair(driver, sym_base: str) -> bool:
-    """Переключает текущую пару через URL param ?symbol=XXX/USDT.
-    Резонанс хранит выбранную пару в URL — самый надёжный способ."""
-    from urllib.parse import quote
-    target = quote(f"{sym_base.upper()}/USDT", safe='')
-    url = f"https://resonance.vision/ru/clusters?symbol={target}"
+def _current_pair(driver) -> Optional[str]:
+    """Какая пара сейчас на графике (кнопка 'XXX/USDT' в топбаре)."""
+    from selenium.webdriver.common.by import By
     try:
-        driver.get(url)
-        time.sleep(5)
-        _clear_popups(driver)
+        for b in driver.find_elements(By.TAG_NAME, "button"):
+            t = (b.text or "").strip()
+            if "/USDT" in t and len(t) <= 20 and b.is_displayed():
+                for tok in t.split():
+                    if "/USDT" in tok:
+                        return tok
+    except Exception:
+        pass
+    return None
+
+
+def _switch_pair_ui(driver, sym_base: str) -> bool:
+    """Переключение через UI: клик по кнопке пары → поиск → клик результата."""
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.common.keys import Keys
+    target_full = f"{sym_base.upper()}/USDT"
+    clicked = False
+    for b in driver.find_elements(By.TAG_NAME, "button"):
+        try:
+            if "/USDT" in (b.text or "") and b.is_displayed():
+                driver.execute_script("arguments[0].click();", b)
+                clicked = True
+                break
+        except Exception:
+            continue
+    if not clicked:
+        for el in driver.find_elements(By.CSS_SELECTOR,
+                '[class*="search"], [class*="Search"], [class*="ticker"], [class*="Ticker"]'):
+            try:
+                if el.is_displayed():
+                    driver.execute_script("arguments[0].click();", el)
+                    clicked = True
+                    break
+            except Exception:
+                continue
+    time.sleep(2)
+    for inp in driver.find_elements(By.TAG_NAME, "input"):
+        try:
+            if inp.is_displayed():
+                inp.clear()
+                inp.send_keys(sym_base.upper())
+                time.sleep(3)
+                break
+        except Exception:
+            continue
+    for r in driver.find_elements(By.XPATH, f"//*[contains(text(), '{target_full}')]"):
+        try:
+            if r.is_displayed() and r.tag_name not in ("input", "html", "body"):
+                driver.execute_script("arguments[0].click();", r)
+                time.sleep(3)
+                return True
+        except Exception:
+            continue
+    try:
+        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
         time.sleep(1)
-        return True
+    except Exception:
+        pass
+    return False
+
+
+def _switch_pair(driver, sym_base: str) -> bool:
+    """Переключает пару. URL-параметр ?symbol= сайт ИГНОРИРУЕТ (проверено
+    по бандлу 2026-07-10: страница читает из query только homework/level,
+    пара живёт во внутреннем состоянии) — поэтому «резонанс всегда
+    открывает биткоин». Единственный путь — UI-поиск + верификация."""
+    target = f"{sym_base.upper()}/USDT"
+    try:
+        if "/clusters" not in (driver.current_url or ""):
+            driver.get("https://resonance.vision/ru/clusters")
+            time.sleep(5)
+        _clear_popups(driver)
+        if _current_pair(driver) == target:
+            return True
+        for _attempt in range(2):
+            _switch_pair_ui(driver, sym_base)
+            _clear_popups(driver)
+            time.sleep(2)
+            if _current_pair(driver) == target:
+                return True
+        got = _current_pair(driver)
+        logger.warning(f"[resonance] switch_pair: хотели {target}, на графике {got}")
+        return got == target
     except Exception as e:
-        logger.warning(f"[resonance] switch_pair via URL fail: {e}")
+        logger.warning(f"[resonance] switch_pair fail: {e}")
         return False
 
 
@@ -320,9 +395,11 @@ def get_cluster_screenshot(symbol: str, timeframe: str = "H1") -> Optional[bytes
         _clear_popups(driver)
         time.sleep(1)
 
-        # ── Step 2: switch pair (через URL param ?symbol=) ───────────
-        # ВСЕГДА переключаем (даже на BTC — гарантирует начальный pair).
-        _switch_pair(driver, sym_base)
+        # ── Step 2: switch pair (UI-поиск + верификация; URL-param мёртв) ──
+        # Если переключить НЕ удалось — не отдаём скриншот чужой пары.
+        if not _switch_pair(driver, sym_base):
+            logger.warning(f"[resonance] пара не переключилась на {sym_base} — abort")
+            return None
         _clear_popups(driver)
         time.sleep(2)
         # Закрываем любые tutorial кнопки после navigation

@@ -7529,7 +7529,7 @@ if (document.readyState !== 'loading') hotLoad();
         <button id="stOverlayToggleBtn" onclick="window._toggleStOverlay()" ...>🌀 ST</button>
         <button id="histMarkersToggleBtn" onclick="window._toggleHistMarkers()" ...>📍 Hist</button>
         -->
-        <button id="jResonanceBtn" onclick="if (typeof window._toggleResonance === 'function') { window._toggleResonance(); } else { alert('Сделай Ctrl+Shift+R чтобы сбросить кеш.'); }" title="Открыть кластерный график Resonance.vision в отдельном окне (login сохраняется)" style="background:linear-gradient(135deg,rgba(180,140,255,0.18),rgba(140,100,255,0.10));border:1px solid rgba(180,140,255,0.55);border-radius:6px;color:#b48cff;font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 10px;font-weight:700;">📊 Резонанс</button>
+        <button id="jResonanceBtn" onclick="if (typeof window._toggleResonance === 'function') { window._toggleResonance(); } else { alert('Сделай Ctrl+Shift+R чтобы сбросить кеш.'); }" title="Кластерный график Resonance.vision по текущей паре (PNG ~30-60с; LIVE-виджет пару не переключает — сайт не принимает её из ссылки)" style="background:linear-gradient(135deg,rgba(180,140,255,0.18),rgba(140,100,255,0.10));border:1px solid rgba(180,140,255,0.55);border-radius:6px;color:#b48cff;font-size:11px;font-family:var(--font-mono);cursor:pointer;padding:4px 10px;font-weight:700;">📊 Резонанс</button>
         <button onclick="if(_currentJournalIdx>0)openJournalChart(_currentJournalIdx-1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">◀</button>
         <span id="jChartCounter" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);min-width:50px;text-align:center;"></span>
         <button onclick="if(_currentJournalIdx<_journalFiltered.length-1)openJournalChart(_currentJournalIdx+1)" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:16px;cursor:pointer;padding:4px 12px;">▶</button>
@@ -9950,46 +9950,31 @@ window._resonanceCurrentMode = 'iframe';  // 'iframe' | 'screenshot'
 window._resonancePopup = null;
 
 window._toggleResonance = async function _toggleResonance() {
-  console.log('[resonance] toggle clicked');
-  // Determine pair from current journal modal signal
+  // ФИКС 2026-07-10: раньше открывали popup с ?symbol=XXX — но resonance.vision
+  // ИГНОРИРУЕТ пару из URL (страница читает только homework/level; пара живёт
+  // во внутреннем состоянии) — поэтому «резонанс всегда открывает биткоин».
+  // Теперь: оверлей в PNG-режиме — сервер (Selenium) сам переключает пару
+  // через UI-поиск и НЕ отдаёт скриншот, если пара не переключилась.
   const sig = _journalFiltered && _journalFiltered[_currentJournalIdx];
   if (!sig) { alert('Сначала открой график (клик по сигналу в журнале).'); return; }
-  const pairFull = ((sig.pair || sig.symbol || '').toUpperCase()).replace('/', '');
-  if (!pairFull) { alert('Нет пары в сигнале'); return; }
-  const base = pairFull.replace('USDT', '');
-  const tfMap = { '15m': 'M15', '30m': 'M30', '1h': 'H1', '4h': 'H4', '12h': 'H4', '1d': 'H4' };
-  const tf = tfMap[_modalTF || '1h'] || 'H1';
-  const url = `https://resonance.vision/ru/clusters?symbol=${encodeURIComponent(base + '/USDT')}&timeframe=${tf}`;
-
-  // Открываем popup window (или используем существующее окно).
-  // Browser сохраняет cookies между визитами — login делается ОДИН раз.
-  const popupName = 'resonance_window';
-  const popupFeatures = 'width=1280,height=820,resizable=yes,scrollbars=yes';
-
-  try {
-    // Проверим жив ли существующий popup
-    let popup = window._resonancePopup;
-    if (popup && !popup.closed) {
-      // Окно есть — переключаем URL и фокусим
-      popup.location.href = url;
-      popup.focus();
-      console.log('[resonance] focused existing popup, new url:', url);
-    } else {
-      // Открываем новое окно
-      popup = window.open(url, popupName, popupFeatures);
-      window._resonancePopup = popup;
-      if (!popup || popup.closed || typeof popup.closed === 'undefined') {
-        alert('Popup заблокирован браузером. Разреши всплывающие окна для этого сайта и попробуй снова.');
-        return;
-      }
-      popup.focus();
-      console.log('[resonance] opened new popup, url:', url);
+  const overlay = document.getElementById('jResonanceOverlay');
+  const btn = document.getElementById('jResonanceBtn');
+  if (window._resonanceOn) {
+    window._resonanceOn = false;
+    if (overlay) overlay.style.display = 'none';
+    if (btn) {
+      btn.textContent = '📊 Резонанс';
+      btn.style.background = 'linear-gradient(135deg,rgba(180,140,255,0.18),rgba(140,100,255,0.10))';
     }
-  } catch (e) {
-    console.error('[resonance] popup fail', e);
-    // Fallback — открыть в новой вкладке
-    window.open(url, '_blank', 'noopener');
+    return;
   }
+  window._resonanceOn = true;
+  if (overlay) overlay.style.display = 'flex';
+  if (btn) {
+    btn.textContent = '📊 Резонанс ✕';
+    btn.style.background = 'rgba(180,140,255,0.30)';
+  }
+  window._resonanceMode('screenshot');
 };
 
 window._resonanceMode = function _resonanceMode(mode) {
@@ -10038,7 +10023,9 @@ window._resonanceMode = function _resonanceMode(mode) {
     img.style.display = 'none';
     status.style.display = 'flex';
     status.innerHTML = `<div>⏳ Загружаю <b style="color:#b48cff;">resonance.vision</b>…</div>
-      <div style="margin-top:8px;font-size:11px;opacity:0.7;">Если видишь страницу логина — войди один раз в новой вкладке<br>через <a href="${directUrl}" target="_blank" rel="noopener" style="color:#b48cff;">↗ открыть напрямую</a>, потом обнови (toggle off/on)</div>`;
+      <div style="margin-top:8px;font-size:11px;opacity:0.8;">⚠ Сайт НЕ принимает пару из ссылки — LIVE покажет последнюю открытую там пару.<br>
+      Переключи пару поиском внутри виджета, либо используй <b>📷 PNG</b> — сервер переключает сам.<br>
+      Если видишь страницу логина — <a href="${directUrl}" target="_blank" rel="noopener" style="color:#b48cff;">↗ войди один раз</a>, потом toggle off/on</div>`;
     iframe.style.display = 'block';
     iframe.onload = () => { status.style.display = 'none'; };
     iframe.src = directUrl;
