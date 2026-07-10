@@ -3425,6 +3425,16 @@ window._lwcLoaded = window._lwcLoaded || false;
 // В v5 series.setMarkers удалён — заменён на отдельный primitive
 // LightweightCharts.createSeriesMarkers(series, markers).setMarkers(...).
 // Patch'им series object чтобы старый код .setMarkers([...]) работал.
+// Глобальный множитель размера маркеров (эмоджи на свечах). LWC размер
+// маркера = size × barSpacing, текст масштабируется вместе с формой.
+// 2026-07-10: «эмоджи не видно на графике» — было default 1, стало 2.2.
+window._markerSizeMult = 2.2;
+window._scaleMarkers = function(arr) {
+  const mult = window._markerSizeMult || 1;
+  return (arr || []).map(m =>
+    (m && m.size == null) ? Object.assign({}, m, {size: mult}) : m);
+};
+
 window._patchSeriesV4 = function(s) {
   const LWC = window.LightweightCharts;
   if (!s || s.setMarkers) return s;
@@ -3432,7 +3442,7 @@ window._patchSeriesV4 = function(s) {
   let _prim = null;
   s.setMarkers = function(arr) {
     try {
-      const m = arr || [];
+      const m = window._scaleMarkers(arr);
       if (!_prim) {
         _prim = LWC.createSeriesMarkers(s, m);
       } else if (_prim.setMarkers) {
