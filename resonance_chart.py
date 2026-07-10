@@ -327,9 +327,15 @@ def _switch_pair(driver, sym_base: str) -> bool:
     открывает биткоин». Единственный путь — UI-поиск + верификация."""
     target = f"{sym_base.upper()}/USDT"
     try:
-        if "/clusters" not in (driver.current_url or ""):
+        # ВАЖНО: только /ru/clusters! На /clusters (en-локаль) SPA падает
+        # client-side: MISSING_MESSAGE notifications (en) — у сайта битые
+        # английские переводы (диагностика 2026-07-10).
+        if "/ru/clusters" not in (driver.current_url or ""):
             driver.get("https://resonance.vision/ru/clusters")
             time.sleep(5)
+        if "application error" in (driver.title or "").lower():
+            driver.get("https://resonance.vision/ru/clusters")
+            time.sleep(6)
         _clear_popups(driver)
         if _current_pair(driver) == target:
             return True
@@ -421,17 +427,17 @@ def get_cluster_screenshot(symbol: str, timeframe: str = "H1") -> Optional[bytes
         session_expired = (time.time() - _last_login_ts) > _SESSION_TTL_S
         if _session_cookies and not session_expired:
             _apply_cookies(driver)
-            driver.get("https://resonance.vision/clusters")
+            driver.get("https://resonance.vision/ru/clusters")
             time.sleep(5)
             if "/auth" in driver.current_url.lower():
                 logger.info("[resonance] cookies expired, re-login")
                 _session_cookies = None
                 _login(driver)
-                driver.get("https://resonance.vision/clusters")
+                driver.get("https://resonance.vision/ru/clusters")
                 time.sleep(6)
         else:
             _login(driver)
-            driver.get("https://resonance.vision/clusters")
+            driver.get("https://resonance.vision/ru/clusters")
             time.sleep(8)
 
         _clear_popups(driver)
