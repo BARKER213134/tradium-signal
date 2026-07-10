@@ -11,8 +11,8 @@
     <!-- Preload LightweightCharts с того же сервера (HTTP/2, без TLS handshake к stranger).
          Раньше CDN unpkg.com давал 0.9с задержки при первом chart open.
          Локально — ~50-100мс. -->
-    <link rel="preload" as="script" href="/static/lightweight-charts.js">
-    <script defer src="/static/lightweight-charts.js"
+    <link rel="preload" as="script" href="/static/lightweight-charts.js?v=mk2">
+    <script defer src="/static/lightweight-charts.js?v=mk2"
             onload="window._lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat();"></script>
     <style>
         :root {
@@ -3429,6 +3429,10 @@ window._lwcLoaded = window._lwcLoaded || false;
 // маркера = size × barSpacing, текст масштабируется вместе с формой.
 // 2026-07-10: «эмоджи не видно на графике» — было default 1, стало 2.2.
 window._markerSizeMult = 2.2;
+// Шрифт ТЕКСТА маркеров (эмоджи): LWC рисует его layout.fontSize графика,
+// без связи с marker.size — наш патч в vendored-бандле умножает на этот
+// множитель (см. static/lightweight-charts.js, Tr(...fontSize*...)).
+window._markerFontMult = 2.0;
 window._scaleMarkers = function(arr) {
   const mult = window._markerSizeMult || 1;
   return (arr || []).map(m =>
@@ -3484,7 +3488,7 @@ async function _ensureLwc() {
   if (window._lwcLoaded) return;
   await new Promise(resolve => {
     const s = document.createElement('script');
-    s.src = '/static/lightweight-charts.js';
+    s.src = '/static/lightweight-charts.js?v=mk2';
     s.onload = () => { window._lwcLoaded = true; window._installLwcCompat(); resolve(); };
     s.onerror = () => resolve();
     document.head.appendChild(s);
