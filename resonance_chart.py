@@ -83,6 +83,15 @@ def _get_driver():
     opts.add_experimental_option('useAutomationExtension', False)
     # Консоль браузера — для диагностики client-side crash'ей SPA
     opts.set_capability("goog:loggingPrefs", {"browser": "ALL"})
+    # РУССКАЯ локаль браузера: у resonance.vision битые en-переводы
+    # (MISSING_MESSAGE: notifications.notificationPrompt) — с Accept-Language
+    # en их SPA падает в Application error даже на /ru/. Плюс блокируем
+    # push-уведомления, чтобы их notificationPrompt вообще не рендерился.
+    opts.add_argument("--lang=ru-RU")
+    opts.add_experimental_option("prefs", {
+        "intl.accept_languages": "ru-RU,ru",
+        "profile.default_content_setting_values.notifications": 2,
+    })
     opts.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
     chrome_bin = os.environ.get("CHROME_BIN")
