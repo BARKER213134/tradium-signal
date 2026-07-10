@@ -3202,7 +3202,8 @@ async def api_accumulation():
                 upd = u.isoformat() if hasattr(u, "isoformat") else None
             items.append({k: d.get(k) for k in
                           ("pair", "symbol", "price", "base_hi", "base_lo",
-                           "rng_pct", "hours", "dist_up_pct", "dist_dn_pct")})
+                           "rng_pct", "hours", "dist_up_pct", "dist_dn_pct",
+                           "delta_dz")})
         return {"items": items, "count": len(items), "updated_at": upd}
     return await asyncio.to_thread(_sync)
 
@@ -7926,6 +7927,11 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
         ).sort("resolved_at", -1).limit(100):
             rat = a.get("resolved_at")
             arrow = "ВВЕРХ" if a.get("resolution") == "UP" else "ВНИЗ"
+            _dz = a.get("delta_dz")
+            _dz_txt = ""
+            if _dz is not None:
+                _dz_txt = (" · 🟢 покупатель" if _dz > 1 else
+                           " · 🔴 продавец" if _dz < -1 else "") + f" (dz {_dz:+.1f})"
             items.append({
                 "source": "accum",
                 "symbol": (a.get("pair") or "").replace("/", "").upper(),
@@ -7934,7 +7940,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "entry": a.get("res_price"),
                 "tp1": None, "sl": None,
                 "pattern": (f"🧊 База {a.get('rng_pct')}% × {a.get('hours')}ч "
-                            f"→ пробой {arrow}"),
+                            f"→ пробой {arrow}{_dz_txt}"),
                 "score": 0, "st_passed": None, "pump_score": 0,
                 "is_top_pick": False, "top_pick_confirmations_count": 0,
                 "at": rat.isoformat() if hasattr(rat, "isoformat") else None,
@@ -8319,6 +8325,11 @@ def _compute_journal_sync(_fast_only: bool = False):
         ).sort("resolved_at", -1).limit(500):
             rat = a.get("resolved_at")
             arrow = "ВВЕРХ" if a.get("resolution") == "UP" else "ВНИЗ"
+            _dz = a.get("delta_dz")
+            _dz_txt = ""
+            if _dz is not None:
+                _dz_txt = (" · 🟢 покупатель" if _dz > 1 else
+                           " · 🔴 продавец" if _dz < -1 else "") + f" (dz {_dz:+.1f})"
             items.append({
                 "source": "accum",
                 "symbol": (a.get("pair") or "").replace("/", "").upper(),
@@ -8327,7 +8338,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "entry": a.get("res_price"),
                 "tp1": None, "sl": None,
                 "pattern": (f"🧊 База {a.get('rng_pct')}% × {a.get('hours')}ч "
-                            f"→ пробой {arrow}"),
+                            f"→ пробой {arrow}{_dz_txt}"),
                 "score": 0, "st_passed": None, "pump_score": 0,
                 "is_top_pick": False, "top_pick_confirmations_count": 0,
                 "at": rat.isoformat() if hasattr(rat, "isoformat") else None,

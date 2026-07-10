@@ -6138,10 +6138,17 @@ async function loadAccum() {
     chips.innerHTML = d.items.slice(0, 40).map(x => {
       const p = (x.pair || '').replace('/USDT', '');
       const days = x.hours >= 48 ? (x.hours/24).toFixed(1) + 'д' : x.hours + 'ч';
+      // 🟢/🔴 тайкер-дельта внутри базы: dz>1 покупатель (выход вверх в ~77%),
+      // dz<-1 продавец (вниз в ~77%). Research 2026-07-10, info-метка.
+      const dz = x.delta_dz;
+      const who = dz == null ? '' : dz > 1 ? '🟢' : dz < -1 ? '🔴' : '⚪';
+      const dzTip = dz == null ? '' :
+        ` · дельта внутри ${dz > 0 ? '+' : ''}${dz} (${dz > 1 ? 'ПОКУПАТЕЛЬ — вверх в ~77%' : dz < -1 ? 'ПРОДАВЕЦ — вниз в ~77%' : 'нейтрально'})`;
+      const brd = dz > 1 ? 'rgba(0,229,160,0.55)' : dz < -1 ? 'rgba(255,107,107,0.55)' : 'rgba(76,201,240,0.28)';
       return `<span onclick="navigator.clipboard && navigator.clipboard.writeText('${p}USDT')"
-        title="в базе ${days} · ширина ${x.rng_pct}% · до пробоя вверх ${x.dist_up_pct}% · до низа ${x.dist_dn_pct}% (клик — скопировать)"
-        style="cursor:copy;font-family:var(--font-mono);font-size:11px;padding:4px 10px;border-radius:7px;background:rgba(76,201,240,0.08);border:1px solid rgba(76,201,240,0.28);color:var(--text);">
-        <b>${p}</b> <span style="color:#4cc9f0;">${days}</span> <span style="color:var(--muted);">±${(x.rng_pct/2).toFixed(1)}%</span>
+        title="в базе ${days} · ширина ${x.rng_pct}% · до пробоя вверх ${x.dist_up_pct}% · до низа ${x.dist_dn_pct}%${dzTip} (клик — скопировать)"
+        style="cursor:copy;font-family:var(--font-mono);font-size:11px;padding:4px 10px;border-radius:7px;background:rgba(76,201,240,0.08);border:1px solid ${brd};color:var(--text);">
+        ${who} <b>${p}</b> <span style="color:#4cc9f0;">${days}</span> <span style="color:var(--muted);">±${(x.rng_pct/2).toFixed(1)}%</span>${dz != null && Math.abs(dz) > 1 ? ` <span style="color:${dz > 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${dz > 0 ? '+' : ''}${dz}</span>` : ''}
       </span>`;
     }).join('');
   } catch (e) { /* тихо */ }

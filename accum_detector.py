@@ -26,6 +26,52 @@ MIN_HOURS = 12    # сколько часов состояние должно д
 MAX_BACK = 240    # глубина поиска начала базы
 
 
+def _fetch_klines_delta(symbol: str, limit: int = 320) -> Optional[list]:
+    """1h свечи С тайкер-дельтой (поле 9 = taker buy volume). get_klines_any
+    его отбрасывает, поэтому прямой REST: fapi (prod) -> Vision (локально)."""
+    import requests
+    sym = symbol.replace("/", "").upper()
+    for url in ("https://fapi.binance.com/fapi/v1/klines",
+                "https://data-api.binance.vision/api/v3/klines"):
+        try:
+            r = requests.get(url, params=dict(symbol=sym, interval="1h",
+                                              limit=limit), timeout=10)
+            if r.status_code != 200:
+                continue
+            rows = r.json()
+            if rows and len(rows) > 60:
+                return [dict(t=int(x[0]), o=float(x[1]), h=float(x[2]),
+                             l=float(x[3]), c=float(x[4]), v=float(x[5]),
+                             tb=float(x[9])) for x in rows]
+        except Exception:
+            continue
+    return None
+
+
+def _delta_z(candles: list[dict], start_idx: int) -> Optional[float]:
+    """Кумулятивная тайкер-дельта с start_idx, нормированная random-walk:
+    sum(delta) / (std(delta) * sqrt(n)). >2 = явный покупатель, <-2 продавец.
+    Research 2026-07-10: базы с dz>2 выходят вверх в 77.5%, с dz<-2 — вниз
+    в 77.3% (n=1264). Торговой обёртки нет (ход после разрешения мал) —
+    используется как ИНФО в watchlist."""
+    try:
+        deltas = [2*c["tb"] - c["v"] for c in candles]
+        hist = deltas[max(0, start_idx-200):start_idx]
+        if len(hist) < 50:
+            return None
+        mean = sum(hist)/len(hist)
+        var = sum((d-mean)**2 for d in hist)/len(hist)
+        std = var ** 0.5
+        if std <= 0:
+            return None
+        seg = deltas[start_idx:]
+        if not seg:
+            return None
+        return round(sum(seg) / (std * len(seg) ** 0.5), 2)
+    except Exception:
+        return None
+
+
 def _state_at(candles: list[dict], idx: int) -> bool:
     """Накопление ли на баре idx (окно W заканчивается на idx включительно)."""
     if idx < W + 25:
@@ -63,6 +109,14 @@ def check_pair(pair: str, candles_1h: Optional[list[dict]] = None) -> Optional[d
         base_hi = max(x["h"] for x in win)
         base_lo = min(x["l"] for x in win)
         price = candles_1h[last]["c"]
+        # 🟢/🔴 кто внутри базы — тайкер-дельта (info, research 07-10)
+        dz = None
+        try:
+            kd = _fetch_klines_delta(pair)
+            if kd and len(kd) > hours + 60:
+                dz = _delta_z(kd, len(kd) - hours)
+        except Exception:
+            pass
         return {
             "pair": pair,
             "symbol": pair.replace("/", "").upper(),
@@ -73,6 +127,7 @@ def check_pair(pair: str, candles_1h: Optional[list[dict]] = None) -> Optional[d
             "hours": hours,
             "dist_up_pct": round((base_hi - price) / price * 100, 2),
             "dist_dn_pct": round((price - base_lo) / price * 100, 2),
+            "delta_dz": dz,
         }
     except Exception:
         logger.debug(f"[accum] check fail {pair}", exc_info=True)
@@ -132,6 +187,7 @@ def track_resolutions(new_items: list[dict]) -> list[dict]:
                 "base_hi": d["base_hi"], "base_lo": d["base_lo"],
                 "rng_pct": d.get("rng_pct"), "hours": d.get("hours"),
                 "res_price": price, "resolved_at": utcnow(),
+                "delta_dz": d.get("delta_dz"),
             })
         if events:
             db.accum_events.insert_many(events)
