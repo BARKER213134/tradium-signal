@@ -3204,7 +3204,13 @@ async def api_accumulation():
                           ("pair", "symbol", "price", "base_hi", "base_lo",
                            "rng_pct", "hours", "dist_up_pct", "dist_dn_pct",
                            "delta_dz")})
-        return {"items": items, "count": len(items), "updated_at": upd}
+        try:
+            from accum_detector import _last_scan
+            scan_debug = dict(_last_scan)
+        except Exception:
+            scan_debug = {}
+        return {"items": items, "count": len(items), "updated_at": upd,
+                "scan_debug": scan_debug}
     return await asyncio.to_thread(_sync)
 
 

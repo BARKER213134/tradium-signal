@@ -134,22 +134,44 @@ def check_pair(pair: str, candles_1h: Optional[list[dict]] = None) -> Optional[d
         return None
 
 
+_last_scan: dict = {}   # диагностика последнего скана (виден в /api/accumulation)
+
+
 def scan_universe(max_pairs: int = 300) -> list[dict]:
     """Скан ликвидных пар. Вызывается из watcher-лупа (thread)."""
     from futures_data import get_liquid_pairs
+    from database import utcnow
     out = []
+    _last_scan.clear()
+    _last_scan["started"] = utcnow().isoformat()
     try:
         pairs = get_liquid_pairs(min_volume_usd=5_000_000)[:max_pairs]
-    except Exception:
+    except Exception as e:
+        _last_scan["error"] = f"pairs: {e}"
         return out
+    _last_scan["pairs"] = len(pairs)
+    checked = errors = short = 0
+    first_err = None
     for sym in pairs:
         pair = sym.replace("USDT", "/USDT") if "/" not in sym else sym
         try:
             st = check_pair(pair)
+            checked += 1
             if st:
                 out.append(st)
-        except Exception:
-            continue
+        except Exception as e:
+            errors += 1
+            if first_err is None:
+                first_err = f"{pair}: {e}"
+    # sample: сколько пар вообще дали свечи (диагностика get_klines_any)
+    try:
+        from exchange import get_klines_any
+        kl = get_klines_any(pairs[0].replace("USDT", "/USDT") if "/" not in pairs[0] else pairs[0], "1h", 320)
+        _last_scan["sample_klines"] = len(kl) if kl else 0
+    except Exception as e:
+        _last_scan["sample_klines"] = f"err: {e}"
+    _last_scan.update(checked=checked, errors=errors, found=len(out),
+                      first_err=first_err, finished=utcnow().isoformat())
     out.sort(key=lambda x: -x["hours"])
     return out
 
