@@ -9998,123 +9998,68 @@ async def api_auto_strategy_close_all_and_start():
 
 @app.get("/api/auto-strategy/info")
 async def api_auto_strategy_info():
-    """Метаданные активной стратегии для UI вкладки."""
+    """Метаданные активной стратегии для UI вкладки.
+
+    С 2026-07-11 автоторговля = MOMENTUM-ONLY: paper/live открывают
+    ТОЛЬКО 💥 ignition и 💰 ten (гейт в paper_trader.on_signal,
+    env PAPER_MOMENTUM_ONLY, дефолт вкл). ALPHA-CV снята с сигналов.
+    """
     try:
-        from auto_strategy import (STRATEGY_NAME, STRATEGY_VERSION,
-                                    STRATEGY_DESCRIPTION,
-                                    STRATEGY_BACKTEST_METRICS,
-                                    is_enabled, get_capital_state,
-                                    MAX_CONCURRENT_POSITIONS,
-                                    MAX_TOTAL_EXPOSURE_PCT,
-                                    DAILY_LOSS_LIMIT_PCT,
-                                    DRAWDOWN_LIMIT_PCT,
-                                    CV_TIER_ALLOWED, BAD_HOURS,
-                                    BAD_WEEKDAYS, MIN_Q_SCORE,
-                                    SIZING_RULES,
-                                    EXIT_PARTIAL_PCT,
-                                    EXIT_TRAIL_DISTANCE_R,
-                                    EXIT_TIMEOUT_HOURS)
-        enabled = is_enabled()
-        cap = await asyncio.to_thread(get_capital_state)
-        # SIZING rules — преобразуем в человеко-читаемый формат
-        sizing_human = [
-            {"setup": "CV SHORT match",  "multiplier": 3.0, "base_pct": 1.0},
-            {"setup": "CV SHORT mixed",  "multiplier": 2.5, "base_pct": 1.0},
-            {"setup": "CV LONG match",   "multiplier": 2.0, "base_pct": 1.0},
-            {"setup": "CV other",        "multiplier": 1.5, "base_pct": 1.0},
-            {"setup": "Second Flip",     "multiplier": 1.0, "base_pct": 1.0},
-            {"setup": "Triple Confluence", "multiplier": 0.7, "base_pct": 1.0},
-        ]
-        # v3.0: current market regime + pause state
-        current_regime = None
-        regime_config = None
-        regime_changed_at = None
-        regime_previous = None
-        try:
-            from auto_strategy import detect_regime, REGIME_CONFIG
-            current_regime = await asyncio.to_thread(detect_regime)
-            regime_config = REGIME_CONFIG.get(current_regime, {})
-            # Last regime change from Mongo
-            from database import _get_db
-            db = _get_db()
-            cur_doc = db.system.find_one({'_id': 'auto_strategy_current_regime'})
-            if cur_doc:
-                regime_changed_at = cur_doc.get('changed_at')
-                regime_previous = cur_doc.get('previous')
-                if hasattr(regime_changed_at, 'isoformat'):
-                    regime_changed_at = regime_changed_at.isoformat()
-        except Exception:
-            pass
-        pause_state = None
-        try:
-            from auto_strategy import is_paused_now
-            paused, p_state = await asyncio.to_thread(is_paused_now)
-            if paused:
-                import time as _t
-                pu = p_state.get('paused_until_ts') or 0
-                pause_state = {
-                    'paused': True,
-                    'remaining_hours': round((pu - int(_t.time())) / 3600, 1),
-                    'reason': p_state.get('reason', ''),
-                }
-        except Exception:
-            pass
+        import paper_trader as _pt
+        enabled = os.getenv("PAPER_MOMENTUM_ONLY", "1") == "1"
+        mode = await asyncio.to_thread(_pt.get_mode)
         return {
-            "name": STRATEGY_NAME,
-            "version": STRATEGY_VERSION,
-            "description": STRATEGY_DESCRIPTION,
+            "name": "MOMENTUM",
+            "version": "v1.0",
+            "description": (
+                "Торгуются только два валидированных momentum-источника: "
+                "💥 IGNITION — ранний вход в начале импульса (1h, объём+дельта, "
+                "TP +6% / SL −3%, горизонт 72ч) и 💰 TEN — импульс на 30m с целью "
+                "+10% (TP +10% / SL −5%, горизонт 96ч). Родные TP/SL стратегий, "
+                "без ATR-пересчёта чекера. Остальные источники дают сигналы и "
+                "алерты как раньше, но автоторговля их не открывает "
+                "(90д-бэктест: все ниже безубытка)."
+            ),
             "enabled": enabled,
-            "backtest": STRATEGY_BACKTEST_METRICS,
-            "current_regime": current_regime,  # BULL/BEAR/CHOP
-            "regime_config": {
-                "directions": list(regime_config.get('allowed_directions', ())),
-                "verdicts": list(regime_config.get('allowed_verdicts', ())),
-                "exit": regime_config.get('exit_label'),
-                "size_mult": regime_config.get('size_mult'),
-                "notes": regime_config.get('notes'),
-            } if regime_config else None,
-            "regime_changed_at": regime_changed_at,
-            "regime_previous": regime_previous,
-            "pause": pause_state,
+            "backtest": {
+                "win_rate_pct": "65–70",
+                "avg_r_per_trade": "~1.0",
+                "profit_factor": "≥2",
+                "trades_after_filter": "90д валидация",
+            },
             "rules": {
                 "entry_whitelist": [
-                    f"cryptovizor + tier ∈ {list(CV_TIER_ALLOWED) + ['None (default mixed)']}",
-                    "second_flip + LONG + tier=match (or None → default)",
-                    "triple_confluence + LONG + tier=mixed (or None → default)",
+                    "💥 ignition — WR 70%, EV +2.75%/сделку (TP6/SL3, 72ч)",
+                    "💰 ten — WR 65%, EV +4.73%/сделку (TP10/SL5, 96ч)",
                 ],
                 "blocked_sources": [
-                    "volume_surge (WR 10%, AvgR -0.63R)",
-                    "volcano (WR 8%, AvgR -0.76R)",
-                    "supertrend (WR 28%, AvgR -0.30R)",
-                    "vol_accum SHORT (WR 15%)",
-                    "cluster, tradium, anomaly (no edge or low N)",
-                    "CV + tier=against (low edge +0.16R, skip for concentration)",
+                    "supertrend / st_mtf / st_daily (ST4h-флип: WR 34.8% LONG, 27.7% SHORT — ниже BE 38)",
+                    "confluence (WR 41.6% лучший срез — на грани, нестабилен)",
+                    "cluster / whale / shark / accum (нет направленного edge)",
+                    "rider_short (PF 1.29, но lumpy — алерты остаются, автовход нет)",
+                    "impulse / fade (родители ignition/ten — поздний вход)",
                 ],
-                "time_filters": {
-                    "bad_hours_utc": list(BAD_HOURS) or "DISABLED (24/7)",
-                    "bad_weekdays": list(BAD_WEEKDAYS) or "DISABLED (7 days/week)",
-                    "min_q_score": MIN_Q_SCORE,
-                },
             },
-            "sizing": sizing_human,
+            "sizing": [
+                {"setup": f"режим {mode['name'].upper()} — size {mode['size_min']}–{mode['size_max']}%",
+                 "multiplier": 1.0, "base_pct": (mode['size_min'] + mode['size_max']) / 2},
+                {"setup": f"плечо ×{mode['lev_min']}–{mode['lev_max']} (low-cap ≤4×)",
+                 "multiplier": 1.0, "base_pct": 0},
+            ],
             "limits": {
-                "max_concurrent_positions": MAX_CONCURRENT_POSITIONS,
-                "max_total_exposure_pct": MAX_TOTAL_EXPOSURE_PCT,
-                "daily_loss_limit_pct": DAILY_LOSS_LIMIT_PCT,
-                "drawdown_limit_pct": DRAWDOWN_LIMIT_PCT,
-                "per_trade_hard_cap_pct": 5.0,
+                "max_concurrent_positions": _pt.MAX_POSITIONS,
+                "max_total_exposure_pct": _pt.MAX_POSITIONS * mode['size_max'],
+                "daily_loss_limit_pct": "—",
+                "drawdown_limit_pct": "—",
+                "per_trade_hard_cap_pct": mode['size_max'],
             },
             "exit_logic": {
-                "method": "1h RSI / SMA(14)RSI crossover",
-                "long_exit": "RSI < SMA на закрытом 1h баре",
-                "short_exit": "RSI > SMA на закрытом 1h баре",
-                "backup_sl": "Signal SL (hard stop)",
-                "monitor_interval_sec": 180,
-                "partial_close_pct": EXIT_PARTIAL_PCT,
-                "trail_distance_r": EXIT_TRAIL_DISTANCE_R,
-                "max_hold_hours": EXIT_TIMEOUT_HOURS,
+                "method": "родные TP/SL источника (first-touch)",
+                "long_exit": "💥 TP +6% / SL −3% · 💰 TP +10% / SL −5%",
+                "short_exit": "momentum-источники только LONG",
+                "backup_sl": "SL стратегии (hard stop)",
+                "max_hold_hours": 96,
             },
-            "capital_state": cap,
         }
     except Exception as e:
         import traceback

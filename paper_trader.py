@@ -1638,6 +1638,9 @@ async def on_signal(signal_data: dict):
         _alpha_cv_active = alpha_st.is_enabled()
     except Exception:
         _alpha_cv_active = False
+    # ALPHA-CV не знает momentum-источники (ignition/ten) — их не гейтим
+    if source in ("ignition", "ten"):
+        _alpha_cv_active = False
     if _alpha_cv_active:
         try:
             sig_eval = dict(signal_data)
@@ -1675,6 +1678,19 @@ async def on_signal(signal_data: dict):
         except Exception as e:
             logger.warning(f"[ALPHA-CV-GATE] error: {e}")
 
+    # ── 0x. 🎯 АВТОТОРГОВЛЯ: только momentum-источники (2026-07-11) ──
+    # По запросу: торгуем ТОЛЬКО 💥 ignition (бэктест WR 70%, EV +2.75%) и
+    # 💰 ten (WR 65%, EV +4.73%). Остальные источники в 90д-бэктесте ниже
+    # безубытка. Их сигналы/алерты живут как раньше — но paper/live их
+    # не открывает. Выключить гейт: Railway env PAPER_MOMENTUM_ONLY=0.
+    _MOMENTUM_SOURCES = ("ignition", "ten")
+    _is_momentum_src = source in _MOMENTUM_SOURCES
+    if os.getenv("PAPER_MOMENTUM_ONLY", "1") == "1" and not _is_momentum_src:
+        _log_rejection(signal_data,
+            f"[MOMENTUM-ONLY] автоторговля: только 💥 ignition / 💰 ten — "
+            f"source='{source}' не торгуется")
+        return None
+
     # ── 0y. RSI/SMA 12h STATE filter (P0 — universal +14-17 WR пп) ──
     # Backtest 14d (10475 signals × all sources): RSI>SMA на 12h для LONG /
     # RSI<SMA для SHORT даёт +14-17 WR пп. Применяем как HARD gate — если
@@ -1682,7 +1698,10 @@ async def on_signal(signal_data: dict):
     # Pairs без 12h данных (fapi banned) пропускаются (avoid false rejects).
     try:
         import rsi12h_state as r12
-        match, state_info = await asyncio.to_thread(r12.check_direction_match, pair, direction)
+        # momentum-источники валидированы БЕЗ этого фильтра (у ignition RSI
+        # разогрет by design — 12h-state их бы косил) — пропускаем гейт.
+        match, state_info = (True, {}) if _is_momentum_src else \
+            await asyncio.to_thread(r12.check_direction_match, pair, direction)
         if not match:
             st = state_info.get('state', '?')
             rv = state_info.get('rsi', '?')
@@ -1700,7 +1719,7 @@ async def on_signal(signal_data: dict):
     # set Railway env PAPER_ONLY_NEW_STRATEGIES=1. Default = "0" (все работают).
     NEW_STRATEGIES = ("volume_surge", "triple_confluence", "vol_accum")
     only_new = os.getenv("PAPER_ONLY_NEW_STRATEGIES", "0") == "1"
-    if only_new and source not in NEW_STRATEGIES:
+    if only_new and source not in NEW_STRATEGIES and not _is_momentum_src:
         _log_rejection(signal_data,
             f"[ONLY-NEW-STRATEGIES] paused — source='{source}' rejected")
         return None
@@ -1803,21 +1822,35 @@ async def on_signal(signal_data: dict):
     # ── 3. Entry Checker ──
     # Timeout 30s: внутри check_entry sync HTTP к Binance (ST 1h state).
     # Без таймаута зависал hot path on_signal на 60+ сек при лагах сети.
+    # Для momentum-источников чекер advisory: при краше/таймауте не режем
+    # сигнал, а идём дальше с родными уровнями из signal_data.
+    _mom_fallback_check = {"ok": True, "verdict": "go", "counts": {},
+                           "summary": "checker unavailable (momentum fallback)",
+                           "signal": {}, "market": {}}
     try:
         check = await asyncio.wait_for(
             asyncio.to_thread(ve.check_entry, pair, direction, signal_data),
             timeout=30.0,
         )
     except asyncio.TimeoutError:
-        _log_rejection(signal_data, "[ENTRY-CHECK TIMEOUT] check_entry >30s — пропуск")
-        return None
+        if _is_momentum_src:
+            check = _mom_fallback_check
+        else:
+            _log_rejection(signal_data, "[ENTRY-CHECK TIMEOUT] check_entry >30s — пропуск")
+            return None
     except Exception as _e:
         logger.exception(f"[paper on_signal] check_entry crashed: {_e}")
-        _log_rejection(signal_data, f"[ENTRY-CHECK CRASH] {_e}")
-        return None
+        if _is_momentum_src:
+            check = _mom_fallback_check
+        else:
+            _log_rejection(signal_data, f"[ENTRY-CHECK CRASH] {_e}")
+            return None
     if not check.get("ok"):
-        _log_rejection(signal_data, f"[ENTRY-CHECK ERROR] {check.get('error','?')}")
-        return None
+        if _is_momentum_src:
+            check = _mom_fallback_check
+        else:
+            _log_rejection(signal_data, f"[ENTRY-CHECK ERROR] {check.get('error','?')}")
+            return None
 
     verdict = check.get("verdict")
     counts = check.get("counts", {})
@@ -1830,11 +1863,17 @@ async def on_signal(signal_data: dict):
                  for c in check.get("checks", []) if c.get("status") == "warn"]
 
     if verdict == "skip":
-        bad_str = " | ".join(bad_full) if bad_full else "—"
-        _log_rejection(signal_data,
-                       f"[ENTRY-CHECK SKIP] src={source} {summary} → BAD: {bad_str}")
-        logger.info(f"Paper SKIP (rule): {symbol} {direction} — {summary}")
-        return None
+        if _is_momentum_src:
+            # 💥/💰 валидированы собственным бэктестом (родные TP/SL/горизонт);
+            # чек-лист Setup Checker их условий не знает — вердикт advisory.
+            logger.info(f"Paper ALLOW (momentum bypass verdict=skip): {symbol} {direction}")
+            verdict = "go"
+        else:
+            bad_str = " | ".join(bad_full) if bad_full else "—"
+            _log_rejection(signal_data,
+                           f"[ENTRY-CHECK SKIP] src={source} {summary} → BAD: {bad_str}")
+            logger.info(f"Paper SKIP (rule): {symbol} {direction} — {summary}")
+            return None
 
     if verdict == "caution":
         # CAUTION — разрешаем для прибыльных источников (по бэктесту 48h):
@@ -1847,6 +1886,7 @@ async def on_signal(signal_data: dict):
         # ВСЕ supertrend (vip/mtf/daily) в CAUTION — старый блок -83R
         # перекрывался плохой ST UNK при отвалившемся API.
         is_strong = (
+            _is_momentum_src or
             source in ("cluster", "cryptovizor", "confluence", "tradium",
                        "supertrend", "supertrend_vip", "supertrend_mtf",
                        "supertrend_daily") or
@@ -1874,8 +1914,15 @@ async def on_signal(signal_data: dict):
     phase = market.get("phase", "NEUTRAL")
 
     entry = sig.get("entry") or signal_data.get("entry") or signal_data.get("price")
-    tp1 = sig.get("tp1")
-    sl = sig.get("sl")
+    # momentum-источники торгуются РОДНЫМИ уровнями своей стратегии
+    # (ignition TP+6/SL-3, ten TP+10/SL-5) — не ATR-пересчётом чекера
+    if _is_momentum_src:
+        entry = signal_data.get("entry") or entry
+        tp1 = signal_data.get("tp1") or signal_data.get("tp") or sig.get("tp1")
+        sl = signal_data.get("sl") or sig.get("sl")
+    else:
+        tp1 = sig.get("tp1")
+        sl = sig.get("sl")
     if not (entry and tp1 and sl):
         _log_rejection(signal_data,
                        f"[NO-LEVELS] entry={entry} tp={tp1} sl={sl} — сигнал без полных уровней")

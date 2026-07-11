@@ -1493,6 +1493,20 @@ async def _momentum_scan_loop():
                         await _asyncio.sleep(1.2)
                     except Exception:
                         pass
+                    # 🎯 Автоторговля: 💥 ignition / 💰 ten идут в paper
+                    # (родные TP/SL; live-аккаунты зеркалят paper) — 2026-07-11
+                    if s.get('strategy') in ('ignition', 'ten'):
+                        try:
+                            import time as _time
+                            import paper_trader as _pt
+                            sd = {**s, 'source': s['strategy'],
+                                  'tp1': s.get('tp'), 'at_ts': int(_time.time())}
+                            pos = await _pt.on_signal(sd)
+                            if pos:
+                                logger.info(f"[momentum] paper OPEN {s['pair']} "
+                                            f"{s['strategy']} @ {s.get('entry')}")
+                        except Exception:
+                            logger.exception('[momentum] paper hook fail')
         except Exception:
             logger.exception('[momentum] scan error')
         # 🏄 RIDER SHORT — тренд-райдер (research 2026-07-09): входы только

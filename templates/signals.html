@@ -2844,7 +2844,7 @@ safeInterval(loadConflicts, 30000);
   <div onclick="_toggleStrategyAccordion()" style="padding:12px 18px;cursor:pointer;display:flex;align-items:center;gap:14px;user-select:none;" id="strategyHeader">
     <div style="font-size:24px;">🎯</div>
     <div style="flex:1;">
-      <div style="font-size:14px;font-weight:800;color:var(--text);" id="strategyName">ALPHA-CV v1.2</div>
+      <div style="font-size:14px;font-weight:800;color:var(--text);" id="strategyName">MOMENTUM v1.0</div>
       <div style="font-size:11px;color:var(--muted);" id="strategySubline">Загрузка…</div>
     </div>
     <div id="strategyStatusBadge" style="padding:6px 12px;border-radius:6px;font-size:11px;font-weight:700;font-family:var(--font-mono);">…</div>
@@ -2876,7 +2876,7 @@ async function _loadStrategyHeader() {
     const stEl = document.getElementById('strategyStatusBadge');
     if (nameEl) nameEl.textContent = `${d.name} ${d.version}`;
     const bt = d.backtest || {};
-    if (subEl) subEl.textContent = `Backtest: WR ${bt.win_rate_pct}% · AvgR +${bt.avg_r_per_trade}R · PF ${bt.profit_factor} · ${bt.trades_after_filter} trades`;
+    if (subEl) subEl.textContent = `Только 💥 IGNITION (WR 70%) + 💰 TEN (WR 65%) · ${bt.trades_after_filter}`;
     if (stEl) {
       const clr = d.enabled ? '#00e5a0' : '#ff5e9c';
       stEl.style.background = clr + '22';
@@ -2908,8 +2908,7 @@ async function _loadStrategyDetails() {
   const bl = (rules.blocked_sources || []).map(r => `<li style="padding:2px 0;color:#ff8c80;list-style:none;">❌ ${r}</li>`).join('');
   const szRows = sz.map(s =>
     `<tr><td style="padding:3px 8px;font-size:11px;">${s.setup}</td>
-     <td style="padding:3px 8px;text-align:right;color:#ffd23e;font-weight:700;font-size:11px;">${s.multiplier}×</td>
-     <td style="padding:3px 8px;text-align:right;color:#aaa;font-size:11px;">${(s.base_pct * s.multiplier).toFixed(1)}%</td></tr>`
+     <td style="padding:3px 8px;text-align:right;color:#aaa;font-size:11px;">${s.base_pct ? '~' + s.base_pct.toFixed(1) + '%' : ''}</td></tr>`
   ).join('');
   det.innerHTML = `
     <div style="font-size:11px;color:var(--muted);padding:10px 0;line-height:1.5;">${data.description || ''}</div>
@@ -2926,7 +2925,7 @@ async function _loadStrategyDetails() {
     <div style="margin-top:16px;">
       <div style="font-size:11px;font-weight:700;color:#ffd23e;margin-bottom:4px;">POSITION SIZING</div>
       <table style="width:100%;border-collapse:collapse;">${szRows}</table>
-      <div style="font-size:10px;color:var(--muted);margin-top:4px;">Base 1% × multiplier. Hard cap: 5% per trade.</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px;">Размер задаётся режимом (⚙️ Режим торговли) — гейт источников от него не зависит.</div>
     </div>
     <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
       <div>
@@ -2943,8 +2942,6 @@ async function _loadStrategyDetails() {
         <div style="font-size:11px;line-height:1.6;color:var(--text);">
           <div>📊 Max позиций: <b>${lim.max_concurrent_positions}</b></div>
           <div>💰 Max exposure: <b>${lim.max_total_exposure_pct}%</b></div>
-          <div>📉 Daily loss limit: <b>-${lim.daily_loss_limit_pct}%</b></div>
-          <div>🛑 Drawdown limit: <b>${lim.drawdown_limit_pct}%</b></div>
           <div>🔒 Per-trade cap: <b>${lim.per_trade_hard_cap_pct}%</b></div>
         </div>
       </div>
