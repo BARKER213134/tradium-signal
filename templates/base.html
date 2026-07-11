@@ -3600,6 +3600,12 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   const chart = klinecharts.init(container);
   container._kChart = chart;
   chart.setStyles(window._kcStyles);
+  // Точность цены от её величины: default=2 знака давал деления оси по
+  // 0.01 — монеты дешевле ~0.03 (PROMPT/SXT/PUMPBTC) влезали целиком в
+  // одно деление и сплющивались в полоску.
+  const _lastC = bars[bars.length - 1].c || 1;
+  const _prec = _lastC >= 100 ? 2 : _lastC >= 1 ? 4 : _lastC >= 0.01 ? 6 : 8;
+  try { chart.setPriceVolumePrecision(_prec, 0); } catch (e) {}
   chart.applyNewData(bars.map(b => ({
     timestamp: b.t, open: b.o, high: b.h, low: b.l, close: b.c,
     volume: b.v, turnover: b.v * b.c, delta: b.d,
