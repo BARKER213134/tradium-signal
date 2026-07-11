@@ -3472,15 +3472,19 @@ window._kcRegisterIndicators = function() {
       }];
     }
   });
-  // SuperTrend 10/3 — зелёная/красная ступенька как на старых графиках
+  // SuperTrend — зелёная/красная ступенька; параметры per-TF через
+  // calcParams (как в классическом рендере: 15m 7/2.0, 30m 7/2.5,
+  // 1h-12h 10/3, 1d 14/3) — иначе на мелких ТФ линия слишком далеко.
   klinecharts.registerIndicator({
-    name: 'ST', shortName: 'ST 10/3',
+    name: 'ST', shortName: 'ST',
+    calcParams: [10, 3],
     figures: [
       { key: 'stUp', title: 'ST↑ ', type: 'line', styles: () => ({ color: '#00e5a0' }) },
       { key: 'stDn', title: 'ST↓ ', type: 'line', styles: () => ({ color: '#ff6b6b' }) },
     ],
-    calc: (list) => {
-      const period = 10, mult = 3;
+    calc: (list, indicator) => {
+      const period = (indicator.calcParams && indicator.calcParams[0]) || 10;
+      const mult = (indicator.calcParams && indicator.calcParams[1]) || 3;
       const out = list.map(() => ({}));
       if (list.length < period + 5) return out;
       let atr = 0;
@@ -3568,7 +3572,12 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   })));
   chart.createIndicator('MA', true, { id: 'candle_pane' });
   chart.overrideIndicator({ name: 'MA', calcParams: [50, 100, 200] }, 'candle_pane');
-  if (opts.st !== false) chart.createIndicator('ST', true, { id: 'candle_pane' });
+  if (opts.st !== false) {
+    chart.createIndicator('ST', true, { id: 'candle_pane' });
+    const stMap = { '15m': [7, 2], '30m': [7, 2.5], '1h': [10, 3], '2h': [10, 3],
+                    '4h': [10, 3], '12h': [10, 3], '1d': [14, 3] };
+    chart.overrideIndicator({ name: 'ST', calcParams: stMap[tf] || [10, 3] }, 'candle_pane');
+  }
   chart.createIndicator('VOL', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
   // Delta-панель только если данные фьючерсные (BingX-фолбэк дельту не отдаёт)
   const hasDelta = bars.some(b => b.d != null);
