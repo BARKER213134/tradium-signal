@@ -3426,14 +3426,47 @@ function domTableSort(thEl, colIdx, type) {
 //   window.renderKChart(containerEl, 'UNIUSDT', '1h', {signals:true, levels:true})
 window._kcLoaded = false;
 window._kcEnsureLib = function() {
-  return new Promise((resolve) => {
+  if (window._kcLibPromise) return window._kcLibPromise;
+  window._kcLibPromise = new Promise((resolve) => {
     if (window.klinecharts) { resolve(); return; }
     const s = document.createElement('script');
     s.src = '/static/klinecharts.min.js';
     s.onload = () => resolve();
-    s.onerror = () => resolve();
+    s.onerror = () => { window._kcLibPromise = null; resolve(); };
     document.head.appendChild(s);
   });
+  return window._kcLibPromise;
+};
+// Прогреваем библиотеку заранее — первое открытие графика не платит 205KB
+setTimeout(() => { try { window._kcEnsureLib(); } catch (e) {} }, 2000);
+
+// Клиентский кэш свечей: TTL 45с — повторное открытие/переключение ТФ
+// туда-обратно и навигация стрелками рендерятся мгновенно.
+window._kcBarsCache = window._kcBarsCache || new Map();
+window._kcFetchBars = async function(sym, tf, limit) {
+  const key = sym + '|' + tf + '|' + limit;
+  const c = window._kcBarsCache.get(key);
+  if (c && Date.now() - c.ts < 45000) return c.bars;
+  try {
+    const r = await fetch(`/api/klines-delta?symbol=${encodeURIComponent(sym)}&tf=${tf}&limit=${limit}`);
+    const d = await r.json();
+    if (d.ok && d.bars && d.bars.length) {
+      window._kcBarsCache.set(key, { ts: Date.now(), bars: d.bars });
+      if (window._kcBarsCache.size > 60) {
+        const oldest = [...window._kcBarsCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
+        if (oldest) window._kcBarsCache.delete(oldest[0]);
+      }
+      return d.bars;
+    }
+  } catch (e) {}
+  return null;
+};
+// Тихий префетч (для стрелок ◀▶ в модалке — соседние пары уже в кэше)
+window._kcPrefetch = function(sym, tf, limit) {
+  try {
+    const s = (sym || '').toUpperCase().replace('/', '').replace(/USDT$/, '') + 'USDT';
+    window._kcFetchBars(s, tf, limit || 400);
+  } catch (e) {}
 };
 
 window._kcRegisterIndicators = function() {
@@ -3553,13 +3586,8 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   container.style.position = 'relative';
 
   const sym = (symbol || 'BTC').toUpperCase().replace('/', '').replace(/USDT$/, '') + 'USDT';
-  let bars;
-  try {
-    const r = await fetch(`/api/klines-delta?symbol=${encodeURIComponent(sym)}&tf=${tf}&limit=${opts.limit || 500}`);
-    const d = await r.json();
-    if (!d.ok || !d.bars || !d.bars.length) throw new Error('нет данных');
-    bars = d.bars;
-  } catch (e) {
+  const bars = await window._kcFetchBars(sym, tf, opts.limit || 500);
+  if (!bars) {
     container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ff6b6b;">Нет данных: ${sym}</div>`;
     return null;
   }

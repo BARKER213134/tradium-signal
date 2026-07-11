@@ -10475,6 +10475,13 @@ async function openJournalChart(idx, forceTF) {
   }
   if (_engine === 'kchart' && window.renderKChart) {
     await window.renderKChart(container, sym, _modalTF, { signals: true, levels: true, limit: 400 });
+    // префетч соседних сигналов — стрелки ◀▶ открываются мгновенно
+    if (window._kcPrefetch) {
+      const nb = [_journalFiltered[idx + 1], _journalFiltered[idx - 1]];
+      nb.forEach(n => {
+        if (n) window._kcPrefetch(n.symbol || (n.pair || '').replace('/', ''), _modalTF, 400);
+      });
+    }
     return;
   }
 
