@@ -3591,11 +3591,43 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     'border:1px solid rgba(148,163,184,0.35);border-radius:8px;padding:8px 10px;font-size:11px;' +
     'font-family:var(--font-mono,monospace);color:#dfe6f0;pointer-events:none;max-width:300px;line-height:1.5;';
   container.appendChild(tip);
+  container._kcTip = tip;
+  container._kcSigs = [];
+  // Тултип: overlay-события KLineChart ненадёжны (крошечная зона хита) —
+  // ищем ближайший маркер по пиксельным координатам сами (порог 18px).
+  let _tipTimer = null;
   container.addEventListener('mousemove', (ev) => {
     const rc = container.getBoundingClientRect();
-    container._kcMouse = { x: ev.clientX - rc.left, y: ev.clientY - rc.top };
+    const mx = ev.clientX - rc.left, my = ev.clientY - rc.top;
+    container._kcMouse = { x: mx, y: my };
+    if (_tipTimer) return;
+    _tipTimer = setTimeout(() => {
+      _tipTimer = null;
+      const sigs = container._kcSigs || [];
+      const t = container._kcTip;
+      if (!t || !sigs.length || !container._kChart) return;
+      let best = null, bestD = 18;
+      try {
+        const coords = container._kChart.convertToPixel(
+          sigs.map(s => ({ timestamp: s.ts, value: s.value })),
+          { paneId: 'candle_pane' });
+        (coords || []).forEach((c, i) => {
+          if (!c || c.x == null) return;
+          const dist = Math.sqrt((c.x - mx) ** 2 + (c.y - my) ** 2);
+          if (dist < bestD) { bestD = dist; best = sigs[i]; }
+        });
+      } catch (e) { return; }
+      if (best) {
+        t.innerHTML = best.info;
+        t.style.left = Math.max(4, Math.min(mx + 14, container.clientWidth - 310)) + 'px';
+        t.style.top = Math.max(4, my + 14) + 'px';
+        t.style.display = 'block';
+      } else {
+        t.style.display = 'none';
+      }
+    }, 70);
   });
-  container._kcTip = tip;
+  container.addEventListener('mouseleave', () => { if (container._kcTip) container._kcTip.style.display = 'none'; });
 
   // плавающая панель рисования
   const tb = document.createElement('div');
@@ -3632,20 +3664,12 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           const info = `<b style="color:${color}">${emoji} ${(s.source || '').toUpperCase()} · ${s.direction || ''}</b><br>` +
                        `${dt} · entry <b>${s.entry ?? '—'}</b>` +
                        (s.pattern ? `<br><span style="color:#aab3c2;">${String(s.pattern).slice(0, 90)}</span>` : '');
+          const value = long ? bar.l : bar.h;
+          container._kcSigs.push({ ts, value, info });
           chart.createOverlay({
             name: 'sigMarker', groupId: 'sig', lock: true,
-            points: [{ timestamp: ts, value: long ? bar.l : bar.h }],
+            points: [{ timestamp: ts, value }],
             extendData: { emoji, dir: long ? 'LONG' : 'SHORT', color },
-            onMouseEnter: () => {
-              const t = container._kcTip;
-              if (!t) return;
-              t.innerHTML = info;
-              const m = container._kcMouse || { x: 20, y: 20 };
-              t.style.left = Math.max(4, Math.min(m.x + 14, container.clientWidth - 310)) + 'px';
-              t.style.top = Math.max(4, m.y + 14) + 'px';
-              t.style.display = 'block';
-            },
-            onMouseLeave: () => { if (container._kcTip) container._kcTip.style.display = 'none'; },
           });
         });
       } catch (e) {}
