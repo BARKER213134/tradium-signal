@@ -3464,7 +3464,7 @@ window._kcRegisterIndicators = function() {
       const below = d.dir === 'LONG';
       return [{
         type: 'text',
-        ignoreEvent: true,
+        ignoreEvent: false,   // события нужны для тултипа при наведении
         attrs: { x: c.x, y: c.y + (below ? 6 : -6), text: d.emoji || '•',
                  align: 'center', baseline: below ? 'top' : 'bottom' },
         styles: { color: d.color || '#fff', size: 15,
@@ -3570,8 +3570,23 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   chart.overrideIndicator({ name: 'MA', calcParams: [50, 100, 200] }, 'candle_pane');
   if (opts.st !== false) chart.createIndicator('ST', true, { id: 'candle_pane' });
   chart.createIndicator('VOL', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
-  chart.createIndicator('DELTA', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
+  // Delta-панель только если данные фьючерсные (BingX-фолбэк дельту не отдаёт)
+  const hasDelta = bars.some(b => b.d != null);
+  if (hasDelta) chart.createIndicator('DELTA', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
   if (opts.rsi !== false) chart.createIndicator('RSI', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
+
+  // тултип для сигналов (показывается overlay-событиями sigMarker)
+  const tip = document.createElement('div');
+  tip.className = 'kc-tip';
+  tip.style.cssText = 'position:absolute;display:none;z-index:30;background:rgba(10,14,20,0.96);' +
+    'border:1px solid rgba(148,163,184,0.35);border-radius:8px;padding:8px 10px;font-size:11px;' +
+    'font-family:var(--font-mono,monospace);color:#dfe6f0;pointer-events:none;max-width:300px;line-height:1.5;';
+  container.appendChild(tip);
+  container.addEventListener('mousemove', (ev) => {
+    const rc = container.getBoundingClientRect();
+    container._kcMouse = { x: ev.clientX - rc.left, y: ev.clientY - rc.top };
+  });
+  container._kcTip = tip;
 
   // плавающая панель рисования
   const tb = document.createElement('div');
@@ -3603,11 +3618,25 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           const ts = s.at_ts * 1000;
           const bar = barAt(ts);
           const long = s.direction === 'LONG';
+          const color = long ? '#00e5a0' : '#ff6b6b';
+          const dt = new Date(ts).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+          const info = `<b style="color:${color}">${emoji} ${(s.source || '').toUpperCase()} · ${s.direction || ''}</b><br>` +
+                       `${dt} · entry <b>${s.entry ?? '—'}</b>` +
+                       (s.pattern ? `<br><span style="color:#aab3c2;">${String(s.pattern).slice(0, 90)}</span>` : '');
           chart.createOverlay({
             name: 'sigMarker', groupId: 'sig', lock: true,
             points: [{ timestamp: ts, value: long ? bar.l : bar.h }],
-            extendData: { emoji, dir: long ? 'LONG' : 'SHORT',
-                          color: long ? '#00e5a0' : '#ff6b6b' },
+            extendData: { emoji, dir: long ? 'LONG' : 'SHORT', color },
+            onMouseEnter: () => {
+              const t = container._kcTip;
+              if (!t) return;
+              t.innerHTML = info;
+              const m = container._kcMouse || { x: 20, y: 20 };
+              t.style.left = Math.max(4, Math.min(m.x + 14, container.clientWidth - 310)) + 'px';
+              t.style.top = Math.max(4, m.y + 14) + 'px';
+              t.style.display = 'block';
+            },
+            onMouseLeave: () => { if (container._kcTip) container._kcTip.style.display = 'none'; },
           });
         });
       } catch (e) {}
@@ -3619,7 +3648,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       try {
         const r = await fetch(`/api/levels?pair=${encodeURIComponent(sym.replace('USDT', '') + '/USDT')}&tf=${tf}`);
         const d = await r.json();
-        (d.zones || []).slice(0, 10).forEach(z => {
+        // не захламляем: топ-3 сильнейших на сторону, сила >= 40
+        const zs = (d.zones || []).filter(z => (z.strength || 0) >= 40);
+        const sups = zs.filter(z => z.kind === 'support').sort((a, b) => (b.strength || 0) - (a.strength || 0)).slice(0, 3);
+        const ress = zs.filter(z => z.kind === 'resistance').sort((a, b) => (b.strength || 0) - (a.strength || 0)).slice(0, 3);
+        sups.concat(ress).forEach(z => {
           chart.createOverlay({
             name: 'priceLine', groupId: 'lvl', lock: true,
             points: [{ value: z.mid || z.low }],

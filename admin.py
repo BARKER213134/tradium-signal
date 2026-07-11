@@ -3273,35 +3273,66 @@ async def api_accum_momentum(hours: int = 24):
     return await asyncio.to_thread(_sync)
 
 
+_kd_cache: dict = {}   # {(sym, tf, lim): (ts, payload)} — ускорение открытия графика
+_KD_TTL_S = 90
+
+
 @app.get("/api/klines-delta")
 async def api_klines_delta(symbol: str, tf: str = "1h", limit: int = 500):
-    """Свечи с тайкер-дельтой для 📈 большого графика (KLineChart).
-    fapi (фьючерсы) -> Vision (спот-фолбэк). d = 2×takerBuy − vol."""
+    """Свечи с тайкер-дельтой для 📈 KChart-графиков.
+    fapi (фьючерсы) -> Vision (спот) -> get_klines_any (BingX, без дельты).
+    Кэш 90с — график открывается мгновенно при повторных заходах."""
     def _sync():
+        import time as _t
         import requests as _rq
         sym = (symbol or "").upper().replace("/", "")
         if not sym.endswith("USDT"):
             sym += "USDT"
         itv = tf if tf in ("1m", "5m", "15m", "30m", "1h", "4h", "12h", "1d") else "1h"
         lim = max(50, min(int(limit or 500), 1000))
+        key = (sym, itv, lim)
+        cached = _kd_cache.get(key)
+        if cached and _t.time() - cached[0] < _KD_TTL_S:
+            return cached[1]
+        payload = None
         for url in ("https://fapi.binance.com/fapi/v1/klines",
                     "https://data-api.binance.vision/api/v3/klines"):
             try:
                 r = _rq.get(url, params=dict(symbol=sym, interval=itv, limit=lim),
-                            timeout=12)
+                            timeout=10)
                 if r.status_code != 200:
                     continue
                 rows = r.json()
                 if not rows or len(rows) < 10:
                     continue
-                return {"ok": True, "symbol": sym, "tf": itv,
-                        "bars": [{"t": int(x[0]), "o": float(x[1]), "h": float(x[2]),
-                                  "l": float(x[3]), "c": float(x[4]), "v": float(x[5]),
-                                  "d": round(2 * float(x[9]) - float(x[5]), 2)}
-                                 for x in rows]}
+                payload = {"ok": True, "symbol": sym, "tf": itv,
+                           "bars": [{"t": int(x[0]), "o": float(x[1]), "h": float(x[2]),
+                                     "l": float(x[3]), "c": float(x[4]), "v": float(x[5]),
+                                     "d": round(2 * float(x[9]) - float(x[5]), 2)}
+                                    for x in rows]}
+                break
             except Exception:
                 continue
-        return {"ok": False, "error": "no data", "bars": []}
+        if payload is None:
+            # Пара не на Binance (спот/фьючи) — BingX-фолбэк без дельты
+            try:
+                from exchange import get_klines_any
+                kl = get_klines_any(sym[:-4] + "/USDT", itv, lim)
+                if kl and len(kl) >= 10:
+                    payload = {"ok": True, "symbol": sym, "tf": itv, "delta": False,
+                               "bars": [{"t": int(c["t"]), "o": c["o"], "h": c["h"],
+                                         "l": c["l"], "c": c["c"], "v": c.get("v", 0),
+                                         "d": None} for c in kl]}
+            except Exception:
+                pass
+        if payload is None:
+            payload = {"ok": False, "error": "no data", "bars": []}
+        else:
+            _kd_cache[key] = (_t.time(), payload)
+            if len(_kd_cache) > 200:
+                for k, _ in sorted(_kd_cache.items(), key=lambda kv: kv[1][0])[:80]:
+                    _kd_cache.pop(k, None)
+        return payload
     return await asyncio.to_thread(_sync)
 
 
