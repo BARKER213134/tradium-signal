@@ -2046,15 +2046,38 @@ function bcToggleLevels() {
   if (_bcShowLvl) bcLoad(); else _bcEnsure().removeOverlay({ groupId: 'lvl' });
 }
 
+// ── 2026-07-11: страница переведена на ОБЩИЙ рендер window.renderKChart
+// (base.html) — та же логика, что в модалке журнала: маркеры LONG под
+// свечой / SHORT над, Delta, ST, уровни, плавающая панель рисования.
+// Переопределения ниже перекрывают старые функции выше (hoisting).
+function _bcChart() { const el = document.getElementById('bigChart'); return el && el._kChart; }
+async function bcLoad() {
+  const pairIn = (document.getElementById('bcPair').value || 'BTC').toUpperCase().replace('/USDT', '').replace('USDT', '');
+  _bcPair = pairIn;
+  const st = document.getElementById('bcStatus');
+  st.textContent = '⏳ загрузка ' + pairIn + ' ' + _bcTf + '…';
+  const chart = await window.renderKChart(document.getElementById('bigChart'), pairIn, _bcTf,
+    { signals: _bcShowSig, levels: _bcShowLvl, limit: 700 });
+  st.textContent = chart ? `${pairIn}/USDT · ${_bcTf}` : '❌ нет данных по ' + pairIn;
+}
+function bcDraw(name) { const c = _bcChart(); if (c) c.createOverlay({ name, groupId: 'draw' }); }
+function bcClearDraw() { const c = _bcChart(); if (c) c.removeOverlay({ groupId: 'draw' }); }
+function bcToggleSignals() {
+  _bcShowSig = !_bcShowSig;
+  document.getElementById('bcSigBtn').classList.toggle('bc-on', _bcShowSig);
+  bcLoad();
+}
+function bcToggleLevels() {
+  _bcShowLvl = !_bcShowLvl;
+  document.getElementById('bcLvlBtn').classList.toggle('bc-on', _bcShowLvl);
+  bcLoad();
+}
+
 (function bcBoot() {
   const qp = new URLSearchParams(location.search).get('pair');
   if (qp) document.getElementById('bcPair').value = qp.toUpperCase().replace('/USDT', '').replace('USDT', '');
   document.querySelectorAll('.bc-tf').forEach(b => b.classList.toggle('bc-on', b.dataset.tf === _bcTf));
-  const s = document.createElement('script');
-  s.src = '/static/klinecharts.min.js';
-  s.onload = () => bcLoad();
-  s.onerror = () => { document.getElementById('bcStatus').textContent = '❌ klinecharts.min.js не загрузился'; };
-  document.head.appendChild(s);
+  bcLoad();  // renderKChart сам лениво грузит klinecharts.min.js
 })();
 </script>
 

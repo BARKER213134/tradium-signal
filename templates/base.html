@@ -3452,6 +3452,26 @@ window._kcRegisterIndicators = function() {
     }],
     calc: (list) => list.map(b => ({ delta: b.delta }))
   });
+  // Сигнальный маркер: LONG — эмодзи ПОД свечой, SHORT — НАД свечой
+  klinecharts.registerOverlay({
+    name: 'sigMarker',
+    totalStep: 1,
+    lock: true,
+    createPointFigures: ({ overlay, coordinates }) => {
+      const d = overlay.extendData || {};
+      const c = coordinates[0];
+      if (!c) return [];
+      const below = d.dir === 'LONG';
+      return [{
+        type: 'text',
+        ignoreEvent: true,
+        attrs: { x: c.x, y: c.y + (below ? 6 : -6), text: d.emoji || '•',
+                 align: 'center', baseline: below ? 'top' : 'bottom' },
+        styles: { color: d.color || '#fff', size: 15,
+                  backgroundColor: 'transparent' },
+      }];
+    }
+  });
   // SuperTrend 10/3 — зелёная/красная ступенька как на старых графиках
   klinecharts.registerIndicator({
     name: 'ST', shortName: 'ST 10/3',
@@ -3566,20 +3586,28 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     else chart.createOverlay({ name, groupId: 'draw' });
   });
 
-  // сигналы платформы на свечах
+  // сигналы платформы на свечах: LONG — под свечой (у low), SHORT — над (у high)
   if (opts.signals !== false) {
     (async () => {
       try {
         const r = await fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=30`);
         const d = await r.json();
         const t0 = bars[0].t;
+        const interval = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
+        const barAt = (ts) => {
+          const idx = Math.min(bars.length - 1, Math.max(0, Math.floor((ts - t0) / interval)));
+          return bars[idx];
+        };
         (d.items || []).filter(s => s.at_ts && s.at_ts * 1000 >= t0).slice(0, 300).forEach(s => {
           const emoji = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier) : '•';
+          const ts = s.at_ts * 1000;
+          const bar = barAt(ts);
+          const long = s.direction === 'LONG';
           chart.createOverlay({
-            name: 'simpleAnnotation', groupId: 'sig', lock: true,
-            points: [{ timestamp: s.at_ts * 1000, value: s.entry || undefined }],
-            extendData: emoji,
-            styles: { text: { color: s.direction === 'LONG' ? '#00e5a0' : '#ff6b6b', size: 15 } },
+            name: 'sigMarker', groupId: 'sig', lock: true,
+            points: [{ timestamp: ts, value: long ? bar.l : bar.h }],
+            extendData: { emoji, dir: long ? 'LONG' : 'SHORT',
+                          color: long ? '#00e5a0' : '#ff6b6b' },
           });
         });
       } catch (e) {}
