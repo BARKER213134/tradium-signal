@@ -797,6 +797,11 @@
       window._disposeChart = function(container) {
         try {
           if (!container) return;
+          // 📈 KChart-инстанс (KLineChart) — освобождаем тоже
+          if (container._kChart && window.klinecharts) {
+            try { window.klinecharts.dispose(container); } catch (_) {}
+            container._kChart = null;
+          }
           const old = container._lwcChart;
           if (old && typeof old.remove === 'function') {
             try { old.remove(); } catch (_) {}
@@ -3415,6 +3420,202 @@ function domTableSort(thEl, colIdx, type) {
 // Рисует свечной график с маркером входа, linemarkers для Entry/TP/SL,
 // TF-переключатель и tooltip. Используется в accordion-ах Cryptovizor,
 // Аномалий и Confluence (замена TradingView виджета).
+// ═══════════ 📈 KChart — общий KLineChart-рендер (везде один график) ═══════════
+// candles + MA50/100/200 + VOL + DELTA(тайкер) + RSI + ST-линия + сигналы +
+// уровни + плавающая панель рисования. Использование:
+//   window.renderKChart(containerEl, 'UNIUSDT', '1h', {signals:true, levels:true})
+window._kcLoaded = false;
+window._kcEnsureLib = function() {
+  return new Promise((resolve) => {
+    if (window.klinecharts) { resolve(); return; }
+    const s = document.createElement('script');
+    s.src = '/static/klinecharts.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => resolve();
+    document.head.appendChild(s);
+  });
+};
+
+window._kcRegisterIndicators = function() {
+  if (window._kcLoaded || !window.klinecharts) return;
+  window._kcLoaded = true;
+  // Delta (тайкер) — поле delta в барах
+  klinecharts.registerIndicator({
+    name: 'DELTA', shortName: 'Delta',
+    figures: [{
+      key: 'delta', title: 'Delta: ', type: 'bar', baseValue: 0,
+      styles: (data) => {
+        let v = 0;
+        try { v = (data.current && data.current.indicatorData ? data.current.indicatorData.delta : 0) || 0; } catch (e) {}
+        return { color: v >= 0 ? 'rgba(0,229,160,0.75)' : 'rgba(255,107,107,0.75)' };
+      }
+    }],
+    calc: (list) => list.map(b => ({ delta: b.delta }))
+  });
+  // SuperTrend 10/3 — зелёная/красная ступенька как на старых графиках
+  klinecharts.registerIndicator({
+    name: 'ST', shortName: 'ST 10/3',
+    figures: [
+      { key: 'stUp', title: 'ST↑ ', type: 'line', styles: () => ({ color: '#00e5a0' }) },
+      { key: 'stDn', title: 'ST↓ ', type: 'line', styles: () => ({ color: '#ff6b6b' }) },
+    ],
+    calc: (list) => {
+      const period = 10, mult = 3;
+      const out = list.map(() => ({}));
+      if (list.length < period + 5) return out;
+      let atr = 0;
+      const trs = [];
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i], pc = i > 0 ? list[i-1].close : c.close;
+        trs.push(Math.max(c.high - c.low, Math.abs(c.high - pc), Math.abs(c.low - pc)));
+      }
+      atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+      let fu = null, fl = null, trend = 1;
+      for (let i = period; i < list.length; i++) {
+        atr = (atr * (period - 1) + trs[i]) / period;
+        const hl2 = (list[i].high + list[i].low) / 2;
+        const bu = hl2 + mult * atr, bl = hl2 - mult * atr;
+        if (fu === null) { fu = bu; fl = bl; }
+        else {
+          fu = (bu < fu || list[i-1].close > fu) ? bu : fu;
+          fl = (bl > fl || list[i-1].close < fl) ? bl : fl;
+          if (trend === 1 && list[i].close < fl) trend = -1;
+          else if (trend === -1 && list[i].close > fu) trend = 1;
+        }
+        out[i] = trend === 1 ? { stUp: fl } : { stDn: fu };
+      }
+      return out;
+    }
+  });
+};
+
+window._kcStyles = {
+  grid: { horizontal: { color: 'rgba(148,163,184,0.06)' }, vertical: { color: 'rgba(148,163,184,0.06)' } },
+  candle: {
+    bar: { upColor: '#00e5a0', downColor: '#ff6b6b', upBorderColor: '#00e5a0',
+           downBorderColor: '#ff6b6b', upWickColor: '#00e5a0', downWickColor: '#ff6b6b' },
+    priceMark: { last: { upColor: '#00e5a0', downColor: '#ff6b6b' } },
+    tooltip: { showRule: 'follow_cross', showType: 'standard' },
+  },
+  xAxis: { axisLine: { color: 'rgba(148,163,184,0.2)' }, tickText: { color: '#7a8ba6' } },
+  yAxis: { axisLine: { color: 'rgba(148,163,184,0.2)' }, tickText: { color: '#7a8ba6' } },
+  crosshair: { horizontal: { line: { color: 'rgba(148,163,184,0.4)' } },
+               vertical: { line: { color: 'rgba(148,163,184,0.4)' } } },
+};
+
+window._kcToolbarHtml = `
+  <div class="kc-toolbar" style="position:absolute;top:8px;left:8px;z-index:20;display:flex;gap:4px;background:rgba(10,14,20,0.85);border:1px solid rgba(148,163,184,0.25);border-radius:8px;padding:4px 6px;backdrop-filter:blur(6px);">
+    <button data-kc="segment" title="Линия">📏</button>
+    <button data-kc="horizontalStraightLine" title="Горизонталь">─</button>
+    <button data-kc="rayLine" title="Луч">➚</button>
+    <button data-kc="fibonacciLine" title="Фибоначчи">🔢</button>
+    <button data-kc="priceLine" title="Ценовая метка">💲</button>
+    <button data-kc="__clear" title="Удалить построения" style="color:#ff6b6b;">🗑</button>
+  </div>
+  <style>.kc-toolbar button{background:none;border:none;color:#aab3c2;font-size:14px;cursor:pointer;padding:2px 5px;border-radius:5px;}
+  .kc-toolbar button:hover{background:rgba(91,140,255,0.2);}</style>`;
+
+window.renderKChart = async function(container, symbol, tf, opts) {
+  opts = opts || {};
+  if (typeof container === 'string') container = document.getElementById(container);
+  if (!container) return null;
+  await window._kcEnsureLib();
+  if (!window.klinecharts) { container.innerHTML = '<div style="padding:40px;color:#ff6b6b;">klinecharts не загрузился</div>'; return null; }
+  window._kcRegisterIndicators();
+  // dispose предыдущего (и LWC, и KChart)
+  if (container._kChart) { try { klinecharts.dispose(container); } catch (e) {} container._kChart = null; }
+  if (window._disposeChart) { try { window._disposeChart(container); } catch (e) {} }
+  container.innerHTML = '';
+  container.style.position = 'relative';
+
+  const sym = (symbol || 'BTC').toUpperCase().replace('/', '').replace(/USDT$/, '') + 'USDT';
+  let bars;
+  try {
+    const r = await fetch(`/api/klines-delta?symbol=${encodeURIComponent(sym)}&tf=${tf}&limit=${opts.limit || 500}`);
+    const d = await r.json();
+    if (!d.ok || !d.bars || !d.bars.length) throw new Error('нет данных');
+    bars = d.bars;
+  } catch (e) {
+    container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ff6b6b;">Нет данных: ${sym}</div>`;
+    return null;
+  }
+  const chart = klinecharts.init(container);
+  container._kChart = chart;
+  chart.setStyles(window._kcStyles);
+  chart.applyNewData(bars.map(b => ({
+    timestamp: b.t, open: b.o, high: b.h, low: b.l, close: b.c,
+    volume: b.v, turnover: b.v * b.c, delta: b.d,
+  })));
+  chart.createIndicator('MA', true, { id: 'candle_pane' });
+  chart.overrideIndicator({ name: 'MA', calcParams: [50, 100, 200] }, 'candle_pane');
+  if (opts.st !== false) chart.createIndicator('ST', true, { id: 'candle_pane' });
+  chart.createIndicator('VOL', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
+  chart.createIndicator('DELTA', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
+  if (opts.rsi !== false) chart.createIndicator('RSI', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
+
+  // плавающая панель рисования
+  const tb = document.createElement('div');
+  tb.innerHTML = window._kcToolbarHtml;
+  container.appendChild(tb);
+  tb.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-kc]');
+    if (!b) return;
+    ev.stopPropagation();
+    const name = b.dataset.kc;
+    if (name === '__clear') chart.removeOverlay({ groupId: 'draw' });
+    else chart.createOverlay({ name, groupId: 'draw' });
+  });
+
+  // сигналы платформы на свечах
+  if (opts.signals !== false) {
+    (async () => {
+      try {
+        const r = await fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=30`);
+        const d = await r.json();
+        const t0 = bars[0].t;
+        (d.items || []).filter(s => s.at_ts && s.at_ts * 1000 >= t0).slice(0, 300).forEach(s => {
+          const emoji = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier) : '•';
+          chart.createOverlay({
+            name: 'simpleAnnotation', groupId: 'sig', lock: true,
+            points: [{ timestamp: s.at_ts * 1000, value: s.entry || undefined }],
+            extendData: emoji,
+            styles: { text: { color: s.direction === 'LONG' ? '#00e5a0' : '#ff6b6b', size: 15 } },
+          });
+        });
+      } catch (e) {}
+    })();
+  }
+  // уровни levels_engine
+  if (opts.levels !== false) {
+    (async () => {
+      try {
+        const r = await fetch(`/api/levels?pair=${encodeURIComponent(sym.replace('USDT', '') + '/USDT')}&tf=${tf}`);
+        const d = await r.json();
+        (d.zones || []).slice(0, 10).forEach(z => {
+          chart.createOverlay({
+            name: 'priceLine', groupId: 'lvl', lock: true,
+            points: [{ value: z.mid || z.low }],
+            styles: { line: { color: z.kind === 'support' ? 'rgba(0,229,160,0.55)' : 'rgba(255,107,107,0.55)', size: (z.strength || 0) >= 60 ? 2 : 1 } },
+          });
+        });
+      } catch (e) {}
+    })();
+  }
+  // resize: перерисовать все живые KChart-инстансы при изменении окна
+  if (!window._kcResizeHooked) {
+    window._kcResizeHooked = true;
+    window._kcInstances = window._kcInstances || new Set();
+    window.addEventListener('resize', () => {
+      (window._kcInstances || []).forEach(el => {
+        try { if (el._kChart && el.isConnected) el._kChart.resize(); } catch (e) {}
+      });
+    });
+  }
+  window._kcInstances = window._kcInstances || new Set();
+  window._kcInstances.add(container);
+  return chart;
+};
+
 window._lwcLoaded = window._lwcLoaded || false;
 
 // Compat shim: LWC v5 заменил addCandlestickSeries/addLineSeries/etc
