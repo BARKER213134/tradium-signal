@@ -78,6 +78,16 @@ def _refresh_batch_cache():
     except Exception:
         pass
 
+    if not cache["ticker"]:
+        # ticker/24hr не ответил. Пустой кэш НЕ коммитим с TTL: иначе 2 мин
+        # get_liquid_pairs отдаёт пустой универсум, и сканеры (accum, momentum)
+        # стирают state / пропускают циклы (2026-07-11: базы 🧊 исчезли).
+        logger.warning("Batch cache: ticker/24hr failed — "
+                       + ("keeping previous cache" if _batch_cache.get("ticker")
+                          else "no previous cache, will retry next call"))
+        if not _batch_cache.get("ticker"):
+            _batch_cache = cache   # ts не штампуем — следующий вызов ретраит
+        return
     _batch_cache = cache
     _batch_cache_ts = now
     logger.info(f"Batch cache refreshed: {len(cache['funding'])} funding, {len(cache['ticker'])} tickers")

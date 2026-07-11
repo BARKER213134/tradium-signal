@@ -1431,15 +1431,21 @@ async def _accum_scan_loop():
         try:
             from accum_detector import scan_universe, store_snapshot, track_resolutions
             items = await _asyncio.to_thread(scan_universe, 300)
+            if not items:
+                # None = скан прерван (пустой универсум); [] = 0 баз на 300 пар,
+                # почти наверняка сбой klines. Прошлый снапшот НЕ трогаем
+                # (полная замена пустым стирала все базы — 2026-07-11).
+                logger.warning('[accum] пустой скан — снапшот сохранён, ретрай 3 мин')
+                await _asyncio.sleep(180)
+                continue
             await _asyncio.to_thread(track_resolutions, items)
             await _asyncio.to_thread(store_snapshot, items)
             logger.info(f"[accum] в накоплении {len(items)} пар")
         except Exception:
             logger.exception('[accum] scan error')
-            items = []
-        # пустой результат = скорее всего холодный универсум после рестарта —
-        # ретрай через 3 мин вместо 30 (2026-07-10)
-        await _asyncio.sleep(1800 if items else 180)
+            await _asyncio.sleep(180)
+            continue
+        await _asyncio.sleep(1800)
 
 
 async def _rider_send_telegram(sig: dict, kind: str = 'entry'):

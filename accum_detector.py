@@ -140,8 +140,10 @@ def check_pair(pair: str, candles_1h: Optional[list[dict]] = None) -> Optional[d
 _last_scan: dict = {}   # диагностика последнего скана (виден в /api/accumulation)
 
 
-def scan_universe(max_pairs: int = 300) -> list[dict]:
-    """Скан ликвидных пар. Вызывается из watcher-лупа (thread)."""
+def scan_universe(max_pairs: int = 300):
+    """Скан ликвидных пар. Вызывается из watcher-лупа (thread).
+    Возвращает list[dict] с базами или None если скан прерван (пустой
+    универсум) — в этом случае снапшот трогать нельзя."""
     from futures_data import get_liquid_pairs
     from database import utcnow
     out = []
@@ -149,23 +151,24 @@ def scan_universe(max_pairs: int = 300) -> list[dict]:
     _last_scan["started"] = utcnow().isoformat()
     try:
         pairs = get_liquid_pairs(min_volume_usd=5_000_000)[:max_pairs]
-        # На 6-й минуте после рестарта ticker-кэш бывает пуст -> 0 пар и
-        # пустой снапшот на 30 мин (2026-07-10). Ретрай + фолбэк на полный
-        # список фьючерсных пар.
+        # На 6-й минуте после рестарта ticker-кэш бывает пуст -> 0 пар.
+        # Сбрасываем TTL кэша и ретраим (2026-07-11: без сброса ретрай
+        # бесполезен — TTL 2 мин держит пустоту).
         if not pairs:
+            import futures_data as _fd
+            _fd._batch_cache_ts = 0
             time.sleep(30)
             pairs = get_liquid_pairs(min_volume_usd=5_000_000)[:max_pairs]
-        if not pairs:
-            from futures_data import get_all_futures_pairs
-            pairs = get_all_futures_pairs()[:max_pairs]
-            _last_scan["fallback"] = "all_futures_pairs"
     except Exception as e:
         _last_scan["error"] = f"pairs: {e}"
-        return out
+        return None
     _last_scan["pairs"] = len(pairs)
     if not pairs:
-        _last_scan["error"] = "universe empty"
-        return out
+        # Скан по алфавитному списку-фолбэку НЕЛЬЗЯ: другой универсум стирает
+        # базы пар вне топ-300 по алфавиту (2026-07-11: QTUM/WOO/XMR).
+        # Пропускаем цикл — watcher ресолипнет через 3 мин.
+        _last_scan["error"] = "universe empty — скан пропущен"
+        return None
     checked = errors = 0
     first_err = None
     delta_map = []
