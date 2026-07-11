@@ -1889,6 +1889,175 @@ loadAccumEntries();
 safeInterval(loadAccumEntries, 120000);
 </script>
 
+{% elif bot == 'bigchart' %}
+<!-- ════════════ 📈 БОЛЬШОЙ ГРАФИК — KLineChart (свечи+MA+Vol+Delta+сигналы+рисование) ════════════ -->
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+  <input id="bcPair" type="text" value="BTC" placeholder="Пара (BTC, UNI...)" onkeydown="if(event.key==='Enter')bcLoad()"
+    style="width:120px;background:var(--dark);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;font-family:var(--font-mono);color:var(--text);text-transform:uppercase;">
+  <div id="bcTfBar" style="display:flex;gap:4px;">
+    <button onclick="bcSetTf('15m')" data-tf="15m" class="bc-tf">15m</button>
+    <button onclick="bcSetTf('30m')" data-tf="30m" class="bc-tf">30m</button>
+    <button onclick="bcSetTf('1h')" data-tf="1h" class="bc-tf bc-on">1h</button>
+    <button onclick="bcSetTf('4h')" data-tf="4h" class="bc-tf">4h</button>
+    <button onclick="bcSetTf('12h')" data-tf="12h" class="bc-tf">12h</button>
+    <button onclick="bcSetTf('1d')" data-tf="1d" class="bc-tf">1d</button>
+  </div>
+  <span style="color:var(--border);">|</span>
+  <button onclick="bcDraw('segment')" class="bc-tool" title="Линия по двум точкам">📏 Линия</button>
+  <button onclick="bcDraw('horizontalStraightLine')" class="bc-tool" title="Горизонтальный уровень">─ Горизонт</button>
+  <button onclick="bcDraw('rayLine')" class="bc-tool" title="Луч">➚ Луч</button>
+  <button onclick="bcDraw('fibonacciLine')" class="bc-tool" title="Уровни Фибоначчи по двум точкам">🔢 Фибо</button>
+  <button onclick="bcDraw('priceLine')" class="bc-tool" title="Ценовая метка">💲 Цена</button>
+  <button onclick="bcClearDraw()" class="bc-tool" style="color:var(--sell);" title="Удалить свои построения">🗑</button>
+  <span style="color:var(--border);">|</span>
+  <button id="bcSigBtn" onclick="bcToggleSignals()" class="bc-tool bc-on" title="Наши сигналы на свечах">🧿 Сигналы</button>
+  <button id="bcLvlBtn" onclick="bcToggleLevels()" class="bc-tool bc-on" title="Уровни levels_engine">🎯 Уровни</button>
+  <span id="bcStatus" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-left:auto;"></span>
+</div>
+<style>
+.bc-tf, .bc-tool { background:var(--dark); border:1px solid var(--border); border-radius:6px; color:var(--muted);
+  font-size:11px; font-family:var(--font-mono); padding:5px 10px; cursor:pointer; }
+.bc-tf.bc-on, .bc-tool.bc-on { background:rgba(91,140,255,0.18); border-color:var(--electric); color:#fff; }
+.bc-tool:hover, .bc-tf:hover { border-color:var(--electric); }
+</style>
+<div id="bigChart" style="height:calc(100vh - 250px);min-height:520px;background:#0a0e14;border:1px solid var(--border);border-radius:12px;overflow:hidden;"></div>
+
+<script>
+let _bc = null, _bcTf = localStorage.getItem('bc_tf') || '1h', _bcPair = '';
+let _bcShowSig = true, _bcShowLvl = true;
+
+function _bcInitStyles(chart) {
+  chart.setStyles({
+    grid: { horizontal: { color: 'rgba(148,163,184,0.06)' }, vertical: { color: 'rgba(148,163,184,0.06)' } },
+    candle: {
+      bar: { upColor: '#00e5a0', downColor: '#ff6b6b', upBorderColor: '#00e5a0',
+             downBorderColor: '#ff6b6b', upWickColor: '#00e5a0', downWickColor: '#ff6b6b' },
+      priceMark: { last: { upColor: '#00e5a0', downColor: '#ff6b6b' } },
+      tooltip: { showRule: 'follow_cross', showType: 'standard' },
+    },
+    xAxis: { axisLine: { color: 'rgba(148,163,184,0.2)' }, tickText: { color: '#7a8ba6' } },
+    yAxis: { axisLine: { color: 'rgba(148,163,184,0.2)' }, tickText: { color: '#7a8ba6' } },
+    crosshair: { horizontal: { line: { color: 'rgba(148,163,184,0.4)' } },
+                 vertical: { line: { color: 'rgba(148,163,184,0.4)' } } },
+    indicator: { tooltip: { showRule: 'follow_cross' } },
+  });
+}
+
+function _bcEnsure() {
+  if (_bc) return _bc;
+  // Delta-индикатор из тайкер-данных (поле d в барах)
+  klinecharts.registerIndicator({
+    name: 'DELTA', shortName: 'Delta',
+    figures: [{
+      key: 'delta', title: 'Delta: ', type: 'bar', baseValue: 0,
+      styles: (data) => {
+        let v = 0;
+        try { v = (data.current && data.current.indicatorData ? data.current.indicatorData.delta : 0) || 0; } catch (e) {}
+        return { color: v >= 0 ? 'rgba(0,229,160,0.75)' : 'rgba(255,107,107,0.75)' };
+      }
+    }],
+    calc: (list) => list.map(b => ({ delta: b.delta }))
+  });
+  _bc = klinecharts.init('bigChart');
+  _bcInitStyles(_bc);
+  _bc.createIndicator('MA', true, { id: 'candle_pane' });
+  _bc.overrideIndicator({ name: 'MA', calcParams: [50, 100, 200] }, 'candle_pane');
+  _bc.createIndicator('VOL', false, { height: 80 });
+  _bc.createIndicator('DELTA', false, { height: 80 });
+  return _bc;
+}
+
+async function bcLoad() {
+  const pairIn = (document.getElementById('bcPair').value || 'BTC').toUpperCase().replace('/USDT', '').replace('USDT', '');
+  _bcPair = pairIn;
+  const st = document.getElementById('bcStatus');
+  st.textContent = '⏳ загрузка ' + pairIn + ' ' + _bcTf + '…';
+  try {
+    const r = await fetch(`/api/klines-delta?symbol=${encodeURIComponent(pairIn)}&tf=${_bcTf}&limit=700`);
+    const d = await r.json();
+    if (!d.ok || !d.bars.length) { st.textContent = '❌ нет данных по ' + pairIn; return; }
+    const chart = _bcEnsure();
+    chart.applyNewData(d.bars.map(b => ({
+      timestamp: b.t, open: b.o, high: b.h, low: b.l, close: b.c,
+      volume: b.v, turnover: b.v * b.c, delta: b.d,
+    })));
+    st.textContent = `${pairIn}/USDT · ${_bcTf} · ${d.bars.length} свечей`;
+    chart.removeOverlay({ groupId: 'sig' });
+    chart.removeOverlay({ groupId: 'lvl' });
+    if (_bcShowSig) bcLoadSignals(pairIn, d.bars);
+    if (_bcShowLvl) bcLoadLevels(pairIn);
+  } catch (e) { st.textContent = '❌ ' + e.message; }
+}
+
+async function bcLoadSignals(pair, bars) {
+  try {
+    const r = await fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(pair + 'USDT')}&days=30`);
+    const d = await r.json();
+    const items = (d.items || []).filter(s => s.at_ts).slice(0, 300);
+    const t0 = bars[0].t;
+    const chart = _bcEnsure();
+    items.forEach(s => {
+      const ts = s.at_ts * 1000;
+      if (ts < t0) return;
+      const emoji = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier) : '•';
+      const long = s.direction === 'LONG';
+      chart.createOverlay({
+        name: 'simpleAnnotation', groupId: 'sig', lock: true,
+        points: [{ timestamp: ts, value: s.entry || undefined }],
+        extendData: `${emoji}`,
+        styles: { text: { color: long ? '#00e5a0' : '#ff6b6b', size: 16 } },
+      });
+    });
+  } catch (e) { /* тихо */ }
+}
+
+async function bcLoadLevels(pair) {
+  try {
+    const tfMap = { '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h', '12h': '12h', '1d': '1d' };
+    const r = await fetch(`/api/levels?pair=${encodeURIComponent(pair + '/USDT')}&tf=${tfMap[_bcTf] || '1h'}`);
+    const d = await r.json();
+    const chart = _bcEnsure();
+    (d.zones || []).slice(0, 10).forEach(z => {
+      chart.createOverlay({
+        name: 'priceLine', groupId: 'lvl', lock: true,
+        points: [{ value: z.mid || z.low }],
+        styles: { line: { color: z.kind === 'support' ? 'rgba(0,229,160,0.55)' : 'rgba(255,107,107,0.55)', size: z.strength >= 60 ? 2 : 1 } },
+      });
+    });
+  } catch (e) { /* тихо */ }
+}
+
+function bcSetTf(tf) {
+  _bcTf = tf;
+  localStorage.setItem('bc_tf', tf);
+  document.querySelectorAll('.bc-tf').forEach(b => b.classList.toggle('bc-on', b.dataset.tf === tf));
+  bcLoad();
+}
+function bcDraw(name) { const c = _bcEnsure(); c.createOverlay({ name, groupId: 'draw' }); }
+function bcClearDraw() { const c = _bcEnsure(); c.removeOverlay({ groupId: 'draw' }); }
+function bcToggleSignals() {
+  _bcShowSig = !_bcShowSig;
+  document.getElementById('bcSigBtn').classList.toggle('bc-on', _bcShowSig);
+  if (_bcShowSig) bcLoad(); else _bcEnsure().removeOverlay({ groupId: 'sig' });
+}
+function bcToggleLevels() {
+  _bcShowLvl = !_bcShowLvl;
+  document.getElementById('bcLvlBtn').classList.toggle('bc-on', _bcShowLvl);
+  if (_bcShowLvl) bcLoad(); else _bcEnsure().removeOverlay({ groupId: 'lvl' });
+}
+
+(function bcBoot() {
+  const qp = new URLSearchParams(location.search).get('pair');
+  if (qp) document.getElementById('bcPair').value = qp.toUpperCase().replace('/USDT', '').replace('USDT', '');
+  document.querySelectorAll('.bc-tf').forEach(b => b.classList.toggle('bc-on', b.dataset.tf === _bcTf));
+  const s = document.createElement('script');
+  s.src = '/static/klinecharts.min.js';
+  s.onload = () => bcLoad();
+  s.onerror = () => { document.getElementById('bcStatus').textContent = '❌ klinecharts.min.js не загрузился'; };
+  document.head.appendChild(s);
+})();
+</script>
+
 {% elif bot == 'setup_check' %}
 <!-- ════════════ 🎰 SETUP CHECKER — paste pair → ENTER LONG/SHORT/WAIT ════════════ -->
 <div class="strategy-box" style="border-color:rgba(255,210,62,0.45);background:linear-gradient(135deg,rgba(255,210,62,0.10),rgba(255,140,80,0.05));">

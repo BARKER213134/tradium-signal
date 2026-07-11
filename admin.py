@@ -3273,6 +3273,38 @@ async def api_accum_momentum(hours: int = 24):
     return await asyncio.to_thread(_sync)
 
 
+@app.get("/api/klines-delta")
+async def api_klines_delta(symbol: str, tf: str = "1h", limit: int = 500):
+    """Свечи с тайкер-дельтой для 📈 большого графика (KLineChart).
+    fapi (фьючерсы) -> Vision (спот-фолбэк). d = 2×takerBuy − vol."""
+    def _sync():
+        import requests as _rq
+        sym = (symbol or "").upper().replace("/", "")
+        if not sym.endswith("USDT"):
+            sym += "USDT"
+        itv = tf if tf in ("1m", "5m", "15m", "30m", "1h", "4h", "12h", "1d") else "1h"
+        lim = max(50, min(int(limit or 500), 1000))
+        for url in ("https://fapi.binance.com/fapi/v1/klines",
+                    "https://data-api.binance.vision/api/v3/klines"):
+            try:
+                r = _rq.get(url, params=dict(symbol=sym, interval=itv, limit=lim),
+                            timeout=12)
+                if r.status_code != 200:
+                    continue
+                rows = r.json()
+                if not rows or len(rows) < 10:
+                    continue
+                return {"ok": True, "symbol": sym, "tf": itv,
+                        "bars": [{"t": int(x[0]), "o": float(x[1]), "h": float(x[2]),
+                                  "l": float(x[3]), "c": float(x[4]), "v": float(x[5]),
+                                  "d": round(2 * float(x[9]) - float(x[5]), 2)}
+                                 for x in rows]}
+            except Exception:
+                continue
+        return {"ok": False, "error": "no data", "bars": []}
+    return await asyncio.to_thread(_sync)
+
+
 @app.get("/api/delta-map")
 async def api_delta_map():
     """Текущая фьючерсная тайкер-дельта 24ч (z-норм.) по сканируемым парам.
