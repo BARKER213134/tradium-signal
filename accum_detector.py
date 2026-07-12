@@ -140,6 +140,43 @@ def check_pair(pair: str, candles_1h: Optional[list[dict]] = None) -> Optional[d
 _last_scan: dict = {}   # диагностика последнего скана (виден в /api/accumulation)
 
 
+def _rsi4h_bull(candles: list[dict]) -> Optional[bool]:
+    """RSI14(4h) выше своей SMA14? Для ширины рынка (/api/market-side).
+    4h-ресемпл из 1h свечей, Wilder RSI."""
+    try:
+        closes = []
+        cur_key = None
+        for c in candles:
+            k = c["t"] // (4 * 3600_000)
+            if k != cur_key:
+                closes.append(c["c"])
+                cur_key = k
+            else:
+                closes[-1] = c["c"]
+        if len(closes) < 32:
+            return None
+        rsis = []
+        ag = al = 0.0
+        for i in range(1, len(closes)):
+            ch = closes[i] - closes[i - 1]
+            g, lo = max(ch, 0.0), max(-ch, 0.0)
+            if i <= 14:
+                ag += g; al += lo
+                if i == 14:
+                    ag /= 14; al /= 14
+                    rsis.append(100.0 if al == 0 else 100 - 100 / (1 + ag / al))
+            else:
+                ag = (ag * 13 + g) / 14
+                al = (al * 13 + lo) / 14
+                rsis.append(100.0 if al == 0 else 100 - 100 / (1 + ag / al))
+        if len(rsis) < 15:
+            return None
+        sma = sum(rsis[-14:]) / 14
+        return rsis[-1] > sma
+    except Exception:
+        return None
+
+
 def scan_universe(max_pairs: int = 300):
     """Скан ликвидных пар. Вызывается из watcher-лупа (thread).
     Возвращает list[dict] с базами или None если скан прерван (пустой
@@ -172,6 +209,7 @@ def scan_universe(max_pairs: int = 300):
     checked = errors = 0
     first_err = None
     delta_map = []
+    breadth_bull = breadth_tot = 0
     for sym in pairs:
         pair = sym.replace("USDT", "/USDT") if "/" not in sym else sym
         try:
@@ -179,6 +217,11 @@ def scan_universe(max_pairs: int = 300):
             kd = _fetch_klines_delta(pair, 320)
             checked += 1
             if kd and len(kd) >= 260:
+                _bull = _rsi4h_bull(kd)
+                if _bull is not None:
+                    breadth_tot += 1
+                    if _bull:
+                        breadth_bull += 1
                 dz24 = _delta_z(kd, len(kd) - 24)
                 if dz24 is not None:
                     delta_map.append({"pair": pair,
@@ -198,6 +241,18 @@ def scan_universe(max_pairs: int = 300):
         _last_scan["delta_map"] = len(delta_map)
     except Exception:
         pass
+    # ширина рынка для /api/market-side (>=50 пар — защита от сбойного скана)
+    try:
+        if breadth_tot >= 50:
+            from database import _get_db, utcnow
+            _get_db().market_state.update_one(
+                {"_id": "breadth"},
+                {"$set": {"bull": breadth_bull, "total": breadth_tot,
+                          "pct": round(breadth_bull / breadth_tot * 100, 1),
+                          "updated_at": utcnow()}}, upsert=True)
+            _last_scan["breadth"] = f"{breadth_bull}/{breadth_tot}"
+    except Exception:
+        logger.exception("[accum] breadth store fail")
     # sample: сколько пар вообще дали свечи (диагностика get_klines_any)
     try:
         if pairs:

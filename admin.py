@@ -3186,6 +3186,49 @@ async def api_momentum_signals(hours: int = 336):
     return await asyncio.to_thread(_sync)
 
 
+@app.get("/api/market-side")
+async def api_market_side():
+    """🟢LONG/🔴SHORT/⚪НЕЙТРАЛ для всего рынка: ширина (доля пар с RSI4h>SMA
+    по универсуму, из 30-мин скана) + BTC ST4h. Бэктест год (~130k входов):
+    ширина >60% — рынок разогрет, edge съеден у обеих сторон; 40-60% — сторона
+    по BTC (UP: лонги 38.7% vs BE 33; DOWN: шорты 41.7% vs BE 40);
+    <40% — шорт-рынок при любом BTC (шорты 43-44%, лонги 27%)."""
+    try:
+        from database import _get_db
+        from rider_detector import get_btc_st4
+        doc = await asyncio.to_thread(
+            lambda: _get_db().market_state.find_one({"_id": "breadth"}))
+        st = await asyncio.to_thread(get_btc_st4)
+        if not doc or doc.get("pct") is None:
+            return {"side": "?", "reason": "нет данных ширины — ждём скан (30 мин)"}
+        pct = doc["pct"]
+        if pct > 60:
+            side = "NEUTRAL"
+            reason = (f"ширина {pct:.0f}% — рынок разогрет, статистического "
+                      f"преимущества нет ни у лонгов, ни у шортов")
+        elif pct < 40:
+            side = "SHORT"
+            reason = (f"ширина {pct:.0f}% — слабость по всему рынку: "
+                      f"шорты +3-4пп к безубытку, лонги мертвы (27%)")
+        elif st == "UP":
+            side = "LONG"
+            reason = (f"ширина {pct:.0f}% + BTC ST4h UP — бычий рынок "
+                      f"с запасом хода: лонги 38.7% vs безубыток 33")
+        elif st == "DOWN":
+            side = "SHORT"
+            reason = (f"ширина {pct:.0f}% + BTC ST4h DOWN — "
+                      f"шорты +2-4пп к безубытку")
+        else:
+            side = "NEUTRAL"
+            reason = f"ширина {pct:.0f}%, BTC ST4h недоступен"
+        upd = doc.get("updated_at")
+        return {"side": side, "breadth_pct": pct, "btc_st4": st,
+                "n_pairs": doc.get("total"), "reason": reason,
+                "updated_at": upd.isoformat() if hasattr(upd, "isoformat") else None}
+    except Exception as e:
+        return {"side": "?", "error": str(e)}
+
+
 @app.get("/api/btc-st4")
 async def api_btc_st4():
     """BTC SuperTrend 4h (UP/DOWN) — гейт для шорт-пресета в журнале."""
