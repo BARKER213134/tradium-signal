@@ -6725,6 +6725,32 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jAllSpecialBtn" style="display:none;"></button>
   <button id="jNearLevelBtn" style="display:none;"></button>
   <button id="jHotOnlyBtn" style="display:none;"></button>
+  <button id="jBestEntryBtn" onclick="_toggleBestEntry()" title="🥇 Лучший отбор по бэктестам 90д (~26k точек, цель +10% до −5% за 96ч): LONG + RSI>SMA на 4h+1d (WR 36.3%, EV +0.45%) + RSI 1h и 4h в зоне 50–70 (35–36% vs BE 33). Выставляет фильтры Направление/SMA/RSI одним кликом — их видно и можно поправить руками. Шорты в этой зоне умирают (22.6% WR) — поэтому только LONG." style="background:linear-gradient(135deg, rgba(0,229,160,0.15), rgba(178,139,255,0.10));border:1.5px solid rgba(0,229,160,0.55);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:700;">🥇 Лучший отбор · OFF</button>
+  <script>
+  window._bestEntryOn = false;
+  window._toggleBestEntry = function() {
+    window._bestEntryOn = !window._bestEntryOn;
+    const b = document.getElementById('jBestEntryBtn');
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    if (window._bestEntryOn) {
+      set('jFilterDir', 'LONG');
+      set('jFilterSma', 'd4h_bull');
+      set('jFilterRsiTf', '');
+      set('jFilterRsiZone', 'sweet');
+      b.textContent = '🥇 Лучший отбор · ON';
+      b.style.background = 'linear-gradient(135deg, rgba(0,229,160,0.35), rgba(178,139,255,0.20))';
+      b.style.color = '#0a0e14';
+    } else {
+      set('jFilterDir', '');
+      set('jFilterSma', '');
+      set('jFilterRsiZone', '');
+      b.textContent = '🥇 Лучший отбор · OFF';
+      b.style.background = 'linear-gradient(135deg, rgba(0,229,160,0.15), rgba(178,139,255,0.10))';
+      b.style.color = '#00e5a0';
+    }
+    if (typeof filterJournal === 'function') filterJournal();
+  };
+  </script>
   <button id="jTopBestBtn" onclick="_toggleTopBest()" title="🏆 TOP-7 BEST: фильтр по 7 лучшим источникам по backtest (triple_confluence 61% / st_vip 60% / confluence 55% / 🐋 WHALE 53.8% / 🧠 combo 52.5% / 🐋 WHALE PREMIUM 47% high-MFE / cv_flip 43%). Скрывает остальные источники." style="background:linear-gradient(135deg, rgba(255,215,0,0.18), rgba(0,229,160,0.10));border:1.5px solid rgba(255,215,0,0.6);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ffd23e;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">🏆 TOP-7 · OFF</button>
   <button id="jHighScoreBtn" style="display:none;"></button>
   <button id="j4hStateBtn" onclick="_toggle4hState()" title="⚡ 4h State filter: RSI>SMA на 4h для LONG, RSI<SMA для SHORT. Faster reaction than 12h." style="background:linear-gradient(135deg, rgba(0,229,160,0.10), rgba(0,128,255,0.06));border:1px solid rgba(0,229,160,0.4);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#88d8a3;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">⚡ +4h state · OFF</button>
