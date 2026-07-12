@@ -6419,9 +6419,9 @@ async function loadAccum() {
       const dzTip = dz == null ? '' :
         ` · дельта внутри ${dz > 0 ? '+' : ''}${dz} (${dz > 1 ? 'ПОКУПАТЕЛЬ — вверх в ~77%' : dz < -1 ? 'ПРОДАВЕЦ — вниз в ~77%' : 'нейтрально'})`;
       const brd = dz > 1 ? 'rgba(0,229,160,0.55)' : dz < -1 ? 'rgba(255,107,107,0.55)' : 'rgba(76,201,240,0.28)';
-      return `<span onclick="navigator.clipboard && navigator.clipboard.writeText('${p}USDT')"
-        title="в базе ${days} · ширина ${x.rng_pct}% · до пробоя вверх ${x.dist_up_pct}% · до низа ${x.dist_dn_pct}%${dzTip} (клик — скопировать)"
-        style="cursor:copy;font-family:var(--font-mono);font-size:11px;padding:4px 10px;border-radius:7px;background:rgba(76,201,240,0.08);border:1px solid ${brd};color:var(--text);">
+      return `<span onclick="_openAccumChart('${p}')"
+        title="в базе ${days} · ширина ${x.rng_pct}% · до пробоя вверх ${x.dist_up_pct}% · до низа ${x.dist_dn_pct}%${dzTip} (клик — график)"
+        style="cursor:pointer;font-family:var(--font-mono);font-size:11px;padding:4px 10px;border-radius:7px;background:rgba(76,201,240,0.08);border:1px solid ${brd};color:var(--text);">
         ${who} <b>${p}</b> <span style="color:#4cc9f0;">${days}</span> <span style="color:var(--muted);">±${(x.rng_pct/2).toFixed(1)}%</span>${dz != null && Math.abs(dz) > 1 ? ` <span style="color:${dz > 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${dz > 0 ? '+' : ''}${dz}</span>` : ''}
       </span>`;
     }).join('');
@@ -6429,6 +6429,23 @@ async function loadAccum() {
 }
 loadAccum();
 safeInterval(loadAccum, 300000);
+
+// Клик по чипу накопления — открыть график монеты (2026-07-12).
+// Если монета есть в журнале — открываем её последний сигнал (с маркерами),
+// иначе подсовываем псевдо-запись source=accum и открываем чистый график.
+window._openAccumChart = function(p) {
+  const sym = (p + 'USDT').toUpperCase();
+  const list = window._journalFiltered;
+  if (!Array.isArray(list) || typeof openJournalChart !== 'function') return;
+  let idx = list.findIndex(s =>
+    ((s.symbol || (s.pair || '').replace('/', '')) + '').toUpperCase() === sym);
+  if (idx < 0) {
+    list.push({symbol: sym, pair: p + '/USDT', direction: '', entry: '',
+               source: 'accum', score: 0, at: null, at_ts: 0, pattern: ''});
+    idx = list.length - 1;
+  }
+  openJournalChart(idx);
+};
 </script>
 <!-- ── Журнал ─────────────────────────────────────────────────────── -->
 <style>
@@ -10440,20 +10457,23 @@ async function openJournalChart(idx, forceTF) {
 
   const pair = (s.pair || s.symbol || '').replace('/USDT', '');
   const sym = s.symbol || (s.pair || '').replace('/', '');
-  const dirE = s.direction === 'LONG' ? '🟢' : '🔴';
+  const dirE = s.direction === 'LONG' ? '🟢' : s.direction === 'SHORT' ? '🔴' : '';
 
   const _isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
   const srcBadge = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _isStrong});
   const srcName = ({anomaly:'Аномалия', cluster:'Cluster', paper:'Paper', supertrend:'SuperTrend',
     whale:'WHALE', shark:'SHARK', combo:'COMBO', volume_surge:'Volume Surge',
     triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano',
-    second_flip:'Second Flip', rsi_cross_12h:'RSI Cross 12h', verified:'Verified'})[s.source]
+    second_flip:'Second Flip', rsi_cross_12h:'RSI Cross 12h', verified:'Verified',
+    accum:'🧊 Накопление'})[s.source]
     || (s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐ STRONG' : 'Confluence') : (s.source || 'Signal'));
   const patternInfo = s.pattern ? ` · ${s.pattern}` : '';
   const scoreInfo = s.score ? ` · ${s.score}` : '';
   // Pair кликабельна — копирует "<PAIR>USDT" в clipboard.
   const pairClick = `<b class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.45);">${pair}</b>`;
-  title.innerHTML = `${srcBadge} ${srcName} · ${pairClick} · ${dirE} ${s.direction} · <code>${s.entry}</code>${scoreInfo}`;
+  const dirInfo = s.direction ? ` · ${dirE} ${s.direction}` : '';
+  const entryInfo = s.entry ? ` · <code>${s.entry}</code>` : '';
+  title.innerHTML = `${srcBadge} ${srcName} · ${pairClick}${dirInfo}${entryInfo}${scoreInfo}`;
   const counter = document.getElementById('jChartCounter');
   if (counter) counter.textContent = `${idx + 1}/${_journalFiltered.length}`;
   container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Загрузка графика…</div>';
