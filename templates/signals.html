@@ -6603,8 +6603,12 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
 .tf-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:700; box-shadow:0 2px 10px rgba(91,140,255,0.35); }
 </style>
 
-<!-- ════ Big TOTAL2 bias banner — посередине, гигантский ════ -->
-<div style="display:flex;justify-content:center;align-items:center;gap:24px;padding:18px 0 4px;margin-bottom:0;">
+<!-- ════ Big TOTAL2 bias banner — СКРЫТ 2026-07-12 по бэктесту (год, ~130k
+     входов): все 4 состояния бейджа дают одинаковый WR (лонги 28.7-30.0%,
+     шорты 37-39% — разброс в шуме), причём лонги в его "SHORT" чуть ЛУЧШЕ,
+     чем в "LONG". Заменён бейджем 🎯 сторона рынка (ширина+BTC, marketSideBar).
+     JS/_biasData живут — их использует Setup Checker (counter-trend). ════ -->
+<div style="display:none;justify-content:center;align-items:center;gap:24px;padding:18px 0 4px;margin-bottom:0;">
   <div id="jBiasBig" title="TOTAL2 (топ-20 альтов, excl. BTC) SuperTrend на 4H+1D. Обновляется каждые 5 мин. Клик = force refresh." style="display:inline-flex;align-items:center;gap:18px;padding:18px 56px;border-radius:18px;font-family:var(--font-mono);font-size:64px;font-weight:900;letter-spacing:0.12em;background:rgba(255,255,255,0.04);border:3px solid rgba(255,255,255,0.15);color:#888;cursor:pointer;line-height:1;min-width:420px;justify-content:center;box-shadow:0 0 24px rgba(0,0,0,0.4);" onclick="_refreshBias(true)">
     <span style="font-size:13px;color:var(--muted);font-weight:700;letter-spacing:0.16em;writing-mode:vertical-rl;transform:rotate(180deg);opacity:0.7;">TOTAL2</span>
     <span id="jBiasLabel">···</span>
