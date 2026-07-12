@@ -3186,6 +3186,17 @@ async def api_momentum_signals(hours: int = 336):
     return await asyncio.to_thread(_sync)
 
 
+@app.get("/api/btc-st4")
+async def api_btc_st4():
+    """BTC SuperTrend 4h (UP/DOWN) — гейт для шорт-пресета в журнале."""
+    try:
+        from rider_detector import get_btc_st4
+        st = await asyncio.to_thread(get_btc_st4)
+        return {"state": st or "?"}
+    except Exception as e:
+        return {"state": "?", "error": str(e)}
+
+
 # ── 🧊 ACCUMULATION watchlist ────────────────────────────────────────────────
 
 @app.get("/api/accumulation")

@@ -6664,6 +6664,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <optgroup label="── По бэктесту (90д, цель +10%) ──">
       <option value="sweet">🎯 Зона входа: 1h+4h в 50–70</option>
       <option value="knife">🔪 Падающий нож: &lt;30 на 1h/4h</option>
+      <option value="short_bounce">🩸 Шорт-отскок: 30–50 + RSI&gt;SMA (1h+4h)</option>
     </optgroup>
     <optgroup label="── Вручную (нужен ТФ слева) ──">
       <option value="lt30">&lt;30 перепродан</option>
@@ -6733,6 +6734,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     const b = document.getElementById('jBestEntryBtn');
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
     if (window._bestEntryOn) {
+      if (window._bestShortOn && typeof _toggleBestShort === 'function') _toggleBestShort();
       set('jFilterDir', 'LONG');
       set('jFilterSma', 'd4h_bull');
       set('jFilterRsiTf', '');
@@ -6750,6 +6752,54 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     }
     if (typeof filterJournal === 'function') filterJournal();
   };
+  </script>
+  <button id="jBestShortBtn" onclick="_toggleBestShort()" title="🩸 Лучший отбор SHORT по бэктесту 90д: RSI 1h+4h в зоне 30–50 + RSI>SMA на обоих (шорт отскока в слабости). WR 46.3% vs BE 37.5 (сетка 5/3/48ч, n=624) — но ТОЛЬКО при BTC ST4h DOWN; при BTC UP шорты мертвы (34% vs BE 40). Кнопка сама проверяет BTC: тусклая = ждём DOWN. Стабильность хуже лонга — работает в месяцы слива." style="background:linear-gradient(135deg, rgba(255,77,109,0.15), rgba(255,140,80,0.08));border:1.5px solid rgba(255,77,109,0.55);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ff5e9c;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:700;">🩸 Отбор SHORT · OFF</button>
+  <script>
+  window._bestShortOn = false;
+  window._btcSt4 = null;
+  window._refreshBtcSt4 = async function() {
+    try {
+      const r = await fetch('/api/btc-st4');
+      const d = await r.json();
+      window._btcSt4 = d.state || '?';
+    } catch (e) { window._btcSt4 = '?'; }
+    const b = document.getElementById('jBestShortBtn');
+    if (!b || window._bestShortOn) return;
+    if (window._btcSt4 === 'DOWN') {
+      b.textContent = '🩸 Отбор SHORT · BTC▼ готов';
+      b.style.opacity = '1';
+    } else if (window._btcSt4 === 'UP') {
+      b.textContent = '🩸 Отбор SHORT · ждём BTC▼';
+      b.style.opacity = '0.55';
+    }
+  };
+  window._toggleBestShort = function() {
+    window._bestShortOn = !window._bestShortOn;
+    const b = document.getElementById('jBestShortBtn');
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    if (window._bestShortOn) {
+      // взаимоисключение с лонговым пресетом
+      if (window._bestEntryOn && typeof _toggleBestEntry === 'function') _toggleBestEntry();
+      set('jFilterDir', 'SHORT');
+      set('jFilterSma', '');
+      set('jFilterRsiTf', '');
+      set('jFilterRsiZone', 'short_bounce');
+      b.textContent = window._btcSt4 === 'UP' ? '🩸 SHORT · ON (BTC▲ против!)' : '🩸 Отбор SHORT · ON';
+      b.style.background = 'linear-gradient(135deg, rgba(255,77,109,0.4), rgba(255,140,80,0.2))';
+      b.style.color = '#fff';
+      b.style.opacity = '1';
+    } else {
+      set('jFilterDir', '');
+      set('jFilterRsiZone', '');
+      b.textContent = '🩸 Отбор SHORT · OFF';
+      b.style.background = 'linear-gradient(135deg, rgba(255,77,109,0.15), rgba(255,140,80,0.08))';
+      b.style.color = '#ff5e9c';
+      window._refreshBtcSt4();
+    }
+    if (typeof filterJournal === 'function') filterJournal();
+  };
+  window._refreshBtcSt4();
+  setInterval(window._refreshBtcSt4, 600000);
   </script>
   <!-- Скрыто по запросу юзера 2026-07-12: TOP-7, ±4h/12h state, WHALE/SHARK,
        звук, Δ Backfill. id/handlers сохранены для совместимости JS. -->
@@ -8560,6 +8610,13 @@ function filterJournal() {
     } else if (rsiZone === 'knife') {
       const r1v = s.rsi_1h, r4v = s.rsi_4h;
       if (!((r1v != null && r1v < 30) || (r4v != null && r4v < 30))) return false;
+    } else if (rsiZone === 'short_bounce') {
+      // Шорт-отскок (бэктест 90д): RSI 1h+4h в 30–50 И выше своей SMA на обоих
+      // (локальный отскок в слабости). WR 46.3% на 5/3/48ч при BTC ST4h DOWN.
+      const r1v = s.rsi_1h, r4v = s.rsi_4h, m1v = s.sma_rsi_1h, m4v = s.sma_rsi_4h;
+      if (r1v == null || r4v == null || m1v == null || m4v == null) return false;
+      if (!(r1v >= 30 && r1v < 50 && r4v >= 30 && r4v < 50
+            && r1v > m1v && r4v > m4v)) return false;
     } else if (rsiTf && rsiZone) {
       const rv = s['rsi_' + rsiTf];
       if (rv == null) return false;
