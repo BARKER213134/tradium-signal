@@ -6652,6 +6652,22 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="align">✅ по тренду (сигнал в сторону 4h)</option>
     <option value="counter">⚠ против тренда 4h</option>
   </select>
+  <select id="jFilterRsiTf" onchange="filterJournal()" title="Таймфрейм RSI для фильтра (значение на момент сигнала)" style="background:var(--dark);color:var(--text);border:1px solid rgba(178,139,255,0.4);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">RSI ТФ: —</option>
+    <option value="15m">15m</option>
+    <option value="1h">1h</option>
+    <option value="4h">4h</option>
+    <option value="1d">1d</option>
+  </select>
+  <select id="jFilterRsiZone" onchange="filterJournal()" title="Зона RSI на выбранном ТФ" style="background:var(--dark);color:var(--text);border:1px solid rgba(178,139,255,0.4);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">RSI: все</option>
+    <option value="lt30">&lt;30 перепродан</option>
+    <option value="30_50">30–50</option>
+    <option value="50_70">50–70</option>
+    <option value="gt70">&gt;70 перекуплен</option>
+    <option value="lt50">ниже 50</option>
+    <option value="gt50">выше 50</option>
+  </select>
   <input id="jFilterScore" type="number" placeholder="Min Score" min="0" step="1" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);width:80px;">
   <select id="jFilterSma" onchange="filterJournal()" title="SMA(14) of RSI filter per TF. Bull = RSI выше SMA (momentum up); Bear = ниже. Multi-TF align = многотаймфреймное подтверждение тренда." style="background:linear-gradient(135deg, rgba(0,229,160,0.10), rgba(0,128,255,0.06));color:#88d8a3;border:1px solid rgba(0,229,160,0.45);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);font-weight:600;">
     <option value="">SMA: все</option>
@@ -8499,6 +8515,19 @@ function filterJournal() {
                    : s.direction === 'SHORT' ? t4 === 'UP' : false,
       }[trendF];
       if (!pass) return false;
+    }
+    // ── Фильтр по RSI на выбранном ТФ (значение на момент сигнала) ──
+    const rsiTf = (document.getElementById('jFilterRsiTf') || {}).value || '';
+    const rsiZone = (document.getElementById('jFilterRsiZone') || {}).value || '';
+    if (rsiTf && rsiZone) {
+      const rv = s['rsi_' + rsiTf];
+      if (rv == null) return false;
+      const zonePass = {
+        'lt30': rv < 30, '30_50': rv >= 30 && rv < 50,
+        '50_70': rv >= 50 && rv <= 70, 'gt70': rv > 70,
+        'lt50': rv < 50, 'gt50': rv >= 50,
+      }[rsiZone];
+      if (!zonePass) return false;
     }
     if (kc === 'pass' && s.st_passed !== true) return false;
     if (kc === 'fail' && s.st_passed !== false) return false;
