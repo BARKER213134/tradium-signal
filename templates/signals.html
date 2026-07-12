@@ -6659,14 +6659,20 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="4h">4h</option>
     <option value="1d">1d</option>
   </select>
-  <select id="jFilterRsiZone" onchange="filterJournal()" title="Зона RSI на выбранном ТФ" style="background:var(--dark);color:var(--text);border:1px solid rgba(178,139,255,0.4);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
+  <select id="jFilterRsiZone" onchange="filterJournal()" title="Зона RSI на выбранном ТФ. Пресеты «по бэктесту» работают без выбора ТФ (смотрят 1h+4h)" style="background:var(--dark);color:var(--text);border:1px solid rgba(178,139,255,0.4);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">RSI: все</option>
-    <option value="lt30">&lt;30 перепродан</option>
-    <option value="30_50">30–50</option>
-    <option value="50_70">50–70</option>
-    <option value="gt70">&gt;70 перекуплен</option>
-    <option value="lt50">ниже 50</option>
-    <option value="gt50">выше 50</option>
+    <optgroup label="── По бэктесту (90д, цель +10%) ──">
+      <option value="sweet">🎯 Зона входа: 1h+4h в 50–70</option>
+      <option value="knife">🔪 Падающий нож: &lt;30 на 1h/4h</option>
+    </optgroup>
+    <optgroup label="── Вручную (нужен ТФ слева) ──">
+      <option value="lt30">&lt;30 перепродан</option>
+      <option value="30_50">30–50</option>
+      <option value="50_70">50–70</option>
+      <option value="gt70">&gt;70 перекуплен</option>
+      <option value="lt50">ниже 50</option>
+      <option value="gt50">выше 50</option>
+    </optgroup>
   </select>
   <input id="jFilterScore" type="number" placeholder="Min Score" min="0" step="1" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);width:80px;">
   <select id="jFilterSma" onchange="filterJournal()" title="SMA(14) of RSI filter per TF. Bull = RSI выше SMA (momentum up); Bear = ниже. Multi-TF align = многотаймфреймное подтверждение тренда." style="background:linear-gradient(135deg, rgba(0,229,160,0.10), rgba(0,128,255,0.06));color:#88d8a3;border:1px solid rgba(0,229,160,0.45);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);font-weight:600;">
@@ -8519,7 +8525,15 @@ function filterJournal() {
     // ── Фильтр по RSI на выбранном ТФ (значение на момент сигнала) ──
     const rsiTf = (document.getElementById('jFilterRsiTf') || {}).value || '';
     const rsiZone = (document.getElementById('jFilterRsiZone') || {}).value || '';
-    if (rsiTf && rsiZone) {
+    // Пресеты по бэктесту 90д (цель +10%): работают без выбора ТФ
+    if (rsiZone === 'sweet') {
+      const r1v = s.rsi_1h, r4v = s.rsi_4h;
+      if (r1v == null || r4v == null) return false;
+      if (!(r1v >= 50 && r1v <= 70 && r4v >= 50 && r4v <= 70)) return false;
+    } else if (rsiZone === 'knife') {
+      const r1v = s.rsi_1h, r4v = s.rsi_4h;
+      if (!((r1v != null && r1v < 30) || (r4v != null && r4v < 30))) return false;
+    } else if (rsiTf && rsiZone) {
       const rv = s['rsi_' + rsiTf];
       if (rv == null) return false;
       const zonePass = {
@@ -9251,6 +9265,17 @@ window._rsiEdgeInfo = function(s, rsi_4h, rsi_1h) {
     return {tier:'good', emoji:'✅', label:'SF LONG (+0.54R 4h RSI 60-70)'};
   if (src === 'triple_confluence' && dir === 'LONG' && rsi_4h != null && rsi_4h >= 60 && rsi_4h < 80)
     return {tier:'good', emoji:'✅', label:'TC LONG (+0.69R 4h RSI 60-80)'};
+  // 🎯 РАБОЧАЯ ЗОНА RSI — бэктест 90д ~26k точек, цель +10% до −5% за 96ч:
+  // 1h 50–70 И 4h 50–70 → 35–36% против безубытка 33 (лучшие клетки матрицы);
+  // перепроданность <30 — худший вход (24–28%, падающий нож).
+  if (dir === 'LONG' && ((rsi_1h != null && rsi_1h < 30) || (rsi_4h != null && rsi_4h < 30)))
+    return {tier:'avoid', emoji:'🔪', label:'Падающий нож: RSI<30 — худшая зона для +10% (24-28% WR, бэктест 90д)'};
+  if (dir === 'LONG' && rsi_1h != null && rsi_4h != null
+      && rsi_1h >= 50 && rsi_1h <= 70 && rsi_4h >= 50 && rsi_4h <= 70)
+    return {tier:'top', emoji:'🎯', label:'RSI-зона входа: 1h+4h в 50–70 — лучшая вероятность +10% (35-36% vs BE 33, бэктест 90д)'};
+  if (dir === 'LONG' && ((rsi_4h != null && rsi_4h >= 50 && rsi_4h <= 70)
+      || (rsi_1h != null && rsi_1h >= 50 && rsi_1h <= 70)))
+    return {tier:'good', emoji:'🎯', label:'RSI 50–70 на одном из ТФ (1h/4h) — рабочая зона для +10% (бэктест 90д)'};
   // ⚠ counter-trend
   if (dir === 'LONG' && rsi_4h != null && rsi_4h < 40)
     return {tier:'warn', emoji:'⚠', label:'LONG в oversold 4h (counter-trend)'};
