@@ -3578,6 +3578,55 @@ window._kcToolbarHtml = `
   <style>.kc-toolbar button{background:none;border:none;color:#aab3c2;font-size:14px;cursor:pointer;padding:2px 5px;border-radius:5px;}
   .kc-toolbar button:hover{background:rgba(91,140,255,0.2);}</style>`;
 
+// ── Быстрая модалка графика для вкладок без своей (momentum, база→вход…) ──
+// openPairChart('SXTUSDT') / openPairChart('SXT/USDT', '4h'). KChart со всем
+// фаршем renderKChart (MA/ST/VOL/Delta/RSI/сигналы/уровни), TF-бар, ESC/фон.
+window._kcQmSym = null;
+window.openPairChart = function(symbol, tf) {
+  const sym = (symbol || '').toUpperCase().replace('/', '').replace(/USDT$/, '') + 'USDT';
+  let m = document.getElementById('kcQuickModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'kcQuickModal';
+    m.style.cssText = 'display:none;position:fixed;inset:0;z-index:400;align-items:center;' +
+      'justify-content:center;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);';
+    m.innerHTML = '<div style="width:92vw;height:86vh;background:var(--dark,#0a0e14);' +
+      'border:1px solid var(--border,#223);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;">' +
+      '<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border,#223);">' +
+      '<b id="kcQmTitle" style="font-family:var(--font-mono,monospace);font-size:14px;"></b>' +
+      '<span id="kcQmTFs" style="display:flex;gap:4px;"></span>' +
+      '<span style="flex:1;"></span>' +
+      '<button onclick="window._kcQmClose()" style="background:none;border:1px solid var(--border,#334);' +
+      'border-radius:6px;color:var(--muted,#8892a4);font-size:14px;cursor:pointer;padding:2px 10px;">✕</button>' +
+      '</div><div id="kcQmBody" style="flex:1;position:relative;"></div></div>';
+    m.addEventListener('click', ev => { if (ev.target === m) window._kcQmClose(); });
+    document.body.appendChild(m);
+    document.addEventListener('keydown', ev => {
+      if (ev.key === 'Escape' && m.style.display === 'flex') window._kcQmClose();
+    });
+  }
+  const tfCur = tf || localStorage.getItem('kc_qm_tf') || '1h';
+  localStorage.setItem('kc_qm_tf', tfCur);
+  window._kcQmSym = sym;
+  document.getElementById('kcQmTitle').textContent = sym.replace('USDT', '') + ' · USDT';
+  document.getElementById('kcQmTFs').innerHTML = ['15m', '30m', '1h', '4h', '1d'].map(t =>
+    `<button onclick="openPairChart(window._kcQmSym,'${t}')" style="background:${t === tfCur ? 'rgba(76,201,240,0.18)' : 'none'};` +
+    `border:1px solid ${t === tfCur ? 'rgba(76,201,240,0.5)' : 'var(--border,#334)'};border-radius:6px;` +
+    `color:${t === tfCur ? '#4cc9f0' : 'var(--muted,#8892a4)'};font-size:11px;cursor:pointer;padding:3px 9px;` +
+    `font-family:var(--font-mono,monospace);">${t}</button>`).join('');
+  m.style.display = 'flex';
+  const body = document.getElementById('kcQmBody');
+  body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted,#8892a4);">Загрузка графика…</div>';
+  window.renderKChart(body, sym, tfCur, {});
+};
+window._kcQmClose = function() {
+  const m = document.getElementById('kcQuickModal');
+  if (!m) return;
+  m.style.display = 'none';
+  const b = document.getElementById('kcQmBody');
+  if (b && b._kChart) { try { klinecharts.dispose(b); } catch (e) {} b._kChart = null; }
+};
+
 window.renderKChart = async function(container, symbol, tf, opts) {
   opts = opts || {};
   if (typeof container === 'string') container = document.getElementById(container);
