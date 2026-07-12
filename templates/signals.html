@@ -6751,16 +6751,17 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     if (typeof filterJournal === 'function') filterJournal();
   };
   </script>
-  <button id="jTopBestBtn" onclick="_toggleTopBest()" title="🏆 TOP-7 BEST: фильтр по 7 лучшим источникам по backtest (triple_confluence 61% / st_vip 60% / confluence 55% / 🐋 WHALE 53.8% / 🧠 combo 52.5% / 🐋 WHALE PREMIUM 47% high-MFE / cv_flip 43%). Скрывает остальные источники." style="background:linear-gradient(135deg, rgba(255,215,0,0.18), rgba(0,229,160,0.10));border:1.5px solid rgba(255,215,0,0.6);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ffd23e;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">🏆 TOP-7 · OFF</button>
+  <!-- Скрыто по запросу юзера 2026-07-12: TOP-7, ±4h/12h state, WHALE/SHARK,
+       звук, Δ Backfill. id/handlers сохранены для совместимости JS. -->
+  <button id="jTopBestBtn" onclick="_toggleTopBest()" style="display:none;">🏆 TOP-7 · OFF</button>
   <button id="jHighScoreBtn" style="display:none;"></button>
-  <button id="j4hStateBtn" onclick="_toggle4hState()" title="⚡ 4h State filter: RSI>SMA на 4h для LONG, RSI<SMA для SHORT. Faster reaction than 12h." style="background:linear-gradient(135deg, rgba(0,229,160,0.10), rgba(0,128,255,0.06));border:1px solid rgba(0,229,160,0.4);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#88d8a3;cursor:pointer;min-width:140px;text-align:center;box-sizing:border-box;font-weight:700;">⚡ +4h state · OFF</button>
-  <button id="j12hStateBtn" onclick="_toggle12hState()" title="⚡ 12h State filter: RSI>SMA на 12h для LONG, RSI<SMA для SHORT. По backtest 14d: +14-17 WR пп для всех источников. Скрывает signals где state против direction." style="background:linear-gradient(135deg, rgba(0,229,160,0.12), rgba(0,128,255,0.08));border:1px solid rgba(0,229,160,0.5);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:700;">⚡ +12h state · OFF</button>
+  <button id="j4hStateBtn" onclick="_toggle4hState()" style="display:none;">⚡ +4h state · OFF</button>
+  <button id="j12hStateBtn" onclick="_toggle12hState()" style="display:none;">⚡ +12h state · OFF</button>
   <button id="jWorthBtn" style="display:none;"></button>
-  <!-- 🐋 WHALE / 🦈 SHARK / 🧠 COMBO — quick source filters -->
-  <button id="jWhaleOnlyBtn" onclick="_toggleSourceOnly('whale')" title="🐋 WHALE только. STANDARD WR 53.8%, MFE 5.56% (LONG)." style="background:linear-gradient(135deg, rgba(0,140,255,0.18), rgba(0,200,255,0.10));border:1.5px solid rgba(0,140,255,0.55);border-radius:6px;padding:4px 12px;font-size:11px;font-family:var(--font-mono);color:#00c8ff;cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;font-weight:800;">🐋 WHALE · OFF</button>
-  <button id="jSharkOnlyBtn" onclick="_toggleSourceOnly('shark')" title="🦈 SHARK только. STANDARD WR 60.4%, MFE 4.96% (SHORT)." style="background:linear-gradient(135deg, rgba(255,77,109,0.18), rgba(255,140,80,0.10));border:1.5px solid rgba(255,77,109,0.55);border-radius:6px;padding:4px 12px;font-size:11px;font-family:var(--font-mono);color:#ff4d6d;cursor:pointer;min-width:110px;text-align:center;box-sizing:border-box;font-weight:800;">🦈 SHARK · OFF</button>
-  <button id="jSoundBtn" onclick="_journalSoundEnabled=!_journalSoundEnabled;this.textContent=_journalSoundEnabled?'🔔':'🔕';this.title=_journalSoundEnabled?'Звук вкл':'Звук выкл'" title="Звук вкл" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:14px;cursor:pointer;">🔔</button>
-  <button id="jDeltaBackfillBtn" onclick="_startDeltaBackfill()" title="Запустить массовый backfill cluster_delta для всех сигналов в БД (через klines, полная история)" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:var(--muted);cursor:pointer;min-width:140px;text-align:center;">📊 Δ Backfill</button>
+  <button id="jWhaleOnlyBtn" onclick="_toggleSourceOnly('whale')" style="display:none;">🐋 WHALE · OFF</button>
+  <button id="jSharkOnlyBtn" onclick="_toggleSourceOnly('shark')" style="display:none;">🦈 SHARK · OFF</button>
+  <button id="jSoundBtn" style="display:none;">🔔</button>
+  <button id="jDeltaBackfillBtn" onclick="_startDeltaBackfill()" style="display:none;">📊 Δ Backfill</button>
 </div>
 
 <script>
