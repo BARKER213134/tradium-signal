@@ -3186,6 +3186,62 @@ async def api_momentum_signals(hours: int = 336):
     return await asyncio.to_thread(_sync)
 
 
+@app.get("/api/health")
+async def api_health():
+    """🚦 Здоровье платформы: пульсы фоновых циклов (heartbeats) + свежесть
+    данных в Mongo. Для индикатора «всё собирается» в шапке.
+    Компонент: ok — в пределах интервала; warn — опаздывает; down — стоит."""
+    def _collect():
+        from database import _get_db, utcnow
+        db = _get_db()
+        now = utcnow()
+
+        def age_min(dt):
+            if dt is None:
+                return None
+            try:
+                return (now - dt).total_seconds() / 60.0
+            except Exception:
+                return None
+
+        comps = []
+
+        def add(name, label, amin, warn_m, down_m):
+            st = ("down" if amin is None or amin > down_m
+                  else "warn" if amin > warn_m else "ok")
+            comps.append({"name": name, "label": label,
+                          "age_min": round(amin, 1) if amin is not None else None,
+                          "warn_after_min": warn_m, "down_after_min": down_m,
+                          "status": st})
+
+        hb = {d["_id"]: d.get("at") for d in db.heartbeats.find()}
+        # циклы (пульс пишется в начале каждой итерации)
+        add("momentum", "💥💰 Momentum-скан (автоторговля)", age_min(hb.get("momentum")), 35, 90)
+        add("accum", "🧊 Скан баз/ширины/Δ24ч", age_min(hb.get("accum")), 45, 120)
+        add("st_tracker", "🌀 SuperTrend tracker", age_min(hb.get("st_tracker")), 15, 45)
+        add("outcomes", "🎯 Трекер исходов TP/SL", age_min(hb.get("outcomes")), 15, 45)
+        add("live_mirror", "💵 Paper→Live зеркало", age_min(hb.get("live_mirror")), 5, 15)
+        # данные (артефакты сборщиков)
+        ms = db.market_state.find_one({"_id": "breadth"}) or {}
+        add("breadth", "🎯 Ширина рынка (бейдж стороны)", age_min(ms.get("updated_at")), 45, 120)
+        ds = db.delta_state.find_one(sort=[("updated_at", -1)]) or {}
+        add("delta24", "Δ24ч скринера", age_min(ds.get("updated_at")), 45, 120)
+        ws = db.cluster_delta.find_one(sort=[("cached_at", -1)]) or {}
+        add("delta_ws", "⚡ Realtime-дельта (WebSocket)", age_min(ws.get("cached_at")), 10, 30)
+        sig = db.new_strategy_signals.find_one(sort=[("created_at", -1)]) or {}
+        add("signals", "📡 Поток сигналов (любой источник)", age_min(sig.get("created_at")), 180, 480)
+        return comps
+
+    try:
+        comps = await asyncio.to_thread(_collect)
+        overall = ("down" if any(c["status"] == "down" for c in comps)
+                   else "warn" if any(c["status"] == "warn" for c in comps)
+                   else "ok")
+        return {"overall": overall, "components": comps}
+    except Exception as e:
+        return {"overall": "down", "error": str(e), "components": []}
+
+
 @app.get("/api/market-side")
 async def api_market_side():
     """🟢LONG/🔴SHORT/⚪НЕЙТРАЛ для всего рынка: ширина (доля пар с RSI4h>SMA

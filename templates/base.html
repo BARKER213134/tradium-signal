@@ -2970,6 +2970,62 @@
                     </div>
                 </div>
             </a>
+            <!-- 🚦 Индикатор здоровья платформы (все сборщики данных) -->
+            <div id="healthInd" onclick="_toggleHealthPop(event)" title="Статус сборщиков данных — клик для деталей" style="position:relative;display:flex;align-items:center;gap:7px;cursor:pointer;padding:6px 12px;border-radius:9px;border:1px solid var(--border);background:rgba(255,255,255,0.02);font-family:var(--font-mono);user-select:none;">
+                <span id="healthDot" style="width:10px;height:10px;border-radius:50%;background:#556;box-shadow:0 0 8px #556;flex-shrink:0;"></span>
+                <span id="healthTxt" style="font-size:10px;font-weight:700;color:var(--muted);letter-spacing:0.06em;white-space:nowrap;">СБОР…</span>
+                <div id="healthPop" style="display:none;position:absolute;top:115%;left:0;z-index:500;background:rgba(10,14,20,0.98);border:1px solid var(--border);border-radius:10px;padding:12px 16px;min-width:360px;box-shadow:0 12px 40px rgba(0,0,0,0.6);cursor:default;"></div>
+            </div>
+            <script>
+            window._healthData = null;
+            window._toggleHealthPop = function(ev) {
+                if (ev && ev.target.closest('#healthPop')) return;
+                const p = document.getElementById('healthPop');
+                p.style.display = p.style.display === 'none' ? 'block' : 'none';
+            };
+            document.addEventListener('click', function(ev) {
+                if (!ev.target.closest('#healthInd')) {
+                    const p = document.getElementById('healthPop');
+                    if (p) p.style.display = 'none';
+                }
+            });
+            async function _loadHealth() {
+                try {
+                    const r = await fetch('/api/health');
+                    const d = await r.json();
+                    window._healthData = d;
+                    const cfg = {
+                        ok:   {c: '#00e5a0', t: 'ВСЁ РАБОТАЕТ'},
+                        warn: {c: '#ffd23e', t: 'ДЕГРАДАЦИЯ'},
+                        down: {c: '#ff4d6d', t: 'СБОЙ СБОРА'},
+                    }[d.overall] || {c: '#556', t: '???'};
+                    const dot = document.getElementById('healthDot');
+                    const txt = document.getElementById('healthTxt');
+                    if (!dot) return;
+                    dot.style.background = cfg.c;
+                    dot.style.boxShadow = `0 0 10px ${cfg.c}`;
+                    txt.textContent = cfg.t;
+                    txt.style.color = cfg.c;
+                    const rows = (d.components || []).map(c => {
+                        const cc = {ok: '#00e5a0', warn: '#ffd23e', down: '#ff4d6d'}[c.status] || '#556';
+                        const age = c.age_min == null ? 'нет данных'
+                            : c.age_min < 90 ? `${Math.round(c.age_min)} мин назад`
+                            : `${(c.age_min / 60).toFixed(1)} ч назад`;
+                        return `<div style="display:flex;align-items:center;gap:9px;padding:3px 0;font-size:11px;">
+                            <span style="width:8px;height:8px;border-radius:50%;background:${cc};box-shadow:0 0 6px ${cc};flex-shrink:0;"></span>
+                            <span style="flex:1;color:var(--text);">${c.label}</span>
+                            <span style="color:${cc};font-weight:600;white-space:nowrap;">${age}</span>
+                        </div>`;
+                    }).join('');
+                    document.getElementById('healthPop').innerHTML =
+                        `<div style="font-size:10px;font-weight:800;color:var(--muted);letter-spacing:0.1em;margin-bottom:8px;">СБОРЩИКИ ДАННЫХ</div>` +
+                        (rows || '<div style="font-size:11px;color:var(--muted);">нет данных</div>') +
+                        `<div style="font-size:9px;color:var(--muted);margin-top:8px;border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;">жёлтый = опаздывает · красный = стоит · обновление раз в минуту</div>`;
+                } catch (e) { /* тихо */ }
+            }
+            _loadHealth();
+            setInterval(_loadHealth, 60000);
+            </script>
             {% if bots %}
             {% set crypto_bots = bots | selectattr('category', 'equalto', 'crypto') | list %}
             {% set stocks_bots = bots | selectattr('category', 'equalto', 'stocks') | list %}

@@ -56,6 +56,17 @@ def setup(bot, admin_chat_id: int, bot2=None, bot3=None, bot4=None, bot10=None):
     _admin_chat_id = admin_chat_id
 
 
+def _hb(name: str):
+    """Пульс фонового цикла — для /api/health (индикатор «всё собирается»).
+    Вызывать через to_thread в начале каждой итерации критичного цикла."""
+    try:
+        from database import _get_db, utcnow
+        _get_db().heartbeats.update_one(
+            {"_id": name}, {"$set": {"at": utcnow()}}, upsert=True)
+    except Exception:
+        pass
+
+
 async def _st_tracker_loop():
     """Фоновая задача: каждые 5 мин запускает check_all_pairs у SuperTrend tracker.
     Генерирует 3 типа сигналов (VIP/MTF/Daily) и шлёт алерты в BOT10.
@@ -71,6 +82,7 @@ async def _st_tracker_loop():
         except Exception: pass
     while True:
         try:
+            await _asyncio.to_thread(_hb, "st_tracker")
             from supertrend_tracker import check_all_pairs
             await check_all_pairs(alert_enabled=True)
         except Exception:
@@ -1429,6 +1441,7 @@ async def _accum_scan_loop():
     await _asyncio.sleep(360)
     while True:
         try:
+            await _asyncio.to_thread(_hb, "accum")
             from accum_detector import scan_universe, store_snapshot, track_resolutions
             items = await _asyncio.to_thread(scan_universe, 300)
             if not items:
@@ -1488,6 +1501,7 @@ async def _momentum_scan_loop():
     await _asyncio.sleep(240)
     while True:
         try:
+            await _asyncio.to_thread(_hb, "momentum")
             from impulse_detector import scan_universe
             fired = await _asyncio.to_thread(scan_universe, 300)
             if fired:
@@ -2452,8 +2466,13 @@ async def _paper_to_live_mirror_loop():
     """Зеркало paper → live (каждые 15с). Timeout 25с."""
     import asyncio as _asyncio
     await _asyncio.sleep(50)
+    _hb_last = 0.0
     while True:
         try:
+            import time as _t
+            if _t.time() - _hb_last > 60:   # пульс раз в минуту (цикл 15с)
+                _hb_last = _t.time()
+                await _asyncio.to_thread(_hb, "live_mirror")
             import live_trader as lt
             res = await _asyncio.wait_for(lt.paper_to_live_sync_check(), timeout=25.0)
             synced = res.get("synced", 0) if isinstance(res, dict) else 0
@@ -2888,6 +2907,7 @@ async def _new_strategies_updater_loop():
     await _asyncio.sleep(180)  # стартовая задержка после prewarm
     while True:
         try:
+            await _asyncio.to_thread(_hb, "outcomes")
             import new_strategies as ns
             res = await _asyncio.wait_for(ns.update_waiting_outcomes(), timeout=60.0)
             if res.get("updated", 0) > 0:
