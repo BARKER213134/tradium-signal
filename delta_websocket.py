@@ -114,6 +114,15 @@ async def run_kline_stream():
             except Exception:
                 pass
             pairs = await asyncio.to_thread(_get_active_pairs, 24)
+            # только реальные фьючерсные символы: в сигналах бывают спотовые
+            # пары (Vision-фолбэк универсума) — fstream их не знает
+            try:
+                from futures_data import get_all_futures_pairs
+                fut = set(await asyncio.to_thread(get_all_futures_pairs))
+                if fut:
+                    pairs = [p for p in pairs if p.replace('/', '').upper() in fut]
+            except Exception:
+                pass
             if not pairs:
                 logger.info('[delta-ws] no active pairs, sleep 5min')
                 await asyncio.sleep(300)
@@ -141,28 +150,45 @@ async def run_kline_stream():
                                            max_size=2**24,
                                            close_timeout=10) as ws:
                 logger.info(f'[delta-ws] connected, listening...')
-                try:
-                    from database import _get_db, utcnow
-                    await asyncio.to_thread(lambda: _get_db().system.update_one(
-                        {'_id': 'delta_ws_status'},
-                        {'$set': {'state': 'connected', 'last_error': None,
-                                  'at': utcnow()}}, upsert=True))
-                except Exception:
-                    pass
+                import os as _os
+
+                def _wr_status(**kw):
+                    try:
+                        from database import _get_db, utcnow
+                        _get_db().system.update_one(
+                            {'_id': 'delta_ws_status'},
+                            {'$set': {'at': utcnow(), 'pid': _os.getpid(), **kw}},
+                            upsert=True)
+                    except Exception:
+                        pass
+                await asyncio.to_thread(_wr_status, state='connected',
+                                        last_error=None,
+                                        streams_n=len(streams),
+                                        sample=streams[:3])
                 last_persist_log = time.time()
                 count = 0
+                got_first = False
                 pending: dict = {}
                 last_flush = time.time()
                 while True:
                     try:
-                        raw = await asyncio.wait_for(ws.recv(), timeout=300)
+                        # первое сообщение ждём 45с: если Binance молчит —
+                        # подписка невалидна (не тот рынок/символы), фиксируем
+                        raw = await asyncio.wait_for(ws.recv(),
+                                                     timeout=45 if not got_first else 300)
                     except asyncio.TimeoutError:
-                        logger.warning('[delta-ws] no messages 5min, reconnect')
+                        if not got_first:
+                            logger.warning('[delta-ws] no FIRST message 45s — bad subscription?')
+                            await asyncio.to_thread(_wr_status, state='no_data',
+                                                    last_error='connected но 0 сообщений за 45с')
+                        else:
+                            logger.warning('[delta-ws] no messages 5min, reconnect')
                         break
                     try:
                         msg = json.loads(raw)
                     except Exception:
                         continue
+                    got_first = True
                     if 'data' not in msg:
                         continue  # ack/error
                     data = msg['data']
