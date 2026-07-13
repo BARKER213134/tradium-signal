@@ -740,6 +740,7 @@
           stack:'🧩',
           impulse:'🚀', fade:'🎣', ignition:'💥', rider_short:'🏄', ten:'💰',  // momentum research 07-02..10
           accum:'🧊',        // 🧊 разрешившаяся база (watchlist-событие)
+          delta_series:'🫧', // 🫧 серия дельт 3×4h (инфо, бэктест: направление не предсказывает)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
         return prefix + base;
@@ -773,6 +774,7 @@
         if (src === 'rider_short') return '🏄';
         if (src === 'ten') return '💰';
         if (src === 'accum') return '🧊';
+        if (src === 'delta_series') return '🫧';
         return ({anomaly:'⚠', paper:'🤖', cluster:'💠'})[src] || '•';
       };
 
@@ -2833,6 +2835,7 @@
     function applyPhase(d){
       const banner = byId('mpBanner');
       if (!banner) return;
+      return;  // ═ Chop/Range бар СКРЫТ по запросу юзера 2026-07-13 ═
       banner.style.display = 'block';
       banner.style.borderBottomColor = d.color || '#333';
       byId('mpEmoji').textContent = d.emoji || '❓';
@@ -3880,14 +3883,14 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         const color = long ? '#4cc9f0' : '#ff8c50';
         const value = long ? bar.l : bar.h;
         const dt = new Date(bar.t).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-        const info = `<b style="color:${color}">💠 СЕРИЯ ДЕЛЬТ · ${long ? 'покупатель' : 'продавец'}</b><br>` +
+        const info = `<b style="color:${color}">🫧 СЕРИЯ ДЕЛЬТ · ${long ? 'покупатель' : 'продавец'}</b><br>` +
           `${dt} · 3 бара подряд · Σдельта ${mk.sigma.toFixed(1)}σ · объём ${mk.vr.toFixed(1)}× нормы<br>` +
           `<span style="color:#aab3c2;">инфо-разметка: крупный поток здесь, но направление дальше — монетка (бэктест год); мед. вынос ±6% за 72ч</span>`;
         container._kcSigs.push({ ts: bar.t, value, info });
         chart.createOverlay({
           name: 'sigMarker', groupId: 'sig', lock: true,
           points: [{ timestamp: bar.t, value }],
-          extendData: { emoji: '💠', dir: long ? 'LONG' : 'SHORT', color },
+          extendData: { emoji: '🫧', dir: long ? 'LONG' : 'SHORT', color },
         });
       });
     } catch (e) {}

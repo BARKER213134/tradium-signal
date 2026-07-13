@@ -8217,14 +8217,15 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "second_flip": "♻️", "combo": "🧠",
                         "whale": "🐋", "shark": "🦈",
                         "impulse": "🚀", "fade": "🎣", "ignition": "💥",
-                        "rider_short": "🏄", "ten": "💰"}
+                        "rider_short": "🏄", "ten": "💰", "delta_series": "🫧"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
                        "second_flip": "Second Flip", "combo": "COMBO",
                        "whale": "WHALE", "shark": "SHARK",
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
-                       "rider_short": "RIDER SHORT", "ten": "TEN"}
+                       "rider_short": "RIDER SHORT", "ten": "TEN",
+                       "delta_series": "Серия дельт"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -8612,13 +8613,14 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "vol_accum": "🔋", "volcano": "🌋",
                         "second_flip": "♻️", "combo": "🧠", "whale": "🐋",
                         "shark": "🦈", "impulse": "🚀", "fade": "🎣", "ignition": "💥",
-                        "rider_short": "🏄", "ten": "💰"}
+                        "rider_short": "🏄", "ten": "💰", "delta_series": "🫧"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
                        "whale": "WHALE", "shark": "SHARK",
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
-                       "rider_short": "RIDER SHORT", "ten": "TEN"}
+                       "rider_short": "RIDER SHORT", "ten": "TEN",
+                       "delta_series": "Серия дельт"}
         for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(2000):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -8627,7 +8629,11 @@ def _compute_journal_sync(_fast_only: bool = False):
             pair_raw = n.get("pair") or ""
             pair_norm = pair_raw.replace("/", "").upper()
             extra = ""
-            if strat == "volume_surge" and n.get("vol_ratio"):
+            if strat == "delta_series":
+                _di = n.get("indicators") or {}
+                extra = (f" · Σ {_di.get('sigma', '?')}σ · vol {_di.get('vol_ratio', '?')}×"
+                         f" · инфо (направление 50/50 по бэктесту)")
+            elif strat == "volume_surge" and n.get("vol_ratio"):
                 extra = f" · vol {n['vol_ratio']}×"
             elif strat == "triple_confluence" and n.get("source_count"):
                 extra = f" · {n['source_count']}src"

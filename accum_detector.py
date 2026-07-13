@@ -27,17 +27,29 @@ MIN_HOURS = 12    # сколько часов состояние должно д
 MAX_BACK = 240    # глубина поиска начала базы
 
 
+_fapi_down_until = 0.0   # circuit breaker: fapi в бане — не жжём таймауты
+
+
 def _fetch_klines_delta(symbol: str, limit: int = 320) -> Optional[list]:
     """1h свечи С тайкер-дельтой (поле 9 = taker buy volume). get_klines_any
-    его отбрасывает, поэтому прямой REST: fapi (prod) -> Vision (локально)."""
+    его отбрасывает, поэтому прямой REST: fapi (prod) -> Vision (локально).
+    При отказе fapi (418-бан) — предохранитель на 10 мин, иначе скан 300 пар
+    жёг по 10с таймаута на каждую и растягивался до ~50 мин (2026-07-13)."""
+    global _fapi_down_until
     import requests
     sym = symbol.replace("/", "").upper()
-    for url in ("https://fapi.binance.com/fapi/v1/klines",
-                "https://data-api.binance.vision/api/v3/klines"):
+    urls = ["https://fapi.binance.com/fapi/v1/klines",
+            "https://data-api.binance.vision/api/v3/klines"]
+    if time.time() < _fapi_down_until:
+        urls = urls[1:]
+    for url in urls:
+        is_fapi = "fapi" in url
         try:
             r = requests.get(url, params=dict(symbol=sym, interval="1h",
                                               limit=limit), timeout=10)
             if r.status_code != 200:
+                if is_fapi:
+                    _fapi_down_until = time.time() + 600
                 continue
             rows = r.json()
             if rows and len(rows) > 60:
@@ -45,6 +57,8 @@ def _fetch_klines_delta(symbol: str, limit: int = 320) -> Optional[list]:
                              l=float(x[3]), c=float(x[4]), v=float(x[5]),
                              tb=float(x[9])) for x in rows]
         except Exception:
+            if is_fapi:
+                _fapi_down_until = time.time() + 600
             continue
     return None
 
@@ -140,6 +154,62 @@ def check_pair(pair: str, candles_1h: Optional[list[dict]] = None) -> Optional[d
 _last_scan: dict = {}   # диагностика последнего скана (виден в /api/accumulation)
 
 
+def _delta_series_sig(pair: str, kd: list[dict]) -> Optional[dict]:
+    """💠 Серия дельт на 4h: 3 закрытых бара подряд с дельтой одного знака,
+    |Σ| >= 2σ√3 (σ по 50 барам), объём серии >= 1.8×MA20, цена в сторону.
+    Бэктест год (5894 соб.): направление НЕ предсказывает (WR 31-32% при
+    БУ 33) — ИНФО-сигнал в журнал по запросу юзера; автоторговля не берёт
+    (гейт PAPER_MOMENTUM_ONLY). Трекер меряет исход по TP/SL 6/3, 72ч."""
+    try:
+        buckets: dict = {}
+        order: list = []
+        for c in kd:
+            k = c["t"] // (4 * 3600_000)
+            if k not in buckets:
+                buckets[k] = {"c": c["c"], "v": 0.0, "d": 0.0, "n": 0}
+                order.append(k)
+            b = buckets[k]
+            b["c"] = c["c"]; b["v"] += c["v"]
+            b["d"] += 2 * c["tb"] - c["v"]; b["n"] += 1
+        if order and buckets[order[-1]]["n"] < 4:
+            order = order[:-1]     # незакрытый 4h-бакет не считаем
+        if len(order) < 60:
+            return None
+        arr = [buckets[k] for k in order]
+        j = len(arr) - 1
+        d0, d1, d2 = arr[j]["d"], arr[j - 1]["d"], arr[j - 2]["d"]
+        sgn = 1 if d0 > 0 else -1
+        if not (sgn * d1 > 0 and sgn * d2 > 0):
+            return None
+        if sgn * (arr[j]["c"] / arr[j - 3]["c"] - 1) <= 0:
+            return None
+        hist = [a["d"] for a in arr[max(0, j - 50):j]]
+        if len(hist) < 30:
+            return None
+        import statistics
+        std = statistics.pstdev(hist)
+        if not std or abs(d0 + d1 + d2) < 2 * std * (3 ** 0.5):
+            return None
+        vh = [a["v"] for a in arr[max(0, j - 22):j - 2]]
+        vma = sum(vh) / len(vh) if vh else 0.0
+        if not vma:
+            return None
+        vr = (arr[j]["v"] + arr[j - 1]["v"] + arr[j - 2]["v"]) / 3 / vma
+        if vr < 1.8:
+            return None
+        price = kd[-1]["c"]
+        direction = "LONG" if sgn > 0 else "SHORT"
+        sigma = abs(d0 + d1 + d2) / (std * (3 ** 0.5))
+        return {"strategy": "delta_series", "direction": direction,
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": price,
+                "tp": price * (1 + 0.06 * sgn), "sl": price * (1 - 0.03 * sgn),
+                "horizon_h": 72,
+                "indicators": {"sigma": round(sigma, 1), "vol_ratio": round(vr, 2)}}
+    except Exception:
+        return None
+
+
 def _rsi4h_bull(candles: list[dict]) -> Optional[bool]:
     """RSI14(4h) выше своей SMA14? Для ширины рынка (/api/market-side).
     4h-ресемпл из 1h свечей, Wilder RSI."""
@@ -210,6 +280,7 @@ def scan_universe(max_pairs: int = 300):
     first_err = None
     delta_map = []
     breadth_bull = breadth_tot = 0
+    ds_fired = 0
     for sym in pairs:
         pair = sym.replace("USDT", "/USDT") if "/" not in sym else sym
         try:
@@ -222,6 +293,15 @@ def scan_universe(max_pairs: int = 300):
                     breadth_tot += 1
                     if _bull:
                         breadth_bull += 1
+                # 💠 серия дельт — инфо-сигнал в журнал (кулдаун 24ч на пару)
+                _ds = _delta_series_sig(pair, kd)
+                if _ds is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_ds, cooldown_h=24):
+                            ds_fired += 1
+                    except Exception:
+                        pass
                 dz24 = _delta_z(kd, len(kd) - 24)
                 if dz24 is not None:
                     delta_map.append({"pair": pair,
@@ -263,6 +343,7 @@ def scan_universe(max_pairs: int = 300):
     except Exception as e:
         _last_scan["sample_klines"] = f"err: {e}"
     _last_scan.update(checked=checked, errors=errors, found=len(out),
+                      delta_series=ds_fired,
                       first_err=first_err, finished=utcnow().isoformat())
     out.sort(key=lambda x: -x["hours"])
     return out
