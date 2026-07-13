@@ -137,7 +137,7 @@ def _fetch_klines_binance(symbol: str, interval: str = "4h",
     # Fallback: try fapi (might work on some IPs)
     try:
         from fapi_budget import allow as _fa
-        if not _fa():
+        if not _fa(tag='total2'):
             return out
         r = _http.get(
             "https://fapi.binance.com/fapi/v1/klines",

@@ -45,7 +45,7 @@ def _fetch_klines_delta(symbol: str, limit: int = 320) -> Optional[list]:
     else:
         try:
             from fapi_budget import allow
-            if not allow():
+            if not allow(tag='accum'):
                 urls = urls[1:]   # бюджет исчерпан — сразу Vision
         except Exception:
             pass

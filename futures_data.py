@@ -49,7 +49,7 @@ def _refresh_batch_cache():
     cache = {"funding": {}, "ticker": {}, "oi": {}}
     try:
         from fapi_budget import allow as _fapi_allow
-        _fapi_ok = _fapi_allow(2)
+        _fapi_ok = _fapi_allow(2, tag='tickers')
     except Exception:
         _fapi_ok = True
 
@@ -148,7 +148,7 @@ def get_all_futures_pairs() -> list[str]:
         return _pairs_cache
     try:
         from fapi_budget import allow as _fa
-        if not _fa():
+        if not _fa(tag='exchangeInfo'):
             return _pairs_cache
     except Exception:
         pass

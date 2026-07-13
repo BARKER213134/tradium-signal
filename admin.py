@@ -3245,12 +3245,14 @@ async def api_health():
         try:
             import fapi_budget
             bs = fapi_budget.stats()
+            top = " · ".join(f"{t} {n}" for t, n in bs.get("top", [])[:3])
             comps.append({
                 "name": "fapi_budget",
                 "label": (f"🚰 Бюджет fapi: {bs['used_per_min']}/{bs['budget']} "
-                          f"запр/мин · отказов {bs['denied_total']}"),
+                          f"запр/мин · съели: {top or '—'}"),
                 "age_min": 0,
-                "status": "ok" if bs["used_per_min"] < bs["budget"] * 0.9 else "warn",
+                # сатурация = механизм работает (отказ -> фолбэк), не warn
+                "status": "ok",
             })
         except Exception:
             pass

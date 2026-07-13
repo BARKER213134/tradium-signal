@@ -248,7 +248,7 @@ def get_futures_klines(pair: str, timeframe: str, limit: int = 50) -> list[dict]
         return []
     try:
         from fapi_budget import allow
-        if not allow():
+        if not allow(tag='fut_klines'):
             return []   # бюджет fapi исчерпан — get_klines_any уйдёт на BingX
     except Exception:
         pass
@@ -403,7 +403,7 @@ def check_pump_potential(symbol: str) -> dict:
     result = {"volume_spike": 0, "oi_change": 0, "funding": 0, "score": 0, "factors": []}
     try:
         from fapi_budget import allow
-        if not allow(3):
+        if not allow(3, tag='pump_check'):
             result["label"] = "⚪ NEUTRAL"
             result["factors"] = ["fapi-бюджет исчерпан — pump-чек пропущен"]
             return result
@@ -667,7 +667,7 @@ def get_24h_volume_usd(pair: str) -> float:
         return cached[0]
     try:
         from fapi_budget import allow
-        if not allow():
+        if not allow(tag='vol24h'):
             return cached[0] if cached else 0.0   # fail-open, кэш не портим
     except Exception:
         pass

@@ -13,16 +13,20 @@ False -> сразу фолбэк (Vision/спот/BingX/кэш) без трат�
 import os
 import threading
 import time
+from collections import defaultdict
 
 _LOCK = threading.Lock()
 _WIN: list = []            # таймстампы разрешённых запросов за последние 60с
 _DENIED = 0
+_BY_TAG: dict = defaultdict(int)      # разрешено по потребителям (всего)
+_DENIED_TAG: dict = defaultdict(int)  # отказано по потребителям (всего)
 
 BUDGET = int(os.getenv("FAPI_BUDGET_PER_MIN", "240"))
 
 
-def allow(n: int = 1) -> bool:
-    """True — можно сделать n запросов к fapi; False — уходи на фолбэк."""
+def allow(n: int = 1, tag: str = "?") -> bool:
+    """True — можно сделать n запросов к fapi; False — уходи на фолбэк.
+    tag = имя потребителя (для поиска обжор в /api/health)."""
     global _DENIED
     now = time.time()
     with _LOCK:
@@ -30,8 +34,10 @@ def allow(n: int = 1) -> bool:
             _WIN.pop(0)
         if len(_WIN) + n > BUDGET:
             _DENIED += 1
+            _DENIED_TAG[tag] += 1
             return False
         _WIN.extend([now] * n)
+        _BY_TAG[tag] += n
         return True
 
 
@@ -39,4 +45,7 @@ def stats() -> dict:
     now = time.time()
     with _LOCK:
         used = sum(1 for t in _WIN if now - t <= 60)
-    return {"used_per_min": used, "budget": BUDGET, "denied_total": _DENIED}
+        top = sorted(_BY_TAG.items(), key=lambda kv: -kv[1])[:4]
+        top_denied = sorted(_DENIED_TAG.items(), key=lambda kv: -kv[1])[:4]
+    return {"used_per_min": used, "budget": BUDGET, "denied_total": _DENIED,
+            "top": top, "top_denied": top_denied}
