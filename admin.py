@@ -3228,6 +3228,17 @@ async def api_health():
         add("delta24", "Δ24ч скринера", age_min(ds.get("updated_at")), 45, 120)
         ws = db.cluster_delta.find_one(sort=[("cached_at", -1)]) or {}
         add("delta_ws", "⚡ Realtime-дельта (WebSocket)", age_min(ws.get("cached_at")), 10, 30)
+        # диагноз стрима: жив ли цикл и что за ошибка коннекта
+        if comps[-1]["status"] != "ok":
+            st_doc = db.system.find_one({"_id": "delta_ws_status"}) or {}
+            loop_age = age_min(hb.get("delta_ws_loop"))
+            note = ""
+            if loop_age is None:
+                note = "цикл не подаёт пульс (мёртв?)"
+            elif st_doc.get("last_error"):
+                note = f"реконнект жив, ошибка: {st_doc['last_error']}"
+            if note:
+                comps[-1]["label"] += f" — {note}"
         sig = db.new_strategy_signals.find_one(sort=[("created_at", -1)]) or {}
         add("signals", "📡 Поток сигналов (любой источник)", age_min(sig.get("created_at")), 180, 480)
         return comps

@@ -105,6 +105,12 @@ async def run_kline_stream():
         return
     while True:
         try:
+            # пульс: цикл жив (даже если коннект не удаётся) — для /api/health
+            try:
+                from watcher import _hb
+                await asyncio.to_thread(_hb, 'delta_ws_loop')
+            except Exception:
+                pass
             pairs = await asyncio.to_thread(_get_active_pairs, 24)
             if not pairs:
                 logger.info('[delta-ws] no active pairs, sleep 5min')
@@ -141,6 +147,14 @@ async def run_kline_stream():
                     }
                     await ws.send(json.dumps(msg))
                 logger.info(f'[delta-ws] connected, listening...')
+                try:
+                    from database import _get_db, utcnow
+                    await asyncio.to_thread(lambda: _get_db().system.update_one(
+                        {'_id': 'delta_ws_status'},
+                        {'$set': {'state': 'connected', 'last_error': None,
+                                  'at': utcnow()}}, upsert=True))
+                except Exception:
+                    pass
                 last_persist_log = time.time()
                 count = 0
                 while True:
@@ -175,4 +189,14 @@ async def run_kline_stream():
                         count = 0
         except Exception as e:
             logger.warning(f'[delta-ws] connection error: {e}; reconnect in 10s')
+            # диагноз в Mongo — виден в /api/health (логов Railway у нас нет)
+            try:
+                from database import _get_db, utcnow
+                _err = f'{type(e).__name__}: {str(e)[:180]}'
+                await asyncio.to_thread(lambda: _get_db().system.update_one(
+                    {'_id': 'delta_ws_status'},
+                    {'$set': {'state': 'error', 'last_error': _err,
+                              'at': utcnow()}}, upsert=True))
+            except Exception:
+                pass
             await asyncio.sleep(10)
