@@ -31,66 +31,67 @@ def _normalize_pair(symbol_upper: str) -> str:
     return symbol_upper
 
 
-async def _persist_kline(pair: str, tf: str, kline: dict):
-    """Пишет одну свечу из WS-сообщения в cluster_delta cache."""
+def _kline_doc(pair: str, tf: str, kline: dict) -> Optional[dict]:
+    """Док cluster_delta из WS-сообщения (k.t=open, k.v=vol, k.V=taker buy)."""
+    try:
+        open_ms = int(kline.get('t', 0))
+        volume = float(kline.get('v', 0))
+        if not open_ms or volume <= 0:
+            return None
+        taker_buy = float(kline.get('V', 0))
+        sell_vol = max(0.0, volume - taker_buy)
+        return {
+            'pair': pair, 'tf': tf, 'open_ms': open_ms,
+            'delta_pct': round((taker_buy - sell_vol) / volume * 100.0, 2),
+            'buy_vol': round(taker_buy, 4),
+            'sell_vol': round(sell_vol, 4),
+            'n_trades': int(kline.get('n', 0)),
+            'cached_at': datetime.now(timezone.utc),
+            'source': 'ws',
+        }
+    except Exception:
+        return None
+
+
+def _flush_docs(docs: list):
+    """Пакетная запись (в thread!). Sync-запись per-message в event loop
+    блокировала цикл на каждом тике — профиль «жил час и завис» (2026-07-13)."""
     try:
         from database import _get_db
-        # Binance kline event format:
-        # k.t = open_ms, k.T = close_ms, k.v = volume base, k.V = taker buy base,
-        # k.n = trades count, k.x = is_closed (true только если свеча закрылась)
-        open_ms = int(kline.get('t', 0))
-        if not open_ms:
-            return
-        volume = float(kline.get('v', 0))
-        taker_buy = float(kline.get('V', 0))
-        n_trades = int(kline.get('n', 0))
-        if volume <= 0:
-            return
-        sell_vol = max(0.0, volume - taker_buy)
-        delta_pct = (taker_buy - sell_vol) / volume * 100.0
-        col = _get_db().cluster_delta
-        col.update_one(
-            {'pair': pair, 'tf': tf, 'open_ms': open_ms},
-            {'$set': {
-                'pair': pair, 'tf': tf, 'open_ms': open_ms,
-                'delta_pct': round(delta_pct, 2),
-                'buy_vol': round(taker_buy, 4),
-                'sell_vol': round(sell_vol, 4),
-                'n_trades': n_trades,
-                'cached_at': datetime.now(timezone.utc),
-                'source': 'ws',
-            }},
-            upsert=True,
-        )
+        from pymongo import UpdateOne
+        ops = [UpdateOne({'pair': d['pair'], 'tf': d['tf'], 'open_ms': d['open_ms']},
+                         {'$set': d}, upsert=True) for d in docs]
+        if ops:
+            _get_db().cluster_delta.bulk_write(ops, ordered=False)
     except Exception as e:
-        logger.debug(f'[delta-ws] persist {pair}/{tf}: {e}')
+        logger.debug(f'[delta-ws] flush: {e}')
 
 
 def _get_active_pairs(hours: int = 24) -> list[str]:
-    """Возвращает список пар активных за last N часов из всех signal collections."""
+    """Пары с сигналами за N часов, отсортированы по СВЕЖЕСТИ последнего
+    сигнала (desc) — при обрезке под лимит URL отваливаются самые старые,
+    а не конец алфавита."""
     try:
         from database import _get_db
         from datetime import timedelta as _td
         db = _get_db()
         since = datetime.now(timezone.utc) - _td(hours=hours)
-        pairs: set = set()
-        for s in db.supertrend_signals.find({'flip_at': {'$gte': since}},
-                                             {'pair': 1}).limit(2000):
-            if s.get('pair'):
-                pairs.add(s['pair'])
-        for s in db.cv_flip_signals.find({'created_at': {'$gte': since}},
-                                          {'pair': 1}).limit(2000):
-            if s.get('pair'):
-                pairs.add(s['pair'])
-        for s in db.signals.find({'received_at': {'$gte': since}},
-                                  {'pair': 1}).limit(3000):
-            if s.get('pair'):
-                pairs.add(s['pair'])
-        for s in db.new_strategy_signals.find({'created_at': {'$gte': since}},
-                                                {'pair': 1}).limit(2000):
-            if s.get('pair'):
-                pairs.add(s['pair'])
-        return sorted(pairs)
+        latest: dict = {}
+
+        def _acc(cursor, ts_field):
+            for s in cursor:
+                p, ts = s.get('pair'), s.get(ts_field)
+                if p and ts:
+                    if p not in latest or ts > latest[p]:
+                        latest[p] = ts
+
+        _acc(db.supertrend_signals.find({'flip_at': {'$gte': since}},
+                                        {'pair': 1, 'flip_at': 1}).limit(2000), 'flip_at')
+        _acc(db.signals.find({'received_at': {'$gte': since}},
+                             {'pair': 1, 'received_at': 1}).limit(3000), 'received_at')
+        _acc(db.new_strategy_signals.find({'created_at': {'$gte': since}},
+                                          {'pair': 1, 'created_at': 1}).limit(3000), 'created_at')
+        return [p for p, _ in sorted(latest.items(), key=lambda kv: kv[1], reverse=True)]
     except Exception as e:
         logger.warning(f'[delta-ws] get_active_pairs fail: {e}')
         return []
@@ -116,36 +117,28 @@ async def run_kline_stream():
                 logger.info('[delta-ws] no active pairs, sleep 5min')
                 await asyncio.sleep(300)
                 continue
-            # Binance permits max 1024 streams per connection.
-            # 500 pairs × 2 TF = 1000 streams — OK.
-            # На всякий cap 500 пар.
-            pairs = pairs[:500]
-            streams = []
-            for pair in pairs:
-                sym = pair.replace('/', '').lower()
-                for tf in TIMEFRAMES:
-                    streams.append(f'{sym}@kline_{tf}')
-            stream_param = '/'.join(streams)
-            url = f'{WS_URL}?streams={stream_param}'
-            if len(url) > 16000:  # URL length limit
-                # Fallback на subscribe-after-connect
-                url = WS_URL
-                use_subscribe = True
-            else:
-                use_subscribe = False
+            # Binance permits max 1024 streams per connection, но гигантский
+            # SUBSCRIBE (1000 params одним сообщением) молча отвергается —
+            # 2026-07-13 стрим 2ч крутил connect->тишина->reconnect после
+            # того как бэкфил раздул список пар и URL превысил 16k.
+            # Поэтому: ТОЛЬКО ?streams= URL, режем самые старые пары под лимит.
+            pairs = pairs[:400]
+            while pairs:
+                streams = []
+                for pair in pairs:
+                    sym = pair.replace('/', '').lower()
+                    for tf in TIMEFRAMES:
+                        streams.append(f'{sym}@kline_{tf}')
+                url = f'{WS_URL}?streams={"/".join(streams)}'
+                if len(url) <= 15000:
+                    break
+                pairs = pairs[:len(pairs) - 20]
 
             logger.info(f'[delta-ws] connecting: {len(pairs)} pairs, {len(streams)} streams')
             async with websockets.connect(url, ping_interval=180,
                                            ping_timeout=600,
                                            max_size=2**24,
                                            close_timeout=10) as ws:
-                if use_subscribe:
-                    msg = {
-                        'method': 'SUBSCRIBE',
-                        'params': streams,
-                        'id': 1,
-                    }
-                    await ws.send(json.dumps(msg))
                 logger.info(f'[delta-ws] connected, listening...')
                 try:
                     from database import _get_db, utcnow
@@ -157,6 +150,8 @@ async def run_kline_stream():
                     pass
                 last_persist_log = time.time()
                 count = 0
+                pending: dict = {}
+                last_flush = time.time()
                 while True:
                     try:
                         raw = await asyncio.wait_for(ws.recv(), timeout=300)
@@ -180,8 +175,15 @@ async def run_kline_stream():
                     if tf not in TIMEFRAMES:
                         continue
                     pair = _normalize_pair(sym)
-                    # Persist every kline update (even unclosed) — даёт near-realtime delta
-                    await _persist_kline(pair, tf, k)
+                    # копим и пишем пачкой раз в ~2с (bulk в thread)
+                    d = _kline_doc(pair, tf, k)
+                    if d:
+                        pending[(pair, tf, d['open_ms'])] = d
+                    if len(pending) >= 300 or (pending and time.time() - last_flush > 2.0):
+                        docs = list(pending.values())
+                        pending.clear()
+                        last_flush = time.time()
+                        await asyncio.to_thread(_flush_docs, docs)
                     count += 1
                     if time.time() - last_persist_log > 60:
                         logger.info(f'[delta-ws] persisted {count} klines/min')
