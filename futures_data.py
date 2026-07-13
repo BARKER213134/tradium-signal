@@ -79,9 +79,30 @@ def _refresh_batch_cache():
         pass
 
     if not cache["ticker"]:
-        # ticker/24hr не ответил. Пустой кэш НЕ коммитим с TTL: иначе 2 мин
-        # get_liquid_pairs отдаёт пустой универсум, и сканеры (accum, momentum)
-        # стирают state / пропускают циклы (2026-07-11: базы 🧊 исчезли).
+        # fapi ticker/24hr не ответил (2026-07-13: 3ч бана IP = сканы стояли).
+        # Фолбэк: Vision spot ticker. Спот-объёмы ~10x ниже фьючерсных —
+        # масштабируем, чтобы фьючерсные пороги min_volume_usd работали.
+        try:
+            r = _http_get("https://data-api.binance.vision/api/v3/ticker/24hr",
+                          timeout=15)
+            if r.status_code == 200:
+                for item in r.json():
+                    s = item.get("symbol", "")
+                    if s.endswith("USDT"):
+                        cache["ticker"][s] = {
+                            "price": float(item.get("lastPrice", 0)),
+                            "volume_usd": float(item.get("quoteVolume", 0)) * 10.0,
+                        }
+                if cache["ticker"]:
+                    logger.warning(f"Batch cache: fapi down -> Vision spot fallback "
+                                   f"({len(cache['ticker'])} tickers, volume x10)")
+                    _batch_cache = cache
+                    _batch_cache_ts = now
+                    return
+        except Exception as e:
+            logger.debug(f"Batch ticker vision fallback: {e}")
+        # Пустой кэш НЕ коммитим с TTL: иначе 2 мин get_liquid_pairs отдаёт
+        # пустой универсум, и сканеры пропускают циклы (2026-07-11).
         logger.warning("Batch cache: ticker/24hr failed — "
                        + ("keeping previous cache" if _batch_cache.get("ticker")
                           else "no previous cache, will retry next call"))
@@ -97,6 +118,10 @@ def get_liquid_pairs(min_volume_usd: float = 5_000_000) -> list[str]:
     """Возвращает только пары с дневным объёмом >= min_volume_usd."""
     _refresh_batch_cache()
     pairs = get_all_futures_pairs()
+    if not pairs:
+        # fapi exchangeInfo недоступен (бан IP) — символы из ticker-кэша
+        # (fapi или Vision-фолбэк), чтобы сканы не стояли часами (2026-07-13)
+        pairs = [s for s in _batch_cache.get("ticker", {}) if s.endswith("USDT")]
     liquid = []
     for p in pairs:
         vol = _batch_cache.get("ticker", {}).get(p, {}).get("volume_usd", 0)
