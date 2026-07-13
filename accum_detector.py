@@ -42,6 +42,13 @@ def _fetch_klines_delta(symbol: str, limit: int = 320) -> Optional[list]:
             "https://data-api.binance.vision/api/v3/klines"]
     if time.time() < _fapi_down_until:
         urls = urls[1:]
+    else:
+        try:
+            from fapi_budget import allow
+            if not allow():
+                urls = urls[1:]   # бюджет исчерпан — сразу Vision
+        except Exception:
+            pass
     for url in urls:
         is_fapi = "fapi" in url
         try:

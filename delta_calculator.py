@@ -122,6 +122,9 @@ def _fetch_agg_trades(symbol: str, start_ms: int, end_ms: int) -> list[dict]:
     max_pages = 20
     for _ in range(max_pages):
         try:
+            from fapi_budget import allow as _fa
+            if not _fa():
+                break   # бюджет fapi исчерпан
             r = _http_client.get(
                 f"{BINANCE_FAPI}/fapi/v1/aggTrades",
                 params={
@@ -296,6 +299,9 @@ def fetch_klines_cdn(symbol: str, tf: str, start_ms: int, end_ms: int) -> list:
                 day_start = int(datetime(cur.year, cur.month, cur.day,
                                           tzinfo=timezone.utc).timestamp() * 1000)
                 day_end = day_start + 24 * 3600 * 1000
+                from fapi_budget import allow as _fa
+                if not _fa():
+                    raise RuntimeError("fapi budget exhausted")
                 r = _http_client.get(
                     f"{BINANCE_FAPI}/fapi/v1/klines",
                     params={'symbol': symbol, 'interval': tf,
@@ -381,6 +387,9 @@ def _delta_from_klines_batch(symbol: str, tf: str,
     max_pages = 30  # 30 × 1500 = 45000 свечей max — для 14d на 15m с запасом
     for _ in range(max_pages):
         try:
+            from fapi_budget import allow as _fa
+            if not _fa():
+                break   # бюджет fapi исчерпан
             r = _http_client.get(
                 f"{BINANCE_FAPI}/fapi/v1/klines",
                 params={

@@ -77,6 +77,9 @@ def _trend_from_emas(ema20: float, ema50: float, close: float) -> str:
 def _fetch_klines_fapi(sym: str, tf: str, limit: int = 1500) -> list:
     """FAPI single-call. Аналог из rsi_cache. В 30x быстрее CDN day-by-day."""
     try:
+        from fapi_budget import allow
+        if not allow():
+            return []   # бюджет fapi исчерпан — caller уйдёт на CDN
         import httpx
         r = httpx.get("https://fapi.binance.com/fapi/v1/klines",
                       params={'symbol': sym, 'interval': tf, 'limit': limit},

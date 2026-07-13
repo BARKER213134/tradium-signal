@@ -47,9 +47,16 @@ def _refresh_batch_cache():
         return
 
     cache = {"funding": {}, "ticker": {}, "oi": {}}
+    try:
+        from fapi_budget import allow as _fapi_allow
+        _fapi_ok = _fapi_allow(2)
+    except Exception:
+        _fapi_ok = True
 
     # 1. premiumIndex — funding rate + mark price для всех пар (1 запрос)
     try:
+        if not _fapi_ok:
+            raise RuntimeError("fapi budget exhausted")
         r = _http_get(f"{FAPI}/fapi/v1/premiumIndex", timeout=10)
         if r.status_code == 200:
             for item in r.json():
@@ -60,6 +67,8 @@ def _refresh_batch_cache():
 
     # 2. ticker/24hr — объём, цена для всех пар (1 запрос)
     try:
+        if not _fapi_ok:
+            raise RuntimeError("fapi budget exhausted")
         r = _http_get(f"{FAPI}/fapi/v1/ticker/24hr", timeout=10)
         if r.status_code == 200:
             for item in r.json():
@@ -137,6 +146,12 @@ def get_all_futures_pairs() -> list[str]:
     now = time.time()
     if _pairs_cache and (now - _pairs_cache_ts) < _PAIRS_TTL:
         return _pairs_cache
+    try:
+        from fapi_budget import allow as _fa
+        if not _fa():
+            return _pairs_cache
+    except Exception:
+        pass
     try:
         r = _http_get(f"{FAPI}/fapi/v1/exchangeInfo", timeout=15)
         if r.status_code != 200:

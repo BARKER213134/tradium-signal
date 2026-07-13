@@ -54,6 +54,9 @@ def _fetch_klines_fapi(sym: str, tf: str, limit: int = 1500) -> list:
     Use as primary в fill_pair_rsi — fallback на CDN если FAPI failed.
     """
     try:
+        from fapi_budget import allow
+        if not allow():
+            return []   # бюджет fapi исчерпан — caller уйдёт на CDN
         import httpx
         r = httpx.get("https://fapi.binance.com/fapi/v1/klines",
                       params={'symbol': sym, 'interval': tf, 'limit': limit},

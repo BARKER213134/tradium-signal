@@ -247,6 +247,12 @@ def get_futures_klines(pair: str, timeframe: str, limit: int = 50) -> list[dict]
     if not symbol:
         return []
     try:
+        from fapi_budget import allow
+        if not allow():
+            return []   # бюджет fapi исчерпан — get_klines_any уйдёт на BingX
+    except Exception:
+        pass
+    try:
         r = _http_get(
             f"{BINANCE_FUTURES}/fapi/v1/klines",
             params={"symbol": symbol, "interval": interval, "limit": limit},
@@ -395,6 +401,14 @@ def check_pump_potential(symbol: str) -> dict:
         return cached[1]
     FAPI = "https://fapi.binance.com"
     result = {"volume_spike": 0, "oi_change": 0, "funding": 0, "score": 0, "factors": []}
+    try:
+        from fapi_budget import allow
+        if not allow(3):
+            result["label"] = "⚪ NEUTRAL"
+            result["factors"] = ["fapi-бюджет исчерпан — pump-чек пропущен"]
+            return result
+    except Exception:
+        pass
 
     try:
         # 1. Volume Spike — текущий vs средний за 5 свечей 1h
@@ -651,6 +665,12 @@ def get_24h_volume_usd(pair: str) -> float:
     cached = _volume_cache.get(sym)
     if cached and (now - cached[1]) < _VOLUME_TTL:
         return cached[0]
+    try:
+        from fapi_budget import allow
+        if not allow():
+            return cached[0] if cached else 0.0   # fail-open, кэш не портим
+    except Exception:
+        pass
     try:
         r = _http_get(f"{BINANCE_FUTURES}/fapi/v1/ticker/24hr",
                       params={"symbol": sym}, timeout=5)

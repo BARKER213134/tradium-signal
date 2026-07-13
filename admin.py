@@ -3241,6 +3241,19 @@ async def api_health():
                 comps[-1]["label"] += f" — {note}"
         sig = db.new_strategy_signals.find_one(sort=[("created_at", -1)]) or {}
         add("signals", "📡 Поток сигналов (любой источник)", age_min(sig.get("created_at")), 180, 480)
+        # бюджет fapi (защита от 418-банов): использование за минуту
+        try:
+            import fapi_budget
+            bs = fapi_budget.stats()
+            comps.append({
+                "name": "fapi_budget",
+                "label": (f"🚰 Бюджет fapi: {bs['used_per_min']}/{bs['budget']} "
+                          f"запр/мин · отказов {bs['denied_total']}"),
+                "age_min": 0,
+                "status": "ok" if bs["used_per_min"] < bs["budget"] * 0.9 else "warn",
+            })
+        except Exception:
+            pass
         return comps
 
     try:
