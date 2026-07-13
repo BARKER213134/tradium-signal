@@ -3832,7 +3832,8 @@ async def start_watcher():
     try:
         import delta_websocket as dws
         asyncio.create_task(dws.run_kline_stream())
-        logger.info("[delta-ws] kline stream task scheduled")
+        asyncio.create_task(dws.run_rest_fallback())
+        logger.info("[delta-ws] kline stream + rest fallback tasks scheduled")
     except Exception:
         logger.exception("[delta-ws] failed to schedule")
 

@@ -98,6 +98,72 @@ def _get_active_pairs(hours: int = 24) -> list[str]:
         return []
 
 
+async def run_rest_fallback():
+    """Резервный REST-поллер дельты: когда WS молчит >5 мин (fstream-бан),
+    тянет последние свечи 15m/1h с Vision (спот, без банов) для активных
+    пар и пишет в cluster_delta с source='rest_vision'. Деградация:
+    спот-дельта, лаг ~2 мин — но фича живёт. Сам отключается, когда WS
+    снова пишет (смотрит только source='ws' доки)."""
+    import requests as _rq
+    await asyncio.sleep(120)
+    while True:
+        try:
+            from database import _get_db
+            db = _get_db()
+            last_ws = await asyncio.to_thread(
+                lambda: db.cluster_delta.find_one({'source': 'ws'},
+                                                  sort=[('cached_at', -1)]))
+            fresh = (last_ws and (datetime.now(timezone.utc) -
+                     last_ws['cached_at'].replace(tzinfo=timezone.utc)
+                     ).total_seconds() < 300)
+            if fresh:
+                await asyncio.sleep(120)
+                continue
+            pairs = (await asyncio.to_thread(_get_active_pairs, 24))[:80]
+            if not pairs:
+                await asyncio.sleep(120)
+                continue
+
+            def _pull():
+                docs = []
+                s = _rq.Session()
+                for pair in pairs:
+                    sym = pair.replace('/', '').upper()
+                    for tf in TIMEFRAMES:
+                        try:
+                            r = s.get('https://data-api.binance.vision/api/v3/klines',
+                                      params=dict(symbol=sym, interval=tf, limit=2),
+                                      timeout=6)
+                            if r.status_code != 200:
+                                continue
+                            for row in r.json():
+                                vol = float(row[5])
+                                if vol <= 0:
+                                    continue
+                                tb = float(row[9])
+                                sell = max(0.0, vol - tb)
+                                docs.append({
+                                    'pair': pair, 'tf': tf, 'open_ms': int(row[0]),
+                                    'delta_pct': round((tb - sell) / vol * 100, 2),
+                                    'buy_vol': round(tb, 4),
+                                    'sell_vol': round(sell, 4),
+                                    'n_trades': int(row[8]),
+                                    'cached_at': datetime.now(timezone.utc),
+                                    'source': 'rest_vision',
+                                })
+                        except Exception:
+                            continue
+                return docs
+
+            docs = await asyncio.to_thread(_pull)
+            if docs:
+                await asyncio.to_thread(_flush_docs, docs)
+                logger.info(f'[delta-rest] fallback: {len(docs)} свечей ({len(pairs)} пар)')
+        except Exception:
+            logger.exception('[delta-rest] fallback fail')
+        await asyncio.sleep(120)
+
+
 async def run_kline_stream():
     """Главная WS петля. Переподключается при разрывах."""
     try:
