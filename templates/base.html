@@ -3700,6 +3700,7 @@ window._kcStopLive = function(container) {
   if (!L) return;
   try { if (L.ws) { L.ws.onclose = null; L.ws.onmessage = null; L.ws.onerror = null; L.ws.close(); } } catch (e) {}
   try { if (L.timer) clearInterval(L.timer); } catch (e) {}
+  try { if (L.wd) clearInterval(L.wd); } catch (e) {}
   try { if (L.t1) clearTimeout(L.t1); } catch (e) {}
   try { if (L.badge) L.badge.remove(); } catch (e) {}
   container._kcLive = null;
@@ -3715,7 +3716,7 @@ window._kcStartLive = function(container, chart, sym, tf, hasDelta) {
     'background:rgba(10,14,20,0.72);color:#556;pointer-events:none;';
   badge.textContent = '● …';
   container.appendChild(badge);
-  const L = { ws: null, timer: null, t1: null, badge, mode: null };
+  const L = { ws: null, timer: null, t1: null, wd: null, badge, mode: null, lastMsg: Date.now() };
   container._kcLive = L;
 
   const setBadge = (mode) => {
@@ -3727,14 +3728,18 @@ window._kcStartLive = function(container, chart, sym, tf, hasDelta) {
   };
   const applyK = (k, modeName) => {
     try {
+      L.lastMsg = Date.now();
       const vol = +k.v, tb = +k.V, close = +k.c;
       chart.updateData({
         timestamp: +k.t, open: +k.o, high: +k.h, low: +k.l, close,
         volume: vol, turnover: vol * close,
         delta: (hasDelta && vol > 0) ? 2 * tb - vol : null,
       });
-      if (L.mode !== modeName) {
-        // WS пробился — страховочный поллинг больше не нужен
+      L.msgCount = (L.msgCount || 0) + 1;
+      if (L.mode !== modeName && L.msgCount >= 3) {
+        // WS доказал стабильность (3+ сообщений) — поллинг больше не нужен.
+        // Одно сообщение не считается: сети бывают пропускают хендшейк
+        // и первый пакет, а дальше душат поток.
         if (L.timer) { clearInterval(L.timer); L.timer = null; }
         setBadge(modeName);
       }
@@ -3791,6 +3796,17 @@ window._kcStartLive = function(container, chart, sym, tf, hasDelta) {
   startPoll();
   tryWs(`wss://fstream.binance.com/ws/${s}@kline_${iv}`, 'ws',
     () => tryWs(`wss://data-stream.binance.vision/ws/${s}@kline_${iv}`, 'spot', () => {}));
+  // Сторожок: сеть может пропустить хендшейк + первые сообщения и задушить
+  // поток (2026-07-14: «дёрнулось один раз и всё») — сокет «открыт», но нем.
+  // LIVE молчит 30с -> закрываем сокет, назад на поллинг.
+  L.wd = setInterval(() => {
+    if (!container.isConnected) { window._kcStopLive(container); return; }
+    if ((L.mode === 'ws' || L.mode === 'spot') && Date.now() - L.lastMsg > 30000) {
+      try { if (L.ws) { L.ws.onclose = null; L.ws.close(); } } catch (e) {}
+      L.ws = null;
+      startPoll();
+    }
+  }, 10000);
 };
 
 window.renderKChart = async function(container, symbol, tf, opts) {
