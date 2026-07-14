@@ -3221,6 +3221,7 @@ async def api_health():
         add("st_tracker", "🌀 SuperTrend tracker", age_min(hb.get("st_tracker")), 15, 45)
         add("outcomes", "🎯 Трекер исходов TP/SL", age_min(hb.get("outcomes")), 15, 45)
         add("live_mirror", "💵 Paper→Live зеркало", age_min(hb.get("live_mirror")), 5, 15)
+        add("market_side", "🔄 Слежение за стороной рынка", age_min(hb.get("market_side")), 15, 45)
         # данные (артефакты сборщиков)
         ms = db.market_state.find_one({"_id": "breadth"}) or {}
         add("breadth", "🎯 Ширина рынка (бейдж стороны)", age_min(ms.get("updated_at")), 45, 120)

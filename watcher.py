@@ -1388,6 +1388,114 @@ def _setup_bot16():
         logger.error(f"BOT16 init fail: {e}")
 
 
+def _market_side_now():
+    """Сторона рынка как в /api/market-side. (side, breadth_pct, btc_st4)."""
+    from database import _get_db, utcnow
+    doc = _get_db().market_state.find_one({"_id": "breadth"}) or {}
+    upd, pct = doc.get("updated_at"), doc.get("pct")
+    if not upd or pct is None or (utcnow() - upd).total_seconds() > 7200:
+        return None, None, None
+    if pct > 60:
+        return "NEUTRAL", pct, None
+    if pct < 40:
+        return "SHORT", pct, None
+    from rider_detector import get_btc_st4
+    st = get_btc_st4()
+    side = "SHORT" if st == "DOWN" else "LONG" if st == "UP" else "NEUTRAL"
+    return side, pct, st
+
+
+async def _market_side_broadcast(txt: str):
+    """Рассылка во ВСЕ инициализированные боты (смена стороны рынка)."""
+    import asyncio as _asyncio
+    from config import WHALE_CHAT_ID
+    if _bot5 is None:
+        try: _setup_bot5()
+        except Exception: pass
+    if _bot9 is None:
+        try: _setup_bot9()
+        except Exception: pass
+    if _bot10 is None:
+        try: _setup_bot10()
+        except Exception: pass
+    if _bot16 is None:
+        try: _setup_bot16()
+        except Exception: pass
+    targets = [(_bot, _admin_chat_id), (_bot2, _admin_chat_id),
+               (_bot4, _admin_chat_id), (_bot5, _admin_chat_id),
+               (_bot8, _admin_chat_id), (_bot9, _admin_chat_id),
+               (_bot10, _admin_chat_id), (_bot16, WHALE_CHAT_ID)]
+    sent = 0
+    seen = set()
+    for bot, chat in targets:
+        if not bot or not chat:
+            continue
+        key = (id(bot), chat)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            await bot.send_message(chat_id=chat, text=txt, parse_mode="HTML")
+            sent += 1
+            await _asyncio.sleep(0.4)
+        except Exception:
+            pass
+    logger.info(f"[market-side] алерт смены стороны разослан в {sent} ботов")
+
+
+async def _market_side_alert_loop():
+    """🔄 Смена стороны рынка (🟢/⚪/🔴) -> алерт во все боты.
+    Проверка каждые 5 мин; смена подтверждается 2 проверками подряд
+    (10 мин) — антидребезг для зоны 40-60% с флипающим BTC ST4h."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(420)
+    pending, pending_n = None, 0
+    while True:
+        try:
+            await _asyncio.to_thread(_hb, "market_side")
+            side, pct, btc = await _asyncio.to_thread(_market_side_now)
+            if side:
+                from database import _get_db, utcnow
+                db = _get_db()
+                doc = await _asyncio.to_thread(
+                    lambda: db.system.find_one({"_id": "market_side_state"})) or {}
+                prev = doc.get("side")
+                if prev is None:
+                    await _asyncio.to_thread(lambda: db.system.update_one(
+                        {"_id": "market_side_state"},
+                        {"$set": {"side": side}}, upsert=True))
+                elif side != prev:
+                    if pending == side:
+                        pending_n += 1
+                    else:
+                        pending, pending_n = side, 1
+                    if pending_n >= 2:
+                        await _asyncio.to_thread(lambda: db.system.update_one(
+                            {"_id": "market_side_state"},
+                            {"$set": {"side": side, "prev": prev,
+                                      "changed_at": utcnow()}}, upsert=True))
+                        E = {"LONG": "🟢 LONG", "SHORT": "🔴 SHORT",
+                             "NEUTRAL": "⚪ БЕЗ СТОРОНЫ"}
+                        BAN = {"LONG": "🚫 НЕ ШОРТИТЬ",
+                               "SHORT": "🚫 НЕ ЛОНГОВАТЬ",
+                               "NEUTRAL": "🚫 НЕ ЛОНГОВАТЬ · НЕ ШОРТИТЬ"}
+                        txt = ("🔄 <b>РЫНОК СМЕНИЛ СТОРОНУ</b>\n"
+                               f"{E.get(prev, prev)} → <b>{E.get(side, side)}</b>\n"
+                               "────────────\n"
+                               f"<b>{BAN[side]}</b>\n"
+                               f"ширина рынка: {pct:.0f}%"
+                               + (f" · BTC ST4h {btc}" if btc else "") + "\n"
+                               "<i>бэктест год: торгуй только по стороне бейджа "
+                               "(+3..+6пп к безубытку), против — минус обеим сторонам</i>")
+                        await _market_side_broadcast(txt)
+                        pending, pending_n = None, 0
+                else:
+                    pending, pending_n = None, 0
+        except Exception:
+            logger.exception("[market-side] alert loop error")
+        await _asyncio.sleep(300)
+
+
 async def _momentum_send_telegram(sig: dict):
     """IMPULSE/FADE alert в BOT16 (общий канал сильных сигналов)."""
     global _bot16
@@ -3886,6 +3994,12 @@ async def start_watcher():
         logger.info("[accum] scan loop scheduled")
     except Exception:
         logger.exception("[accum] failed to schedule")
+    # 🔄 Смена стороны рынка -> алерт во все боты (2026-07-14)
+    try:
+        asyncio.create_task(_market_side_alert_loop())
+        logger.info("[market-side] alert loop scheduled")
+    except Exception:
+        logger.exception("[market-side] failed to schedule")
     # Paper→Live mirror — каждые 15с зеркалит partials/SL moves/full close
     try:
         asyncio.create_task(_paper_to_live_mirror_loop())
