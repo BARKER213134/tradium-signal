@@ -1461,6 +1461,12 @@ async def _market_side_alert_loop():
                 db = _get_db()
                 doc = await _asyncio.to_thread(
                     lambda: db.system.find_one({"_id": "market_side_state"})) or {}
+                # сырой возраст фазы (без дебаунса) — для таймера на бейдже
+                if doc.get("raw_side") != side:
+                    await _asyncio.to_thread(lambda: db.system.update_one(
+                        {"_id": "market_side_state"},
+                        {"$set": {"raw_side": side, "raw_since": utcnow()}},
+                        upsert=True))
                 prev = doc.get("side")
                 if prev is None:
                     await _asyncio.to_thread(lambda: db.system.update_one(

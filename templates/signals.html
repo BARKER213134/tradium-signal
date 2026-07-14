@@ -6435,6 +6435,7 @@ safeInterval(loadForexJournal, 30000);
   <div id="msBan" style="font-size:22px;font-weight:900;font-family:var(--font-mono);letter-spacing:0.1em;padding:10px 22px;border-radius:10px;border:2px dashed rgba(255,77,109,0.7);background:rgba(255,77,109,0.08);color:#ff5e9c;white-space:nowrap;"></div>
   <div style="flex:1;min-width:200px;">
     <div id="msReason" style="font-size:12.5px;color:var(--text);line-height:1.5;"></div>
+    <div id="msPhase" style="display:none;font-size:12px;font-weight:700;margin-top:4px;font-family:var(--font-mono);"></div>
     <div id="msMeta" style="font-size:10px;color:var(--muted);margin-top:3px;font-family:var(--font-mono);"></div>
   </div>
 </div>
@@ -6471,6 +6472,19 @@ async function loadMarketSide() {
       ban.style.display = cfg.ban ? 'block' : 'none';
     }
     document.getElementById('msReason').textContent = d.reason || '';
+    // ⏳ таймер фазы: возраст стороны + подсказка (год-бэктест)
+    const ph = document.getElementById('msPhase');
+    if (ph) {
+      if (d.phase_age_h != null && d.phase_hint) {
+        const ageTxt = d.phase_age_h < 48 ? `${d.phase_age_h.toFixed(1)}ч` : `${(d.phase_age_h/24).toFixed(1)}д`;
+        const stale = d.phase_hint.includes('ХВАТИТ');
+        ph.textContent = `⏱ фаза живёт ${ageTxt} · ${d.phase_hint}`;
+        ph.style.color = stale ? '#ff4d6d' : d.phase_hint.startsWith('🔥') ? '#00e5a0' : '#ffd23e';
+        ph.style.display = 'block';
+      } else {
+        ph.style.display = 'none';
+      }
+    }
     const age = d.updated_at ? Math.round((Date.now() - new Date(d.updated_at).getTime()) / 60000) : null;
     document.getElementById('msMeta').textContent =
       `ширина ${d.breadth_pct}% (${d.n_pairs} пар) · BTC ST4h ${d.btc_st4 || '?'}` +

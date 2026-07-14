@@ -3305,8 +3305,33 @@ async def api_market_side():
             side = "NEUTRAL"
             reason = f"ширина {pct:.0f}%, BTC ST4h недоступен"
         upd = doc.get("updated_at")
+        # ⏳ таймер фазы: возраст стороны + подсказка по год-бэктесту
+        # (шорт: 0-24ч WR 43-47%, 48ч+ ниже БУ; лонг: пик 4-12ч, 88%
+        # зелёных фаз умирают <8ч)
+        phase_age_h = None
+        phase_hint = None
+        try:
+            ms = await asyncio.to_thread(
+                lambda: _get_db().system.find_one({"_id": "market_side_state"}))
+            if ms and ms.get("raw_side") == side and ms.get("raw_since"):
+                from database import utcnow as _un
+                phase_age_h = round((_un() - ms["raw_since"]).total_seconds() / 3600, 1)
+                a = phase_age_h
+                if side == "SHORT":
+                    phase_hint = ("🔥 шорт свежий — лучшие часы (0-24ч: WR 43-47%)" if a < 24
+                                  else "⌛ фаза стареет — эдж тает (24-48ч: около БУ)" if a < 48
+                                  else "⏳ ХВАТИТ ШОРТИТЬ — фаза выдохлась (48ч+: ниже БУ)")
+                elif side == "LONG":
+                    phase_hint = ("⌛ фаза не подтверждена — 88% зелёных умирают <8ч" if a < 4
+                                  else "🔥 лучшее окно лонгов (4-12ч: WR 40-43%)" if a < 12
+                                  else "⌛ поздняя фаза — зелёное дольше 20ч не живёт")
+                else:
+                    phase_hint = "мёртвая зона — обе стороны без эджа независимо от возраста"
+        except Exception:
+            pass
         return {"side": side, "breadth_pct": pct, "btc_st4": st,
                 "n_pairs": doc.get("total"), "reason": reason,
+                "phase_age_h": phase_age_h, "phase_hint": phase_hint,
                 "updated_at": upd.isoformat() if hasattr(upd, "isoformat") else None}
     except Exception as e:
         return {"side": "?", "error": str(e)}
