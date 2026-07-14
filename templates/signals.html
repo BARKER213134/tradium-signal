@@ -6440,7 +6440,39 @@ safeInterval(loadForexJournal, 30000);
   </div>
   <button id="msPlanBtn" onclick="const p=document.getElementById('msPlan');p.style.display=p.style.display==='none'?'block':'none';this.textContent=p.style.display==='none'?'📋 Что делать':'📋 Свернуть';" style="background:rgba(76,201,240,0.10);border:1px solid rgba(76,201,240,0.4);border-radius:8px;color:#4cc9f0;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">📋 Что делать</button>
   <div id="msPlan" style="display:none;flex-basis:100%;margin-top:10px;padding:14px 18px;background:rgba(10,14,20,0.5);border:1px solid var(--border);border-radius:10px;font-size:12.5px;line-height:1.9;color:var(--text);"></div>
+  <div id="msCands" style="display:none;flex-basis:100%;margin-top:10px;">
+    <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);margin-bottom:6px;">
+      <b style="color:#ffd23e;">🏆 КАНДИДАТЫ ФАЗЫ</b> — волатильные с импульсом (ловят 2–4 из 10 будущих лидеров против 0.5 у случайного выбора; клик — график)
+    </div>
+    <div id="msCandChips" style="display:flex;gap:7px;flex-wrap:wrap;"></div>
+  </div>
 </div>
+<script>
+async function loadPhaseCandidates(side) {
+  try {
+    const r = await fetch('/api/phase-candidates');
+    const d = await r.json();
+    const box = document.getElementById('msCands');
+    const chips = document.getElementById('msCandChips');
+    if (!d.ok || !box) { if (box) box.style.display = 'none'; return; }
+    // сторона: по бейджу; в ⚪ показываем шортовый список (72% ломаются в 🔴)
+    const list = side === 'LONG' ? (d.long || []) : (d.short || []);
+    const lbl = side === 'LONG' ? 'лонг' : side === 'SHORT' ? 'шорт' : 'шорт (⚪ в 72% ломается в 🔴)';
+    if (!list.length) { box.style.display = 'none'; return; }
+    chips.innerHTML = list.slice(0, 12).map(c => {
+      const p = (c.pair || '').replace('/USDT', '');
+      const momC = c.mom24 >= 0 ? 'var(--buy)' : 'var(--sell)';
+      return `<span onclick="openPairChart('${c.symbol}')" title="ATR ${c.atr_pct}% · импульс 24ч ${c.mom24 > 0 ? '+' : ''}${c.mom24}% · объём ${c.vol_ratio}× · дельта dz ${c.dz24 ?? '—'} (клик — график)"
+        style="cursor:pointer;font-family:var(--font-mono);font-size:11px;padding:4px 10px;border-radius:7px;background:rgba(255,210,62,0.07);border:1px solid rgba(255,210,62,0.35);color:var(--text);">
+        <b>${p}</b> <span style="color:#ffd23e;">${c.atr_pct}%</span> <span style="color:${momC};">${c.mom24 > 0 ? '+' : ''}${c.mom24}%</span>
+      </span>`;
+    }).join('');
+    box.querySelector('div').innerHTML =
+      `<b style="color:#ffd23e;">🏆 КАНДИДАТЫ ФАЗЫ (под ${lbl})</b> — волатильные с импульсом: исторически 2–4 из 10 будущих лидеров (случайный выбор: 0.5). ATR% · импульс 24ч · клик — график`;
+    box.style.display = 'block';
+  } catch (e) { /* тихо */ }
+}
+</script>
 <script>
 async function loadMarketSide() {
   try {
@@ -6512,6 +6544,7 @@ async function loadMarketSide() {
       };
       plan.innerHTML = PLANS[d.side] || '';
     }
+    loadPhaseCandidates(d.side);
     const age = d.updated_at ? Math.round((Date.now() - new Date(d.updated_at).getTime()) / 60000) : null;
     document.getElementById('msMeta').textContent =
       `ширина ${d.breadth_pct}% (${d.n_pairs} пар) · BTC ST4h ${d.btc_st4 || '?'}` +

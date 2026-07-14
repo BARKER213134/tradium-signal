@@ -288,6 +288,7 @@ def scan_universe(max_pairs: int = 300):
     delta_map = []
     breadth_bull = breadth_tot = 0
     ds_fired = 0
+    cand_rows = []
     for sym in pairs:
         pair = sym.replace("USDT", "/USDT") if "/" not in sym else sym
         try:
@@ -310,6 +311,28 @@ def scan_universe(max_pairs: int = 300):
                     except Exception:
                         pass
                 dz24 = _delta_z(kd, len(kd) - 24)
+                # 🏆 кандидаты фазы: ATR%, импульс 24ч, объём-ратио
+                # (год-бэктест: ATR ловит 2.2-3.9 из 10 реальных лидеров
+                # фазы против 0.5 у случайного выбора)
+                try:
+                    _c = [x["c"] for x in kd]
+                    _v = [x["v"] for x in kd]
+                    _tr = [max(kd[i]["h"] - kd[i]["l"],
+                               abs(kd[i]["h"] - kd[i-1]["c"]),
+                               abs(kd[i]["l"] - kd[i-1]["c"]))
+                           for i in range(len(kd) - 14, len(kd))]
+                    _atrp = (sum(_tr) / len(_tr)) / _c[-1] * 100 if _c[-1] else 0
+                    _mom = (_c[-1] / _c[-25] - 1) * 100 if len(_c) > 25 and _c[-25] else 0
+                    _vbase = sum(_v[-240:-24]) / 216 if len(_v) >= 240 else 0
+                    _vr = (sum(_v[-24:]) / 24) / _vbase if _vbase else 1.0
+                    cand_rows.append({"pair": pair,
+                                      "symbol": pair.replace("/", "").upper(),
+                                      "atr_pct": round(_atrp, 2),
+                                      "mom24": round(_mom, 2),
+                                      "vol_ratio": round(_vr, 2),
+                                      "dz24": round(dz24, 2) if dz24 is not None else None})
+                except Exception:
+                    pass
                 if dz24 is not None:
                     delta_map.append({"pair": pair,
                                       "symbol": pair.replace("/", "").upper(),
@@ -328,6 +351,33 @@ def scan_universe(max_pairs: int = 300):
         _last_scan["delta_map"] = len(delta_map)
     except Exception:
         pass
+    # 🏆 кандидаты фазы: композит 0.5*ATR + 0.3*импульс(по направлению) +
+    # 0.2*объём (перцентильные ранги). Топ-15 на лонг и на шорт.
+    try:
+        if len(cand_rows) >= 50:
+            def _ranks(vals):
+                order = sorted(range(len(vals)), key=lambda i: vals[i])
+                rk = [0.0] * len(vals)
+                for pos, idx in enumerate(order):
+                    rk[idx] = pos / max(len(vals) - 1, 1)
+                return rk
+            r_atr = _ranks([c["atr_pct"] for c in cand_rows])
+            r_vol = _ranks([c["vol_ratio"] for c in cand_rows])
+            r_mom = _ranks([c["mom24"] for c in cand_rows])
+            for i, c in enumerate(cand_rows):
+                c["score_long"] = round(0.5 * r_atr[i] + 0.3 * r_mom[i] + 0.2 * r_vol[i], 3)
+                c["score_short"] = round(0.5 * r_atr[i] + 0.3 * (1 - r_mom[i]) + 0.2 * r_vol[i], 3)
+            top_long = sorted(cand_rows, key=lambda c: -c["score_long"])[:15]
+            top_short = sorted(cand_rows, key=lambda c: -c["score_short"])[:15]
+            from database import _get_db, utcnow
+            _get_db().market_state.update_one(
+                {"_id": "phase_candidates"},
+                {"$set": {"long": top_long, "short": top_short,
+                          "n_universe": len(cand_rows),
+                          "updated_at": utcnow()}}, upsert=True)
+            _last_scan["candidates"] = len(cand_rows)
+    except Exception:
+        logger.exception("[accum] candidates store fail")
     # ширина рынка для /api/market-side (>=50 пар — защита от сбойного скана)
     try:
         if breadth_tot >= 50:

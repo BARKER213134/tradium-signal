@@ -3342,6 +3342,26 @@ async def api_market_side():
         return {"side": "?", "error": str(e)}
 
 
+@app.get("/api/phase-candidates")
+async def api_phase_candidates():
+    """🏆 Кандидаты фазы: топ-15 монет под лонг и под шорт по композиту
+    0.5*ATR% + 0.3*импульс24ч(по направлению) + 0.2*объём-ратио.
+    Год-бэктест: ATR-ранжирование ловит 2.2-3.9 из 10 реальных лидеров
+    фазы (случайный выбор: 0.5). Обновляется 30-мин сканом."""
+    try:
+        from database import _get_db
+        doc = await asyncio.to_thread(
+            lambda: _get_db().market_state.find_one({"_id": "phase_candidates"}))
+        if not doc:
+            return {"ok": False, "error": "ждём первый скан"}
+        upd = doc.get("updated_at")
+        return {"ok": True, "long": doc.get("long", []), "short": doc.get("short", []),
+                "n_universe": doc.get("n_universe"),
+                "updated_at": upd.isoformat() if hasattr(upd, "isoformat") else None}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/btc-st4")
 async def api_btc_st4():
     """BTC SuperTrend 4h (UP/DOWN) — гейт для шорт-пресета в журнале."""
