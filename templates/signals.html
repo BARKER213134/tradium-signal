@@ -8224,7 +8224,18 @@ async function loadCoinChart(coin) {
   document.getElementById('jCoinTFBar').style.display = 'flex';
   chartDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Загрузка…</div>';
 
-  // LWC
+  // 📈 KChart (2026-07-14): живой режим, дельта, ST, уровни и маркеры
+  // сигналов — всё внутри renderKChart. Это был последний статичный
+  // LWC-график журнала («клик по монете»). Старый код ниже отключён
+  // ранним return (оставлен для отката).
+  try {
+    chartDiv.style.height = '520px';
+    await window.renderKChart(chartDiv, sym, _coinTF, {});
+  } catch (e) {
+    chartDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--sell);">' + e.message + '</div>';
+  }
+  return;
+  // ── СТАРЫЙ LWC-РЕНДЕР (мёртвый код за return) ──
   if (!_lwcLoaded) {
     await new Promise(resolve => {
       const sc = document.createElement('script');
