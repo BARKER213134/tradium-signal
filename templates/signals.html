@@ -6445,6 +6445,8 @@ safeInterval(loadForexJournal, 30000);
       <b style="color:#ffd23e;">🏆 КАНДИДАТЫ ФАЗЫ</b> — волатильные с импульсом (ловят 2–4 из 10 будущих лидеров против 0.5 у случайного выбора; клик — график)
     </div>
     <div id="msCandChips" style="display:flex;gap:7px;flex-wrap:wrap;"></div>
+    <div id="msCandFlipLbl" style="display:none;font-family:var(--font-mono);font-size:10.5px;color:var(--muted);margin:10px 0 6px;"></div>
+    <div id="msCandFlip" style="display:none;gap:7px;flex-wrap:wrap;"></div>
   </div>
 </div>
 <script>
@@ -6470,6 +6472,28 @@ async function loadPhaseCandidates(side) {
     box.querySelector('div').innerHTML =
       `<b style="color:#ffd23e;">🏆 КАНДИДАТЫ ФАЗЫ (под ${lbl})</b> — волатильные с импульсом: исторически 2–4 из 10 будущих лидеров (случайный выбор: 0.5). ATR% · импульс 24ч · клик — график`;
     box.style.display = 'block';
+    // 📌 снапшот на момент последнего переворота стороны (из алерта)
+    const flbl = document.getElementById('msCandFlipLbl');
+    const fbox = document.getElementById('msCandFlip');
+    if (flbl && fbox) {
+      if (d.at_flip && d.at_flip.length) {
+        const ft = d.flip_at ? new Date(d.flip_at).toLocaleString('ru', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '';
+        flbl.innerHTML = `<b style="color:#b28bff;">📌 ЗАФИКСИРОВАНЫ ПРИ ПЕРЕВОРОТЕ</b> ${ft} — этот же список ушёл в боты алертом`;
+        fbox.innerHTML = d.at_flip.map(c => {
+          const p = (c.pair || '').replace('/USDT', '');
+          const momC = c.mom24 >= 0 ? 'var(--buy)' : 'var(--sell)';
+          return `<span onclick="openPairChart('${c.symbol}')" title="на момент переворота: ATR ${c.atr_pct}% · импульс 24ч ${c.mom24 > 0 ? '+' : ''}${c.mom24}% · объём ${c.vol_ratio}× (клик — график)"
+            style="cursor:pointer;font-family:var(--font-mono);font-size:11px;padding:4px 10px;border-radius:7px;background:rgba(178,139,255,0.07);border:1px solid rgba(178,139,255,0.4);color:var(--text);">
+            <b>${p}</b> <span style="color:#b28bff;">${c.atr_pct}%</span> <span style="color:${momC};">${c.mom24 > 0 ? '+' : ''}${c.mom24}%</span>
+          </span>`;
+        }).join('');
+        flbl.style.display = 'block';
+        fbox.style.display = 'flex';
+      } else {
+        flbl.style.display = 'none';
+        fbox.style.display = 'none';
+      }
+    }
   } catch (e) { /* тихо */ }
 }
 </script>

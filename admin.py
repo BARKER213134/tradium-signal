@@ -3355,8 +3355,21 @@ async def api_phase_candidates():
         if not doc:
             return {"ok": False, "error": "ждём первый скан"}
         upd = doc.get("updated_at")
+        # 📌 снапшот кандидатов на момент последнего переворота стороны
+        at_flip, flip_at, flip_side = None, None, None
+        try:
+            ms = await asyncio.to_thread(
+                lambda: _get_db().system.find_one({"_id": "market_side_state"}))
+            if ms and ms.get("candidates_at_flip"):
+                at_flip = ms["candidates_at_flip"]
+                flip_side = ms.get("side")
+                ca = ms.get("changed_at")
+                flip_at = ca.isoformat() if hasattr(ca, "isoformat") else None
+        except Exception:
+            pass
         return {"ok": True, "long": doc.get("long", []), "short": doc.get("short", []),
                 "n_universe": doc.get("n_universe"),
+                "at_flip": at_flip, "flip_at": flip_at, "flip_side": flip_side,
                 "updated_at": upd.isoformat() if hasattr(upd, "isoformat") else None}
     except Exception as e:
         return {"ok": False, "error": str(e)}
