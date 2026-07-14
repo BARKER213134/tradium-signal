@@ -3428,11 +3428,21 @@ async def api_klines_delta(symbol: str, tf: str = "1h", limit: int = 500):
         lim = max(50, min(int(limit or 500), 1000))
         key = (sym, itv, lim)
         cached = _kd_cache.get(key)
-        if cached and _t.time() - cached[0] < _KD_TTL_S:
+        # маленький limit = живая подкачка последних свечей (поллинг-фолбэк
+        # лайв-режима): кэш 10с вместо 90с, иначе на 5m график "мёртвый"
+        ttl = 10 if lim <= 60 else _KD_TTL_S
+        if cached and _t.time() - cached[0] < ttl:
             return cached[1]
         payload = None
-        for url in ("https://fapi.binance.com/fapi/v1/klines",
-                    "https://data-api.binance.vision/api/v3/klines"):
+        urls = ["https://fapi.binance.com/fapi/v1/klines",
+                "https://data-api.binance.vision/api/v3/klines"]
+        try:
+            from fapi_budget import allow
+            if not allow(tag='chart'):
+                urls = urls[1:]   # бюджет fapi исчерпан — Vision
+        except Exception:
+            pass
+        for url in urls:
             try:
                 r = _rq.get(url, params=dict(symbol=sym, interval=itv, limit=lim),
                             timeout=10)
