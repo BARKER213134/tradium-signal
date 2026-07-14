@@ -649,6 +649,50 @@ def check_positions(prices: dict):
                 closed.append({"trade_id": pos["trade_id"], "symbol": sym, "reason": "SL"})
             continue  # ← skip остальные exit rules для ALPHA-CV
 
+        # ── 🎯 MOMENTUM (💥 ignition / 💰 ten): чистая механика бэктеста ──
+        # (2026-07-14) WR 70/65 валидированы first-touch по РОДНЫМ TP/SL
+        # с горизонтом 72/96ч. TP_LADDER/BE+/TRAIL капали победителей на
+        # ~+2% (трейл 0.5%) — +6/+10 не достигались НИКОГДА, а лузеры ехали
+        # полные -3/-5: матожидание бэктеста разрушалось. Для momentum:
+        # только родные TP/SL + TIMEOUT по горизонту, без частичек/трейлов.
+        _MOM_HZ = {"ignition": 72, "ten": 96}
+        if pos.get("source") in _MOM_HZ:
+            if max_fav != pos.get("max_favorable_pct", 0):
+                trades.update_one({"trade_id": pos["trade_id"]},
+                                  {"$set": {"max_favorable_pct": max_fav}})
+            done = False
+            if is_long:
+                if tp1 and price >= tp1:
+                    r = close_position(pos["trade_id"], tp1, "TP")
+                    if r: closed.append(r)
+                    done = True
+                elif sl and price <= sl:
+                    r = close_position(pos["trade_id"], sl, "SL")
+                    if r: closed.append(r)
+                    done = True
+            else:
+                if tp1 and price <= tp1:
+                    r = close_position(pos["trade_id"], tp1, "TP")
+                    if r: closed.append(r)
+                    done = True
+                elif sl and price >= sl:
+                    r = close_position(pos["trade_id"], sl, "SL")
+                    if r: closed.append(r)
+                    done = True
+            if not done:
+                # таймаут горизонта — закрытие по рынку (как в бэктесте)
+                try:
+                    opened = pos.get("opened_at")
+                    if opened is not None:
+                        now_n = _utcnow().replace(tzinfo=None)
+                        op_n = opened.replace(tzinfo=None)
+                        if (now_n - op_n).total_seconds() > _MOM_HZ[pos["source"]] * 3600:
+                            r = close_position(pos["trade_id"], price, "TIMEOUT")
+                            if r: closed.append(r)
+                except Exception:
+                    pass
+            continue  # ← ladder/BE+/trail не для momentum
+
         # ── 1. TP LADDER — частичные закрытия (для не-ALPHA-CV) ──
         for step in TP_LADDER:
             if step["name"] in tp_hits_done:
