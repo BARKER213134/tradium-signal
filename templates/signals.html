@@ -6438,6 +6438,8 @@ safeInterval(loadForexJournal, 30000);
     <div id="msPhase" style="display:none;font-size:12px;font-weight:700;margin-top:4px;font-family:var(--font-mono);"></div>
     <div id="msMeta" style="font-size:10px;color:var(--muted);margin-top:3px;font-family:var(--font-mono);"></div>
   </div>
+  <button id="msPlanBtn" onclick="const p=document.getElementById('msPlan');p.style.display=p.style.display==='none'?'block':'none';this.textContent=p.style.display==='none'?'📋 Что делать':'📋 Свернуть';" style="background:rgba(76,201,240,0.10);border:1px solid rgba(76,201,240,0.4);border-radius:8px;color:#4cc9f0;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">📋 Что делать</button>
+  <div id="msPlan" style="display:none;flex-basis:100%;margin-top:10px;padding:14px 18px;background:rgba(10,14,20,0.5);border:1px solid var(--border);border-radius:10px;font-size:12.5px;line-height:1.9;color:var(--text);"></div>
 </div>
 <script>
 async function loadMarketSide() {
@@ -6484,6 +6486,31 @@ async function loadMarketSide() {
       } else {
         ph.style.display = 'none';
       }
+    }
+    // 📋 план действий по-тупому — меняется по состоянию
+    const plan = document.getElementById('msPlan');
+    if (plan) {
+      const PLANS = {
+        LONG: `<b style="color:#00e5a0;">🟢 ПЛАН НА ЛОНГ — по шагам:</b><br>
+1️⃣ Смотри возраст фазы выше: <b>0–4ч — жди</b> (не подтверждена, 88% зелёных умирают), <b>4–12ч — лучшее окно</b>, действуй.<br>
+2️⃣ Жми кнопку <b>«🥇 Лучший отбор»</b> в фильтрах ниже — она сама выставит LONG + RSI 50–70 + SMA Bull.<br>
+3️⃣ Из списка бери <b>💥 IGNITION / 💰 TEN</b> (их же берёт автоторговля) или монеты с 🎯-зелёной ячейкой RSI.<br>
+4️⃣ Вход по цене сигнала. Стоп <b>−3%</b> (💥) или <b>−5%</b> (💰). Цель <b>+6% / +10%</b>. Не двигай стоп.<br>
+5️⃣ 🟢 живёт медиану 4ч, максимум за год — 20ч: <b>не добирай на исходе</b>, таймер скажет «поздняя фаза».`,
+        SHORT: `<b style="color:#ff5e9c;">🔴 ПЛАН НА ШОРТ — по шагам:</b><br>
+1️⃣ Смотри возраст фазы: <b>0–24ч — лучшие часы</b> (WR 47%), 24–48ч — эдж тает, <b>48ч+ — НЕ входить</b>.<br>
+2️⃣ Жми кнопку <b>«🩸 Отбор SHORT»</b> — выставит SHORT + шорт-отскок (RSI 30–50 + выше SMA).<br>
+3️⃣ В красной фазе шорт работает широко (медиана −5% у всех монет): бери лидеров слабости из списка.<br>
+4️⃣ Сетка короткая: цель <b>−3…−5%</b>, стоп <b>+2…+3%</b>, держать до 24–48ч. Не пересиживай.<br>
+5️⃣ <b>Ничего не лонговать</b> — даже с фильтрами (26.9% WR). Автоторговля лонги уже блокирует сама.`,
+        NEUTRAL: `<b style="color:#9aa4b5;">⚪ ПЛАН НА МЁРТВУЮ ЗОНУ — по шагам:</b><br>
+1️⃣ <b>Не входить никуда.</b> Лонги −1.9пп, шорты −2.6пп, фильтры дают ноль. Ожидание = позиция с лучшим EV.<br>
+2️⃣ Закрой терминал или занимайся разбором: алерт о смене стороны <b>сам придёт во все боты</b>.<br>
+3️⃣ Пока ждёшь — можно готовить список: открой скринер, отметь монеты с 🧊 базами и 🎯-ячейками — кандидаты на вход после переворота.<br>
+4️⃣ Если фаза старше 48ч (таймер покажет ⚠️) — допустим ранний агрессивный шорт (+5.4пп), но лучше дождаться слома: первые 8ч после ⚪→🔴 = 48.1% WR, окно широкое.<br>
+5️⃣ ⚪ ломается в 🔴 в 72% случаев — скорее всего следующий план будет шортовый.`,
+      };
+      plan.innerHTML = PLANS[d.side] || '';
     }
     const age = d.updated_at ? Math.round((Date.now() - new Date(d.updated_at).getTime()) / 60000) : null;
     document.getElementById('msMeta').textContent =
