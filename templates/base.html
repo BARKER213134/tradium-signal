@@ -3571,6 +3571,12 @@ window._kcRegisterIndicators = function() {
   // 1h-12h 10/3, 1d 14/3) — иначе на мелких ТФ линия слишком далеко.
   klinecharts.registerIndicator({
     name: 'ST', shortName: 'ST',
+    // precision ОБЯЗАТЕЛЕН: у кастомных индикаторов дефолт 4 знака, и ось
+    // candle-панели переходит на шаг 0.0001 — монеты дешевле ~0.001
+    // (1MBABYDOGE и т.п.) сплющивались в полоску (2026-07-14, найдено
+    // бисекцией вживую). В renderKChart precision дополнительно
+    // подгоняется под цену через overrideIndicator.
+    precision: 8,
     calcParams: [10, 3],
     figures: [
       { key: 'stUp', title: 'ST↑ ', type: 'line', styles: () => ({ color: '#00e5a0' }) },
@@ -3847,7 +3853,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     chart.createIndicator('ST', true, { id: 'candle_pane' });
     const stMap = { '5m': [7, 2], '15m': [7, 2], '30m': [7, 2.5], '1h': [10, 3], '2h': [10, 3],
                     '4h': [10, 3], '12h': [10, 3], '1d': [14, 3] };
-    chart.overrideIndicator({ name: 'ST', calcParams: stMap[tf] || [10, 3] }, 'candle_pane');
+    chart.overrideIndicator({ name: 'ST', calcParams: stMap[tf] || [10, 3], precision: _prec }, 'candle_pane');
   }
   chart.createIndicator('VOL', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
   // Delta-панель только если данные фьючерсные (BingX-фолбэк дельту не отдаёт)
