@@ -3722,7 +3722,7 @@ window._kcStartLive = function(container, chart, sym, tf, hasDelta) {
     L.mode = mode;
     if (mode === 'ws')        { badge.textContent = '● LIVE'; badge.style.color = '#00e5a0'; }
     else if (mode === 'spot') { badge.textContent = '● LIVE·spot'; badge.style.color = '#4cc9f0'; }
-    else if (mode === 'poll') { badge.textContent = '● ~20s'; badge.style.color = '#ffd23e'; }
+    else if (mode === 'poll') { badge.textContent = '● ~15s'; badge.style.color = '#ffd23e'; }
     else { badge.textContent = '● OFF'; badge.style.color = '#556'; }
   };
   const applyK = (k, modeName) => {
@@ -3733,24 +3733,31 @@ window._kcStartLive = function(container, chart, sym, tf, hasDelta) {
         volume: vol, turnover: vol * close,
         delta: (hasDelta && vol > 0) ? 2 * tb - vol : null,
       });
-      if (L.mode !== modeName) setBadge(modeName);
+      if (L.mode !== modeName) {
+        // WS пробился — страховочный поллинг больше не нужен
+        if (L.timer) { clearInterval(L.timer); L.timer = null; }
+        setBadge(modeName);
+      }
     } catch (e) {}
   };
 
   const startPoll = () => {
     if (!container._kcLive || L.timer) return;
     setBadge('poll');
-    L.timer = setInterval(async () => {
+    const _pollOnce = async () => {
       if (!container.isConnected) { window._kcStopLive(container); return; }
       try {
         const r = await fetch(`/api/klines-delta?symbol=${encodeURIComponent(sym)}&tf=${tf}&limit=3`);
         const d = await r.json();
+        if (L.mode !== 'poll') return;   // WS уже перехватил — не мешаем
         (d.bars || []).slice(-2).forEach(b => {
           chart.updateData({ timestamp: b.t, open: b.o, high: b.h, low: b.l, close: b.c,
                              volume: b.v, turnover: b.v * b.c, delta: b.d });
         });
       } catch (e) {}
-    }, 20000);
+    };
+    _pollOnce();
+    L.timer = setInterval(_pollOnce, 15000);
   };
 
   const tryWs = (url, modeName, next) => {
@@ -3778,8 +3785,12 @@ window._kcStartLive = function(container, chart, sym, tf, hasDelta) {
   };
 
   const s = sym.toLowerCase();
+  // Поллинг стартует СРАЗУ (движение через сервер гарантировано с первых
+  // секунд — 2026-07-14: в сетях, где оба WS Binance молча висят, график
+  // стоял 16с+ и выглядел мёртвым). WS, пробившись, выключает поллинг.
+  startPoll();
   tryWs(`wss://fstream.binance.com/ws/${s}@kline_${iv}`, 'ws',
-    () => tryWs(`wss://data-stream.binance.vision/ws/${s}@kline_${iv}`, 'spot', startPoll));
+    () => tryWs(`wss://data-stream.binance.vision/ws/${s}@kline_${iv}`, 'spot', () => {}));
 };
 
 window.renderKChart = async function(container, symbol, tf, opts) {
