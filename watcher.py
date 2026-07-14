@@ -1487,12 +1487,39 @@ async def _market_side_alert_loop():
                         BAN = {"LONG": "🚫 НЕ ШОРТИТЬ",
                                "SHORT": "🚫 НЕ ЛОНГОВАТЬ",
                                "NEUTRAL": "🚫 НЕ ЛОНГОВАТЬ · НЕ ШОРТИТЬ"}
+                        # 🏆 топ-5 кандидатов на момент переворота — в алерт
+                        cand_txt = ""
+                        try:
+                            cdoc = await _asyncio.to_thread(
+                                lambda: db.market_state.find_one(
+                                    {"_id": "phase_candidates"})) or {}
+                            lst = (cdoc.get("long") if side == "LONG"
+                                   else cdoc.get("short")) or []
+                            top5 = lst[:5]
+                            if top5:
+                                rows = "\n".join(
+                                    f"  {i+1}. <b>{c['pair'].replace('/USDT', '')}</b>"
+                                    f" · ATR {c['atr_pct']}% · 24ч {c['mom24']:+.1f}%"
+                                    f" · vol {c['vol_ratio']}×"
+                                    for i, c in enumerate(top5))
+                                lbl = ("под ЛОНГ" if side == "LONG" else
+                                       "под ШОРТ" if side == "SHORT" else
+                                       "под шорт (⚪ в 72% ломается в 🔴)")
+                                cand_txt = f"\n🏆 <b>Кандидаты {lbl}:</b>\n{rows}\n"
+                                # снапшот списка на момент переворота
+                                await _asyncio.to_thread(lambda: db.system.update_one(
+                                    {"_id": "market_side_state"},
+                                    {"$set": {"candidates_at_flip": top5}},
+                                    upsert=True))
+                        except Exception:
+                            pass
                         txt = ("🔄 <b>РЫНОК СМЕНИЛ СТОРОНУ</b>\n"
                                f"{E.get(prev, prev)} → <b>{E.get(side, side)}</b>\n"
                                "────────────\n"
                                f"<b>{BAN[side]}</b>\n"
                                f"ширина рынка: {pct:.0f}%"
                                + (f" · BTC ST4h {btc}" if btc else "") + "\n"
+                               + cand_txt +
                                "<i>бэктест год: торгуй только по стороне бейджа "
                                "(+3..+6пп к безубытку), против — минус обеим сторонам</i>")
                         await _market_side_broadcast(txt)
