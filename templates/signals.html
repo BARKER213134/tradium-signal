@@ -2052,7 +2052,7 @@ async function bcLoadSignals(pair, bars) {
 
 async function bcLoadLevels(pair) {
   try {
-    const tfMap = { '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h', '12h': '12h', '1d': '1d' };
+    const tfMap = { '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h', '12h': '12h', '1d': '1d' };
     const r = await fetch(`/api/levels?pair=${encodeURIComponent(pair + '/USDT')}&tf=${tfMap[_bcTf] || '1h'}`);
     const d = await r.json();
     const chart = _bcEnsure();
@@ -2384,7 +2384,7 @@ async function _scRenderChart(d, tf) {
     });
   }
 
-  const limitByTF = { '15m': 250, '30m': 200, '1h': 300, '4h': 150, '1d': 60 };
+  const limitByTF = { '5m': 250, '15m': 250, '30m': 200, '1h': 300, '4h': 150, '1d': 60 };
   const candleLimit = limitByTF[tf] || 300;
   try {
     const cR = await fetch(`/api/journal-candles?symbol=${symbol}&tf=${tf}&limit=${candleLimit}`);
@@ -2416,7 +2416,7 @@ async function _scRenderChart(d, tf) {
     if (window._addRSI) window._addRSI(chart, cD.candles, { anchor: chartDiv });
 
     // ── Маркеры всех сигналов из recent_signals (включая 🔔 BIG BUY) ──
-    const tfSec = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 3600;
+    const tfSec = { '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 3600;
     const firstTs = cD.candles[0].time;
     const lastTs = cD.candles[cD.candles.length - 1].time;
     const nearest = (ts) => {
@@ -4126,7 +4126,7 @@ async function _drawPaperHistChart(idx) {
 
     // ── Маркеры ──
     const markers = [];
-    const tfSec = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 3600;
+    const tfSec = { '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 3600;
     const firstTs = d.candles[0].time;
     const lastTs = d.candles[d.candles.length - 1].time;
     const nearest = (ts) => {
@@ -4354,7 +4354,7 @@ async function _renderPaperChart(idx, tf) {
       chartArea.innerHTML = '';
     } else {
       div.innerHTML = `<div class="at-tf-bar" id="paperTFBar${idx}" onclick="event.stopPropagation();">
-        ${['15m','30m','1h','4h','1d'].map(t =>
+        ${['5m','15m','30m','1h','4h','1d'].map(t =>
           `<button class="at-tf-btn${t===tf?' active':''}" data-tf="${t}" onclick="event.stopPropagation();_setPaperTF(${idx},'${t}')">${t==='1d'?'1D':t}</button>`
         ).join('')}
       </div>
@@ -6629,6 +6629,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <input id="jCoinSearch" type="text" placeholder="DUSK, ETH, BTC..." oninput="onCoinSearch(this.value)" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-size:12px;font-family:var(--font-mono);width:160px;outline:none;" autocomplete="off">
   <span id="jCoinCount" style="font-family:var(--font-mono);font-size:10px;color:var(--muted);"></span>
   <div id="jCoinTFBar" class="tf-bar" style="display:none;">
+    <button class="tf-btn" onclick="_setCoinTF('5m')">5m</button>
     <button class="tf-btn" onclick="_setCoinTF('15m')">15m</button>
     <button class="tf-btn" onclick="_setCoinTF('30m')">30m</button>
     <button class="tf-btn active" onclick="_setCoinTF('1h')">1h</button>
@@ -7346,7 +7347,7 @@ window.openPrepumpChart = async function(pair) {
         const eeItems = (eeD || {}).items || [];
 
         const markers = [];
-        const tfSec = { '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '12h': 43200, '1d': 86400 }[tf] || 3600;
+        const tfSec = { '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '12h': 43200, '1d': 86400 }[tf] || 3600;
         const firstTs = d.candles[0].time;
         const lastTs = d.candles[d.candles.length - 1].time;
         const nearest = (ts) => {
@@ -8006,6 +8007,7 @@ if (document.readyState !== 'loading') hotLoad();
     <div id="jChartHeader" style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:rgba(148,163,184,0.05);border-bottom:1px solid rgba(148,163,184,0.18);font-family:var(--font-mono);gap:8px;">
       <div id="jChartTitle" style="font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;"></div>
       <div id="jModalTFBar" class="tf-bar">
+        <button class="tf-btn" onclick="_setModalTF('5m')">5m</button>
         <button class="tf-btn" onclick="_setModalTF('15m')">15m</button>
         <button class="tf-btn" onclick="_setModalTF('30m')">30m</button>
         <button class="tf-btn active" onclick="_setModalTF('1h')">1h</button>
@@ -8274,7 +8276,7 @@ async function loadCoinChart(coin) {
     // Окно: от первой свечи до последней ± TF/2 запас.
     const markers = [];
     const coinMarkerMap = new Map();
-    const tfSec = {'15m':900,'30m':1800,'1h':3600,'4h':14400,'1d':86400}[_coinTF] || 3600;
+    const tfSec = {'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'1d':86400}[_coinTF] || 3600;
     const firstTs = d.candles.length ? d.candles[0].time : 0;
     const lastTs = d.candles.length ? d.candles[d.candles.length-1].time : 0;
     let skippedOutOfRange = 0;
