@@ -1691,6 +1691,41 @@ async def on_signal(signal_data: dict):
             f"source='{source}' не торгуется")
         return None
 
+    # ── 0x2. 🎯 Гейт стороны рынка (2026-07-14) ──
+    # Бэктест год (~130k входов): лонги при ширине <40% дают 27.1% (БУ 33);
+    # живая проверка 10-14.07: ignition 22%, ten 28% в красном окне.
+    # Пока бейдж рынка 🔴 SHORT (ширина <40%, либо 40-60% при BTC ST4h
+    # DOWN) — лонги автоторговли на паузе. Данные ширины старше 2ч или
+    # отсутствуют -> fail-open (не блокируем). Выкл: PAPER_MARKETSIDE_GATE=0.
+    if (_is_momentum_src and direction == "LONG"
+            and os.getenv("PAPER_MARKETSIDE_GATE", "1") == "1"):
+        try:
+            def _mside():
+                from database import _get_db, utcnow
+                doc = _get_db().market_state.find_one({"_id": "breadth"}) or {}
+                upd = doc.get("updated_at")
+                pct = doc.get("pct")
+                if not upd or pct is None:
+                    return None, None
+                if (utcnow() - upd).total_seconds() > 7200:
+                    return None, None       # данные стухли — fail-open
+                if pct < 40:
+                    return "SHORT", pct
+                if pct <= 60:
+                    from rider_detector import get_btc_st4
+                    st = get_btc_st4()
+                    return ("SHORT" if st == "DOWN" else
+                            "LONG" if st == "UP" else "NEUTRAL"), pct
+                return "NEUTRAL", pct
+            _side, _bpct = await asyncio.to_thread(_mside)
+            if _side == "SHORT":
+                _log_rejection(signal_data,
+                    f"[MARKET-SIDE] рынок 🔴 SHORT (ширина {_bpct:.0f}%) — "
+                    f"лонги 💥/💰 на паузе (год: лонги при <40% -> WR 27%)")
+                return None
+        except Exception as _mse:
+            logger.debug(f"[paper] market-side gate fail-open: {_mse}")
+
     # ── 0y. RSI/SMA 12h STATE filter (P0 — universal +14-17 WR пп) ──
     # Backtest 14d (10475 signals × all sources): RSI>SMA на 12h для LONG /
     # RSI<SMA для SHORT даёт +14-17 WR пп. Применяем как HARD gate — если
