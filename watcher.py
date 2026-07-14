@@ -1445,8 +1445,10 @@ async def _market_side_broadcast(txt: str):
 
 async def _market_side_alert_loop():
     """🔄 Смена стороны рынка (🟢/⚪/🔴) -> алерт во все боты.
-    Проверка каждые 5 мин; смена подтверждается 2 проверками подряд
-    (10 мин) — антидребезг для зоны 40-60% с флипающим BTC ST4h."""
+    Проверка каждые 5 мин; смена подтверждается 24 проверками подряд
+    (~2 часа). Год-статистика: сырых переключений 38/мес (медиана
+    эпизода 🟢 всего 4ч) — дебаунс 10 мин дал бы спам; 2ч режет
+    дёрганья, фазы (🔴 медиана 16ч, до 4д) ловятся в начале."""
     import asyncio as _asyncio
     await _asyncio.sleep(420)
     pending, pending_n = None, 0
@@ -1469,7 +1471,7 @@ async def _market_side_alert_loop():
                         pending_n += 1
                     else:
                         pending, pending_n = side, 1
-                    if pending_n >= 2:
+                    if pending_n >= 24:   # ~2 часа подряд (антиспам, см. docstring)
                         await _asyncio.to_thread(lambda: db.system.update_one(
                             {"_id": "market_side_state"},
                             {"$set": {"side": side, "prev": prev,
