@@ -3375,6 +3375,38 @@ async def api_phase_candidates():
         return {"ok": False, "error": str(e)}
 
 
+_phase_hist_cache = {"at": 0.0, "data": None}
+
+
+@app.get("/api/phase-history")
+async def api_phase_history():
+    """История фаз рынка (🟢/⚪/🔴) как список переворотов [{t: ms, side}].
+    Год бэкфилла с 4h-разрешением + живые смены raw-стороны (5-мин цикл
+    watcher). Используется тултипами графиков: фаза на момент сигнала."""
+    import time as _time
+    if _phase_hist_cache["data"] and _time.time() - _phase_hist_cache["at"] < 300:
+        return _phase_hist_cache["data"]
+    try:
+        from datetime import timezone as _tz
+        from database import _get_db
+        rows = await asyncio.to_thread(lambda: list(
+            _get_db().market_side_history.find(
+                {}, {"_id": 0, "at": 1, "side": 1}).sort("at", 1)))
+        flips = []
+        for r in rows:
+            if r.get("at") and r.get("side"):
+                # дедуп подряд идущих одинаковых сторон (стык бэкфилла и live)
+                if flips and flips[-1]["side"] == r["side"]:
+                    continue
+                ts = r["at"].replace(tzinfo=_tz.utc).timestamp()
+                flips.append({"t": int(ts * 1000), "side": r["side"]})
+        data = {"ok": True, "flips": flips}
+        _phase_hist_cache.update(at=_time.time(), data=data)
+        return data
+    except Exception as e:
+        return {"ok": False, "error": str(e), "flips": []}
+
+
 @app.get("/api/btc-st4")
 async def api_btc_st4():
     """BTC SuperTrend 4h (UP/DOWN) — гейт для шорт-пресета в журнале."""

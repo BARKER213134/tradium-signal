@@ -1467,6 +1467,9 @@ async def _market_side_alert_loop():
                         {"_id": "market_side_state"},
                         {"$set": {"raw_side": side, "raw_since": utcnow()}},
                         upsert=True))
+                    # история фаз (для тултипов «какая была фаза» на графиках)
+                    await _asyncio.to_thread(lambda: db.market_side_history.insert_one(
+                        {"at": utcnow(), "side": side, "breadth": pct, "src": "live"}))
                 prev = doc.get("side")
                 if prev is None:
                     await _asyncio.to_thread(lambda: db.system.update_one(

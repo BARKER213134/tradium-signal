@@ -3923,7 +3923,10 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   if (opts.signals !== false) {
     (async () => {
       try {
-        const r = await fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=30`);
+        const [r] = await Promise.all([
+          fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=30`),
+          window._loadPhaseFlips(),
+        ]);
         const d = await r.json();
         const t0 = bars[0].t;
         const interval = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
@@ -3938,8 +3941,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           const long = s.direction === 'LONG';
           const color = long ? '#00e5a0' : '#ff6b6b';
           const dt = new Date(ts).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+          const phL = window.phaseLabelAt(ts);
+          const phC = !phL ? '' : phL.startsWith('🟢') ? '#00e5a0' : phL.startsWith('🔴') ? '#ff6b6b' : '#aab3c2';
           const info = `<b style="color:${color}">${emoji} ${(s.source || '').toUpperCase()} · ${s.direction || ''}</b><br>` +
                        `${dt} · entry <b>${s.entry ?? '—'}</b>` +
+                       (phL ? `<br>фаза рынка: <b style="color:${phC}">${phL}</b>` : '') +
                        (s.pattern ? `<br><span style="color:#aab3c2;">${String(s.pattern).slice(0, 90)}</span>` : '');
           const value = long ? bar.l : bar.h;
           container._kcSigs.push({ ts, value, info });
@@ -4006,14 +4012,17 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         if (vr < 1.8) continue;
         marks.push({ j, sgn, sigma: Math.abs(d0 + d1 + d2) / (std * Math.sqrt(3)), vr });
       }
-      marks.slice(-40).forEach(mk => {
+      window._loadPhaseFlips().then(() => marks.slice(-40).forEach(mk => {
         const bar = bars[mk.j];
         const long = mk.sgn > 0;
         const color = long ? '#4cc9f0' : '#ff8c50';
         const value = long ? bar.l : bar.h;
         const dt = new Date(bar.t).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const phL = window.phaseLabelAt(bar.t);
+        const phC = !phL ? '' : phL.startsWith('🟢') ? '#00e5a0' : phL.startsWith('🔴') ? '#ff6b6b' : '#aab3c2';
         const info = `<b style="color:${color}">🫧 СЕРИЯ ДЕЛЬТ · ${long ? 'покупатель' : 'продавец'}</b><br>` +
           `${dt} · 3 бара подряд · Σдельта ${mk.sigma.toFixed(1)}σ · объём ${mk.vr.toFixed(1)}× нормы<br>` +
+          (phL ? `фаза рынка: <b style="color:${phC}">${phL}</b><br>` : '') +
           `<span style="color:#aab3c2;">инфо-разметка: крупный поток здесь, но направление дальше — монетка (бэктест год); мед. вынос ±6% за 72ч</span>`;
         container._kcSigs.push({ ts: bar.t, value, info });
         chart.createOverlay({
@@ -4021,7 +4030,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           points: [{ timestamp: bar.t, value }],
           extendData: { emoji: '🫧', dir: long ? 'LONG' : 'SHORT', color },
         });
-      });
+      }));
     } catch (e) {}
   }
   // resize: перерисовать все живые KChart-инстансы при изменении окна
@@ -4123,6 +4132,38 @@ async function _ensureLwc() {
   });
 }
 
+// ── История фаз рынка (🟢/⚪/🔴) для тултипов сигналов ────────────────
+// Год бэкфилла (4h) + live-смены (5 мин). Грузится один раз, лениво.
+window._phaseFlips = null;
+window._phaseFlipsPromise = null;
+window._loadPhaseFlips = function() {
+  if (window._phaseFlipsPromise) return window._phaseFlipsPromise;
+  window._phaseFlipsPromise = fetch('/api/phase-history')
+    .then(r => r.json())
+    .then(d => { window._phaseFlips = (d && d.flips) || []; })
+    .catch(() => { window._phaseFlips = []; });
+  return window._phaseFlipsPromise;
+};
+// Фаза на момент tsMs → '🟢 LONG · 5ч' или null (история не загружена/раньше начала)
+window.phaseLabelAt = function(tsMs) {
+  const f = window._phaseFlips;
+  if (!f || !f.length || !tsMs || tsMs < f[0].t) { window._loadPhaseFlips(); return null; }
+  let lo = 0, hi = f.length - 1;
+  while (lo < hi) { // последний флип с t <= tsMs
+    const mid = (lo + hi + 1) >> 1;
+    if (f[mid].t <= tsMs) lo = mid; else hi = mid - 1;
+  }
+  const E = { LONG: '🟢 LONG', SHORT: '🔴 SHORT', NEUTRAL: '⚪ НЕЙТРАЛ' };
+  const ageH = (tsMs - f[lo].t) / 3600000;
+  const age = ageH < 48 ? `${ageH.toFixed(0)}ч` : `${(ageH / 24).toFixed(1)}д`;
+  return `${E[f[lo].side] || f[lo].side} · ${age}`;
+};
+window.phaseColorOf = function(label) {
+  return !label ? 'var(--text)'
+    : label.startsWith('🟢') ? 'var(--buy)'
+    : label.startsWith('🔴') ? 'var(--sell)' : 'var(--muted)';
+};
+
 function _sigTooltipHTML(o) {
   const dirC = o.direction === 'LONG' ? 'var(--buy)' : 'var(--sell)';
   const dirE = o.direction === 'LONG' ? '🟢' : '🔴';
@@ -4192,12 +4233,17 @@ function _sigTooltipHTML(o) {
   if (score != null) html += row('Score', '⭐ ' + score);
   // Время сигнала (если указано)
   const timeVal = o.at || meta.at;
+  let tsMs = null;
   if (timeVal) {
     const d = new Date(typeof timeVal === 'number' ? timeVal * 1000 : timeVal);
     if (!isNaN(d.getTime())) {
+      tsMs = d.getTime();
       html += row('Время', d.toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}));
     }
   }
+  // Фаза рынка (🟢/⚪/🔴) на момент сигнала + её возраст
+  const phL = tsMs ? window.phaseLabelAt(tsMs) : null;
+  if (phL) html += row('Фаза рынка', phL, window.phaseColorOf(phL));
   return html;
 }
 
@@ -4210,6 +4256,7 @@ async function _renderLwcSignalChart(containerId, opts) {
   // чтобы на графике одной монеты показались ВСЕ сигналы из БД за окно.
   const container = document.getElementById(containerId);
   if (!container) return;
+  window._loadPhaseFlips();  // префетч фаз для тултипа (не блокирует)
   container._signalOpts = opts;
   const tf = opts.tf || container.dataset.tf || '1h';
   container.dataset.tf = tf;
