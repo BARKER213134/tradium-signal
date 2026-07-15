@@ -3883,14 +3883,17 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       const sigs = container._kcSigs || [];
       const t = container._kcTip;
       if (!t || !sigs.length || !container._kChart) return;
-      let best = null, bestD = 18;
+      let best = null, bestD = 30;
       try {
         const coords = container._kChart.convertToPixel(
           sigs.map(s => ({ timestamp: s.ts, value: s.value })),
           { paneId: 'candle_pane' });
         (coords || []).forEach((c, i) => {
           if (!c || c.x == null) return;
-          const dist = Math.sqrt((c.x - mx) ** 2 + (c.y - my) ** 2);
+          // якорь — low/high свечи, а видимая иконка смещена на ~14px
+          // (6px отступ + полвысоты эмодзи); меряем до центра иконки
+          const iy = c.y + (sigs[i].below ? 14 : -14);
+          const dist = Math.sqrt((c.x - mx) ** 2 + (iy - my) ** 2);
           if (dist < bestD) { bestD = dist; best = sigs[i]; }
         });
       } catch (e) { return; }
@@ -3948,7 +3951,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
                        (phL ? `<br>фаза рынка: <b style="color:${phC}">${phL}</b>` : '') +
                        (s.pattern ? `<br><span style="color:#aab3c2;">${String(s.pattern).slice(0, 90)}</span>` : '');
           const value = long ? bar.l : bar.h;
-          container._kcSigs.push({ ts, value, info });
+          container._kcSigs.push({ ts, value, info, below: long });
           chart.createOverlay({
             name: 'sigMarker', groupId: 'sig', lock: true,
             points: [{ timestamp: ts, value }],
@@ -4024,7 +4027,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           `${dt} · 3 бара подряд · Σдельта ${mk.sigma.toFixed(1)}σ · объём ${mk.vr.toFixed(1)}× нормы<br>` +
           (phL ? `фаза рынка: <b style="color:${phC}">${phL}</b><br>` : '') +
           `<span style="color:#aab3c2;">инфо-разметка: крупный поток здесь, но направление дальше — монетка (бэктест год); мед. вынос ±6% за 72ч</span>`;
-        container._kcSigs.push({ ts: bar.t, value, info });
+        container._kcSigs.push({ ts: bar.t, value, info, below: long });
         chart.createOverlay({
           name: 'sigMarker', groupId: 'sig', lock: true,
           points: [{ timestamp: bar.t, value }],
