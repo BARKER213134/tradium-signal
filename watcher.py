@@ -1445,13 +1445,14 @@ async def _market_side_broadcast(txt: str):
 
 async def _market_side_alert_loop():
     """🔄 Смена стороны рынка (🟢/⚪/🔴) -> алерт во все боты.
-    Проверка каждые 5 мин; смена подтверждается 24 проверками подряд
-    (~2 часа). Год-статистика: сырых переключений 38/мес (медиана
-    эпизода 🟢 всего 4ч) — дебаунс 10 мин дал бы спам; 2ч режет
-    дёрганья, фазы (🔴 медиана 16ч, до 4д) ловятся в начале."""
+    Проверка каждые 5 мин; смена подтверждается когда сырая сторона
+    держится >=2ч (по raw_since из БД — переживает рестарты/деплои;
+    счётчик в памяти терял подтверждение при каждом деплое, 2026-07-16).
+    Год-статистика: сырых переключений 38/мес (медиана эпизода 🟢 всего
+    4ч) — дебаунс 10 мин дал бы спам; 2ч режет дёрганья, фазы (🔴
+    медиана 16ч, до 4д) ловятся в начале."""
     import asyncio as _asyncio
     await _asyncio.sleep(420)
-    pending, pending_n = None, 0
     while True:
         try:
             await _asyncio.to_thread(_hb, "market_side")
@@ -1476,11 +1477,12 @@ async def _market_side_alert_loop():
                         {"_id": "market_side_state"},
                         {"$set": {"side": side}}, upsert=True))
                 elif side != prev:
-                    if pending == side:
-                        pending_n += 1
-                    else:
-                        pending, pending_n = side, 1
-                    if pending_n >= 24:   # ~2 часа подряд (антиспам, см. docstring)
+                    # подтверждение: сырая сторона держится >=2ч (raw_since
+                    # из БД — переживает деплои, см. docstring)
+                    _held_h = None
+                    if doc.get("raw_side") == side and doc.get("raw_since"):
+                        _held_h = (utcnow() - doc["raw_since"]).total_seconds() / 3600
+                    if _held_h is not None and _held_h >= 2:
                         await _asyncio.to_thread(lambda: db.system.update_one(
                             {"_id": "market_side_state"},
                             {"$set": {"side": side, "prev": prev,
@@ -1526,9 +1528,6 @@ async def _market_side_alert_loop():
                                "<i>бэктест год: торгуй только по стороне бейджа "
                                "(+3..+6пп к безубытку), против — минус обеим сторонам</i>")
                         await _market_side_broadcast(txt)
-                        pending, pending_n = None, 0
-                else:
-                    pending, pending_n = None, 0
         except Exception:
             logger.exception("[market-side] alert loop error")
         await _asyncio.sleep(300)

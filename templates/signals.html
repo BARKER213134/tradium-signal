@@ -6465,6 +6465,13 @@ async function toggleForecast(btn) {
   btn.textContent = '⏳ Свернуть';
   box.style.display = 'block';
   box.innerHTML = '<span style="color:var(--muted);">считаю по году истории…</span>';
+  loadForecastPanel();
+}
+
+// перерисовка открытой панели прогноза (тогл, поллер, смена фазы)
+async function loadForecastPanel() {
+  const box = document.getElementById('msForecast');
+  if (!box || box.style.display === 'none') return;
   try {
     const r = await fetch('/api/phase-forecast');
     const d = await r.json();
@@ -6509,6 +6516,13 @@ async function togglePicks(btn) {
   btn.textContent = '🎯 Свернуть';
   box.style.display = 'block';
   box.innerHTML = '<span style="color:var(--muted);">анализирую рынок…</span>';
+  loadPicksPanel();
+}
+
+// перерисовка открытой панели входов (тогл, поллер, смена фазы)
+async function loadPicksPanel() {
+  const box = document.getElementById('msPicks');
+  if (!box || box.style.display === 'none') return;
   try {
     const r = await fetch('/api/entry-picks');
     const d = await r.json();
@@ -6667,10 +6681,30 @@ async function loadMarketSide() {
       (age != null ? ` · обновлено ${age} мин назад` : '') +
       ' · правило (бэктест год): >60% разогрет → ⚪ · 40–60% → сторона BTC · <40% → 🔴';
     bar.style.display = 'flex';
+    // смена стороны без перезагрузки: вспышка бейджа + перерисовать открытые панели
+    if (window._msPrevSide && window._msPrevSide !== d.side) {
+      try {
+        badge.animate(
+          [{transform: 'scale(1)'}, {transform: 'scale(1.15)'}, {transform: 'scale(1)'}],
+          {duration: 500, iterations: 4});
+      } catch (e) {}
+      if (typeof loadForecastPanel === 'function') loadForecastPanel();
+      if (typeof loadPicksPanel === 'function') loadPicksPanel();
+    }
+    window._msPrevSide = d.side;
   } catch (e) { /* тихо */ }
 }
 loadMarketSide();
-safeInterval(loadMarketSide, 300000);
+safeInterval(loadMarketSide, 60000);
+// открытые панели (⏳ прогноз / 🎯 входы) тоже живут без перезагрузки
+safeInterval(() => {
+  if (typeof loadForecastPanel === 'function') loadForecastPanel();
+  if (typeof loadPicksPanel === 'function') loadPicksPanel();
+}, 120000);
+// вернулся во вкладку (браузер троттлит фоновые таймеры) — обновить сразу
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) loadMarketSide();
+});
 </script>
 
 <!-- ── 🧊 ACCUMULATION watchlist (не сигнал: базы >=12ч, ход <5% за 48ч) ── -->
