@@ -7441,8 +7441,9 @@ async function _pollDeltaBackfill() {
       <col style="width:7%;">    <!-- Источник -->
       <col style="width:6%;">    <!-- Пара -->
       <col style="width:5%;">    <!-- Напр. -->
+      <col style="width:5%;">    <!-- 🎓 Вход? (оценка сделки) -->
       <col style="width:6%;">    <!-- Entry -->
-      <col style="width:18%;">   <!-- Паттерн (шире: вердикт убран 2026-07-10) -->
+      <col style="width:13%;">   <!-- Паттерн -->
       <col style="width:9%;">    <!-- RSI 4 TF -->
       <col style="width:6%;">    <!-- SMA vs RSI -->
       <col style="width:7%;">    <!-- Trend -->
@@ -7458,6 +7459,7 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('source')" id="jSortSrc" style="text-align:center;padding:14px 8px;">Источник</th>
         <th class="sortable" onclick="jSort('symbol')" id="jSortPair" style="text-align:center;padding:14px 8px;">Пара</th>
         <th class="sortable" onclick="jSort('direction')" id="jSortDir" style="text-align:center;padding:14px 6px;">Напр.</th>
+        <th class="sortable" onclick="jSort('trade_ev')" id="jSortGrade" title="🎓 Оценка сделки: единый бэктест ВСЕХ сигналов базы (3 мес, 47.9k, одна сетка LONG +6/−3 / SHORT −5/+3, 72ч) в разрезе источник × направление × фаза бейджа на момент сигнала. 🟩 EV ≥ +0.4%/сделку — вход · 🟨 0…+0.4 — слабый плюс · 🟥 < 0 — исторически минус. Число = EV %/сделку. Наведи на ячейку — детали. Клик — сортировка." style="text-align:center;padding:14px 6px;">Вход?</th>
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry" style="text-align:center;padding:14px 8px;">Entry</th>
         <th class="sortable" onclick="jSort('score')" id="jSortScore" style="text-align:left;padding:14px 14px;">Паттерн</th>
         <th id="jSortRsi" style="text-align:center;padding:14px 6px;position:relative;">
@@ -7474,7 +7476,7 @@ async function _pollDeltaBackfill() {
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="14" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="15" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -9733,7 +9735,7 @@ function renderJournal(items, startIdx) {
   startIdx = startIdx || 0;
   const tbody = document.getElementById('jBody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
     return;
   }
   tbody.innerHTML = items.map((s, i) => {
@@ -9818,11 +9820,24 @@ function renderJournal(items, startIdx) {
     // Stack (Δ% и Резонанс удалены по запросу — оставили только Stack для MOONSHOT detection)
     const stackCell = window._renderStackCell ? window._renderStackCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    // 🎓 Оценка сделки: (источник × направление × фаза) → EV из единого бэктеста
+    let gradeCell = '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    if (s.trade_grade) {
+      const gm = {A: ['🟩', '#00e5a0', 'ВХОД — эдж подтверждён'],
+                  B: ['🟨', '#ffd23e', 'слабый плюс — можно, но без размера'],
+                  C: ['🟥', '#ff4d6d', 'СКИП — исторически минус']}[s.trade_grade];
+      const slTxt = s.trade_slice === 'ВСЕ' ? 'все фазы' : 'фаза: ' + s.trade_slice;
+      const evTxt = (s.trade_ev > 0 ? '+' : '') + (+s.trade_ev).toFixed(2);
+      const tip = `${gm[2]} · единый бэктест 3 мес (сетка ${s.direction === 'LONG' ? '+6/−3' : '−5/+3'}, 72ч): ` +
+        `${s.source} ${s.direction}, ${slTxt} → EV ${evTxt}%/сделку · WR ${s.trade_wr}% · n=${s.trade_n}`;
+      gradeCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:700;color:${gm[1]};" title="${tip}">${gm[0]}${evTxt}</td>`;
+    }
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
       <td class="mono text-muted" style="font-size:11px;">${time}</td>
       <td style="font-size:11px;">${srcBadge} ${srcName}</td>
       <td class="mono text-accent fw-700">${pairCell}</td>
       <td>${dir}</td>
+      ${gradeCell}
       <td class="mono">${s.entry || '—'}</td>
       <td class="mono pattern-cell" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(s.pattern || '').replace(/"/g,'&quot;')}">${s.pattern || ''} ${s.score ? '<span style=\"color:var(--muted);font-size:11px;\">('+s.score+')</span>' : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
       ${rsiCell}
@@ -11001,14 +11016,14 @@ function jSort(field) {
     _jSortAsc = field === 'symbol' || field === 'source' || field === 'direction'; // alpha = asc default
   }
   // Update header arrows
-  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',rsi4h_match:'jSort4h',rsi12h_match:'jSort12h',stack_distinct:'jSortStack'};
-  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',rsi4h_match:'4h',rsi12h_match:'12h',stack_distinct:'Stack'};
+  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',rsi4h_match:'jSort4h',rsi12h_match:'jSort12h',stack_distinct:'jSortStack',trade_ev:'jSortGrade'};
+  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',rsi4h_match:'4h',rsi12h_match:'12h',stack_distinct:'Stack',trade_ev:'Вход?'};
   for (const [f, id] of Object.entries(cols)) {
     const el = document.getElementById(id);
     if (el) el.textContent = labels[f] + (f === _jSortField ? (_jSortAsc ? ' ▲' : ' ▼') : '');
   }
   // Sort filtered data
-  const _nf = new Set(['at_ts','score','entry','pump_score']);
+  const _nf = new Set(['at_ts','score','entry','pump_score','trade_ev']);
   _journalFiltered.sort((a, b) => {
     let va = a[field], vb = b[field];
     if (va == null || va === '') va = _nf.has(field) ? -Infinity : '';

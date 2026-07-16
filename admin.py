@@ -8771,6 +8771,13 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
     except Exception:
         pass
 
+    # 🎓 Оценка сделки — как в главном журнале
+    try:
+        from trade_grade import annotate_items
+        annotate_items(items)
+    except Exception:
+        pass
+
     return {"items": items, "symbol": sym_clean, "days": days, "count": len(items)}
 
 
@@ -10041,6 +10048,13 @@ def _compute_journal_sync(_fast_only: bool = False):
                 it['q_score'] = 0
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] q_score fail: {e}")
+
+    # 🎓 Оценка сделки (источник × направление × фаза → EV из единого бэктеста)
+    try:
+        from trade_grade import annotate_items
+        annotate_items(items)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[journal] trade_grade fail: {e}")
 
     # ─── RSI 15m/1h/4h/1d enrichment из Mongo + INLINE fill для top-10 свежих ───
     # Smart fill: только 10 самых свежих пар где cache miss, budget 3s через FAPI.
