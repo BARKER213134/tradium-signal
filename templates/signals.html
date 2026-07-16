@@ -6439,7 +6439,9 @@ safeInterval(loadForexJournal, 30000);
     <div id="msMeta" style="font-size:10px;color:var(--muted);margin-top:3px;font-family:var(--font-mono);"></div>
   </div>
   <button id="msPlanBtn" onclick="const p=document.getElementById('msPlan');p.style.display=p.style.display==='none'?'block':'none';this.textContent=p.style.display==='none'?'📋 Что делать':'📋 Свернуть';" style="background:rgba(76,201,240,0.10);border:1px solid rgba(76,201,240,0.4);border-radius:8px;color:#4cc9f0;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">📋 Что делать</button>
+  <button id="msForecastBtn" onclick="toggleForecast(this)" style="background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.4);border-radius:8px;color:#ffd23e;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">⏳ Когда закончится?</button>
   <div id="msPlan" style="display:none;flex-basis:100%;margin-top:10px;padding:14px 18px;background:rgba(10,14,20,0.5);border:1px solid var(--border);border-radius:10px;font-size:12.5px;line-height:1.9;color:var(--text);"></div>
+  <div id="msForecast" style="display:none;flex-basis:100%;margin-top:10px;padding:14px 18px;background:rgba(10,14,20,0.5);border:1px solid rgba(255,210,62,0.3);border-radius:10px;font-size:12.5px;line-height:1.9;color:var(--text);"></div>
   <div id="msCands" style="display:none;flex-basis:100%;margin-top:10px;">
     <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);margin-bottom:6px;">
       <b style="color:#ffd23e;">🏆 КАНДИДАТЫ ФАЗЫ</b> — волатильные с импульсом (ловят 2–4 из 10 будущих лидеров против 0.5 у случайного выбора; клик — график)
@@ -6449,6 +6451,51 @@ safeInterval(loadForexJournal, 30000);
     <div id="msCandFlip" style="display:none;gap:7px;flex-wrap:wrap;"></div>
   </div>
 </div>
+<script>
+async function toggleForecast(btn) {
+  const box = document.getElementById('msForecast');
+  if (!box) return;
+  if (box.style.display !== 'none') {
+    box.style.display = 'none';
+    btn.textContent = '⏳ Когда закончится?';
+    return;
+  }
+  btn.textContent = '⏳ Свернуть';
+  box.style.display = 'block';
+  box.innerHTML = '<span style="color:var(--muted);">считаю по году истории…</span>';
+  try {
+    const r = await fetch('/api/phase-forecast');
+    const d = await r.json();
+    if (!d.ok) { box.innerHTML = `<span style="color:var(--muted);">${d.error || 'нет данных'}</span>`; return; }
+    // спарклайн breadth за 48ч: ▁▂▃▄▅▆▇█ (0-100%), пороги 60/40 подписью
+    let spark = '';
+    const traj = d.traj || [];
+    if (traj.length >= 2) {
+      const pts = traj.slice(-48);
+      const blocks = '▁▂▃▄▅▆▇█';
+      spark = pts.map(p => {
+        const ch = blocks[Math.max(0, Math.min(7, Math.floor(p.pct / 12.5)))];
+        const c = p.pct > 60 ? '#9aa4b5' : p.pct < 40 ? '#ff5e9c' : '#00e5a0';
+        return `<span style="color:${c};" title="${new Date(p.t).toLocaleString('ru', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})} · ${p.pct}%">${ch}</span>`;
+      }).join('');
+      spark = `<div style="font-family:var(--font-mono);font-size:15px;letter-spacing:1px;margin:6px 0 2px;">${spark}</div>` +
+        `<div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);">breadth за 48ч (наведи на столбик) · ⚪ >60% · зона BTC 40-60% · 🔴 <40%</div>`;
+    }
+    const FLIP_HINT = {
+      NEUTRAL: 'при флипе: 🔴 → шорт кандидатов в первые 0-8ч, TP 5% · 🟢 → лонг, окно 4-12ч, TP 8%',
+      LONG: 'после конца 🟢: чаще всего 🔴 или ⚪ — фиксируй лонги по таймеру, не пересиживай',
+      SHORT: 'после конца 🔴: в 74-93% уходит в ⚪ — там обе стороны без эджа, закрывай шорты',
+    };
+    box.innerHTML =
+      `<b style="color:#ffd23e;">⏳ ПРОГНОЗ КОНЦА ФАЗЫ</b> <span style="color:var(--muted);font-size:10.5px;font-family:var(--font-mono);">год-статистика (465 фаз) + живой breadth</span><br>` +
+      d.lines.map(l => `· ${l}`).join('<br>') +
+      spark +
+      `<div style="margin-top:6px;font-size:11.5px;color:var(--muted);">${FLIP_HINT[d.side] || ''} · алерт о флипе придёт в боты сам (подтверждение ~2ч)</div>`;
+  } catch (e) {
+    box.innerHTML = '<span style="color:var(--muted);">ошибка загрузки</span>';
+  }
+}
+</script>
 <script>
 async function loadPhaseCandidates(side) {
   try {

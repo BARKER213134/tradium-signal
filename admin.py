@@ -3407,6 +3407,134 @@ async def api_phase_history():
         return {"ok": False, "error": str(e), "flips": []}
 
 
+# Таблицы дожития фаз (год, 4h-бары, universe RSI4h>SMA14 + BTC ST4h).
+# rows: возраст → выжило n, медиана/средняя оставшейся жизни (ч),
+# P(конец ≤12ч), куда ломается (%). Пересчёт: research/survival_all_sides.py
+_PHASE_SURVIVAL = {
+    "LONG": {"episodes": 99, "med_total": 4, "max_total": 20, "rows": [
+        {"age": 0, "n": 99, "med_more": 4, "p_end_12h": 93, "to_long": 0, "to_short": 60, "to_neutral": 40},
+        {"age": 4, "n": 24, "med_more": 6, "p_end_12h": 96, "to_long": 0, "to_short": 54, "to_neutral": 46},
+        {"age": 8, "n": 12, "med_more": 8, "p_end_12h": 100, "to_long": 0, "to_short": 33, "to_neutral": 67},
+        {"age": 12, "n": 7, "med_more": 4, "p_end_12h": 100, "to_long": 0, "to_short": 29, "to_neutral": 71},
+    ]},
+    "NEUTRAL": {"episodes": 179, "med_total": 12, "max_total": 88, "rows": [
+        {"age": 0, "n": 179, "med_more": 12, "p_end_12h": 52, "to_long": 28, "to_short": 72, "to_neutral": 0},
+        {"age": 4, "n": 122, "med_more": 20, "p_end_12h": 37, "to_long": 32, "to_short": 68, "to_neutral": 0},
+        {"age": 8, "n": 99, "med_more": 20, "p_end_12h": 33, "to_long": 33, "to_short": 67, "to_neutral": 0},
+        {"age": 12, "n": 86, "med_more": 20, "p_end_12h": 36, "to_long": 35, "to_short": 65, "to_neutral": 0},
+        {"age": 16, "n": 77, "med_more": 20, "p_end_12h": 40, "to_long": 32, "to_short": 68, "to_neutral": 0},
+        {"age": 24, "n": 55, "med_more": 16, "p_end_12h": 38, "to_long": 29, "to_short": 71, "to_neutral": 0},
+        {"age": 36, "n": 34, "med_more": 16, "p_end_12h": 41, "to_long": 32, "to_short": 68, "to_neutral": 0},
+        {"age": 48, "n": 20, "med_more": 14, "p_end_12h": 50, "to_long": 20, "to_short": 80, "to_neutral": 0},
+    ]},
+    "SHORT": {"episodes": 187, "med_total": 16, "max_total": 96, "rows": [
+        {"age": 0, "n": 187, "med_more": 16, "p_end_12h": 47, "to_long": 26, "to_short": 0, "to_neutral": 74},
+        {"age": 4, "n": 135, "med_more": 24, "p_end_12h": 39, "to_long": 23, "to_short": 0, "to_neutral": 77},
+        {"age": 8, "n": 113, "med_more": 24, "p_end_12h": 32, "to_long": 25, "to_short": 0, "to_neutral": 75},
+        {"age": 12, "n": 99, "med_more": 24, "p_end_12h": 30, "to_long": 24, "to_short": 0, "to_neutral": 76},
+        {"age": 16, "n": 83, "med_more": 24, "p_end_12h": 23, "to_long": 20, "to_short": 0, "to_neutral": 80},
+        {"age": 24, "n": 69, "med_more": 24, "p_end_12h": 33, "to_long": 19, "to_short": 0, "to_neutral": 81},
+        {"age": 36, "n": 46, "med_more": 16, "p_end_12h": 37, "to_long": 15, "to_short": 0, "to_neutral": 85},
+        {"age": 48, "n": 29, "med_more": 12, "p_end_12h": 69, "to_long": 7, "to_short": 0, "to_neutral": 93},
+    ]},
+}
+
+
+@app.get("/api/phase-forecast")
+async def api_phase_forecast():
+    """⏳ Когда закончится текущая фаза: дожитие по году (для текущего
+    возраста), живая траектория breadth + ETA до порога флипа, куда
+    ломается. Кнопка на плашке стороны рынка."""
+    try:
+        from datetime import timedelta
+        from database import _get_db, utcnow
+        db = _get_db()
+        bdoc = await asyncio.to_thread(
+            lambda: db.market_state.find_one({"_id": "breadth"})) or {}
+        pct = bdoc.get("pct")
+        ms = await asyncio.to_thread(
+            lambda: db.system.find_one({"_id": "market_side_state"})) or {}
+        from rider_detector import get_btc_st4
+        st = await asyncio.to_thread(get_btc_st4)
+        if pct is None:
+            return {"ok": False, "error": "нет данных ширины"}
+        side = ("NEUTRAL" if pct > 60 else "SHORT" if pct < 40
+                else "LONG" if st == "UP" else "SHORT" if st == "DOWN" else "NEUTRAL")
+        age_h = None
+        if ms.get("raw_side") == side and ms.get("raw_since"):
+            age_h = round((utcnow() - ms["raw_since"]).total_seconds() / 3600, 1)
+
+        surv = _PHASE_SURVIVAL[side]
+        row = surv["rows"][0]
+        for r in surv["rows"]:
+            if age_h is not None and age_h >= r["age"]:
+                row = r
+        outlived = round((1 - row["n"] / surv["episodes"]) * 100)
+
+        # траектория breadth: последние 48ч (бэкфилл 4h + живые 30-мин точки)
+        since = utcnow() - timedelta(hours=48)
+        traj_rows = await asyncio.to_thread(lambda: list(
+            db.breadth_history.find({"at": {"$gte": since}},
+                                    {"_id": 0, "at": 1, "pct": 1}).sort("at", 1)))
+        traj = [{"t": r["at"].isoformat(), "pct": r["pct"]} for r in traj_rows]
+
+        # наклон за последние 6ч (fallback 12ч) → ETA до порога флипа
+        slope, eta_h, eta_to = None, None, None
+        for win in (6, 12):
+            pts = [r for r in traj_rows
+                   if (utcnow() - r["at"]).total_seconds() <= win * 3600]
+            if len(pts) >= 3:
+                xs = [(p["at"] - pts[0]["at"]).total_seconds() / 3600 for p in pts]
+                ys = [p["pct"] for p in pts]
+                n = len(xs)
+                mx, my = sum(xs) / n, sum(ys) / n
+                den_ = sum((x - mx) ** 2 for x in xs)
+                if den_ > 0:
+                    slope = round(sum((xs[i] - mx) * (ys[i] - my)
+                                      for i in range(n)) / den_, 2)
+                break
+        if slope is not None and pct is not None:
+            # ближайший порог по направлению наклона
+            if side == "NEUTRAL" and slope < -0.3:
+                eta_h, eta_to = round((pct - 60) / -slope, 1), "60% (конец ⚪)"
+            elif side == "SHORT" and pct < 40 and slope > 0.3:
+                eta_h, eta_to = round((40 - pct) / slope, 1), "40% (конец 🔴)"
+            elif side == "LONG":
+                if slope > 0.3:
+                    eta_h, eta_to = round((60 - pct) / slope, 1), "60% (→ ⚪)"
+                elif slope < -0.3:
+                    eta_h, eta_to = round((pct - 40) / -slope, 1), "40% (→ 🔴)"
+
+        E = {"LONG": "🟢", "SHORT": "🔴", "NEUTRAL": "⚪"}
+        lines = []
+        if age_h is not None:
+            lines.append(f"{E[side]} фаза живёт <b>{age_h}ч</b> — дольше, чем "
+                         f"{outlived}% таких фаз за год (медиана {surv['med_total']}ч, "
+                         f"рекорд {surv['max_total']}ч)")
+        lines.append(f"для этого возраста: медиана ещё <b>~{row['med_more']}ч</b> · "
+                     f"шанс конца в ближайшие 12ч: <b>{row['p_end_12h']}%</b>")
+        brk = [f"{E[k]} {v}%" for k, v in
+               (("LONG", row["to_long"]), ("SHORT", row["to_short"]),
+                ("NEUTRAL", row["to_neutral"])) if v > 0]
+        lines.append("куда ломается: " + " · ".join(brk))
+        if slope is not None:
+            trend = (f"падает {abs(slope)}пп/ч" if slope < -0.3
+                     else f"растёт {slope}пп/ч" if slope > 0.3 else "стоит на месте")
+            eta_txt = (f" → порог {eta_to} через <b>~{eta_h}ч</b>"
+                       if eta_h is not None and 0 < eta_h < 96 else "")
+            lines.append(f"breadth <b>{pct}%</b> · {trend}{eta_txt}")
+        else:
+            lines.append(f"breadth <b>{pct}%</b> · наклон посчитается после "
+                         f"пары сканов (30 мин)")
+        return {"ok": True, "side": side, "age_h": age_h, "breadth": pct,
+                "btc_st4": st, "slope_6h": slope, "eta_h": eta_h,
+                "eta_to": eta_to, "stat": row, "outlived_pct": outlived,
+                "med_total": surv["med_total"], "max_total": surv["max_total"],
+                "traj": traj, "lines": lines}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/btc-st4")
 async def api_btc_st4():
     """BTC SuperTrend 4h (UP/DOWN) — гейт для шорт-пресета в журнале."""

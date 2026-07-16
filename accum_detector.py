@@ -382,11 +382,14 @@ def scan_universe(max_pairs: int = 300):
     try:
         if breadth_tot >= 50:
             from database import _get_db, utcnow
+            _pct = round(breadth_bull / breadth_tot * 100, 1)
             _get_db().market_state.update_one(
                 {"_id": "breadth"},
                 {"$set": {"bull": breadth_bull, "total": breadth_tot,
-                          "pct": round(breadth_bull / breadth_tot * 100, 1),
-                          "updated_at": utcnow()}}, upsert=True)
+                          "pct": _pct, "updated_at": utcnow()}}, upsert=True)
+            # история breadth для прогноза фазы (/api/phase-forecast)
+            _get_db().breadth_history.insert_one(
+                {"at": utcnow(), "pct": _pct, "src": "scan"})
             _last_scan["breadth"] = f"{breadth_bull}/{breadth_tot}"
     except Exception:
         logger.exception("[accum] breadth store fail")
