@@ -1804,6 +1804,136 @@ loadMomentum();
 safeInterval(loadMomentum, 60000);
 </script>
 
+{% elif bot == 'st_break' %}
+<!-- ════════════ 🧨 ST-ПРОБОЙ — пробой 1h SuperTrend по фазе бейджа (research 16.07) ════════════ -->
+<div class="strategy-box">
+  <div class="strat-icon">🧨</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · ST-ПРОБОЙ 1h по фазе рынка (research 16.07)</div>
+    Вход на закрытии бара, где часовой SuperTrend (10/3) сменил направление, — но <b>только по стороне бейджа</b>.
+    Бэктест год, 302 пары, горизонт 72ч:<br>
+    <b>🟢 лонг-флип в LONG-фазе</b>: TP +10% / SL −5% — <b>WR 46.1% (+12.8пп к БУ)</b>, EV ~+1.9%/сделку. Самая сильная ячейка, но фаз мало (медиана 🟢 4ч).<br>
+    <b>⚪ лонг-флип в НЕЙТРАЛИ</b>: TP +10% / SL −5% — <b>WR 37.3% (+4.0пп)</b>, EV ~+0.6%. 16.6k случаев/год — рабочая лошадка, размер поменьше. Единственный лонг-вход с плюсом в ⚪.<br>
+    <b>🔴 шорт-флип в SHORT-фазе</b>: TP −5% / SL +3% — <b>WR 41.8% (+4.3пп)</b>.<br>
+    Против фазы — минус (лонг в 🔴 −4.6пп, шорт в ⚪ −5.8пп) → <b>не детектится</b>. Кулдаун 12ч на пару.
+    Telegram (BOT16): 🟢-фаза — все, ⚪ — только монеты из 🏆 кандидатов (в ⚪ ~45 флипов/день). В журнале и здесь — все.
+  </div>
+</div>
+
+<div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+  <select id="stbPhase" onchange="loadStBreak()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="">Все фазы</option>
+    <option value="LONG">🟢 в LONG-фазе (+12.8пп)</option>
+    <option value="NEUTRAL">⚪ в нейтрали (+4.0пп)</option>
+    <option value="SHORT">🔴 в SHORT-фазе (+4.3пп)</option>
+  </select>
+  <select id="stbState" onchange="loadStBreak()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="">Все статусы</option>
+    <option value="WAITING">⏳ WAITING</option>
+    <option value="TP">✅ TP</option>
+    <option value="SL">❌ SL</option>
+    <option value="TIMEOUT">⌛ TIMEOUT</option>
+  </select>
+  <select id="stbHours" onchange="loadStBreak()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="24">сутки</option>
+    <option value="72">3 дня</option>
+    <option value="168" selected>7 дней</option>
+    <option value="336">14 дней</option>
+  </select>
+  <span id="stbStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th style="padding:12px 14px;">Время</th>
+      <th style="padding:12px 14px;">Пара</th>
+      <th style="padding:12px 14px;">Напр.</th>
+      <th style="padding:12px 14px;text-align:center;">Фаза</th>
+      <th style="padding:12px 14px;">Entry</th>
+      <th style="padding:12px 14px;">TP</th>
+      <th style="padding:12px 14px;">SL</th>
+      <th style="padding:12px 14px;text-align:center;">Статус</th>
+      <th style="padding:12px 14px;text-align:right;">PnL</th>
+    </tr></thead>
+    <tbody id="stbBody">
+      <tr><td colspan="9" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+function _stbFmt(v) {
+  if (v == null) return '—';
+  const n = +v;
+  if (!isFinite(n)) return '—';
+  return n >= 100 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n.toPrecision(4);
+}
+async function loadStBreak() {
+  const tb = document.getElementById('stbBody');
+  try {
+    const hours = document.getElementById('stbHours').value || '168';
+    const r = await fetch('/api/momentum-signals?strat=st_break&hours=' + hours);
+    const d = await r.json();
+    let rows = d.items || [];
+    const total = rows.length;
+    const phase = document.getElementById('stbPhase').value;
+    const state = document.getElementById('stbState').value;
+    if (phase) rows = rows.filter(x => (x.indicators || {}).phase === phase);
+    if (state) rows = rows.filter(x => (x.state || 'WAITING') === state);
+    const closed = rows.filter(x => ['TP', 'SL', 'TIMEOUT'].includes(x.state) && x.pnl_pct != null);
+    const wins = closed.filter(x => x.pnl_pct > 0).length;
+    const pnlSum = closed.reduce((a, x) => a + (x.pnl_pct || 0), 0);
+    let statsTxt = `${rows.length} из ${total} сигналов`;
+    if (closed.length) {
+      statsTxt += ` · закрыто ${closed.length}: WR ${Math.round(wins / closed.length * 100)}%` +
+                  `, Σ ${pnlSum >= 0 ? '+' : ''}${pnlSum.toFixed(1)}%`;
+    }
+    document.getElementById('stbStats').textContent = statsTxt;
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;" class="text-muted">' +
+        'Сигналов под фильтр нет. Детектор живёт с 16.07 15:00 UTC — история копится; флипы против фазы не детектятся по дизайну.</td></tr>';
+      return;
+    }
+    const STATE_BADGE = {
+      WAITING: '<span style="color:#ffd23e;font-weight:700;">⏳ WAIT</span>',
+      TP: '<span style="color:var(--buy);font-weight:700;">✅ TP</span>',
+      SL: '<span style="color:var(--sell);font-weight:700;">❌ SL</span>',
+      TIMEOUT: '<span style="color:var(--muted);font-weight:700;">⌛ TIME</span>',
+    };
+    const PHASE_BADGE = {
+      LONG: '<span style="color:var(--buy);font-weight:700;">🟢 LONG</span>',
+      NEUTRAL: '<span style="color:#9aa4b5;font-weight:700;">⚪ НЕЙТР</span>',
+      SHORT: '<span style="color:var(--sell);font-weight:700;">🔴 SHORT</span>',
+    };
+    tb.innerHTML = rows.slice(0, 300).map(x => {
+      const t = x.at ? new Date(x.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+      const pair = (x.pair || '').replace('/USDT', '');
+      const ph = (x.indicators || {}).phase;
+      const dirB = x.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
+      const pnl = x.pnl_pct;
+      const pnlTxt = pnl == null ? '—'
+        : `<span style="color:${pnl >= 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${pnl >= 0 ? '+' : ''}${(+pnl).toFixed(2)}%</span>`;
+      return `<tr>
+        <td class="mono" style="font-size:12px;">${t}</td>
+        <td class="mono fw-700" style="color:var(--text);cursor:pointer;border-bottom:1px dashed rgba(255,210,62,0.4);" onclick="openPairChart('${pair}USDT')" title="Клик — график ${pair}">🧨 ${pair}</td>
+        <td>${dirB}</td>
+        <td style="text-align:center;">${PHASE_BADGE[ph] || '—'}</td>
+        <td class="mono">${_stbFmt(x.entry)}</td>
+        <td class="mono" style="color:var(--buy);">${_stbFmt(x.tp)}</td>
+        <td class="mono" style="color:var(--sell);">${_stbFmt(x.sl)}</td>
+        <td style="text-align:center;">${STATE_BADGE[x.state] || STATE_BADGE.WAITING}</td>
+        <td class="mono" style="text-align:right;">${pnlTxt}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--sell);">Ошибка: ' + e.message + '</td></tr>';
+  }
+}
+loadStBreak();
+safeInterval(loadStBreak, 60000);
+</script>
+
 {% elif bot == 'accum_entry' %}
 <!-- ════════════ 🧊💥 БАЗА→ВХОД — накопление + momentum-сигнал ════════════ -->
 <div class="strategy-box" style="border-color:rgba(76,201,240,0.4);">

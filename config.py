@@ -147,6 +147,7 @@ BOTS = [
     {"id": "shark", "label": "🦈 SHARK", "category": "crypto"},
     {"id": "stack", "label": "🧩 Stack", "category": "crypto"},
     {"id": "momentum", "label": "🚀 Impulse·Fade", "category": "crypto"},
+    {"id": "st_break", "label": "🧨 ST-Пробой", "category": "crypto"},
     {"id": "accum_entry", "label": "🧊💥 База→Вход", "category": "crypto"},
     # 📈 График убран из навигации (2026-07-11) — графики есть в журнале
     # (клик по паре → KChart). Вкладка жива по прямому URL /signals/bigchart.

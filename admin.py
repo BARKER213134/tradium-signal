@@ -3149,17 +3149,20 @@ async def root():
 # ── 🚀🎣 IMPULSE / FADE (momentum detector, research 2026-07-02) ─────────────
 
 @app.get("/api/momentum-signals")
-async def api_momentum_signals(hours: int = 336):
+async def api_momentum_signals(hours: int = 336, strat: str = ""):
     """Сигналы impulse_detector (new_strategy_signals, strategy in impulse/fade)
-    + статусы аутком-трекера (WAITING/TP/SL/TIMEOUT, pnl_pct)."""
+    + статусы аутком-трекера (WAITING/TP/SL/TIMEOUT, pnl_pct).
+    strat=<name> — одна конкретная стратегия (вкладка 🧨 ST-Пробой)."""
     def _sync():
         from database import _get_db, utcnow
         from datetime import timedelta
         since = utcnow() - timedelta(hours=max(1, min(hours, 2160)))
         col = _get_db().new_strategy_signals
+        strats = ([strat] if strat else
+                  ["impulse", "fade", "ignition", "rider_short", "ten"])
         items = []
         for n in col.find(
-            {"strategy": {"$in": ["impulse", "fade", "ignition", "rider_short", "ten"]},
+            {"strategy": {"$in": strats},
              "created_at": {"$gte": since}},
             {"strategy": 1, "pair": 1, "direction": 1, "entry": 1, "tp": 1,
              "sl": 1, "horizon_h": 1, "indicators": 1, "state": 1,
