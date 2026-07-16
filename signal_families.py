@@ -62,9 +62,9 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
 
     Возвращает НОВЫЙ список (сортировка by at_ts desc сохраняется снаружи).
     """
-    # accum — инфо-событие, не голос; st_break — боевой триггер со своими
-    # TP/SL (пробой 1h ST по фазе), в 🧩 его глотало ST-эхо того же флипа
-    NO_GROUP = {"paper", "stack", "accum", "st_break"}
+    # accum — инфо-событие, не голос; st_break/st_break4h — боевые триггеры
+    # со своими TP/SL (пробой ST по фазе), в 🧩 их глотало ST-эхо того же флипа
+    NO_GROUP = {"paper", "stack", "accum", "st_break", "st_break4h"}
     from collections import defaultdict
 
     groupable = [it for it in items

@@ -1934,6 +1934,140 @@ loadStBreak();
 safeInterval(loadStBreak, 60000);
 </script>
 
+{% elif bot == 'st_break4h' %}
+<!-- ════════════ 💣 ST-ПРОБОЙ 4h — пробой 4h SuperTrend по фазе (research 16.07) ════════════ -->
+<div class="strategy-box">
+  <div class="strat-icon">💣</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · ST-ПРОБОЙ 4h (research 16.07)</div>
+    Вход на закрытии 4h-бара, где SuperTrend 4h (10/3) сменил направление. Реже часового (~35/день против ~120),
+    эдж 2-4 раза жирнее. Бэктест год, 302 пары, горизонт 72ч, EV с честными таймаутами:<br>
+    <b>🟢 лонг-флип в LONG-фазе</b>: WR 55.4% (+22пп) — <b>EV +2.39%/сделку</b>. Сильнейшая ячейка платформы.<br>
+    <b>🔴 лонг-флип в SHORT-фазе</b>: WR 46.2% (+12.9пп) — <b>EV +1.48%</b>. Реверсал с дна: единственное валидированное исключение из «НЕ ЛОНГОВАТЬ в 🔴». Агрессивно: SL срабатывает в 48%.<br>
+    <b>⚪ лонг-флип в нейтрали</b>: WR 42.1% (+8.8пп) — EV +0.48%.<br>
+    <b>Шорт-флип в 🔴/⚪</b>: EV +0.62/+0.63% (TP −5% / SL +3%). Шорт в 🟢 — скип (слабо + запрет бейджа).<br>
+    Сетка лонга: <b>TP +10% / SL −5%</b>. Скан через ~7 мин после закрытия каждого 4h-бара (00/04/08/12/16/20 UTC). Кулдаун 12ч.
+    Telegram (BOT16): 🟢-лонги и 🔴-реверсалы — все, остальное — только 🏆 кандидаты.
+  </div>
+</div>
+
+<div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+  <select id="stb4Phase" onchange="loadStBreak4()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="">Все фазы</option>
+    <option value="LONG">🟢 в LONG-фазе (EV +2.39%)</option>
+    <option value="SHORT">🔴 в SHORT-фазе (реверсал/шорт)</option>
+    <option value="NEUTRAL">⚪ в нейтрали (EV +0.5%)</option>
+  </select>
+  <select id="stb4State" onchange="loadStBreak4()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="">Все статусы</option>
+    <option value="WAITING">⏳ WAITING</option>
+    <option value="TP">✅ TP</option>
+    <option value="SL">❌ SL</option>
+    <option value="TIMEOUT">⌛ TIMEOUT</option>
+  </select>
+  <select id="stb4Hours" onchange="loadStBreak4()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="24">сутки</option>
+    <option value="72">3 дня</option>
+    <option value="168" selected>7 дней</option>
+    <option value="336">14 дней</option>
+    <option value="720">30 дней</option>
+  </select>
+  <span id="stb4Stats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th style="padding:12px 14px;">Время</th>
+      <th style="padding:12px 14px;">Пара</th>
+      <th style="padding:12px 14px;">Напр.</th>
+      <th style="padding:12px 14px;text-align:center;">Фаза</th>
+      <th style="padding:12px 14px;">Entry</th>
+      <th style="padding:12px 14px;">TP</th>
+      <th style="padding:12px 14px;">SL</th>
+      <th style="padding:12px 14px;text-align:center;">Статус</th>
+      <th style="padding:12px 14px;text-align:right;">PnL</th>
+    </tr></thead>
+    <tbody id="stb4Body">
+      <tr><td colspan="9" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+function _stb4Fmt(v) {
+  if (v == null) return '—';
+  const n = +v;
+  if (!isFinite(n)) return '—';
+  return n >= 100 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n.toPrecision(4);
+}
+async function loadStBreak4() {
+  const tb = document.getElementById('stb4Body');
+  try {
+    const hours = document.getElementById('stb4Hours').value || '168';
+    const r = await fetch('/api/momentum-signals?strat=st_break4h&hours=' + hours);
+    const d = await r.json();
+    let rows = d.items || [];
+    const total = rows.length;
+    const phase = document.getElementById('stb4Phase').value;
+    const state = document.getElementById('stb4State').value;
+    if (phase) rows = rows.filter(x => (x.indicators || {}).phase === phase);
+    if (state) rows = rows.filter(x => (x.state || 'WAITING') === state);
+    const closed = rows.filter(x => ['TP', 'SL', 'TIMEOUT'].includes(x.state) && x.pnl_pct != null);
+    const wins = closed.filter(x => x.pnl_pct > 0).length;
+    const pnlSum = closed.reduce((a, x) => a + (x.pnl_pct || 0), 0);
+    let statsTxt = `${rows.length} из ${total} сигналов`;
+    if (closed.length) {
+      statsTxt += ` · закрыто ${closed.length}: WR ${Math.round(wins / closed.length * 100)}%` +
+                  `, Σ ${pnlSum >= 0 ? '+' : ''}${pnlSum.toFixed(1)}% (EV ${(pnlSum / closed.length).toFixed(2)}%)`;
+    }
+    document.getElementById('stb4Stats').textContent = statsTxt;
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;" class="text-muted">' +
+        'Сигналов под фильтр нет. Скан идёт после закрытия каждого 4h-бара (00/04/08/12/16/20 UTC).</td></tr>';
+      return;
+    }
+    const STATE_BADGE = {
+      WAITING: '<span style="color:#ffd23e;font-weight:700;">⏳ WAIT</span>',
+      TP: '<span style="color:var(--buy);font-weight:700;">✅ TP</span>',
+      SL: '<span style="color:var(--sell);font-weight:700;">❌ SL</span>',
+      TIMEOUT: '<span style="color:var(--muted);font-weight:700;">⌛ TIME</span>',
+    };
+    const PHASE_BADGE = {
+      LONG: '<span style="color:var(--buy);font-weight:700;">🟢 LONG</span>',
+      NEUTRAL: '<span style="color:#9aa4b5;font-weight:700;">⚪ НЕЙТР</span>',
+      SHORT: '<span style="color:var(--sell);font-weight:700;">🔴 SHORT</span>',
+    };
+    tb.innerHTML = rows.slice(0, 300).map(x => {
+      const t = x.at ? new Date(x.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+      const pair = (x.pair || '').replace('/USDT', '');
+      const ph = (x.indicators || {}).phase;
+      const rev = x.direction === 'LONG' && ph === 'SHORT'
+        ? ' <span title="реверсал с дна — против фазы, агрессивный вход" style="font-size:10px;">🔄</span>' : '';
+      const dirB = x.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
+      const pnl = x.pnl_pct;
+      const pnlTxt = pnl == null ? '—'
+        : `<span style="color:${pnl >= 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${pnl >= 0 ? '+' : ''}${(+pnl).toFixed(2)}%</span>`;
+      return `<tr>
+        <td class="mono" style="font-size:12px;">${t}</td>
+        <td class="mono fw-700" style="color:var(--text);cursor:pointer;border-bottom:1px dashed rgba(255,140,80,0.4);" onclick="openPairChart('${pair}USDT')" title="Клик — график ${pair}">💣 ${pair}</td>
+        <td>${dirB}${rev}</td>
+        <td style="text-align:center;">${PHASE_BADGE[ph] || '—'}</td>
+        <td class="mono">${_stb4Fmt(x.entry)}</td>
+        <td class="mono" style="color:var(--buy);">${_stb4Fmt(x.tp)}</td>
+        <td class="mono" style="color:var(--sell);">${_stb4Fmt(x.sl)}</td>
+        <td style="text-align:center;">${STATE_BADGE[x.state] || STATE_BADGE.WAITING}</td>
+        <td class="mono" style="text-align:right;">${pnlTxt}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--sell);">Ошибка: ' + e.message + '</td></tr>';
+  }
+}
+loadStBreak4();
+safeInterval(loadStBreak4, 60000);
+</script>
+
 {% elif bot == 'accum_entry' %}
 <!-- ════════════ 🧊💥 БАЗА→ВХОД — накопление + momentum-сигнал ════════════ -->
 <div class="strategy-box" style="border-color:rgba(76,201,240,0.4);">
@@ -7044,6 +7178,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="accum">🧊 Накопление (разрешившиеся базы)</option>
     <option value="delta_series">🫧 Серия дельт (крупный поток 3×4h, инфо)</option>
     <option value="st_break">🧨 ST-пробой 1h (по фазе: ⚪/🟢 лонг, 🔴 шорт)</option>
+    <option value="st_break4h">💣 ST-пробой 4h (лонг все фазы, шорт ⚪/🔴)</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все</option>
@@ -8999,7 +9134,7 @@ function filterJournal() {
     if (minTs && !sourceExplicit && (s.at_ts || 0) < minTs) return false;
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
-      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','rider_short','ten','delta_series','st_break'].includes(s.source)) return false;
+      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','rider_short','ten','delta_series','st_break','st_break4h'].includes(s.source)) return false;
     } else if (src && s.source !== src) return false;
     if (dir && s.direction !== dir) return false;
     // ── Отбор по тренду монеты (EMA20/50 per TF на момент сигнала) ──
@@ -11069,7 +11204,7 @@ async function openJournalChart(idx, forceTF) {
     whale:'WHALE', shark:'SHARK', combo:'COMBO', volume_surge:'Volume Surge',
     triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano',
     second_flip:'Second Flip', rsi_cross_12h:'RSI Cross 12h', verified:'Verified',
-    accum:'🧊 Накопление', delta_series:'🫧 Серия дельт', st_break:'🧨 ST-пробой'})[s.source]
+    accum:'🧊 Накопление', delta_series:'🫧 Серия дельт', st_break:'🧨 ST-пробой', st_break4h:'💣 ST-пробой 4h'})[s.source]
     || (s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐ STRONG' : 'Confluence') : (s.source || 'Signal'));
   const patternInfo = s.pattern ? ` · ${s.pattern}` : '';
   const scoreInfo = s.score ? ` · ${s.score}` : '';

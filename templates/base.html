@@ -742,6 +742,7 @@
           accum:'🧊',        // 🧊 разрешившаяся база (watchlist-событие)
           delta_series:'🫧', // 🫧 серия дельт 3×4h (инфо, бэктест: направление не предсказывает)
           st_break:'🧨',     // 🧨 пробой 1h ST по фазе (⚪/🟢 лонг +4/+12.8пп, 🔴 шорт +4.3пп)
+          st_break4h:'💣',   // 💣 пробой 4h ST (лонг все фазы EV +0.5..+2.4%, шорт ⚪/🔴)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
         return prefix + base;
@@ -777,6 +778,7 @@
         if (src === 'accum') return '🧊';
         if (src === 'delta_series') return '🫧';
         if (src === 'st_break') return '🧨';
+        if (src === 'st_break4h') return '💣';
         return ({anomaly:'⚠', paper:'🤖', cluster:'💠'})[src] || '•';
       };
 

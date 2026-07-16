@@ -90,6 +90,32 @@ async def _st_tracker_loop():
         await _asyncio.sleep(300)
 
 
+async def _st_break4h_loop():
+    """💣 ST-пробой 4h: скан всех пар через ~7 мин после закрытия каждого
+    4h-бара (00/04/08/12/16/20 UTC). На старте — один догоняющий скан
+    (свежесть флипа 4.5ч закрывает пропущенную границу при деплое)."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(300)
+    try:
+        await _asyncio.to_thread(_hb, "st_break4h")
+        from supertrend_tracker import check_all_pairs_4h
+        await check_all_pairs_4h()
+    except Exception:
+        logger.exception("[st-break4h] initial scan crashed")
+    while True:
+        try:
+            from database import utcnow
+            secs = utcnow().timestamp()
+            next_b = (int(secs // 14400) + 1) * 14400 + 420  # граница + 7 мин
+            await _asyncio.sleep(max(60, next_b - secs))
+            await _asyncio.to_thread(_hb, "st_break4h")
+            from supertrend_tracker import check_all_pairs_4h
+            await check_all_pairs_4h()
+        except Exception:
+            logger.exception("[st-break4h] loop crashed")
+            await _asyncio.sleep(600)
+
+
 async def _whale_scanner_loop():
     """🐋 WHALE safety-net scanner — каждые 30 мин. TG dispatch напрямую
     из fired_docs (раньше был баг: query по created_at brought 0 because
@@ -3871,6 +3897,12 @@ async def start_watcher():
         logger.info("[st-tracker] background loop started")
     except Exception:
         logger.exception("[st-tracker] failed to start loop")
+    # 💣 ST-пробой 4h — скан после закрытия каждого 4h-бара
+    try:
+        asyncio.create_task(_st_break4h_loop())
+        logger.info("[st-break4h] background loop started")
+    except Exception:
+        logger.exception("[st-break4h] failed to start loop")
     # 🐋 WHALE safety-net scanner — каждые 30 мин на пропущенные flips
     try:
         asyncio.create_task(_whale_scanner_loop())

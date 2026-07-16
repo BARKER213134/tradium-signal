@@ -503,6 +503,115 @@ async def _maybe_st_break(pair_norm: str, flip_bars: list) -> None:
             logger.debug(f"[st-break] tg fail {pair_norm}", exc_info=True)
 
 
+async def _st_break4h_pair(pair_norm: str, phase: str) -> bool:
+    """💣 ST-BREAK 4h: флип 4h SuperTrend (10/3) на последнем ЗАКРЫТОМ баре.
+    Год (302 пары, 72ч, вход по закрытию бара флипа, EV с честными таймаутами):
+      LONG:  🟢 EV +2.39%/сделку (WR 55.4%) · 🔴 +1.48% (реверсал с дна,
+             SL 48% — агрессивно) · ⚪ +0.48%  → детектим во ВСЕХ фазах
+      SHORT: 🔴 +0.62% · ⚪ +0.63% → детектим; в 🟢 (+0.39, n=134) — скип
+    Реже часового (~35/день против ~120), эдж 2-4x жирнее."""
+    if pair_norm[:-4] in {"USDC", "FDUSD", "TUSD", "DAI", "USD1", "USDP",
+                          "EURI", "AEUR", "XUSD", "PAXG", "XAUT", "WBTC", "BFUSD"}:
+        return False
+    from exchange import get_klines_any
+    from backtest_supertrend import compute_st_series
+    pair_slash = pair_norm[:-4] + "/USDT"
+    try:
+        c4h = await asyncio.to_thread(get_klines_any, pair_slash, "4h", 150)
+    except Exception:
+        return False
+    if not c4h or len(c4h) < 30:
+        return False
+    st_4h = compute_st_series(c4h, 10, 3.0)
+    if len(st_4h) < 3:
+        return False
+    # последний ЗАКРЫТЫЙ бар: [-1] может быть текущим незакрытым
+    from database import utcnow
+    now_ms = utcnow().timestamp() * 1000
+    idx = len(st_4h) - 1
+    if st_4h[idx]["t"] + 4 * 3600_000 > now_ms + 60_000:
+        idx -= 1  # [-1] ещё не закрыт
+    if idx < 1:
+        return False
+    cur, prev = st_4h[idx], st_4h[idx - 1]
+    if cur["trend"] == prev["trend"] or not cur["trend"] or not prev["trend"]:
+        return False
+    # свежесть: бар закрылся в последние 4.5ч (одно окно сканирования)
+    if now_ms - (cur["t"] + 4 * 3600_000) > 4.5 * 3600_000:
+        return False
+    direction = "LONG" if cur["trend"] == 1 else "SHORT"
+    if direction == "SHORT" and phase == "LONG":
+        return False  # слабейшая ячейка + запрет бейджа
+    entry = cur["close"]
+    k = 1 if direction == "LONG" else -1
+    tp_pct, sl_pct = (10.0, 5.0) if k == 1 else (5.0, 3.0)
+    from impulse_detector import store_signal
+    sig = {
+        "strategy": "st_break4h", "direction": direction,
+        "pair": pair_slash, "symbol": pair_norm,
+        "entry": entry,
+        "tp": entry * (1 + k * tp_pct / 100),
+        "sl": entry * (1 - k * sl_pct / 100),
+        "horizon_h": 72,
+        "indicators": {"phase": phase, "tf": "4h",
+                       "st": round(cur.get("st") or 0, 8)},
+    }
+    stored = await asyncio.to_thread(store_signal, sig, 12)
+    if not stored:
+        return False
+    # TG: 🟢-лонги и 🔴-реверсал-лонги — все (сильнейшие ячейки, редкие);
+    # остальное — только 🏆 кандидаты
+    try:
+        notable = direction == "LONG" and phase in ("LONG", "SHORT")
+        if not notable:
+            from database import _get_db
+            cdoc = await asyncio.to_thread(
+                lambda: _get_db().market_state.find_one(
+                    {"_id": "phase_candidates"})) or {}
+            lst = (cdoc.get("long") if direction == "LONG"
+                   else cdoc.get("short")) or []
+            notable = any(c.get("symbol") == pair_norm for c in lst)
+        if notable:
+            from watcher import _bot16
+            from config import WHALE_CHAT_ID
+            if _bot16 and WHALE_CHAT_ID:
+                E = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}
+                d_e = "🟢 LONG" if k == 1 else "🔴 SHORT"
+                rev = (" · реверсал с дна (агрессивно, SL 48%)"
+                       if direction == "LONG" and phase == "SHORT" else "")
+                ev = {"LONG": "+2.4", "SHORT": "+1.5", "NEUTRAL": "+0.5"}[phase] \
+                    if k == 1 else "+0.6"
+                txt = (f"💣 <b>ST-ПРОБОЙ 4h · {pair_slash.replace('/USDT', '')}</b>\n"
+                       f"{d_e} @ {entry}\n"
+                       f"фаза рынка: {E[phase]} {phase}{rev}\n"
+                       f"TP {sig['tp']:.6g} · SL {sig['sl']:.6g} · горизонт 72ч\n"
+                       f"<i>бэктест год: EV {ev}%/сделку</i>")
+                await _bot16.send_message(WHALE_CHAT_ID, txt, parse_mode="HTML")
+    except Exception:
+        logger.debug(f"[st-break4h] tg fail {pair_norm}", exc_info=True)
+    return True
+
+
+async def check_all_pairs_4h() -> int:
+    """💣 Скан 4h-флипов по всем tracked pairs. Вызывать после закрытия
+    4h-бара (00/04/08/12/16/20 UTC + ~5 мин). Возвращает число сигналов."""
+    phase = await asyncio.to_thread(_market_phase_now)
+    if not phase:
+        return 0
+    pairs = await asyncio.to_thread(get_tracked_pairs)
+    fired = 0
+    for i, p in enumerate(pairs):
+        try:
+            if await _st_break4h_pair(p, phase):
+                fired += 1
+        except Exception:
+            logger.debug(f"[st-break4h] {p} fail", exc_info=True)
+        if i % 20 == 19:
+            await asyncio.sleep(0.5)
+    logger.info(f"[st-break4h] scan done: {fired} сигналов (фаза {phase})")
+    return fired
+
+
 async def _process_pair(pair_norm: str, alert_enabled: bool = True) -> int:
     """Проверяет одну пару. Возвращает кол-во новых сигналов."""
     from exchange import get_klines_any
