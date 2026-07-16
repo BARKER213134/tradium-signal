@@ -6440,8 +6440,10 @@ safeInterval(loadForexJournal, 30000);
   </div>
   <button id="msPlanBtn" onclick="const p=document.getElementById('msPlan');p.style.display=p.style.display==='none'?'block':'none';this.textContent=p.style.display==='none'?'📋 Что делать':'📋 Свернуть';" style="background:rgba(76,201,240,0.10);border:1px solid rgba(76,201,240,0.4);border-radius:8px;color:#4cc9f0;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">📋 Что делать</button>
   <button id="msForecastBtn" onclick="toggleForecast(this)" style="background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.4);border-radius:8px;color:#ffd23e;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">⏳ Когда закончится?</button>
+  <button id="msPicksBtn" onclick="togglePicks(this)" style="background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.4);border-radius:8px;color:#00e5a0;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">🎯 Входы сейчас</button>
   <div id="msPlan" style="display:none;flex-basis:100%;margin-top:10px;padding:14px 18px;background:rgba(10,14,20,0.5);border:1px solid var(--border);border-radius:10px;font-size:12.5px;line-height:1.9;color:var(--text);"></div>
   <div id="msForecast" style="display:none;flex-basis:100%;margin-top:10px;padding:14px 18px;background:rgba(10,14,20,0.5);border:1px solid rgba(255,210,62,0.3);border-radius:10px;font-size:12.5px;line-height:1.9;color:var(--text);"></div>
+  <div id="msPicks" style="display:none;flex-basis:100%;margin-top:10px;padding:14px 18px;background:rgba(10,14,20,0.5);border:1px solid rgba(0,229,160,0.3);border-radius:10px;font-size:12.5px;line-height:1.7;color:var(--text);"></div>
   <div id="msCands" style="display:none;flex-basis:100%;margin-top:10px;">
     <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);margin-bottom:6px;">
       <b style="color:#ffd23e;">🏆 КАНДИДАТЫ ФАЗЫ</b> — волатильные с импульсом (ловят 2–4 из 10 будущих лидеров против 0.5 у случайного выбора; клик — график)
@@ -6491,6 +6493,49 @@ async function toggleForecast(btn) {
       d.lines.map(l => `· ${l}`).join('<br>') +
       spark +
       `<div style="margin-top:6px;font-size:11.5px;color:var(--muted);">${FLIP_HINT[d.side] || ''} · алерт о флипе придёт в боты сам (подтверждение ~2ч)</div>`;
+  } catch (e) {
+    box.innerHTML = '<span style="color:var(--muted);">ошибка загрузки</span>';
+  }
+}
+
+async function togglePicks(btn) {
+  const box = document.getElementById('msPicks');
+  if (!box) return;
+  if (box.style.display !== 'none') {
+    box.style.display = 'none';
+    btn.textContent = '🎯 Входы сейчас';
+    return;
+  }
+  btn.textContent = '🎯 Свернуть';
+  box.style.display = 'block';
+  box.innerHTML = '<span style="color:var(--muted);">анализирую рынок…</span>';
+  try {
+    const r = await fetch('/api/entry-picks');
+    const d = await r.json();
+    if (!d.ok) { box.innerHTML = `<span style="color:var(--muted);">${d.error || 'нет данных'}</span>`; return; }
+    const E = {LONG: '🟢', SHORT: '🔴', NEUTRAL: '⚪'};
+    let html = `<b style="color:#00e5a0;">🎯 ВХОДЫ ПОД ФАЗУ ${E[d.side] || ''} ${d.side}</b> ` +
+      `<span style="color:var(--muted);font-size:10.5px;font-family:var(--font-mono);">кандидаты × сигналы 12ч (${d.n_signals_12h ?? 0}) × RSI-зона · клик по монете — график</span>`;
+    if (d.warn) html += `<div style="margin-top:6px;padding:6px 10px;border-radius:7px;background:rgba(255,210,62,0.08);border:1px solid rgba(255,210,62,0.35);color:#ffd23e;font-size:12px;">${d.warn}</div>`;
+    if (!d.picks || !d.picks.length) {
+      box.innerHTML = html + '<div style="margin-top:8px;color:var(--muted);">пусто</div>';
+      return;
+    }
+    const fmtP = (v) => v == null ? '—' : v >= 100 ? v.toFixed(1) : v >= 1 ? v.toFixed(3) : v.toPrecision(4);
+    html += '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">';
+    d.picks.forEach((p, i) => {
+      const name = (p.pair || '').replace('/USDT', '');
+      const sigMark = p.signal ? '' : 'opacity:0.75;';
+      html += `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 10px;border-radius:8px;background:rgba(0,229,160,0.05);border:1px solid rgba(0,229,160,0.22);${sigMark}">
+        <b style="cursor:pointer;font-family:var(--font-mono);font-size:13px;min-width:86px;" onclick="openPairChart('${p.symbol}')">${i + 1}. ${name}</b>
+        <span style="font-family:var(--font-mono);font-size:11.5px;color:var(--muted);min-width:78px;">${fmtP(p.price)}</span>
+        <span style="font-size:11px;flex:1;min-width:220px;">${(p.reasons || []).join(' · ')}</span>
+        <span style="font-family:var(--font-mono);font-size:11px;white-space:nowrap;">вход <b>${fmtP(p.price)}</b> · <span style="color:var(--sell);">стоп ${fmtP(p.sl)} (${p.sl_pct}%)</span> · <span style="color:var(--buy);">цель ${fmtP(p.tp)} (${p.tp_pct > 0 ? '+' : ''}${p.tp_pct}%)</span></span>
+      </div>`;
+    });
+    html += '</div>';
+    html += `<div style="margin-top:8px;font-size:11px;color:var(--muted);">📐 ${d.rules || ''}</div>`;
+    box.innerHTML = html;
   } catch (e) {
     box.innerHTML = '<span style="color:var(--muted);">ошибка загрузки</span>';
   }

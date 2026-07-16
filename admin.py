@@ -3535,6 +3535,145 @@ async def api_phase_forecast():
         return {"ok": False, "error": str(e)}
 
 
+@app.get("/api/entry-picks")
+async def api_entry_picks():
+    """🎯 Кого брать сейчас: анализ под текущую фазу. Кандидаты фазы (ATR-
+    скоринг) × свежие сигналы (12ч) × RSI-зона (лонг 50-70 / шорт 30-50) ×
+    импульс → ранжированный список с готовыми уровнями входа (TP/SL из
+    год-бэктеста: лонг +8/−3, шорт −5/+3)."""
+    try:
+        from datetime import timedelta
+        from database import _get_db, utcnow
+        db = _get_db()
+        bdoc = await asyncio.to_thread(
+            lambda: db.market_state.find_one({"_id": "breadth"})) or {}
+        pct = bdoc.get("pct")
+        from rider_detector import get_btc_st4
+        st = await asyncio.to_thread(get_btc_st4)
+        if pct is None:
+            return {"ok": False, "error": "нет данных ширины"}
+        side = ("NEUTRAL" if pct > 60 else "SHORT" if pct < 40
+                else "LONG" if st == "UP" else "SHORT" if st == "DOWN" else "NEUTRAL")
+        ms = await asyncio.to_thread(
+            lambda: db.system.find_one({"_id": "market_side_state"})) or {}
+        age_h = None
+        if ms.get("raw_side") == side and ms.get("raw_since"):
+            age_h = round((utcnow() - ms["raw_since"]).total_seconds() / 3600, 1)
+
+        warn = None
+        if side == "NEUTRAL":
+            return {"ok": True, "side": side, "age_h": age_h, "picks": [],
+                    "warn": "⚪ мёртвая зона — статистического эджа нет ни у "
+                            "лонгов, ни у шортов; входы не выдаю (год: лонги "
+                            "−1.9пп, шорты −2.6пп)"}
+        if side == "LONG" and age_h is not None and age_h < 4:
+            warn = (f"⚠️ фазе всего {age_h}ч — не подтверждена (88% зелёных "
+                    f"умирают <8ч): малый размер или дождись 4ч")
+        elif side == "SHORT" and age_h is not None and age_h >= 48:
+            warn = "⏳ фазе 48ч+ — ХВАТИТ ШОРТИТЬ (эдж ниже безубытка)"
+        elif side == "SHORT" and age_h is not None and age_h > 24:
+            warn = "⌛ фаза стареет (24-48ч) — эдж тает, только добор, не новые"
+
+        cdoc = await asyncio.to_thread(
+            lambda: db.market_state.find_one({"_id": "phase_candidates"})) or {}
+        cands = (cdoc.get("long") if side == "LONG" else cdoc.get("short")) or []
+        cands = cands[:15]
+        if not cands:
+            return {"ok": False, "error": "нет кандидатов — ждём 30-мин скан"}
+
+        # свежие сигналы за 12ч по направлению фазы
+        since = utcnow() - timedelta(hours=12)
+        sig_strats = (("ignition", "ten", "impulse") if side == "LONG"
+                      else ("impulse", "shark", "delta_series", "rider_short"))
+        sigs_raw = await asyncio.to_thread(lambda: list(
+            db.new_strategy_signals.find(
+                {"created_at": {"$gte": since}, "direction": side,
+                 "strategy": {"$in": list(sig_strats)}},
+                {"symbol": 1, "strategy": 1, "created_at": 1}).sort("created_at", -1)))
+        sig_by_sym = {}
+        for s in sigs_raw:
+            sig_by_sym.setdefault(s.get("symbol"), s)  # свежейший
+
+        # цены из batch-кэша тикеров (1 запрос на все пары)
+        import futures_data as _fd
+        await asyncio.to_thread(_fd._refresh_batch_cache)
+        tickers = (_fd._batch_cache or {}).get("ticker", {})
+
+        # RSI4h из кэша (свежесть ≤8ч); отсутствующим — ленивый дозапрос
+        rsi_by_pair = {}
+        pairs = [c.get("pair") for c in cands if c.get("pair")]
+        fresh_ms = int((utcnow() - timedelta(hours=8)).timestamp() * 1000)
+        rdocs = await asyncio.to_thread(lambda: list(
+            db.signal_rsi_cache.find(
+                {"pair": {"$in": pairs}, "tf": "4h", "open_ms": {"$gte": fresh_ms}},
+                {"pair": 1, "rsi": 1, "open_ms": 1}).sort("open_ms", -1)))
+        for r in rdocs:
+            rsi_by_pair.setdefault(r["pair"], r.get("rsi"))
+        missing = [p for p in pairs if p not in rsi_by_pair]
+        if missing:
+            from rsi_cache import fill_pair_rsi_async
+            for p in missing[:6]:
+                asyncio.create_task(fill_pair_rsi_async(p, tfs=("4h",)))
+
+        picks = []
+        for c in cands:
+            sym, pair = c.get("symbol"), c.get("pair")
+            price = (tickers.get(sym) or {}).get("price")
+            rsi = rsi_by_pair.get(pair)
+            sig = sig_by_sym.get(sym)
+            score, reasons = 0.0, []
+            if sig:
+                ago = (utcnow() - sig["created_at"]).total_seconds() / 3600
+                emoji = {"ignition": "💥", "ten": "💰", "impulse": "⚡",
+                         "shark": "🦈", "delta_series": "🫧",
+                         "rider_short": "🏇"}.get(sig["strategy"], "•")
+                score += 3
+                reasons.append(f"{emoji} {sig['strategy']} {ago:.1f}ч назад")
+            if rsi is not None:
+                in_zone = (50 <= rsi <= 70) if side == "LONG" else (30 <= rsi <= 50)
+                if in_zone:
+                    score += 2
+                    reasons.append(f"🎯 RSI4h {rsi:.0f} — рабочая зона")
+                elif (rsi > 75 and side == "LONG") or (rsi < 25 and side == "SHORT"):
+                    score -= 1
+                    reasons.append(f"🔪 RSI4h {rsi:.0f} — перегрет, догонять поздно")
+                else:
+                    reasons.append(f"RSI4h {rsi:.0f}")
+            mom_ok = (c.get("mom24", 0) > 0) if side == "LONG" else (c.get("mom24", 0) < 0)
+            if mom_ok:
+                score += 1
+            score += min(1.0, (c.get("atr_pct") or 0) / 10)
+            reasons.append(f"ATR {c.get('atr_pct')}% · 24ч {c.get('mom24', 0):+.1f}% "
+                           f"· vol {c.get('vol_ratio')}×")
+            tp_pct, sl_pct = (8, -3) if side == "LONG" else (-5, 3)
+            if sig and sig.get("strategy") == "ten":
+                tp_pct, sl_pct = 10, -5
+            picks.append({
+                "symbol": sym, "pair": pair, "price": price,
+                "score": round(score, 2), "rsi4h": rsi,
+                "atr_pct": c.get("atr_pct"), "mom24": c.get("mom24"),
+                "vol_ratio": c.get("vol_ratio"),
+                "signal": (sig or {}).get("strategy"),
+                "reasons": reasons,
+                "tp": round(price * (1 + tp_pct / 100), 8) if price else None,
+                "sl": round(price * (1 + sl_pct / 100), 8) if price else None,
+                "tp_pct": tp_pct, "sl_pct": sl_pct,
+            })
+        picks.sort(key=lambda p: -p["score"])
+        rules = ("вход по рынку · стоп −3% (💰 ten: −5%) · цель +8% (💰 +10%) · "
+                 "лучшее окно 4-12ч фазы · не двигать стоп"
+                 if side == "LONG" else
+                 "вход по рынку · стоп +3% · цель −5% · лучшие часы 0-24ч · "
+                 "не пересиживать 48ч")
+        return {"ok": True, "side": side, "age_h": age_h, "breadth": pct,
+                "warn": warn, "rules": rules, "picks": picks[:8],
+                "n_signals_12h": len(sigs_raw),
+                "cand_updated": (cdoc.get("updated_at").isoformat()
+                                 if cdoc.get("updated_at") else None)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/btc-st4")
 async def api_btc_st4():
     """BTC SuperTrend 4h (UP/DOWN) — гейт для шорт-пресета в журнале."""
