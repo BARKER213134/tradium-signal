@@ -9031,7 +9031,11 @@ def _compute_journal_sync(_fast_only: bool = False):
             pair_raw = n.get("pair") or ""
             pair_norm = pair_raw.replace("/", "").upper()
             extra = ""
-            if strat == "delta_series":
+            if strat == "st_break":
+                _ph = (n.get("indicators") or {}).get("phase")
+                _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
+                extra = f" · 1h флип · фаза {_phe}{_ph or '?'}"
+            elif strat == "delta_series":
                 _di = n.get("indicators") or {}
                 extra = (f" · Σ {_di.get('sigma', '?')}σ · vol {_di.get('vol_ratio', '?')}×"
                          f" · инфо (направление 50/50 по бэктесту)")
