@@ -3167,7 +3167,7 @@ async def api_momentum_signals(hours: int = 336, strat: str = ""):
             {"strategy": 1, "pair": 1, "direction": 1, "entry": 1, "tp": 1,
              "sl": 1, "horizon_h": 1, "indicators": 1, "state": 1,
              "pnl_pct": 1, "exit_price": 1, "exit_at": 1, "created_at": 1},
-        ).sort("created_at", -1).limit(500):
+        ).sort("created_at", -1).limit(3000 if strat else 500):
             at = n.get("created_at")
             ex = n.get("exit_at")
             items.append({
@@ -9026,7 +9026,11 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
                        "rider_short": "RIDER SHORT", "ten": "TEN",
                        "delta_series": "Серия дельт", "st_break": "ST-пробой"}
-        for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(2000):
+        # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
+        # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
+        # из limit(2000)
+        for n in nss_col.find({"created_at": {"$gte": nss_since},
+                               "indicators.backfill": {"$ne": True}}).sort("created_at", -1).limit(2000):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
             em = STRAT_EMOJI.get(strat, "✨")
