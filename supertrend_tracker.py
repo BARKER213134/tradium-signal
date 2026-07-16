@@ -412,6 +412,92 @@ async def _alert_signal(sig: dict) -> None:
             pass
 
 
+def _market_phase_now() -> Optional[str]:
+    """Фаза бейджа (🟢/⚪/🔴) как в /api/market-side. None = данные
+    протухли (>2ч) — st_break тогда не создаётся (fail-safe)."""
+    try:
+        from database import _get_db, utcnow
+        doc = _get_db().market_state.find_one({"_id": "breadth"}) or {}
+        pct, upd = doc.get("pct"), doc.get("updated_at")
+        if pct is None or not upd or (utcnow() - upd).total_seconds() > 7200:
+            return None
+        if pct > 60:
+            return "NEUTRAL"
+        if pct < 40:
+            return "SHORT"
+        from rider_detector import get_btc_st4
+        st = get_btc_st4()
+        return "LONG" if st == "UP" else "SHORT" if st == "DOWN" else "NEUTRAL"
+    except Exception:
+        return None
+
+
+async def _maybe_st_break(pair_norm: str, flip_bars: list) -> None:
+    """🧨 ST-BREAK: пробой 1h ST с фильтром по фазе бейджа.
+    Год (302 пары, 72ч, вход по закрытию бара флипа):
+      лонг-флип в ⚪  TP10/SL5: WR 37.3% (БУ 33.3, +4.0пп), 16.6k случаев
+      лонг-флип в 🟢 TP10/SL5: WR 46.1% (+12.8пп) — лучшая ячейка
+      шорт-флип в 🔴 TP5/SL3:  WR 41.8% (БУ 37.5, +4.3пп)
+    Против фазы — минус (лонг в 🔴 −4.6пп, шорт в ⚪ −5.8пп) => скип.
+    Журнал/графики: все. Telegram (BOT16): только 🟢-фаза или пара из
+    🏆 phase_candidates — иначе спам (~45 флипов/день в ⚪)."""
+    phase = await asyncio.to_thread(_market_phase_now)
+    if not phase:
+        return
+    pair_slash = pair_norm[:-4] + "/USDT"
+    from impulse_detector import store_signal
+    for fb in flip_bars:
+        direction = "LONG" if fb["trend"] == 1 else "SHORT"
+        if direction == "LONG" and phase in ("NEUTRAL", "LONG"):
+            tp_pct, sl_pct = 10.0, 5.0
+        elif direction == "SHORT" and phase == "SHORT":
+            tp_pct, sl_pct = 5.0, 3.0
+        else:
+            continue
+        entry = fb["close"]
+        k = 1 if direction == "LONG" else -1
+        sig = {
+            "strategy": "st_break", "direction": direction,
+            "pair": pair_slash, "symbol": pair_norm,
+            "entry": entry,
+            "tp": entry * (1 + k * tp_pct / 100),
+            "sl": entry * (1 - k * sl_pct / 100),
+            "horizon_h": 72,
+            "indicators": {"phase": phase, "tf": "1h",
+                           "st": round(fb.get("st") or 0, 8)},
+        }
+        stored = await asyncio.to_thread(store_signal, sig, 12)
+        if not stored:
+            continue
+        # TG: 🟢-фаза (редкая, самый жирный эдж) или пара из 🏆 кандидатов
+        try:
+            notable = phase == "LONG"
+            if not notable:
+                from database import _get_db
+                cdoc = await asyncio.to_thread(
+                    lambda: _get_db().market_state.find_one(
+                        {"_id": "phase_candidates"})) or {}
+                lst = (cdoc.get("long") if direction == "LONG"
+                       else cdoc.get("short")) or []
+                notable = any(c.get("symbol") == pair_norm for c in lst)
+            if notable:
+                from watcher import _bot16
+                from config import WHALE_CHAT_ID
+                if _bot16 and WHALE_CHAT_ID:
+                    E = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}
+                    d_e = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
+                    txt = (f"🧨 <b>ST-ПРОБОЙ 1h · {pair_slash.replace('/USDT', '')}</b>\n"
+                           f"{d_e} @ {entry}\n"
+                           f"фаза рынка: {E[phase]} {phase}\n"
+                           f"TP {sig['tp']:.6g} ({'+' if k > 0 else '−'}{tp_pct:.0f}%) · "
+                           f"SL {sig['sl']:.6g} · горизонт 72ч\n"
+                           f"<i>бэктест год: WR {'46%' if phase == 'LONG' else '37%' if direction == 'LONG' else '42%'} "
+                           f"({'+12.8' if phase == 'LONG' else '+4.0' if direction == 'LONG' else '+4.3'}пп к БУ)</i>")
+                    await _bot16.send_message(WHALE_CHAT_ID, txt, parse_mode="HTML")
+        except Exception:
+            logger.debug(f"[st-break] tg fail {pair_norm}", exc_info=True)
+
+
 async def _process_pair(pair_norm: str, alert_enabled: bool = True) -> int:
     """Проверяет одну пару. Возвращает кол-во новых сигналов."""
     from exchange import get_klines_any
@@ -441,6 +527,12 @@ async def _process_pair(pair_norm: str, alert_enabled: bool = True) -> int:
     fresh_flip_indices = [i for i in flips if st_1h[i]["t"] >= cutoff_ms]
     if not fresh_flip_indices:
         return 0
+
+    # 🧨 ST-BREAK — фазозависимый сигнал на пробой (не зависит от tier)
+    try:
+        await _maybe_st_break(pair_norm, [st_1h[i] for i in fresh_flip_indices])
+    except Exception:
+        logger.debug(f"[st-break] {pair_norm} fail", exc_info=True)
 
     # Подтягиваем 4h и 1d только если есть свежие флипы (экономим API)
     c4h = c1d = None

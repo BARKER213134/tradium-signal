@@ -3583,8 +3583,9 @@ async def api_entry_picks():
 
         # свежие сигналы за 12ч по направлению фазы
         since = utcnow() - timedelta(hours=12)
-        sig_strats = (("ignition", "ten", "impulse") if side == "LONG"
-                      else ("impulse", "shark", "delta_series", "rider_short"))
+        sig_strats = (("ignition", "ten", "impulse", "st_break") if side == "LONG"
+                      else ("impulse", "shark", "delta_series", "rider_short",
+                            "st_break"))
         sigs_raw = await asyncio.to_thread(lambda: list(
             db.new_strategy_signals.find(
                 {"created_at": {"$gte": since}, "direction": side,
@@ -3625,7 +3626,7 @@ async def api_entry_picks():
             if sig:
                 ago = (utcnow() - sig["created_at"]).total_seconds() / 3600
                 emoji = {"ignition": "💥", "ten": "💰", "impulse": "⚡",
-                         "shark": "🦈", "delta_series": "🫧",
+                         "shark": "🦈", "delta_series": "🫧", "st_break": "🧨",
                          "rider_short": "🏇"}.get(sig["strategy"], "•")
                 score += 3
                 reasons.append(f"{emoji} {sig['strategy']} {ago:.1f}ч назад")
@@ -8616,7 +8617,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "second_flip": "♻️", "combo": "🧠",
                         "whale": "🐋", "shark": "🦈",
                         "impulse": "🚀", "fade": "🎣", "ignition": "💥",
-                        "rider_short": "🏄", "ten": "💰", "delta_series": "🫧"}
+                        "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
+                        "st_break": "🧨"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -8624,7 +8626,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "whale": "WHALE", "shark": "SHARK",
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
                        "rider_short": "RIDER SHORT", "ten": "TEN",
-                       "delta_series": "Серия дельт"}
+                       "delta_series": "Серия дельт", "st_break": "ST-пробой"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -9012,14 +9014,15 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "vol_accum": "🔋", "volcano": "🌋",
                         "second_flip": "♻️", "combo": "🧠", "whale": "🐋",
                         "shark": "🦈", "impulse": "🚀", "fade": "🎣", "ignition": "💥",
-                        "rider_short": "🏄", "ten": "💰", "delta_series": "🫧"}
+                        "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
+                        "st_break": "🧨"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
                        "whale": "WHALE", "shark": "SHARK",
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
                        "rider_short": "RIDER SHORT", "ten": "TEN",
-                       "delta_series": "Серия дельт"}
+                       "delta_series": "Серия дельт", "st_break": "ST-пробой"}
         for n in nss_col.find({"created_at": {"$gte": nss_since}}).sort("created_at", -1).limit(2000):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")

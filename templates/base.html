@@ -741,6 +741,7 @@
           impulse:'🚀', fade:'🎣', ignition:'💥', rider_short:'🏄', ten:'💰',  // momentum research 07-02..10
           accum:'🧊',        // 🧊 разрешившаяся база (watchlist-событие)
           delta_series:'🫧', // 🫧 серия дельт 3×4h (инфо, бэктест: направление не предсказывает)
+          st_break:'🧨',     // 🧨 пробой 1h ST по фазе (⚪/🟢 лонг +4/+12.8пп, 🔴 шорт +4.3пп)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
         return prefix + base;
@@ -775,6 +776,7 @@
         if (src === 'ten') return '💰';
         if (src === 'accum') return '🧊';
         if (src === 'delta_series') return '🫧';
+        if (src === 'st_break') return '🧨';
         return ({anomaly:'⚠', paper:'🤖', cluster:'💠'})[src] || '•';
       };
 
