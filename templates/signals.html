@@ -7277,6 +7277,24 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jAllSpecialBtn" style="display:none;"></button>
   <button id="jNearLevelBtn" style="display:none;"></button>
   <button id="jHotOnlyBtn" style="display:none;"></button>
+  <button id="jGradeOnlyBtn" onclick="_toggleGradeOnly()" title="🎓 Показать только сигналы с оценкой 🟩 ВХОД: комбинация источник × направление × фаза исторически даёт EV ≥ +0.75%/сделку на сетке под цель +10% (TP+10/SL−5, 96ч, бэктест 3 мес всех сигналов базы). Самый простой режим: жми, бери верхние строки (сортировка по EV кликом на «Вход?»), уровни — в подсказке ячейки." style="background:linear-gradient(135deg, rgba(0,229,160,0.18), rgba(255,210,62,0.10));border:1.5px solid rgba(0,229,160,0.6);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:700;">🟩 Только ВХОД · OFF</button>
+  <script>
+  window._gradeOnlyOn = false;
+  window._toggleGradeOnly = function() {
+    window._gradeOnlyOn = !window._gradeOnlyOn;
+    const b = document.getElementById('jGradeOnlyBtn');
+    if (window._gradeOnlyOn) {
+      b.textContent = '🟩 Только ВХОД · ON';
+      b.style.background = 'linear-gradient(135deg, rgba(0,229,160,0.4), rgba(255,210,62,0.2))';
+      b.style.color = '#0a0e14';
+    } else {
+      b.textContent = '🟩 Только ВХОД · OFF';
+      b.style.background = 'linear-gradient(135deg, rgba(0,229,160,0.18), rgba(255,210,62,0.10))';
+      b.style.color = '#00e5a0';
+    }
+    if (typeof filterJournal === 'function') filterJournal();
+  };
+  </script>
   <button id="jBestEntryBtn" onclick="_toggleBestEntry()" title="🥇 Лучший отбор по бэктестам 90д (~26k точек, цель +10% до −5% за 96ч): LONG + RSI>SMA на 4h+1d (WR 36.3%, EV +0.45%) + RSI 1h и 4h в зоне 50–70 (35–36% vs BE 33). Выставляет фильтры Направление/SMA/RSI одним кликом — их видно и можно поправить руками. Шорты в этой зоне умирают (22.6% WR) — поэтому только LONG." style="background:linear-gradient(135deg, rgba(0,229,160,0.15), rgba(178,139,255,0.10));border:1.5px solid rgba(0,229,160,0.55);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:700;">🥇 Лучший отбор · OFF</button>
   <script>
   window._bestEntryOn = false;
@@ -7459,7 +7477,7 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('source')" id="jSortSrc" style="text-align:center;padding:14px 8px;">Источник</th>
         <th class="sortable" onclick="jSort('symbol')" id="jSortPair" style="text-align:center;padding:14px 8px;">Пара</th>
         <th class="sortable" onclick="jSort('direction')" id="jSortDir" style="text-align:center;padding:14px 6px;">Напр.</th>
-        <th class="sortable" onclick="jSort('trade_ev')" id="jSortGrade" title="🎓 Оценка сделки: единый бэктест ВСЕХ сигналов базы (3 мес, 47.9k, одна сетка LONG +6/−3 / SHORT −5/+3, 72ч) в разрезе источник × направление × фаза бейджа на момент сигнала. 🟩 EV ≥ +0.4%/сделку — вход · 🟨 0…+0.4 — слабый плюс · 🟥 < 0 — исторически минус. Число = EV %/сделку. Наведи на ячейку — детали. Клик — сортировка." style="text-align:center;padding:14px 6px;">Вход?</th>
+        <th class="sortable" onclick="jSort('trade_ev')" id="jSortGrade" title="🎓 Оценка сделки под ЦЕЛЬ +10%: единый бэктест ВСЕХ сигналов базы (3 мес, ~48k, сетка LONG TP+10/SL−5 · SHORT TP−10/SL+5, горизонт 96ч) в разрезе источник × направление × фаза бейджа на момент сигнала. 🟩 EV ≥ +0.75%/сделку — ВХОД · 🟨 0…+0.75 — слабый плюс · 🟥 < 0 — скип. Число = EV %/сделку. В подсказке ячейки: WR, % доходов до +10%, готовые уровни. Клик — сортировка." style="text-align:center;padding:14px 6px;">Вход?</th>
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry" style="text-align:center;padding:14px 8px;">Entry</th>
         <th class="sortable" onclick="jSort('score')" id="jSortScore" style="text-align:left;padding:14px 14px;">Паттерн</th>
         <th id="jSortRsi" style="text-align:center;padding:14px 6px;position:relative;">
@@ -9139,6 +9157,8 @@ function filterJournal() {
     if (src === 'new_strategies') {
       if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','rider_short','ten','delta_series','st_break','st_break4h'].includes(s.source)) return false;
     } else if (src && s.source !== src) return false;
+    // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
+    if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;
     if (dir && s.direction !== dir) return false;
     // ── Отбор по тренду монеты (EMA20/50 per TF на момент сигнала) ──
     const trendF = (document.getElementById('jFilterTrend') || {}).value || '';
@@ -9820,16 +9840,19 @@ function renderJournal(items, startIdx) {
     // Stack (Δ% и Резонанс удалены по запросу — оставили только Stack для MOONSHOT detection)
     const stackCell = window._renderStackCell ? window._renderStackCell(s) :
       '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
-    // 🎓 Оценка сделки: (источник × направление × фаза) → EV из единого бэктеста
+    // 🎓 Оценка сделки под цель +10%: (источник × направление × фаза) → EV
     let gradeCell = '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     if (s.trade_grade) {
       const gm = {A: ['🟩', '#00e5a0', 'ВХОД — эдж подтверждён'],
-                  B: ['🟨', '#ffd23e', 'слабый плюс — можно, но без размера'],
+                  B: ['🟨', '#ffd23e', 'слабый плюс — можно, но малым размером'],
                   C: ['🟥', '#ff4d6d', 'СКИП — исторически минус']}[s.trade_grade];
       const slTxt = s.trade_slice === 'ВСЕ' ? 'все фазы' : 'фаза: ' + s.trade_slice;
       const evTxt = (s.trade_ev > 0 ? '+' : '') + (+s.trade_ev).toFixed(2);
-      const tip = `${gm[2]} · единый бэктест 3 мес (сетка ${s.direction === 'LONG' ? '+6/−3' : '−5/+3'}, 72ч): ` +
-        `${s.source} ${s.direction}, ${slTxt} → EV ${evTxt}%/сделку · WR ${s.trade_wr}% · n=${s.trade_n}`;
+      const kk = s.direction === 'LONG' ? 1 : -1;
+      const e0 = +s.entry || 0;
+      const lvl = e0 ? ` · уровни: вход ${s.entry} → цель ${(e0 * (1 + kk * 0.10)).toPrecision(5)} (+10%) / стоп ${(e0 * (1 - kk * 0.05)).toPrecision(5)} (−5%)` : '';
+      const tip = `${gm[2]} · цель +10% (сетка ${s.direction === 'LONG' ? 'TP+10/SL−5' : 'TP−10/SL+5'}, 96ч, бэктест 3 мес): ` +
+        `${s.source} ${s.direction}, ${slTxt} → EV ${evTxt}%/сделку · WR ${s.trade_wr}% · до +10% доходит ${s.trade_hit10}% · n=${s.trade_n}${lvl}`;
       gradeCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:700;color:${gm[1]};" title="${tip}">${gm[0]}${evTxt}</td>`;
     }
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
