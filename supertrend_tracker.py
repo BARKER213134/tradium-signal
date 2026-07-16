@@ -441,6 +441,11 @@ async def _maybe_st_break(pair_norm: str, flip_bars: list) -> None:
     Против фазы — минус (лонг в 🔴 −4.6пп, шорт в ⚪ −5.8пп) => скип.
     Журнал/графики: все. Telegram (BOT16): только 🟢-фаза или пара из
     🏆 phase_candidates — иначе спам (~45 флипов/день в ⚪)."""
+    # стейблы/обёртки: ST-флип на них — шум пега, не тренд (USD1 16.07)
+    _STB_SKIP = {"USDC", "FDUSD", "TUSD", "DAI", "USD1", "USDP", "EURI",
+                 "AEUR", "XUSD", "PAXG", "XAUT", "WBTC", "BFUSD"}
+    if pair_norm[:-4] in _STB_SKIP:
+        return
     phase = await asyncio.to_thread(_market_phase_now)
     if not phase:
         return
