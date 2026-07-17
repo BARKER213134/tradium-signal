@@ -198,6 +198,100 @@ def _src_key(item: dict):
     return src
 
 
+_ctx_cache = {"at": 0.0, "by_sym": {}}
+
+
+def _pair_context():
+    """pair_context из 30-мин скана (кэш 120с): symbol -> {pctl7d, mom24, rsi4h}."""
+    now = time.time()
+    if now - _ctx_cache["at"] < 120 and _ctx_cache["by_sym"]:
+        return _ctx_cache["by_sym"]
+    try:
+        from database import _get_db
+        by_sym = {d["_id"]: d for d in _get_db().pair_context.find({})}
+        if by_sym:
+            _ctx_cache.update(at=now, by_sym=by_sym)
+        return by_sym
+    except Exception:
+        logger.debug("[pro] pair_context load fail", exc_info=True)
+        return _ctx_cache["by_sym"]
+
+
+def annotate_pro(items: list) -> None:
+    """🎩 PRO-колонка: оценка КОНТЕКСТА сделки «как трейдер» (не источника).
+    Год-валидация компонент: RS-лидер+пробой в ⚪ EV +0.65 (hit10 35%);
+    капитуляция RSI4h<=18 в 🔴 +0.68; догон/перегрев — 🔪-зоны в минусе;
+    классика «откат в тренде» −0.66 => не используется.
+    Слагаемые: режим (+2 по фазе / +1 ⚪ / −2 против) · RS-сила 7д
+    (+2 лидер / −1 хвост не туда) · догон >20%/24ч (−2) · RSI4h
+    (капитуляция +2 лонгу, перегрев −2 лонгу, +1 шорту в 🔴).
+    Вердикт: >=4 УСИЛИТЬ · >=2 БРАТЬ · >=0 ПАС · <0 ПРОТИВ.
+    Контекст живой (сейчас) — сигналы старше 48ч не оцениваются."""
+    ctx_by_sym = _pair_context()
+    flips = _phase_flips()
+    phase = flips[-1][1] if flips else None
+    now_ts = time.time()
+    for it in items:
+        try:
+            d = it.get("direction")
+            src = it.get("source")
+            if d not in ("LONG", "SHORT") or src in _SKIP:
+                continue
+            at_ts = it.get("at_ts") or 0
+            if not at_ts or now_ts - at_ts > 48 * 3600:
+                continue
+            sym = (it.get("symbol") or (it.get("pair") or "").replace("/", "")).upper()
+            ctx = ctx_by_sym.get(sym)
+            if not ctx or phase is None:
+                continue
+            score, checks = 0, []
+            # режим
+            if phase == d:
+                score += 2; checks.append("✓ по фазе рынка (+2)")
+            elif phase == "NEUTRAL":
+                score += 1; checks.append("· фаза ⚪ (+1)")
+            else:
+                score -= 2; checks.append("✗ ПРОТИВ фазы (−2)")
+            # RS-сила за 7д (кросс-секционный перцентиль)
+            p7 = ctx.get("pctl7d")
+            if p7 is not None:
+                if d == "LONG" and p7 >= 0.85:
+                    score += 2; checks.append(f"✓ лидер силы 7д (топ-{max(1, round((1-p7)*100))}%) (+2)")
+                elif d == "SHORT" and p7 <= 0.15:
+                    score += 2; checks.append(f"✓ лидер слабости 7д (+2)")
+                elif d == "LONG" and p7 <= 0.15:
+                    score -= 1; checks.append("✗ слабак 7д — лонг аутсайдера (−1)")
+                elif d == "SHORT" and p7 >= 0.85:
+                    score -= 1; checks.append("✗ шорт лидера силы (−1)")
+                else:
+                    checks.append("· RS 7д нейтрален (0)")
+            # догон
+            m24 = ctx.get("mom24")
+            if m24 is not None:
+                if d == "LONG" and m24 > 20:
+                    score -= 2; checks.append(f"✗ догон: +{m24:.0f}% за 24ч (−2)")
+                elif d == "SHORT" and m24 < -20:
+                    score -= 2; checks.append(f"✗ догон вниз: {m24:.0f}% за 24ч (−2)")
+            # экстремумы RSI4h
+            r4 = ctx.get("rsi4h")
+            if r4 is not None:
+                if d == "LONG" and r4 <= 20:
+                    score += 2; checks.append(f"✓ капитуляция RSI4h {r4:.0f} (+2)")
+                elif d == "LONG" and r4 >= 80:
+                    score -= 2; checks.append(f"✗ перегрев RSI4h {r4:.0f} (−2)")
+                elif d == "SHORT" and r4 >= 80 and phase == "SHORT":
+                    score += 1; checks.append(f"✓ фейд перегрева в 🔴 (+1)")
+                elif d == "SHORT" and r4 <= 20:
+                    score -= 2; checks.append(f"✗ шорт в яму RSI4h {r4:.0f} (−2)")
+            it["pro_score"] = score
+            it["pro_verdict"] = ("УСИЛИТЬ" if score >= 4 else
+                                 "БРАТЬ" if score >= 2 else
+                                 "ПАС" if score >= 0 else "ПРОТИВ")
+            it["pro_checks"] = checks
+        except Exception:
+            continue
+
+
 def annotate_items(items: list) -> None:
     """Проставляет trade_grade/trade_ev/trade_wr/trade_n/trade_hit10/
     trade_slice/trade_phase каждому item журнала (in-place)."""

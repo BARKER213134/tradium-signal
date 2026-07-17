@@ -8771,10 +8771,11 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
     except Exception:
         pass
 
-    # 🎓 Оценка сделки — как в главном журнале
+    # 🎓 Оценка сделки + 🎩 PRO-контекст — как в главном журнале
     try:
-        from trade_grade import annotate_items
+        from trade_grade import annotate_items, annotate_pro
         annotate_items(items)
+        annotate_pro(items)
     except Exception:
         pass
 
@@ -10050,9 +10051,11 @@ def _compute_journal_sync(_fast_only: bool = False):
         logging.getLogger(__name__).warning(f"[journal] q_score fail: {e}")
 
     # 🎓 Оценка сделки (источник × направление × фаза → EV из единого бэктеста)
+    # + 🎩 PRO-контекст (RS-сила, догон, экстремумы RSI4h, режим — свежие 48ч)
     try:
-        from trade_grade import annotate_items
+        from trade_grade import annotate_items, annotate_pro
         annotate_items(items)
+        annotate_pro(items)
     except Exception as e:
         logging.getLogger(__name__).warning(f"[journal] trade_grade fail: {e}")
 

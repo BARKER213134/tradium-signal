@@ -7460,15 +7460,16 @@ async function _pollDeltaBackfill() {
       <col style="width:6%;">    <!-- Пара -->
       <col style="width:5%;">    <!-- Напр. -->
       <col style="width:5%;">    <!-- 🎓 Вход? (оценка сделки) -->
+      <col style="width:6%;">    <!-- 🎩 PRO (контекст трейдера) -->
       <col style="width:6%;">    <!-- Entry -->
-      <col style="width:13%;">   <!-- Паттерн -->
+      <col style="width:12%;">   <!-- Паттерн -->
       <col style="width:9%;">    <!-- RSI 4 TF -->
       <col style="width:6%;">    <!-- SMA vs RSI -->
-      <col style="width:7%;">    <!-- Trend -->
+      <col style="width:6%;">    <!-- Trend -->
       <col style="width:4%;">    <!-- Δ24ч фьюч. дельта -->
       <col style="width:5%;">    <!-- 4h state -->
-      <col style="width:6%;">    <!-- 12h state -->
-      <col style="width:7%;">    <!-- EMA Cross 1h -->
+      <col style="width:5%;">    <!-- 12h state -->
+      <col style="width:6%;">    <!-- EMA Cross 1h -->
       <col style="width:4%;">    <!-- Stack -->
     </colgroup>
     <thead>
@@ -7478,6 +7479,7 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('symbol')" id="jSortPair" style="text-align:center;padding:14px 8px;">Пара</th>
         <th class="sortable" onclick="jSort('direction')" id="jSortDir" style="text-align:center;padding:14px 6px;">Напр.</th>
         <th class="sortable" onclick="jSort('trade_ev')" id="jSortGrade" title="🎓 Оценка сделки под ЦЕЛЬ +10%: единый бэктест ВСЕХ сигналов базы (3 мес, ~48k, сетка LONG TP+10/SL−5 · SHORT TP−10/SL+5, горизонт 96ч) в разрезе источник × направление × фаза бейджа на момент сигнала. 🟩 EV ≥ +0.75%/сделку — ВХОД · 🟨 0…+0.75 — слабый плюс · 🟥 < 0 — скип. Число = EV %/сделку. В подсказке ячейки: WR, % доходов до +10%, готовые уровни. Клик — сортировка." style="text-align:center;padding:14px 6px;">Вход?</th>
+        <th class="sortable" onclick="jSort('pro_score')" id="jSortPro" title="🎩 PRO — оценка КОНТЕКСТА сделки «как трейдер» (дополняет «Вход?», который оценивает источник). Слагаемые (год-валидация): режим — по фазе +2 / ⚪ +1 / против −2 · RS-сила 7д — лидер +2, аутсайдер не туда −1 · догон >20% за 24ч −2 · RSI4h — капитуляция ≤20 лонгу +2, перегрев ≥80 лонгу −2, фейд перегрева шорту в 🔴 +1. Вердикт: 🚀 УСИЛИТЬ (≥4) · ✅ БРАТЬ (≥2) · 😐 ПАС (≥0) · ⛔ ПРОТИВ (<0). Контекст живой — только сигналы моложе 48ч. Идеал: 🟩 + 🚀." style="text-align:center;padding:14px 6px;">PRO</th>
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry" style="text-align:center;padding:14px 8px;">Entry</th>
         <th class="sortable" onclick="jSort('score')" id="jSortScore" style="text-align:left;padding:14px 14px;">Паттерн</th>
         <th id="jSortRsi" style="text-align:center;padding:14px 6px;position:relative;">
@@ -7494,7 +7496,7 @@ async function _pollDeltaBackfill() {
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="15" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="16" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -9755,7 +9757,7 @@ function renderJournal(items, startIdx) {
   startIdx = startIdx || 0;
   const tbody = document.getElementById('jBody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="15" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="16" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
     return;
   }
   tbody.innerHTML = items.map((s, i) => {
@@ -9855,12 +9857,22 @@ function renderJournal(items, startIdx) {
         `${s.source} ${s.direction}, ${slTxt} → EV ${evTxt}%/сделку · WR ${s.trade_wr}% · до +10% доходит ${s.trade_hit10}% · n=${s.trade_n}${lvl}`;
       gradeCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:700;color:${gm[1]};" title="${tip}">${gm[0]}${evTxt}</td>`;
     }
+    // 🎩 PRO — контекст сделки «как трейдер» (свежие 48ч, живой pair_context)
+    let proCell = '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    if (s.pro_verdict) {
+      const pm = {'УСИЛИТЬ': ['🚀', '#00e5a0'], 'БРАТЬ': ['✅', '#8ee78e'],
+                  'ПАС': ['😐', '#9aa4b5'], 'ПРОТИВ': ['⛔', '#ff4d6d']}[s.pro_verdict];
+      const tipP = `PRO ${s.pro_verdict} (счёт ${s.pro_score >= 0 ? '+' : ''}${s.pro_score}) — контекст сейчас:\n` +
+        (s.pro_checks || []).join('\n');
+      proCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:700;color:${pm[1]};" title="${tipP.replace(/"/g, '&quot;')}">${pm[0]} ${s.pro_verdict}</td>`;
+    }
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
       <td class="mono text-muted" style="font-size:11px;">${time}</td>
       <td style="font-size:11px;">${srcBadge} ${srcName}</td>
       <td class="mono text-accent fw-700">${pairCell}</td>
       <td>${dir}</td>
       ${gradeCell}
+      ${proCell}
       <td class="mono">${s.entry || '—'}</td>
       <td class="mono pattern-cell" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(s.pattern || '').replace(/"/g,'&quot;')}">${s.pattern || ''} ${s.score ? '<span style=\"color:var(--muted);font-size:11px;\">('+s.score+')</span>' : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
       ${rsiCell}
@@ -11039,7 +11051,7 @@ function jSort(field) {
     _jSortAsc = field === 'symbol' || field === 'source' || field === 'direction'; // alpha = asc default
   }
   // Update header arrows
-  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',rsi4h_match:'jSort4h',rsi12h_match:'jSort12h',stack_distinct:'jSortStack',trade_ev:'jSortGrade'};
+  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',rsi4h_match:'jSort4h',rsi12h_match:'jSort12h',stack_distinct:'jSortStack',trade_ev:'jSortGrade',pro_score:'jSortPro'};
   const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',rsi4h_match:'4h',rsi12h_match:'12h',stack_distinct:'Stack',trade_ev:'Вход?'};
   for (const [f, id] of Object.entries(cols)) {
     const el = document.getElementById(id);

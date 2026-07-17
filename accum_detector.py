@@ -217,8 +217,8 @@ def _delta_series_sig(pair: str, kd: list[dict]) -> Optional[dict]:
         return None
 
 
-def _rsi4h_bull(candles: list[dict]) -> Optional[bool]:
-    """RSI14(4h) выше своей SMA14? Для ширины рынка (/api/market-side).
+def _rsi4h_value(candles: list[dict]):
+    """(RSI14(4h) последнего бара, SMA14 RSI) или None.
     4h-ресемпл из 1h свечей, Wilder RSI."""
     try:
         closes = []
@@ -249,9 +249,15 @@ def _rsi4h_bull(candles: list[dict]) -> Optional[bool]:
         if len(rsis) < 15:
             return None
         sma = sum(rsis[-14:]) / 14
-        return rsis[-1] > sma
+        return rsis[-1], sma
     except Exception:
         return None
+
+
+def _rsi4h_bull(candles: list[dict]) -> Optional[bool]:
+    """RSI14(4h) выше своей SMA14? Для ширины рынка (/api/market-side)."""
+    v = _rsi4h_value(candles)
+    return None if v is None else v[0] > v[1]
 
 
 def scan_universe(max_pairs: int = 300):
@@ -296,7 +302,8 @@ def scan_universe(max_pairs: int = 300):
             kd = _fetch_klines_delta(pair, 320)
             checked += 1
             if kd and len(kd) >= 260:
-                _bull = _rsi4h_bull(kd)
+                _rv = _rsi4h_value(kd)
+                _bull = None if _rv is None else _rv[0] > _rv[1]
                 if _bull is not None:
                     breadth_tot += 1
                     if _bull:
@@ -325,11 +332,15 @@ def scan_universe(max_pairs: int = 300):
                     _mom = (_c[-1] / _c[-25] - 1) * 100 if len(_c) > 25 and _c[-25] else 0
                     _vbase = sum(_v[-240:-24]) / 216 if len(_v) >= 240 else 0
                     _vr = (sum(_v[-24:]) / 24) / _vbase if _vbase else 1.0
+                    _ret7 = ((_c[-1] / _c[-169] - 1) * 100
+                             if len(_c) >= 169 and _c[-169] else None)
                     cand_rows.append({"pair": pair,
                                       "symbol": pair.replace("/", "").upper(),
                                       "atr_pct": round(_atrp, 2),
                                       "mom24": round(_mom, 2),
                                       "vol_ratio": round(_vr, 2),
+                                      "ret7d": round(_ret7, 2) if _ret7 is not None else None,
+                                      "rsi4h": round(_rv[0], 1) if _rv else None,
                                       "dz24": round(dz24, 2) if dz24 is not None else None})
                 except Exception:
                     pass
@@ -378,6 +389,29 @@ def scan_universe(max_pairs: int = 300):
             _last_scan["candidates"] = len(cand_rows)
     except Exception:
         logger.exception("[accum] candidates store fail")
+    # 🎩 pair_context для PRO-колонки журнала: RS-ранг 7д (кросс-секционный
+    # перцентиль), импульс 24ч, RSI4h — контекст «как оценил бы трейдер»
+    try:
+        ctx_rows = [c for c in cand_rows if c.get("ret7d") is not None]
+        if len(ctx_rows) >= 50:
+            from database import _get_db, utcnow
+            from pymongo import ReplaceOne
+            order = sorted(range(len(ctx_rows)), key=lambda i: ctx_rows[i]["ret7d"])
+            pctl = [0.0] * len(ctx_rows)
+            for pos, idx in enumerate(order):
+                pctl[idx] = round(pos / max(len(ctx_rows) - 1, 1), 3)
+            now = utcnow()
+            ops = [ReplaceOne(
+                {"_id": c["symbol"]},
+                {"_id": c["symbol"], "pair": c["pair"],
+                 "ret7d": c["ret7d"], "pctl7d": pctl[i],
+                 "mom24": c["mom24"], "rsi4h": c.get("rsi4h"),
+                 "atr_pct": c["atr_pct"], "updated_at": now},
+                upsert=True) for i, c in enumerate(ctx_rows)]
+            _get_db().pair_context.bulk_write(ops, ordered=False)
+            _last_scan["pair_context"] = len(ops)
+    except Exception:
+        logger.exception("[accum] pair_context store fail")
     # ширина рынка для /api/market-side (>=50 пар — защита от сбойного скана)
     try:
         if breadth_tot >= 50:
