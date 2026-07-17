@@ -3650,6 +3650,43 @@ window._kcToolbarHtml = `
   .kc-toolbar button:hover{background:rgba(91,140,255,0.2);}</style>`;
 
 // ── Быстрая модалка графика для вкладок без своей (momentum, база→вход…) ──
+// 📋 Копирование тикера в буфер (клик по монете на вкладках 🧨/💣/База)
+window._copyFallback = function(txt) {
+  const ta = document.createElement('textarea');
+  ta.value = txt;
+  ta.style.cssText = 'position:fixed;left:-9999px;';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  ta.remove();
+};
+window.copyTicker = function(sym, ev) {
+  if (ev) ev.stopPropagation();
+  const done = () => {
+    const t = document.createElement('div');
+    t.textContent = '📋 ' + sym + ' скопирован';
+    t.style.cssText = 'position:fixed;z-index:99999;background:rgba(0,229,160,0.95);color:#0a0e14;' +
+      'font-family:var(--font-mono,monospace);font-size:12px;font-weight:700;padding:6px 12px;' +
+      'border-radius:8px;pointer-events:none;transition:opacity 0.3s;';
+    const x = (ev && ev.clientX) || window.innerWidth / 2;
+    const y = (ev && ev.clientY) || 80;
+    t.style.left = Math.max(8, Math.min(x - 60, window.innerWidth - 220)) + 'px';
+    t.style.top = Math.max(8, y - 40) + 'px';
+    document.body.appendChild(t);
+    setTimeout(() => { t.style.opacity = '0'; }, 900);
+    setTimeout(() => t.remove(), 1300);
+  };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(sym).then(done).catch(() => { window._copyFallback(sym); done(); });
+    } else {
+      window._copyFallback(sym); done();
+    }
+  } catch (e) {
+    try { window._copyFallback(sym); done(); } catch (e2) {}
+  }
+};
+
 // openPairChart('SXTUSDT') / openPairChart('SXT/USDT', '4h'). KChart со всем
 // фаршем renderKChart (MA/ST/VOL/Delta/RSI/сигналы/уровни), TF-бар, ESC/фон.
 window._kcQmSym = null;

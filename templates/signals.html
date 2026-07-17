@@ -1917,7 +1917,7 @@ async function loadStBreak() {
         : `<span style="color:${pnl >= 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${pnl >= 0 ? '+' : ''}${(+pnl).toFixed(2)}%</span>`;
       return `<tr>
         <td class="mono" style="font-size:12px;">${t}</td>
-        <td class="mono fw-700" style="color:var(--text);cursor:pointer;border-bottom:1px dashed rgba(255,210,62,0.4);" onclick="openPairChart('${pair}USDT')" title="Клик — график ${pair}">🧨 ${pair}</td>
+        <td class="mono fw-700" style="color:var(--text);cursor:pointer;border-bottom:1px dashed rgba(255,210,62,0.4);" onclick="copyTicker('${pair}USDT', event)" title="Клик — скопировать ${pair}USDT">🧨 ${pair} <span onclick="openPairChart('${pair}USDT');event.stopPropagation()" title="График ${pair}" style="cursor:pointer;opacity:0.65;">📈</span></td>
         <td>${dirB}</td>
         <td style="text-align:center;">${PHASE_BADGE[ph] || '—'}</td>
         <td class="mono">${_stbFmt(x.entry)}</td>
@@ -2051,7 +2051,7 @@ async function loadStBreak4() {
         : `<span style="color:${pnl >= 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${pnl >= 0 ? '+' : ''}${(+pnl).toFixed(2)}%</span>`;
       return `<tr>
         <td class="mono" style="font-size:12px;">${t}</td>
-        <td class="mono fw-700" style="color:var(--text);cursor:pointer;border-bottom:1px dashed rgba(255,140,80,0.4);" onclick="openPairChart('${pair}USDT')" title="Клик — график ${pair}">💣 ${pair}</td>
+        <td class="mono fw-700" style="color:var(--text);cursor:pointer;border-bottom:1px dashed rgba(255,140,80,0.4);" onclick="copyTicker('${pair}USDT', event)" title="Клик — скопировать ${pair}USDT">💣 ${pair} <span onclick="openPairChart('${pair}USDT');event.stopPropagation()" title="График ${pair}" style="cursor:pointer;opacity:0.65;">📈</span></td>
         <td>${dirB}${rev}</td>
         <td style="text-align:center;">${PHASE_BADGE[ph] || '—'}</td>
         <td class="mono">${_stb4Fmt(x.entry)}</td>
@@ -2110,10 +2110,10 @@ async function loadAccumAE() {
       const dzTip = dz == null ? '' :
         ` · дельта внутри ${dz > 0 ? '+' : ''}${dz} (${dz > 1 ? 'ПОКУПАТЕЛЬ — вверх в ~77%' : dz < -1 ? 'ПРОДАВЕЦ — вниз в ~77%' : 'нейтрально'})`;
       const brd = dz > 1 ? 'rgba(0,229,160,0.55)' : dz < -1 ? 'rgba(255,107,107,0.55)' : 'rgba(76,201,240,0.28)';
-      return `<span onclick="openPairChart('${p}USDT')"
-        title="в базе ${days} · ширина ${x.rng_pct}% · до пробоя вверх ${x.dist_up_pct}% · до низа ${x.dist_dn_pct}%${dzTip} (клик — график)"
+      return `<span onclick="copyTicker('${p}USDT', event)"
+        title="в базе ${days} · ширина ${x.rng_pct}% · до пробоя вверх ${x.dist_up_pct}% · до низа ${x.dist_dn_pct}%${dzTip} (клик — скопировать ${p}USDT)"
         style="cursor:pointer;font-family:var(--font-mono);font-size:11px;padding:4px 10px;border-radius:7px;background:rgba(76,201,240,0.08);border:1px solid ${brd};color:var(--text);">
-        ${who} <b>${p}</b> <span style="color:#4cc9f0;">${days}</span> <span style="color:var(--muted);">±${(x.rng_pct/2).toFixed(1)}%</span>${dz != null && Math.abs(dz) > 1 ? ` <span style="color:${dz > 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${dz > 0 ? '+' : ''}${dz}</span>` : ''}
+        ${who} <b>${p}</b> <span style="color:#4cc9f0;">${days}</span> <span style="color:var(--muted);">±${(x.rng_pct/2).toFixed(1)}%</span>${dz != null && Math.abs(dz) > 1 ? ` <span style="color:${dz > 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${dz > 0 ? '+' : ''}${dz}</span>` : ''} <span onclick="openPairChart('${p}USDT');event.stopPropagation()" title="График ${p}" style="cursor:pointer;opacity:0.65;">📈</span>
       </span>`;
     }).join('');
   } catch (e) { /* тихо */ }
@@ -2176,7 +2176,7 @@ async function loadAccumEntries() {
       return `<tr>
         <td class="mono" style="font-size:12px;">${t}</td>
         <td>${SB[x.strategy] || x.strategy}</td>
-        <td class="mono fw-700" style="cursor:pointer;border-bottom:1px dashed rgba(76,201,240,0.35);" onclick="openPairChart('${p}USDT')" title="Клик — график ${p}">${p}</td>
+        <td class="mono fw-700" style="cursor:pointer;border-bottom:1px dashed rgba(76,201,240,0.35);" onclick="copyTicker('${p}USDT', event)" title="Клик — скопировать ${p}USDT">${p} <span onclick="openPairChart('${p}USDT');event.stopPropagation()" title="График ${p}" style="cursor:pointer;opacity:0.65;">📈</span></td>
         <td class="mono">${fmt(x.entry)}</td>
         <td class="mono" style="font-size:11px;"><span style="color:var(--buy);">${fmt(x.tp)}</span> / <span style="color:var(--sell);">${fmt(x.sl)}</span></td>
         <td style="text-align:center;">${ST[x.state] || x.state}</td>
