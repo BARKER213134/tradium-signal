@@ -225,3 +225,40 @@ def bulk_get_trend_for_items(items: list) -> None:
             tr = cached_map.get((pair, tf, open_ms))
             if tr:
                 it[f'trend_{tf}'] = tr
+
+    # Фолбэк: точного бара нет (fapi-бюджет → CDN-фолбэк лагает часами,
+    # 2026-07-17: свежие сигналы оставались без тренда). Тренд EMA20/50
+    # меняется медленно — берём ближайший закэшированный бар в пределах
+    # 6 бакетов назад.
+    miss = {}
+    for it, pair, keys in item_keys:
+        for tf, open_ms in keys:
+            if it.get(f'trend_{tf}') is None:
+                k = (pair, tf)
+                miss.setdefault(k, set()).add(open_ms)
+    if not miss:
+        return
+    conds = []
+    for (pair, tf), opens in miss.items():
+        hi = max(opens)
+        conds.append({'pair': pair, 'tf': tf,
+                      'open_ms': {'$lt': hi,
+                                  '$gte': hi - 6 * TF_BUCKET_MS[tf]}})
+    latest = {}   # (pair, tf) -> (open_ms, trend)
+    for i in range(0, len(conds), 500):
+        try:
+            for doc in col.find({'$or': conds[i:i+500]},
+                                {'pair': 1, 'tf': 1, 'open_ms': 1,
+                                 'trend': 1, '_id': 0}):
+                k = (doc['pair'], doc['tf'])
+                if doc.get('trend') and (k not in latest
+                                         or doc['open_ms'] > latest[k][0]):
+                    latest[k] = (doc['open_ms'], doc['trend'])
+        except Exception:
+            pass
+    for it, pair, keys in item_keys:
+        for tf, open_ms in keys:
+            if it.get(f'trend_{tf}') is None:
+                got = latest.get((pair, tf))
+                if got and got[0] <= open_ms:
+                    it[f'trend_{tf}'] = got[1]
