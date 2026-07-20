@@ -3748,33 +3748,62 @@ async def api_entry_check(symbol: str, direction: str = "LONG"):
             lambda: db.pair_context.find_one({"_id": sym})) or {}
         pctl7d = ctx.get("pctl7d")
 
-        # свежие сигналы по монете (48ч) + их грейды
+        # свежие сигналы по монете (48ч) из ВСЕХ коллекций + их грейды —
+        # тот же набор источников, что у колонки 🚦 в журнале (иначе для
+        # SuperTrend/Confluence/Verified модалка не видела триггер и
+        # расходилась с таблицей, 2026-07-20)
         since = utcnow() - timedelta(hours=48)
-        sigs = await asyncio.to_thread(lambda: list(
-            db.new_strategy_signals.find(
-                {"$or": [{"symbol": sym}, {"pair": pair_slash}],
-                 "created_at": {"$gte": since}},
-                {"strategy": 1, "direction": 1, "entry": 1, "created_at": 1})
-            .sort("created_at", -1).limit(20)))
+
+        def _collect_sigs():
+            out = []
+            for n_ in db.new_strategy_signals.find(
+                    {"$or": [{"symbol": sym}, {"pair": pair_slash}],
+                     "created_at": {"$gte": since}},
+                    {"strategy": 1, "direction": 1, "created_at": 1}).limit(30):
+                if n_.get("direction"):
+                    out.append((n_.get("strategy"), n_["direction"], n_["created_at"]))
+            for s_ in db.supertrend_signals.find(
+                    {"pair": {"$in": [sym, pair_slash]},
+                     "flip_at": {"$gte": since}},
+                    {"tier": 1, "direction": 1, "flip_at": 1}).limit(30):
+                if s_.get("direction"):
+                    out.append((f"st_{s_.get('tier') or 'daily'}",
+                                s_["direction"], s_["flip_at"]))
+            for c_ in db.confluence.find(
+                    {"$or": [{"symbol": sym}, {"pair": pair_slash}],
+                     "detected_at": {"$gte": since}},
+                    {"direction": 1, "detected_at": 1, "score": 1}).limit(30):
+                if c_.get("direction"):
+                    key = ("confluence_5plus" if (c_.get("score") or 0) >= 5
+                           else "confluence_lo")
+                    out.append((key, c_["direction"], c_["detected_at"]))
+            for v_ in db.verified_signals.find(
+                    {"$or": [{"pair_norm": sym}, {"pair": pair_slash}],
+                     "created_at": {"$gte": since}},
+                    {"direction": 1, "created_at": 1}).limit(30):
+                if v_.get("direction"):
+                    out.append(("verified", v_["direction"], v_["created_at"]))
+            out.sort(key=lambda x: x[2], reverse=True)
+            return out[:20]
+
+        sigs = await asyncio.to_thread(_collect_sigs)
         from trade_grade import EDGE, _phase_flips, _phase_at
         flips = await asyncio.to_thread(_phase_flips)
         sig_rows, best_grade = [], None
-        for s in sigs:
-            sp = _phase_at(s["created_at"].timestamp() * 1000 + 0, flips) \
-                if flips else None
-            sl_ = ("по фазе" if s.get("direction") == sp else
+        for strat_, dir_, at_ in sigs:
+            sp = _phase_at(at_.timestamp() * 1000, flips) if flips else None
+            sl_ = ("по фазе" if dir_ == sp else
                    "против" if sp in ("LONG", "SHORT") else "нейтраль")
-            row = (EDGE.get((s.get("strategy"), s.get("direction"), sl_))
-                   or EDGE.get((s.get("strategy"), s.get("direction"), "ВСЕ")))
+            row = (EDGE.get((strat_, dir_, sl_))
+                   or EDGE.get((strat_, dir_, "ВСЕ")))
             g = None
             if row:
                 g = "A" if row[2] >= 0.75 else "B" if row[2] >= 0 else "C"
-            ago_h = round((utcnow() - s["created_at"]).total_seconds() / 3600, 1)
-            sig_rows.append({"strategy": s.get("strategy"),
-                             "direction": s.get("direction"),
+            ago_h = round((utcnow() - at_).total_seconds() / 3600, 1)
+            sig_rows.append({"strategy": strat_, "direction": dir_,
                              "ago_h": ago_h, "grade": g,
                              "ev": row[2] if row else None})
-            if s.get("direction") == direction and g:
+            if dir_ == direction and g:
                 if best_grade is None or g < best_grade:
                     best_grade = g
 
