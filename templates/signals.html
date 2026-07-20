@@ -2397,6 +2397,81 @@ function bcToggleLevels() {
   </div>
 </div>
 
+<!-- ═══ 🚦 ПРОВЕРКА ВХОДА — «как трейдер»: монета + направление → ДА/НЕТ ═══ -->
+<div style="margin:20px 0;padding:18px;background:linear-gradient(135deg,rgba(0,229,160,0.07),rgba(76,201,240,0.04));border:1.5px solid rgba(0,229,160,0.4);border-radius:12px;">
+  <div style="font-family:var(--font-mono);font-size:13px;font-weight:800;color:#00e5a0;margin-bottom:10px;">
+    🚦 ПРОВЕРКА ВХОДА — хочешь войти? вставь монету, получи ДА или НЕТ
+    <span style="font-weight:400;color:var(--muted);font-size:10.5px;"> · фаза-гейт · догон · RS-сила 7д · RSI4h · сигналы с грейдами · ST-флипы · готовые уровни (всё год-валидировано)</span>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <input id="ec-sym" type="text" placeholder="PHA, ARBUSDT, WIF/USDT…"
+           style="flex:1;min-width:180px;background:var(--dark);border:1px solid var(--border);border-radius:8px;padding:12px 18px;font-size:16px;font-family:var(--font-mono);color:var(--text);outline:none;text-transform:uppercase;"
+           onkeydown="if(event.key==='Enter') _ecCheck()">
+    <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+      <button id="ec-long" onclick="_ecDir('LONG')" style="background:rgba(0,229,160,0.35);color:#0a0e14;border:none;padding:12px 20px;font-size:13px;font-family:var(--font-mono);font-weight:800;cursor:pointer;">🟢 LONG</button>
+      <button id="ec-short" onclick="_ecDir('SHORT')" style="background:transparent;color:#ff5e9c;border:none;padding:12px 20px;font-size:13px;font-family:var(--font-mono);font-weight:800;cursor:pointer;">🔴 SHORT</button>
+    </div>
+    <button onclick="_ecCheck()" style="background:linear-gradient(135deg,rgba(0,229,160,0.35),rgba(76,201,240,0.25));color:#0a0e14;border:1.5px solid rgba(0,229,160,0.7);border-radius:8px;padding:12px 28px;font-size:14px;font-family:var(--font-mono);font-weight:800;cursor:pointer;letter-spacing:0.06em;">ПРОВЕРИТЬ</button>
+  </div>
+  <div id="ec-result" style="display:none;margin-top:14px;"></div>
+</div>
+<script>
+window._ecDirVal = 'LONG';
+function _ecDir(d) {
+  window._ecDirVal = d;
+  const l = document.getElementById('ec-long'), s = document.getElementById('ec-short');
+  if (d === 'LONG') {
+    l.style.background = 'rgba(0,229,160,0.35)'; l.style.color = '#0a0e14';
+    s.style.background = 'transparent'; s.style.color = '#ff5e9c';
+  } else {
+    s.style.background = 'rgba(255,77,109,0.4)'; s.style.color = '#fff';
+    l.style.background = 'transparent'; l.style.color = '#00e5a0';
+  }
+}
+async function _ecCheck() {
+  const inp = document.getElementById('ec-sym');
+  const box = document.getElementById('ec-result');
+  const sym = (inp.value || '').trim().toUpperCase();
+  if (!sym) { inp.focus(); return; }
+  box.style.display = 'block';
+  box.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-family:var(--font-mono);">⏳ Проверяю ' + sym + ' ' + window._ecDirVal + ' по всем правилам…</div>';
+  try {
+    const r = await fetch(`/api/entry-check?symbol=${encodeURIComponent(sym)}&direction=${window._ecDirVal}`);
+    const d = await r.json();
+    if (!d.ok) { box.innerHTML = `<div style="padding:16px;color:#ff4d6d;font-family:var(--font-mono);">${d.error || 'ошибка'}</div>`; return; }
+    const V = {
+      YES: ['✅ ДА — ВХОДИТЬ', '#00e5a0', 'rgba(0,229,160,0.15)'],
+      CAUTION: ['⚠️ МОЖНО — НО МАЛЫМ РАЗМЕРОМ', '#ffd23e', 'rgba(255,210,62,0.12)'],
+      NO: ['⛔ НЕТ — НЕ ВХОДИТЬ', '#ff4d6d', 'rgba(255,77,109,0.12)'],
+    }[d.verdict] || ['?', '#888', 'transparent'];
+    const fmtP = (v) => v == null ? '—' : (+v >= 100 ? (+v).toFixed(1) : +v >= 1 ? (+v).toFixed(4) : (+v).toPrecision(4));
+    let html = `<div style="padding:16px 20px;border-radius:10px;background:${V[2]};border:2px solid ${V[1]};">
+      <div style="font-size:22px;font-weight:900;font-family:var(--font-mono);color:${V[1]};letter-spacing:0.04em;">${V[0]}</div>
+      <div style="font-family:var(--font-mono);font-size:11.5px;color:var(--muted);margin-top:4px;">
+        ${d.symbol} ${d.direction} · фаза ${d.phase_emoji}${d.phase || '?'} (breadth ${d.breadth ?? '?'}%) · счёт ${d.score >= 0 ? '+' : ''}${d.score} · цена ${fmtP(d.price)} · 24ч ${d.mom24 > 0 ? '+' : ''}${d.mom24}% · 7д ${d.ret7d != null ? (d.ret7d > 0 ? '+' : '') + d.ret7d + '%' : '—'} · RSI4h ${d.rsi4h ?? '—'}
+      </div>`;
+    if (d.hard_no) html += `<div style="margin-top:8px;padding:8px 12px;border-radius:8px;background:rgba(255,77,109,0.15);border:1px solid rgba(255,77,109,0.5);color:#ff5e9c;font-size:12.5px;font-weight:700;">🚫 ${d.hard_no}</div>`;
+    html += '<div style="margin-top:10px;font-size:12.5px;line-height:1.9;">' +
+      (d.reasons || []).map(r => `<div>${r.ok === true ? '✅' : r.ok === false ? '❌' : '▫️'} ${r.t}</div>`).join('') + '</div>';
+    if (d.signals && d.signals.length) {
+      const gm = {A: '🟩', B: '🟨', C: '🟥'};
+      html += `<div style="margin-top:10px;font-size:11px;color:var(--muted);font-family:var(--font-mono);">сигналы за 48ч: ` +
+        d.signals.map(s => `${gm[s.grade] || '▫️'}${s.strategy} ${s.direction === 'LONG' ? '↑' : '↓'} ${s.ago_h}ч`).join(' · ') + '</div>';
+    }
+    if (d.verdict !== 'NO') {
+      html += `<div style="margin-top:12px;padding:10px 14px;border-radius:8px;background:rgba(10,14,20,0.5);border:1px solid var(--border);font-family:var(--font-mono);font-size:12.5px;">
+        📐 вход <b>${fmtP(d.levels.entry)}</b> · <span style="color:var(--sell);">стоп ${fmtP(d.levels.stop)} (−5%)</span> · <span style="color:var(--buy);">цель ${fmtP(d.levels.target)} (+10%)</span><br>
+        <span style="color:var(--muted);font-size:11px;">${d.size_rule}</span>
+      </div>`;
+    }
+    html += '</div>';
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<div style="padding:16px;color:#ff4d6d;">Ошибка: ${e.message}</div>`;
+  }
+}
+</script>
+
 <!-- Input form -->
 <div style="display:flex;gap:12px;align-items:center;margin:20px 0;padding:16px;background:var(--card);border:1px solid var(--border);border-radius:12px;">
   <input id="sc-pair" type="text" placeholder="WIF, BTCUSDT, ETH/USDT..."

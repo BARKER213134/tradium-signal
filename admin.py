@@ -3680,6 +3680,230 @@ async def api_entry_picks():
         return {"ok": False, "error": str(e)}
 
 
+@app.get("/api/entry-check")
+async def api_entry_check(symbol: str, direction: str = "LONG"):
+    """🚦 Проверка входа «как трейдер»: вставил монету + направление →
+    ✅ ДА / ⚠️ МОЖНО / ⛔ НЕТ по валидированной рамке: фаза-гейт, догон,
+    RS-сила 7д, RSI4h, свежие сигналы с их грейдами, ST-флипы, уровни
+    (стоп −5 / цель +10 / 96ч) и формула размера. Setup Check tab."""
+    try:
+        from datetime import timedelta
+        from database import _get_db, utcnow
+        direction = (direction or "LONG").upper()
+        if direction not in ("LONG", "SHORT"):
+            direction = "LONG"
+        sym = (symbol or "").upper().strip().replace("/", "")
+        if not sym.endswith("USDT"):
+            sym += "USDT"
+        pair_slash = sym[:-4] + "/USDT"
+        db = _get_db()
+
+        # фаза бейджа
+        bdoc = await asyncio.to_thread(
+            lambda: db.market_state.find_one({"_id": "breadth"})) or {}
+        pct = bdoc.get("pct")
+        from rider_detector import get_btc_st4
+        st_btc = await asyncio.to_thread(get_btc_st4)
+        phase = None
+        if pct is not None:
+            phase = ("NEUTRAL" if pct > 60 else "SHORT" if pct < 40
+                     else "LONG" if st_btc == "UP" else
+                     "SHORT" if st_btc == "DOWN" else "NEUTRAL")
+
+        # свечи монеты: 1h (RSI4h/mom/ret7d/ST 1h) + 4h (ST 4h)
+        from exchange import get_klines_any
+        c1h = await asyncio.to_thread(get_klines_any, pair_slash, "1h", 400)
+        if not c1h or len(c1h) < 60:
+            return {"ok": False, "error": f"нет данных по {sym} — проверь тикер"}
+        closes = [x["c"] for x in c1h]
+        price = closes[-1]
+        mom24 = (closes[-1] / closes[-25] - 1) * 100 if len(closes) > 25 else 0
+        ret7d = ((closes[-1] / closes[-169] - 1) * 100
+                 if len(closes) >= 169 else None)
+        from accum_detector import _rsi4h_value
+        _rv = _rsi4h_value(c1h)
+        rsi4h = round(_rv[0], 1) if _rv else None
+        from backtest_supertrend import compute_st_series
+        st1 = compute_st_series(c1h, 10, 3.0)
+        c4h = await asyncio.to_thread(get_klines_any, pair_slash, "4h", 150)
+        st4 = compute_st_series(c4h or [], 10, 3.0)
+
+        def _fresh_flip(st_series, n_bars, want_trend):
+            """Флип в want_trend в последних n_bars ЗАКРЫТЫХ барах."""
+            if len(st_series) < n_bars + 2:
+                return False
+            for j in range(len(st_series) - n_bars, len(st_series)):
+                if (st_series[j]["trend"] == want_trend
+                        and st_series[j - 1]["trend"] == -want_trend):
+                    return True
+            return False
+
+        want = 1 if direction == "LONG" else -1
+        st1_flip = _fresh_flip(st1, 4, want)
+        st4_flip = _fresh_flip(st4, 2, want)
+        st4_state = st4[-1]["trend"] if st4 else 0
+
+        # RS-перцентиль из pair_context (универсум, 30-мин скан)
+        ctx = await asyncio.to_thread(
+            lambda: db.pair_context.find_one({"_id": sym})) or {}
+        pctl7d = ctx.get("pctl7d")
+
+        # свежие сигналы по монете (48ч) + их грейды
+        since = utcnow() - timedelta(hours=48)
+        sigs = await asyncio.to_thread(lambda: list(
+            db.new_strategy_signals.find(
+                {"$or": [{"symbol": sym}, {"pair": pair_slash}],
+                 "created_at": {"$gte": since}},
+                {"strategy": 1, "direction": 1, "entry": 1, "created_at": 1})
+            .sort("created_at", -1).limit(20)))
+        from trade_grade import EDGE, _phase_flips, _phase_at
+        flips = await asyncio.to_thread(_phase_flips)
+        sig_rows, best_grade = [], None
+        for s in sigs:
+            sp = _phase_at(s["created_at"].timestamp() * 1000 + 0, flips) \
+                if flips else None
+            sl_ = ("по фазе" if s.get("direction") == sp else
+                   "против" if sp in ("LONG", "SHORT") else "нейтраль")
+            row = (EDGE.get((s.get("strategy"), s.get("direction"), sl_))
+                   or EDGE.get((s.get("strategy"), s.get("direction"), "ВСЕ")))
+            g = None
+            if row:
+                g = "A" if row[2] >= 0.75 else "B" if row[2] >= 0 else "C"
+            ago_h = round((utcnow() - s["created_at"]).total_seconds() / 3600, 1)
+            sig_rows.append({"strategy": s.get("strategy"),
+                             "direction": s.get("direction"),
+                             "ago_h": ago_h, "grade": g,
+                             "ev": row[2] if row else None})
+            if s.get("direction") == direction and g:
+                if best_grade is None or g < best_grade:
+                    best_grade = g
+
+        # ── вердикт ──────────────────────────────────────────────
+        reasons, score, hard_no = [], 0, None
+        E = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴", None: "?"}
+        if phase is None:
+            reasons.append({"ok": None, "t": "фаза рынка недоступна — ждём скан"})
+        elif direction == "LONG":
+            if phase == "SHORT":
+                if st4_flip:
+                    score += 1
+                    reasons.append({"ok": None, "t": "🔴 фаза, но свежий флип 4h ST вверх — "
+                                    "реверсал с дна (валидное исключение, агрессивно: SL срабатывает в 48%)"})
+                else:
+                    hard_no = ("фаза 🔴 SHORT — НЕ ЛОНГОВАТЬ (год: WR 26.9%). "
+                               "Исключение только флип 4h ST вверх — его нет")
+            elif phase == "LONG":
+                score += 2
+                reasons.append({"ok": True, "t": "фаза 🟢 — лонг по рынку (+2)"})
+            else:
+                score += 1
+                reasons.append({"ok": True, "t": "фаза ⚪ — лонг допустим, но кромка тонкая (+1)"})
+        else:
+            if phase == "LONG":
+                hard_no = "фаза 🟢 LONG — НЕ ШОРТИТЬ (год: WR 34.9%)"
+            elif phase == "SHORT":
+                score += 2
+                reasons.append({"ok": True, "t": "фаза 🔴 — шорт по рынку (+2)"})
+            else:
+                score -= 1
+                reasons.append({"ok": False, "t": "фаза ⚪ — шорты в нейтрали минусовые (−1)"})
+        # догон
+        if direction == "LONG" and mom24 > 20:
+            hard_no = hard_no or f"догон: +{mom24:.0f}% за 24ч — покупка верхушки пампа"
+        elif direction == "SHORT" and mom24 < -20:
+            hard_no = hard_no or f"догон вниз: {mom24:.0f}% за 24ч — шорт в яму"
+        elif abs(mom24) > 12:
+            score -= 1
+            reasons.append({"ok": False, "t": f"ход {mom24:+.0f}% за 24ч — поздновато (−1)"})
+        else:
+            reasons.append({"ok": True, "t": f"без догона ({mom24:+.1f}% за 24ч)"})
+        # RS-сила
+        if pctl7d is not None:
+            if direction == "LONG" and pctl7d >= 0.85:
+                score += 2
+                reasons.append({"ok": True, "t": f"лидер силы 7д (топ-{max(1, round((1-pctl7d)*100))}%) (+2)"})
+            elif direction == "SHORT" and pctl7d <= 0.15:
+                score += 2
+                reasons.append({"ok": True, "t": "лидер слабости 7д (+2)"})
+            elif direction == "LONG" and pctl7d <= 0.15:
+                score -= 1
+                reasons.append({"ok": False, "t": "аутсайдер 7д — лонг слабака (−1)"})
+            elif direction == "SHORT" and pctl7d >= 0.85:
+                score -= 1
+                reasons.append({"ok": False, "t": "шорт лидера силы (−1)"})
+            else:
+                reasons.append({"ok": None, "t": f"RS 7д нейтрален (перцентиль {pctl7d:.0%})"})
+        # RSI4h
+        if rsi4h is not None:
+            if direction == "LONG":
+                if rsi4h <= 20:
+                    score += 2
+                    reasons.append({"ok": True, "t": f"капитуляция RSI4h {rsi4h:.0f} — «купи кровь» (+2)"})
+                elif rsi4h >= 80:
+                    score -= 2
+                    reasons.append({"ok": False, "t": f"перегрев RSI4h {rsi4h:.0f} (−2)"})
+                elif 50 <= rsi4h <= 70:
+                    score += 1
+                    reasons.append({"ok": True, "t": f"RSI4h {rsi4h:.0f} — рабочая зона 50-70 (+1)"})
+                else:
+                    reasons.append({"ok": None, "t": f"RSI4h {rsi4h:.0f}"})
+            else:
+                if rsi4h >= 80 and phase == "SHORT":
+                    score += 1
+                    reasons.append({"ok": True, "t": f"фейд перегрева RSI4h {rsi4h:.0f} в 🔴 (+1)"})
+                elif rsi4h <= 20:
+                    score -= 2
+                    reasons.append({"ok": False, "t": f"RSI4h {rsi4h:.0f} — шорт в яму (−2)"})
+                elif 30 <= rsi4h <= 50:
+                    score += 1
+                    reasons.append({"ok": True, "t": f"RSI4h {rsi4h:.0f} — шорт-зона 30-50 (+1)"})
+                else:
+                    reasons.append({"ok": None, "t": f"RSI4h {rsi4h:.0f}"})
+        # триггеры: сигналы + ST-флипы
+        if best_grade == "A":
+            score += 3
+            reasons.append({"ok": True, "t": "есть свежий 🟩-сигнал в направлении (+3)"})
+        elif best_grade == "B":
+            score += 1
+            reasons.append({"ok": True, "t": "есть свежий 🟨-сигнал в направлении (+1)"})
+        if st4_flip:
+            score += 2
+            reasons.append({"ok": True, "t": "свежий флип 4h ST в направлении (+2)"})
+        elif st1_flip:
+            score += 1
+            reasons.append({"ok": True, "t": "свежий флип 1h ST в направлении (+1)"})
+        if best_grade is None and not st4_flip and not st1_flip:
+            score -= 2
+            reasons.append({"ok": False, "t": "нет триггера: ни сигнала, ни ST-флипа — вход «на глазок» (−2)"})
+        if st4_state == -want and not st4_flip:
+            score -= 1
+            reasons.append({"ok": False, "t": "4h SuperTrend против направления (−1)"})
+
+        if hard_no:
+            verdict = "NO"
+        elif score >= 5:
+            verdict = "YES"
+        elif score >= 2:
+            verdict = "CAUTION"
+        else:
+            verdict = "NO"
+        k = 1 if direction == "LONG" else -1
+        return {"ok": True, "symbol": sym, "direction": direction,
+                "verdict": verdict, "score": score, "hard_no": hard_no,
+                "phase": phase, "phase_emoji": E.get(phase, "?"),
+                "breadth": pct, "reasons": reasons,
+                "price": price, "mom24": round(mom24, 1),
+                "ret7d": round(ret7d, 1) if ret7d is not None else None,
+                "rsi4h": rsi4h, "pctl7d": pctl7d,
+                "signals": sig_rows[:8],
+                "levels": {"entry": price,
+                           "stop": round(price * (1 - k * 0.05), 8),
+                           "target": round(price * (1 + k * 0.10), 8)},
+                "size_rule": "размер = (1-2% депозита) ÷ 5% риска · держать до 96ч · стоп не двигать"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/btc-st4")
 async def api_btc_st4():
     """BTC SuperTrend 4h (UP/DOWN) — гейт для шорт-пресета в журнале."""
