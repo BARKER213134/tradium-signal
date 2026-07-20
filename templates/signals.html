@@ -7555,7 +7555,7 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('symbol')" id="jSortPair" style="text-align:center;padding:14px 8px;">Пара</th>
         <th class="sortable" onclick="jSort('direction')" id="jSortDir" style="text-align:center;padding:14px 6px;">Напр.</th>
         <th class="sortable" onclick="jSort('trade_ev')" id="jSortGrade" title="🎓 Оценка сделки под ЦЕЛЬ +10%: единый бэктест ВСЕХ сигналов базы (3 мес, ~48k, сетка LONG TP+10/SL−5 · SHORT TP−10/SL+5, горизонт 96ч) в разрезе источник × направление × фаза бейджа на момент сигнала. 🟩 EV ≥ +0.75%/сделку — ВХОД · 🟨 0…+0.75 — слабый плюс · 🟥 < 0 — скип. Число = EV %/сделку. В подсказке ячейки: WR, % доходов до +10%, готовые уровни. Клик — сортировка." style="text-align:center;padding:14px 6px;">Вход?</th>
-        <th class="sortable" onclick="jSort('pro_score')" id="jSortPro" title="🎩 PRO — оценка КОНТЕКСТА сделки «как трейдер» (дополняет «Вход?», который оценивает источник). Слагаемые (год-валидация): режим — по фазе +2 / ⚪ +1 / против −2 · RS-сила 7д — лидер +2, аутсайдер не туда −1 · догон >20% за 24ч −2 · RSI4h — капитуляция ≤20 лонгу +2, перегрев ≥80 лонгу −2, фейд перегрева шорту в 🔴 +1. Вердикт: 🚀 УСИЛИТЬ (≥4) · ✅ БРАТЬ (≥2) · 😐 ПАС (≥0) · ⛔ ПРОТИВ (<0). Контекст живой — только сигналы моложе 48ч. Идеал: 🟩 + 🚀." style="text-align:center;padding:14px 6px;">PRO</th>
+        <th class="sortable" onclick="jSort('pro_score')" id="jSortPro" title="🚦 Светофор — «входить или нет» считается сервером для каждого свежего сигнала (<48ч), та же логика что модалка проверки входа. Жёсткие НЕТ: против фазы (кроме 💣-реверсала), догон >20%/24ч. Счёт: фаза + RS-сила 7д + RSI4h-зоны + триггер (🟩 +3 / 🟨 +1 / ST-флипы) − 4h ST против. ✅ ДА ≥5 · ⚠️ МОЖНО 2-4 · ⛔ НЕТ <2. Реплей 30д (13.7k сделок): ДА WR 43.1% (+9.8пп к БУ) · НЕТ 37.3%. Наведи на ячейку — слагаемые; клик по 🚦 у монеты — полный разбор. Клик — сортировка." style="text-align:center;padding:14px 6px;">🚦</th>
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry" style="text-align:center;padding:14px 8px;">Entry</th>
         <th class="sortable" onclick="jSort('score')" id="jSortScore" style="text-align:left;padding:14px 14px;">Паттерн</th>
         <th id="jSortRsi" style="text-align:center;padding:14px 6px;position:relative;">
@@ -9934,14 +9934,18 @@ function renderJournal(items, startIdx) {
         `${s.source} ${s.direction}, ${slTxt} → EV ${evTxt}%/сделку · WR ${s.trade_wr}% · до +10% доходит ${s.trade_hit10}% · n=${s.trade_n}${lvl}`;
       gradeCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:700;color:${gm[1]};" title="${tip}">${gm[0]}${evTxt}</td>`;
     }
-    // 🎩 PRO — контекст сделки «как трейдер» (свежие 48ч, живой pair_context)
+    // 🚦 Серверный светофор — вердикт «входить или нет» сразу при появлении
+    // сигнала (та же логика, что модалка /api/entry-check; реплей 30д:
+    // ДА WR 43.1% vs НЕТ 37.3%)
     let proCell = '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     if (s.pro_verdict) {
-      const pm = {'УСИЛИТЬ': ['🚀', '#00e5a0'], 'БРАТЬ': ['✅', '#8ee78e'],
-                  'ПАС': ['😐', '#9aa4b5'], 'ПРОТИВ': ['⛔', '#ff4d6d']}[s.pro_verdict];
-      const tipP = `PRO ${s.pro_verdict} (счёт ${s.pro_score >= 0 ? '+' : ''}${s.pro_score}) — контекст сейчас:\n` +
-        (s.pro_checks || []).join('\n');
-      proCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:700;color:${pm[1]};" title="${tipP.replace(/"/g, '&quot;')}">${pm[0]} ${s.pro_verdict}</td>`;
+      const pm = {'ДА': ['✅', '#00e5a0'], 'МОЖНО': ['⚠️', '#ffd23e'],
+                  'НЕТ': ['⛔', '#ff4d6d']}[s.pro_verdict];
+      if (pm) {
+        const tipP = `🚦 Светофор: ${s.pro_verdict}${s.pro_score > -90 ? ' (счёт ' + (s.pro_score >= 0 ? '+' : '') + s.pro_score + ')' : ''} — детали:\n` +
+          (s.pro_checks || []).join('\n') + '\n\nКлик по 🚦 у монеты — полный разбор с уровнями.';
+        proCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:800;color:${pm[1]};" title="${tipP.replace(/"/g, '&quot;')}">${pm[0]} ${s.pro_verdict}</td>`;
+      }
     }
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
       <td class="mono text-muted" style="font-size:11px;">${time}</td>

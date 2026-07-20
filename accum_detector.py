@@ -334,6 +334,33 @@ def scan_universe(max_pairs: int = 300):
                     _vr = (sum(_v[-24:]) / 24) / _vbase if _vbase else 1.0
                     _ret7 = ((_c[-1] / _c[-169] - 1) * 100
                              if len(_c) >= 169 and _c[-169] else None)
+                    # ST-состояния 1h/4h для серверного светофора (журнал)
+                    _st1t = _st1f = _st4t = _st4f = None
+                    try:
+                        from backtest_supertrend import compute_st_series
+                        _s1 = compute_st_series(kd, 10, 3.0)
+                        if len(_s1) >= 6:
+                            _st1t = _s1[-1]["trend"]
+                            _st1f = any(_s1[j]["trend"] != _s1[j-1]["trend"]
+                                        and _s1[j-1]["trend"]
+                                        for j in range(len(_s1) - 4, len(_s1)))
+                        _b4 = {}
+                        for _x in kd:
+                            _k = _x["t"] // (4 * 3600_000)
+                            if _k not in _b4:
+                                _b4[_k] = dict(_x)
+                            else:
+                                _b4[_k]["h"] = max(_b4[_k]["h"], _x["h"])
+                                _b4[_k]["l"] = min(_b4[_k]["l"], _x["l"])
+                                _b4[_k]["c"] = _x["c"]
+                        _kd4 = [_b4[_k] for _k in sorted(_b4)][:-1]  # закрытые
+                        _s4 = compute_st_series(_kd4, 10, 3.0)
+                        if len(_s4) >= 3:
+                            _st4t = _s4[-1]["trend"]
+                            _st4f = (_s4[-1]["trend"] != _s4[-2]["trend"]
+                                     and bool(_s4[-2]["trend"]))
+                    except Exception:
+                        pass
                     cand_rows.append({"pair": pair,
                                       "symbol": pair.replace("/", "").upper(),
                                       "atr_pct": round(_atrp, 2),
@@ -341,6 +368,8 @@ def scan_universe(max_pairs: int = 300):
                                       "vol_ratio": round(_vr, 2),
                                       "ret7d": round(_ret7, 2) if _ret7 is not None else None,
                                       "rsi4h": round(_rv[0], 1) if _rv else None,
+                                      "st1_trend": _st1t, "st1_flip": _st1f,
+                                      "st4_trend": _st4t, "st4_flip": _st4f,
                                       "dz24": round(dz24, 2) if dz24 is not None else None})
                 except Exception:
                     pass
@@ -406,6 +435,8 @@ def scan_universe(max_pairs: int = 300):
                 {"_id": c["symbol"], "pair": c["pair"],
                  "ret7d": c["ret7d"], "pctl7d": pctl[i],
                  "mom24": c["mom24"], "rsi4h": c.get("rsi4h"),
+                 "st1_trend": c.get("st1_trend"), "st1_flip": c.get("st1_flip"),
+                 "st4_trend": c.get("st4_trend"), "st4_flip": c.get("st4_flip"),
                  "atr_pct": c["atr_pct"], "updated_at": now},
                 upsert=True) for i, c in enumerate(ctx_rows)]
             _get_db().pair_context.bulk_write(ops, ordered=False)

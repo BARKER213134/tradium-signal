@@ -218,19 +218,28 @@ def _pair_context():
 
 
 def annotate_pro(items: list) -> None:
-    """🎩 PRO-колонка: оценка КОНТЕКСТА сделки «как трейдер» (не источника).
-    Год-валидация компонент: RS-лидер+пробой в ⚪ EV +0.65 (hit10 35%);
-    капитуляция RSI4h<=18 в 🔴 +0.68; догон/перегрев — 🔪-зоны в минусе;
-    классика «откат в тренде» −0.66 => не используется.
-    Слагаемые: режим (+2 по фазе / +1 ⚪ / −2 против) · RS-сила 7д
-    (+2 лидер / −1 хвост не туда) · догон >20%/24ч (−2) · RSI4h
-    (капитуляция +2 лонгу, перегрев −2 лонгу, +1 шорту в 🔴).
-    Вердикт: >=4 УСИЛИТЬ · >=2 БРАТЬ · >=0 ПАС · <0 ПРОТИВ.
-    Контекст живой (сейчас) — сигналы старше 48ч не оцениваются."""
+    """🚦 Серверный светофор для журнала: каждый свежий сигнал (<48ч)
+    появляется сразу с вердиктом ДА/МОЖНО/НЕТ — та же логика, что
+    /api/entry-check (реплей 30д: ДА WR 43.1% vs НЕТ 37.3%).
+    Слагаемые: фаза-гейт (жёсткое НЕТ против фазы, кроме 💣-реверсала) ·
+    догон >20%/24ч (жёсткое НЕТ) · RS-сила 7д · RSI4h-зоны · триггер
+    (грейд сигнала: 🟩 +3 / 🟨 +1; ST-флипы 1h/4h из pair_context).
+    Контекст живой (30-мин скан) — сигналы старше 48ч не оцениваются."""
     ctx_by_sym = _pair_context()
     flips = _phase_flips()
     phase = flips[-1][1] if flips else None
     now_ts = time.time()
+    # лучший грейд соседних сигналов той же монеты/направления за 48ч
+    best_by_key = {}
+    for it in items:
+        g = it.get("trade_grade")
+        d = it.get("direction")
+        at = it.get("at_ts") or 0
+        if g and d and at and now_ts - at <= 48 * 3600:
+            sym = (it.get("symbol") or (it.get("pair") or "").replace("/", "")).upper()
+            k = (sym, d)
+            if k not in best_by_key or g < best_by_key[k]:
+                best_by_key[k] = g
     for it in items:
         try:
             d = it.get("direction")
@@ -244,49 +253,92 @@ def annotate_pro(items: list) -> None:
             ctx = ctx_by_sym.get(sym)
             if not ctx or phase is None:
                 continue
-            score, checks = 0, []
-            # режим
-            if phase == d:
-                score += 2; checks.append("✓ по фазе рынка (+2)")
-            elif phase == "NEUTRAL":
-                score += 1; checks.append("· фаза ⚪ (+1)")
-            else:
-                score -= 2; checks.append("✗ ПРОТИВ фазы (−2)")
-            # RS-сила за 7д (кросс-секционный перцентиль)
-            p7 = ctx.get("pctl7d")
-            if p7 is not None:
-                if d == "LONG" and p7 >= 0.85:
-                    score += 2; checks.append(f"✓ лидер силы 7д (топ-{max(1, round((1-p7)*100))}%) (+2)")
-                elif d == "SHORT" and p7 <= 0.15:
-                    score += 2; checks.append(f"✓ лидер слабости 7д (+2)")
-                elif d == "LONG" and p7 <= 0.15:
-                    score -= 1; checks.append("✗ слабак 7д — лонг аутсайдера (−1)")
-                elif d == "SHORT" and p7 >= 0.85:
-                    score -= 1; checks.append("✗ шорт лидера силы (−1)")
+            want = 1 if d == "LONG" else -1
+            st4f = bool(ctx.get("st4_flip")) and ctx.get("st4_trend") == want
+            st1f = bool(ctx.get("st1_flip")) and ctx.get("st1_trend") == want
+            st4_against = (ctx.get("st4_trend") == -want and not st4f)
+            score, checks, hard_no = 0, [], None
+            # фаза-гейт
+            if d == "LONG":
+                if phase == "SHORT":
+                    if st4f:
+                        score += 1
+                        checks.append("· 🔴, но флип 4h ST вверх — реверсал (агрессивно)")
+                    else:
+                        hard_no = "фаза 🔴 — НЕ ЛОНГОВАТЬ"
+                elif phase == "LONG":
+                    score += 2; checks.append("✓ фаза 🟢 (+2)")
                 else:
-                    checks.append("· RS 7д нейтрален (0)")
+                    score += 1; checks.append("· фаза ⚪ (+1)")
+            else:
+                if phase == "LONG":
+                    hard_no = "фаза 🟢 — НЕ ШОРТИТЬ"
+                elif phase == "SHORT":
+                    score += 2; checks.append("✓ фаза 🔴 (+2)")
+                else:
+                    score -= 1; checks.append("✗ шорт в ⚪ — минусовой за год (−1)")
             # догон
             m24 = ctx.get("mom24")
             if m24 is not None:
                 if d == "LONG" and m24 > 20:
-                    score -= 2; checks.append(f"✗ догон: +{m24:.0f}% за 24ч (−2)")
+                    hard_no = hard_no or f"догон +{m24:.0f}%/24ч"
                 elif d == "SHORT" and m24 < -20:
-                    score -= 2; checks.append(f"✗ догон вниз: {m24:.0f}% за 24ч (−2)")
-            # экстремумы RSI4h
+                    hard_no = hard_no or f"догон вниз {m24:.0f}%/24ч"
+                elif abs(m24) > 12:
+                    score -= 1; checks.append(f"✗ ход {m24:+.0f}%/24ч — поздно (−1)")
+            # RS-сила 7д
+            p7 = ctx.get("pctl7d")
+            if p7 is not None:
+                if d == "LONG" and p7 >= 0.85:
+                    score += 2; checks.append("✓ лидер силы 7д (+2)")
+                elif d == "SHORT" and p7 <= 0.15:
+                    score += 2; checks.append("✓ лидер слабости 7д (+2)")
+                elif d == "LONG" and p7 <= 0.15:
+                    score -= 1; checks.append("✗ лонг аутсайдера (−1)")
+                elif d == "SHORT" and p7 >= 0.85:
+                    score -= 1; checks.append("✗ шорт лидера силы (−1)")
+            # RSI4h
             r4 = ctx.get("rsi4h")
             if r4 is not None:
-                if d == "LONG" and r4 <= 20:
-                    score += 2; checks.append(f"✓ капитуляция RSI4h {r4:.0f} (+2)")
-                elif d == "LONG" and r4 >= 80:
-                    score -= 2; checks.append(f"✗ перегрев RSI4h {r4:.0f} (−2)")
-                elif d == "SHORT" and r4 >= 80 and phase == "SHORT":
-                    score += 1; checks.append(f"✓ фейд перегрева в 🔴 (+1)")
-                elif d == "SHORT" and r4 <= 20:
-                    score -= 2; checks.append(f"✗ шорт в яму RSI4h {r4:.0f} (−2)")
-            it["pro_score"] = score
-            it["pro_verdict"] = ("УСИЛИТЬ" if score >= 4 else
-                                 "БРАТЬ" if score >= 2 else
-                                 "ПАС" if score >= 0 else "ПРОТИВ")
+                if d == "LONG":
+                    if r4 <= 20:
+                        score += 2; checks.append(f"✓ капитуляция RSI4h {r4:.0f} (+2)")
+                    elif r4 >= 80:
+                        score -= 2; checks.append(f"✗ перегрев RSI4h {r4:.0f} (−2)")
+                    elif 50 <= r4 <= 70:
+                        score += 1; checks.append(f"✓ RSI4h {r4:.0f} зона 50-70 (+1)")
+                else:
+                    if r4 >= 80 and phase == "SHORT":
+                        score += 1; checks.append("✓ фейд перегрева в 🔴 (+1)")
+                    elif r4 <= 20:
+                        score -= 2; checks.append(f"✗ шорт в яму RSI4h {r4:.0f} (−2)")
+                    elif 30 <= r4 <= 50:
+                        score += 1; checks.append(f"✓ RSI4h {r4:.0f} шорт-зона (+1)")
+            # триггер: грейд (свой или соседний) + ST-флипы
+            bg = best_by_key.get((sym, d))
+            if bg == "A":
+                score += 3; checks.append("✓ 🟩-сигнал (+3)")
+            elif bg == "B":
+                score += 1; checks.append("✓ 🟨-сигнал (+1)")
+            if st4f:
+                score += 2; checks.append("✓ флип 4h ST (+2)")
+            elif st1f:
+                score += 1; checks.append("✓ флип 1h ST (+1)")
+            if bg is None and not st4f and not st1f:
+                score -= 2; checks.append("✗ нет триггера (−2)")
+            if st4_against:
+                score -= 1; checks.append("✗ 4h ST против (−1)")
+            if hard_no:
+                verdict = "НЕТ"
+                checks.insert(0, f"🚫 {hard_no}")
+            elif score >= 5:
+                verdict = "ДА"
+            elif score >= 2:
+                verdict = "МОЖНО"
+            else:
+                verdict = "НЕТ"
+            it["pro_score"] = score if not hard_no else -99
+            it["pro_verdict"] = verdict
             it["pro_checks"] = checks
         except Exception:
             continue
