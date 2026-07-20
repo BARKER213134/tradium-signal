@@ -246,7 +246,9 @@ def annotate_pro(items: list, extra_ctx: dict = None) -> None:
         try:
             d = it.get("direction")
             src = it.get("source")
-            if d not in ("LONG", "SHORT") or src in _SKIP:
+            # stack — синтетическая группа, но раз участники прогрейжены
+            # (annotate_items), светофор ей тоже положен
+            if d not in ("LONG", "SHORT") or (src in _SKIP and src != "stack"):
                 continue
             at_ts = it.get("at_ts") or 0
             if not at_ts or now_ts - at_ts > 48 * 3600:
@@ -503,5 +505,52 @@ def annotate_items(items: list) -> None:
             it["trade_hit10"] = hit10
             it["trade_slice"] = used
             it["trade_phase"] = ph
+        except Exception:
+            continue
+    # 🧩 STACK-группы: грейд по ЛУЧШЕМУ участнику (по EV его среза).
+    # Сам stack — синтетическая строка, но участники — реальные сигналы.
+    for it in items:
+        try:
+            if it.get("source") != "stack" or it.get("trade_grade"):
+                continue
+            d = it.get("direction")
+            members = it.get("stack_members") or []
+            if d not in ("LONG", "SHORT") or not members:
+                continue
+            ph = _phase_at((it.get("at_ts") or 0) * 1000, flips) if it.get("at_ts") else None
+            sl = ("по фазе" if (d == ph) else
+                  "против" if (ph in ("LONG", "SHORT") and d != ph) else
+                  "нейтраль" if ph == "NEUTRAL" else None)
+            best = None
+            for m in members:
+                msrc = m.get("source")
+                if not msrc or msrc in _SKIP:
+                    continue
+                if msrc == "confluence":
+                    key = ("confluence_5plus" if (m.get("score") or 0) >= 5
+                           else "confluence_lo")
+                elif msrc == "supertrend":
+                    mp = m.get("pattern") or ""
+                    key = ("st_vip" if "🏆" in mp else
+                           "st_mtf" if "🔱" in mp else "st_daily")
+                else:
+                    key = msrc
+                row = EDGE.get((key, d, sl)) if sl else None
+                used = sl
+                if row is None or row[0] < 30:
+                    row = EDGE.get((key, d, "ВСЕ"))
+                    used = "ВСЕ"
+                if row and (best is None or row[2] > best[0][2]):
+                    best = (row, key, used)
+            if best:
+                row, key, used = best
+                n, wr, ev, hit10 = row
+                it["trade_grade"] = "A" if ev >= 0.75 else "B" if ev >= 0 else "C"
+                it["trade_ev"] = ev
+                it["trade_wr"] = wr
+                it["trade_n"] = n
+                it["trade_hit10"] = hit10
+                it["trade_slice"] = f"{used} · лучший в группе: {key}"
+                it["trade_phase"] = ph
         except Exception:
             continue
