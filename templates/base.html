@@ -4046,7 +4046,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           return bars[idx];
         };
         (d.items || []).filter(s => s.at_ts && s.at_ts * 1000 >= t0).slice(0, 300).forEach(s => {
-          const emoji = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier) : '•';
+          const emoji0 = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier) : '•';
+          // ✅ галочка — светофор на момент сигнала говорил ДА (бэкфилл 3 мес + live-штамп)
+          const emoji = s.svetofor === 'ДА' ? '✅' + emoji0 : emoji0;
           const ts = s.at_ts * 1000;
           const bar = barAt(ts);
           const long = s.direction === 'LONG';
@@ -4054,8 +4056,12 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           const dt = new Date(ts).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
           const phL = window.phaseLabelAt(ts);
           const phC = !phL ? '' : phL.startsWith('🟢') ? '#00e5a0' : phL.startsWith('🔴') ? '#ff6b6b' : '#aab3c2';
+          const svL = s.svetofor === 'ДА' ? '<b style="color:#00e5a0;">✅ ДА</b>'
+                    : s.svetofor === 'МОЖНО' ? '<b style="color:#ffd23e;">⚠️ МОЖНО</b>'
+                    : s.svetofor === 'НЕТ' ? '<b style="color:#ff6b6b;">⛔ НЕТ</b>' : '';
           const info = `<b style="color:${color}">${emoji} ${(s.source || '').toUpperCase()} · ${s.direction || ''}</b><br>` +
                        `${dt} · entry <b>${s.entry ?? '—'}</b>` +
+                       (svL ? `<br>светофор: ${svL}` : '') +
                        (phL ? `<br>фаза рынка: <b style="color:${phC}">${phL}</b>` : '') +
                        (s.pattern ? `<br><span style="color:#aab3c2;">${String(s.pattern).slice(0, 90)}</span>` : '');
           const value = long ? bar.l : bar.h;

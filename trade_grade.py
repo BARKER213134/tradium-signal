@@ -344,6 +344,79 @@ def annotate_pro(items: list) -> None:
             continue
 
 
+def svetofor_stamp_recent() -> int:
+    """Проставляет svetofor/svetofor_score свежим сигналам без вердикта
+    (4 коллекции, последние 2ч) — та же логика, что annotate_pro, но
+    персистентно: галочки ✅ на графиках и история для бэктестов.
+    Вызывается из watcher каждые ~10 мин (sync, в thread)."""
+    from datetime import timedelta
+    from database import _get_db, utcnow
+    db = _get_db()
+    since = utcnow() - timedelta(hours=2)
+    cand = []  # (coll, _id, src_key, direction, sym, at)
+    for n_ in db.new_strategy_signals.find(
+            {"created_at": {"$gte": since}, "svetofor": {"$exists": False}},
+            {"strategy": 1, "pair": 1, "symbol": 1, "direction": 1, "created_at": 1}).limit(300):
+        if n_.get("direction"):
+            sym = (n_.get("symbol") or (n_.get("pair") or "").replace("/", "")).upper()
+            cand.append(("new_strategy_signals", n_["_id"], n_.get("strategy"),
+                         n_["direction"], sym, n_["created_at"]))
+    for s_ in db.supertrend_signals.find(
+            {"flip_at": {"$gte": since}, "svetofor": {"$exists": False}},
+            {"tier": 1, "pair": 1, "direction": 1, "flip_at": 1}).limit(300):
+        if s_.get("direction"):
+            sym = (s_.get("pair") or "").replace("/", "").upper()
+            cand.append(("supertrend_signals", s_["_id"],
+                         f"st_{s_.get('tier') or 'daily'}", s_["direction"],
+                         sym, s_["flip_at"]))
+    for c_ in db.confluence.find(
+            {"detected_at": {"$gte": since}, "svetofor": {"$exists": False}},
+            {"pair": 1, "symbol": 1, "direction": 1, "detected_at": 1, "score": 1}).limit(300):
+        if c_.get("direction"):
+            sym = (c_.get("symbol") or (c_.get("pair") or "").replace("/", "")).upper()
+            key = "confluence_5plus" if (c_.get("score") or 0) >= 5 else "confluence_lo"
+            cand.append(("confluence", c_["_id"], key, c_["direction"], sym, c_["detected_at"]))
+    for v_ in db.verified_signals.find(
+            {"created_at": {"$gte": since}, "svetofor": {"$exists": False}},
+            {"pair": 1, "pair_norm": 1, "direction": 1, "created_at": 1}).limit(300):
+        if v_.get("direction"):
+            sym = (v_.get("pair_norm") or (v_.get("pair") or "").replace("/", "")).upper()
+            cand.append(("verified_signals", v_["_id"], "verified",
+                         v_["direction"], sym, v_["created_at"]))
+    if not cand:
+        return 0
+    # аннотируем через ту же annotate_pro (единый скоринг с колонкой 🚦)
+    items = []
+    for coll, _id, src, d, sym, at in cand:
+        pseudo_src = ("supertrend" if coll == "supertrend_signals" else
+                      "confluence" if coll == "confluence" else
+                      "verified" if coll == "verified_signals" else src)
+        items.append({"source": pseudo_src, "st_tier": src[3:] if src.startswith("st_") else None,
+                      "score": 5 if src == "confluence_5plus" else 0,
+                      "strategy": src, "direction": d, "symbol": sym,
+                      "pair": sym[:-4] + "/USDT" if sym.endswith("USDT") else sym,
+                      "at_ts": int(at.timestamp())})
+    annotate_items(items)
+    annotate_pro(items)
+    from pymongo import UpdateOne
+    ops = {}
+    n_done = 0
+    for (coll, _id, src, d, sym, at), it in zip(cand, items):
+        v = it.get("pro_verdict")
+        if not v:
+            continue
+        ops.setdefault(coll, []).append(UpdateOne(
+            {"_id": _id},
+            {"$set": {"svetofor": v, "svetofor_score": it.get("pro_score", 0)}}))
+    for coll, o in ops.items():
+        try:
+            r = db[coll].bulk_write(o, ordered=False)
+            n_done += r.modified_count
+        except Exception:
+            logger.debug(f"[svetofor-stamp] bulk {coll} fail", exc_info=True)
+    return n_done
+
+
 def annotate_items(items: list) -> None:
     """Проставляет trade_grade/trade_ev/trade_wr/trade_n/trade_hit10/
     trade_slice/trade_phase каждому item журнала (in-place)."""

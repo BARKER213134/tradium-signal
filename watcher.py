@@ -116,6 +116,23 @@ async def _st_break4h_loop():
             await _asyncio.sleep(600)
 
 
+async def _svetofor_stamp_loop():
+    """🚦 Штампует svetofor-вердикт свежим сигналам (4 коллекции, <2ч)
+    каждые 10 мин — галочки ✅ на графиках и история для бэктестов."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(240)
+    while True:
+        try:
+            await _asyncio.to_thread(_hb, "svetofor")
+            from trade_grade import svetofor_stamp_recent
+            n = await _asyncio.to_thread(svetofor_stamp_recent)
+            if n:
+                logger.info(f"[svetofor] проштамповано {n} сигналов")
+        except Exception:
+            logger.exception("[svetofor] stamp loop crashed")
+        await _asyncio.sleep(600)
+
+
 async def _whale_scanner_loop():
     """🐋 WHALE safety-net scanner — каждые 30 мин. TG dispatch напрямую
     из fired_docs (раньше был баг: query по created_at brought 0 because
@@ -3903,6 +3920,12 @@ async def start_watcher():
         logger.info("[st-break4h] background loop started")
     except Exception:
         logger.exception("[st-break4h] failed to start loop")
+    # 🚦 штамп светофора на свежие сигналы (галочки на графиках)
+    try:
+        asyncio.create_task(_svetofor_stamp_loop())
+        logger.info("[svetofor] stamp loop started")
+    except Exception:
+        logger.exception("[svetofor] failed to start loop")
     # 🐋 WHALE safety-net scanner — каждые 30 мин на пропущенные flips
     try:
         asyncio.create_task(_whale_scanner_loop())

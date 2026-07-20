@@ -8764,7 +8764,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
         "symbol":1, "pair":1, "direction":1, "price":1, "r1":1, "s1":1,
         "pattern":1, "strength":1, "factors":1, "score":1,
         "st_passed":1, "pump_score":1, "is_top_pick":1,
-        "top_pick_confirmations_count":1, "detected_at":1,
+        "top_pick_confirmations_count":1, "detected_at":1, "svetofor":1,
     }).sort("detected_at", -1):
         items.append({
             "source": "confluence",
@@ -8780,6 +8780,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "pump_score": c.get("pump_score", 0),
             "is_top_pick": bool(c.get("is_top_pick")),
             "top_pick_confirmations_count": c.get("top_pick_confirmations_count", 0),
+            "svetofor": c.get("svetofor"),
             "at": c["detected_at"].isoformat() if hasattr(c.get("detected_at"), "isoformat") else None,
             "at_ts": int(c["detected_at"].timestamp()) if hasattr(c.get("detected_at"), "timestamp") else 0,
         })
@@ -8825,6 +8826,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "top_pick_confirmations_count": len(aligned_bots),
                 "st_tier": tier,
                 "aligned_tfs": aligned_tfs,
+                "svetofor": s.get("svetofor"),
                 "at": at_iso,
                 "at_ts": at_ts,
             })
@@ -8893,6 +8895,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "shark_tier": 1, "shark_score": 1, "shark_indicators": 1,
             "combo_score": 1, "vol_ratio": 1, "source_count": 1,
             "setup_verdict": 1,  # server-side verdict from setup_checker
+            "svetofor": 1,       # 🚦 вердикт на момент сигнала (галочка на графике)
         }).sort("created_at", -1).limit(200):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -8941,6 +8944,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "whale_score": n.get("whale_score"),
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),
+                "svetofor": n.get("svetofor"),
                 "at": at_iso,
                 "at_ts": at_ts,
             })
@@ -8973,6 +8977,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "st_passed": None, "pump_score": 0,
                 "is_top_pick": False, "top_pick_confirmations_count": 0,
                 "verified_verdict": verdict,
+                "svetofor": v.get("svetofor"),
                 "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else None,
                 "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
             })
