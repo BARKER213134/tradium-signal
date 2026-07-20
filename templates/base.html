@@ -4063,7 +4063,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
                     : sv === 'НЕТ' ? '<b style="color:#ff6b6b;">⛔ НЕТ</b>' : '';
           const info = `<b style="color:${color}">${emoji} ${(s.source || '').toUpperCase()} · ${s.direction || ''}</b><br>` +
                        `${dt} · entry <b>${s.entry ?? '—'}</b>` +
-                       (svL ? `<br>светофор: ${svL}` : '') +
+                       `<br>светофор: ${svL || '<span style="color:#8a94a6;">— не оценён</span>'}` +
                        (phL ? `<br>фаза рынка: <b style="color:${phC}">${phL}</b>` : '') +
                        (s.pattern ? `<br><span style="color:#aab3c2;">${String(s.pattern).slice(0, 90)}</span>` : '');
           const value = long ? bar.l : bar.h;
@@ -4363,6 +4363,13 @@ function _sigTooltipHTML(o) {
   // Фаза рынка (🟢/⚪/🔴) на момент сигнала + её возраст
   const phL = tsMs ? window.phaseLabelAt(tsMs) : null;
   if (phL) html += row('Фаза рынка', phL, window.phaseColorOf(phL));
+  // 🚦 светофор (вердикт на момент сигнала / живой)
+  const svv = o.svetofor || o.pro_verdict;
+  if (svv) {
+    const svc = svv === 'ДА' ? 'var(--buy)' : svv === 'МОЖНО' ? '#ffd23e' : 'var(--sell)';
+    const sve = svv === 'ДА' ? '✅' : svv === 'МОЖНО' ? '⚠️' : '⛔';
+    html += row('Светофор', sve + ' ' + svv, svc);
+  }
   return html;
 }
 

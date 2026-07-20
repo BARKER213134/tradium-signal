@@ -121,6 +121,10 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
                 "stack_size": len(chain),
                 "stack_families": len(fams),
                 "families": fams,
+                # 🚦 наследуем лучший вердикт участников (стэк сам не в БД,
+                # без этого старые стэки на графиках оставались без светофора)
+                "svetofor": next((v for v in ("ДА", "МОЖНО", "НЕТ")
+                                  if any(m.get("svetofor") == v for m in chain)), None),
                 # Наследуем максимум полезных полей от участников
                 "whale_tier": next((m.get("whale_tier") for m in chain if m.get("whale_tier")), None),
                 "shark_tier": next((m.get("shark_tier") for m in chain if m.get("shark_tier")), None),
