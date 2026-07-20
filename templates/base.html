@@ -3687,6 +3687,73 @@ window.copyTicker = function(sym, ev) {
   }
 };
 
+// 🚦 Модалка «входить или нет» — кнопка у монеты в журнале.
+// Дергает /api/entry-check (фаза-гейт, догон, RS 7д, RSI4h, сигналы
+// с грейдами, ST-флипы) и рисует вердикт ✅/⚠️/⛔ с уровнями.
+window.showEntryCheck = async function(symbol, direction) {
+  direction = direction === 'SHORT' ? 'SHORT' : 'LONG';
+  let m = document.getElementById('ecModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'ecModal';
+    m.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(4,8,14,0.75);backdrop-filter:blur(3px);';
+    m.innerHTML = '<div id="ecModalBody" style="width:min(640px,94vw);max-height:86vh;overflow-y:auto;background:var(--card,#0e1420);border:1px solid var(--border,#26314a);border-radius:14px;padding:18px 20px;"></div>';
+    m.addEventListener('click', (e) => { if (e.target === m) m.style.display = 'none'; });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') m.style.display = 'none'; });
+    document.body.appendChild(m);
+  }
+  m.style.display = 'flex';
+  const body = document.getElementById('ecModalBody');
+  const name = symbol.replace('USDT', '');
+  const dirBtns = (cur) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <div style="font-family:var(--font-mono,monospace);font-weight:800;font-size:15px;">🚦 Проверка входа · ${name}</div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button onclick="showEntryCheck('${symbol}', 'LONG')" style="background:${cur === 'LONG' ? 'rgba(0,229,160,0.35)' : 'transparent'};color:${cur === 'LONG' ? '#0a0e14' : '#00e5a0'};border:1px solid rgba(0,229,160,0.5);border-radius:6px;padding:5px 12px;font-size:11px;font-family:var(--font-mono,monospace);font-weight:800;cursor:pointer;">LONG</button>
+        <button onclick="showEntryCheck('${symbol}', 'SHORT')" style="background:${cur === 'SHORT' ? 'rgba(255,77,109,0.4)' : 'transparent'};color:${cur === 'SHORT' ? '#fff' : '#ff5e9c'};border:1px solid rgba(255,77,109,0.5);border-radius:6px;padding:5px 12px;font-size:11px;font-family:var(--font-mono,monospace);font-weight:800;cursor:pointer;">SHORT</button>
+        <button onclick="document.getElementById('ecModal').style.display='none'" style="background:transparent;color:var(--muted,#8a94a6);border:1px solid var(--border,#26314a);border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;">✕</button>
+      </div>
+    </div>`;
+  body.innerHTML = dirBtns(direction) + '<div style="padding:24px;text-align:center;color:var(--muted,#8a94a6);font-family:var(--font-mono,monospace);">⏳ Проверяю ' + name + ' ' + direction + ' по всем правилам…</div>';
+  try {
+    const r = await fetch(`/api/entry-check?symbol=${encodeURIComponent(symbol)}&direction=${direction}`);
+    const d = await r.json();
+    if (!d.ok) {
+      body.innerHTML = dirBtns(direction) + `<div style="padding:16px;color:#ff4d6d;font-family:var(--font-mono,monospace);">${d.error || 'ошибка'}</div>`;
+      return;
+    }
+    const V = {
+      YES: ['✅ ДА — ВХОДИТЬ', '#00e5a0', 'rgba(0,229,160,0.15)'],
+      CAUTION: ['⚠️ МОЖНО — НО МАЛЫМ РАЗМЕРОМ', '#ffd23e', 'rgba(255,210,62,0.12)'],
+      NO: ['⛔ НЕТ — НЕ ВХОДИТЬ', '#ff4d6d', 'rgba(255,77,109,0.12)'],
+    }[d.verdict] || ['?', '#888', 'transparent'];
+    const fmtP = (v) => v == null ? '—' : (+v >= 100 ? (+v).toFixed(1) : +v >= 1 ? (+v).toFixed(4) : (+v).toPrecision(4));
+    let html = dirBtns(direction) + `<div style="padding:14px 16px;border-radius:10px;background:${V[2]};border:2px solid ${V[1]};">
+      <div style="font-size:20px;font-weight:900;font-family:var(--font-mono,monospace);color:${V[1]};">${V[0]}</div>
+      <div style="font-family:var(--font-mono,monospace);font-size:11px;color:var(--muted,#8a94a6);margin-top:4px;">
+        фаза ${d.phase_emoji}${d.phase || '?'} (breadth ${d.breadth ?? '?'}%) · счёт ${d.score >= 0 ? '+' : ''}${d.score} · цена ${fmtP(d.price)} · 24ч ${d.mom24 > 0 ? '+' : ''}${d.mom24}% · 7д ${d.ret7d != null ? (d.ret7d > 0 ? '+' : '') + d.ret7d + '%' : '—'} · RSI4h ${d.rsi4h ?? '—'}
+      </div>`;
+    if (d.hard_no) html += `<div style="margin-top:8px;padding:8px 12px;border-radius:8px;background:rgba(255,77,109,0.15);border:1px solid rgba(255,77,109,0.5);color:#ff5e9c;font-size:12px;font-weight:700;">🚫 ${d.hard_no}</div>`;
+    html += '<div style="margin-top:10px;font-size:12.5px;line-height:1.9;">' +
+      (d.reasons || []).map(x => `<div>${x.ok === true ? '✅' : x.ok === false ? '❌' : '▫️'} ${x.t}</div>`).join('') + '</div>';
+    if (d.signals && d.signals.length) {
+      const gm = {A: '🟩', B: '🟨', C: '🟥'};
+      html += `<div style="margin-top:10px;font-size:10.5px;color:var(--muted,#8a94a6);font-family:var(--font-mono,monospace);">сигналы за 48ч: ` +
+        d.signals.map(s => `${gm[s.grade] || '▫️'}${s.strategy} ${s.direction === 'LONG' ? '↑' : '↓'} ${s.ago_h}ч`).join(' · ') + '</div>';
+    }
+    if (d.verdict !== 'NO') {
+      html += `<div style="margin-top:12px;padding:10px 14px;border-radius:8px;background:rgba(10,14,20,0.5);border:1px solid var(--border,#26314a);font-family:var(--font-mono,monospace);font-size:12px;">
+        📐 вход <b>${fmtP(d.levels.entry)}</b> · <span style="color:#ff6b6b;">стоп ${fmtP(d.levels.stop)} (−5%)</span> · <span style="color:#00e5a0;">цель ${fmtP(d.levels.target)} (+10%)</span><br>
+        <span style="color:var(--muted,#8a94a6);font-size:10.5px;">${d.size_rule}</span>
+      </div>`;
+    }
+    html += `<div style="margin-top:10px;text-align:right;"><span onclick="openPairChart('${symbol}')" style="cursor:pointer;font-size:11px;color:#4cc9f0;border-bottom:1px dashed rgba(76,201,240,0.5);">📈 открыть график</span></div></div>`;
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = dirBtns(direction) + `<div style="padding:16px;color:#ff4d6d;">Ошибка: ${e.message}</div>`;
+  }
+};
+
 // openPairChart('SXTUSDT') / openPairChart('SXT/USDT', '4h'). KChart со всем
 // фаршем renderKChart (MA/ST/VOL/Delta/RSI/сигналы/уровни), TF-бар, ESC/фон.
 window._kcQmSym = null;
