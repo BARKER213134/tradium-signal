@@ -217,7 +217,7 @@ def _pair_context():
         return _ctx_cache["by_sym"]
 
 
-def annotate_pro(items: list) -> None:
+def annotate_pro(items: list, extra_ctx: dict = None) -> None:
     """🚦 Серверный светофор для журнала: каждый свежий сигнал (<48ч)
     появляется сразу с вердиктом ДА/МОЖНО/НЕТ — та же логика, что
     /api/entry-check (реплей 30д: ДА WR 43.1% vs НЕТ 37.3%).
@@ -225,7 +225,9 @@ def annotate_pro(items: list) -> None:
     догон >20%/24ч (жёсткое НЕТ) · RS-сила 7д · RSI4h-зоны · триггер
     (грейд сигнала: 🟩 +3 / 🟨 +1; ST-флипы 1h/4h из pair_context).
     Контекст живой (30-мин скан) — сигналы старше 48ч не оцениваются."""
-    ctx_by_sym = _pair_context()
+    ctx_by_sym = dict(_pair_context())
+    if extra_ctx:
+        ctx_by_sym.update(extra_ctx)
     flips = _phase_flips()
     phase = flips[-1][1] if flips else None
     now_ts = time.time()
@@ -342,17 +344,29 @@ def annotate_pro(items: list) -> None:
             it["pro_checks"] = checks
         except Exception:
             continue
+    # фолбэк: живой контекст недоступен (пара вне универсума 30-мин скана)
+    # или сигнал старше 48ч — показываем вердикт, зафиксированный при
+    # появлении сигнала (штамп-луп / бэкфилл 3 мес)
+    _sv_score = {"ДА": 5, "МОЖНО": 2, "НЕТ": -3}
+    for it in items:
+        if it.get("pro_verdict"):
+            continue
+        sv = it.get("svetofor")
+        if sv in _sv_score:
+            it["pro_verdict"] = sv
+            it["pro_score"] = _sv_score[sv]
+            it["pro_checks"] = ["вердикт зафиксирован в момент появления сигнала"]
 
 
-def svetofor_stamp_recent() -> int:
+def svetofor_stamp_recent(hours: float = 2) -> int:
     """Проставляет svetofor/svetofor_score свежим сигналам без вердикта
-    (4 коллекции, последние 2ч) — та же логика, что annotate_pro, но
-    персистентно: галочки ✅ на графиках и история для бэктестов.
+    (4 коллекции, последние `hours` ч) — та же логика, что annotate_pro,
+    но персистентно: галочки ✅ на графиках и история для бэктестов.
     Вызывается из watcher каждые ~10 мин (sync, в thread)."""
     from datetime import timedelta
     from database import _get_db, utcnow
     db = _get_db()
-    since = utcnow() - timedelta(hours=2)
+    since = utcnow() - timedelta(hours=hours)
     cand = []  # (coll, _id, src_key, direction, sym, at)
     for n_ in db.new_strategy_signals.find(
             {"created_at": {"$gte": since}, "svetofor": {"$exists": False}},
@@ -385,6 +399,49 @@ def svetofor_stamp_recent() -> int:
                          v_["direction"], sym, v_["created_at"]))
     if not cand:
         return 0
+    # пары вне универсума 30-мин скана (новые листинги, мелкий объём):
+    # досчитываем контекст свечами на лету, до 8 пар за проход
+    known = _pair_context()
+    missing = [s for s in {c[4] for c in cand} if s not in known][:8]
+    extra_ctx = {}
+    for msym in missing:
+        try:
+            from exchange import get_klines_any
+            from accum_detector import _rsi4h_value
+            from backtest_supertrend import compute_st_series
+            pair_slash = msym[:-4] + "/USDT"
+            kd = get_klines_any(pair_slash, "1h", 320)
+            if not kd or len(kd) < 60:
+                continue
+            closes = [x["c"] for x in kd]
+            mom24 = (closes[-1] / closes[-25] - 1) * 100 if len(closes) > 25 else 0
+            rv = _rsi4h_value(kd)
+            s1 = compute_st_series(kd, 10, 3.0)
+            st1t = s1[-1]["trend"] if s1 else None
+            st1f = (len(s1) >= 6 and any(
+                s1[j]["trend"] != s1[j-1]["trend"] and s1[j-1]["trend"]
+                for j in range(len(s1) - 4, len(s1))))
+            b4 = {}
+            for x in kd:
+                k_ = x["t"] // (4 * 3600_000)
+                if k_ not in b4:
+                    b4[k_] = dict(x)
+                else:
+                    b4[k_]["h"] = max(b4[k_]["h"], x["h"])
+                    b4[k_]["l"] = min(b4[k_]["l"], x["l"])
+                    b4[k_]["c"] = x["c"]
+            kd4 = [b4[k_] for k_ in sorted(b4)][:-1]
+            s4 = compute_st_series(kd4, 10, 3.0)
+            extra_ctx[msym] = {
+                "mom24": round(mom24, 2), "pctl7d": None,
+                "rsi4h": round(rv[0], 1) if rv else None,
+                "st1_trend": st1t, "st1_flip": bool(st1f),
+                "st4_trend": s4[-1]["trend"] if len(s4) >= 3 else None,
+                "st4_flip": (len(s4) >= 3 and s4[-1]["trend"] != s4[-2]["trend"]
+                             and bool(s4[-2]["trend"])),
+            }
+        except Exception:
+            logger.debug(f"[svetofor-stamp] ctx {msym} fail", exc_info=True)
     # аннотируем через ту же annotate_pro (единый скоринг с колонкой 🚦)
     items = []
     for coll, _id, src, d, sym, at in cand:
@@ -397,7 +454,7 @@ def svetofor_stamp_recent() -> int:
                       "pair": sym[:-4] + "/USDT" if sym.endswith("USDT") else sym,
                       "at_ts": int(at.timestamp())})
     annotate_items(items)
-    annotate_pro(items)
+    annotate_pro(items, extra_ctx=extra_ctx)
     from pymongo import UpdateOne
     ops = {}
     n_done = 0

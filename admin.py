@@ -9076,7 +9076,7 @@ def _compute_journal_sync(_fast_only: bool = False):
         "symbol":1, "pair":1, "direction":1, "price":1, "r1":1, "s1":1,
         "pattern":1, "strength":1, "factors":1, "score":1,
         "st_passed":1, "pump_score":1, "is_top_pick":1,
-        "top_pick_confirmations_count":1, "detected_at":1,
+        "top_pick_confirmations_count":1, "detected_at":1, "svetofor":1,
     }).sort("detected_at", -1).limit(3000):
         ftypes = [f["type"] for f in c.get("factors", [])]
         items.append({
@@ -9093,6 +9093,7 @@ def _compute_journal_sync(_fast_only: bool = False):
             "pump_score": c.get("pump_score", 0),
             "is_top_pick": bool(c.get("is_top_pick")),
             "top_pick_confirmations_count": c.get("top_pick_confirmations_count", 0),
+            "svetofor": c.get("svetofor"),
             "at": c["detected_at"].isoformat() if hasattr(c.get("detected_at"), "isoformat") else str(c.get("detected_at", "")),
             "at_ts": int(c["detected_at"].timestamp()) if hasattr(c.get("detected_at"), "timestamp") else 0,
         })
@@ -9195,6 +9196,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "st_tier": tier,
                 "aligned_tfs": aligned_tfs,
                 "aligned_bots_count": len(aligned_bots),
+                "svetofor": s.get("svetofor"),
                 "at": at_iso,
                 "at_ts": at_ts,
                 "flip_at": flip_iso,  # для графика (отдельно от сортировки)
@@ -9238,6 +9240,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "verified_counts": counts,
                 "rr": v.get("rr"),
                 "phase": v.get("phase"),
+                "svetofor": v.get("svetofor"),
                 "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
                 "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
             })
@@ -9418,6 +9421,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "setup_verdict": n.get("setup_verdict"),
                 "tp_R": n.get("tp_R"),
                 "rr": n.get("tp_R"),
+                "svetofor": n.get("svetofor"),
                 "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
                 "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
                 # Cluster Delta + Resonance (информативно, не влияет на сигналы)
