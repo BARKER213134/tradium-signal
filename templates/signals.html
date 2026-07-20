@@ -6963,6 +6963,21 @@ async function loadMarketSide() {
                 ban: '🚫 НЕ ЛОНГОВАТЬ · НЕ ШОРТИТЬ',
                 banTip: 'Мёртвая зона: лонги −1.9пп, шорты −2.6пп, фильтры не спасают (год)'},
     }[d.side] || {txt: d.side, c: '#9aa4b5', bg: 'transparent', ban: '', banTip: ''};
+    // ⚪ подфазы (год 248k входов, сетка 10/5/96ч)
+    if (d.side === 'NEUTRAL' && d.neutral_sub) {
+      const SUB = {
+        DOWN: {txt: '⚪🔻 ШОРТОВАЯ НЕЙТРАЛЬ', c: '#ff8c50', bg: 'rgba(255,140,80,0.10)',
+               ban: '🚫 НЕ ЛОНГОВАТЬ · шорт разрешён',
+               banTip: 'Возраст 24ч+ или breadth падает: шорты EV +0.95..+1.66/сделку, лонги −0.7..−1.8 (год)'},
+        UP: {txt: '⚪🔺 РАЗГОН', c: '#9aa4b5', bg: 'rgba(154,164,181,0.10)',
+             ban: '🚫 вход только с триггером',
+             banTip: 'Свежая нейтраль из 🔴: random-лонг −0.4, но лонг на ST-пробое/🟩-сигнале +4пп — триггер решает'},
+        PLATEAU: {txt: '⚪▫ ПЛАТО', c: '#9aa4b5', bg: 'rgba(154,164,181,0.10)',
+                  ban: '🚫 вход только с триггером',
+                  banTip: 'Нейтраль после 🟢 — плато сильного рынка: единственная не-минусовая лонг-ячейка (+0.10)'},
+      }[d.neutral_sub];
+      if (SUB) Object.assign(cfg, SUB);
+    }
     const badge = document.getElementById('msBadge');
     badge.textContent = cfg.txt;
     badge.style.color = cfg.c;

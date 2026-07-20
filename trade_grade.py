@@ -198,6 +198,57 @@ def _src_key(item: dict):
     return src
 
 
+_nsub_cache = {"at": 0.0, "val": None}
+
+
+def neutral_subphase():
+    """Подфаза нейтрали (год-бэктест 248k входов, сетка 10/5/96ч):
+      DOWN (⚪🔻 шортовая): возраст >=24ч ИЛИ breadth падает >2пп/12ч —
+        шорты EV +0.95..+1.66, лонги −0.71..−1.77 (запрет)
+      PLATEAU (⚪▫ плато): пришла из 🟢 — единственная ячейка с random-лонгом
+        не в минусе (+0.10); обе стороны только с триггером
+      UP (⚪🔺 разгон): пришла из 🔴, моложе 24ч, breadth не падает —
+        лонги только с триггером (random −0.4), шорты без приоритета (+0.49)
+    Возвращает (sub, age_h, slope12) или (None, None, None) если фаза
+    не NEUTRAL / данных нет. Кэш 120с."""
+    now = time.time()
+    if now - _nsub_cache["at"] < 120 and _nsub_cache["val"] is not None:
+        return _nsub_cache["val"]
+    val = (None, None, None)
+    try:
+        from datetime import timedelta
+        from database import _get_db, utcnow
+        db = _get_db()
+        flips = _phase_flips()
+        if flips and flips[-1][1] == "NEUTRAL":
+            ms = db.system.find_one({"_id": "market_side_state"}) or {}
+            age_h = None
+            if ms.get("raw_side") == "NEUTRAL" and ms.get("raw_since"):
+                age_h = (utcnow() - ms["raw_since"]).total_seconds() / 3600
+            prev = flips[-2][1] if len(flips) >= 2 else None
+            slope12 = None
+            try:
+                pts = list(db.breadth_history.find(
+                    {"at": {"$gte": utcnow() - timedelta(hours=13)}},
+                    {"at": 1, "pct": 1}).sort("at", 1))
+                if len(pts) >= 2:
+                    slope12 = pts[-1]["pct"] - pts[0]["pct"]
+            except Exception:
+                pass
+            if (age_h is not None and age_h >= 24) or (slope12 is not None and slope12 < -2):
+                sub = "DOWN"
+            elif prev == "LONG":
+                sub = "PLATEAU"
+            else:
+                sub = "UP"
+            val = (sub, round(age_h, 1) if age_h is not None else None,
+                   round(slope12, 1) if slope12 is not None else None)
+    except Exception:
+        logger.debug("[neutral-sub] fail", exc_info=True)
+    _nsub_cache.update(at=now, val=val)
+    return val
+
+
 _ctx_cache = {"at": 0.0, "by_sym": {}}
 
 
@@ -262,7 +313,9 @@ def annotate_pro(items: list, extra_ctx: dict = None) -> None:
             st1f = bool(ctx.get("st1_flip")) and ctx.get("st1_trend") == want
             st4_against = (ctx.get("st4_trend") == -want and not st4f)
             score, checks, hard_no = 0, [], None
-            # фаза-гейт
+            # фаза-гейт (⚪ — по подфазе: год 248k входов, сетка 10/5/96ч)
+            nsub, nage, _nsl = (neutral_subphase() if phase == "NEUTRAL"
+                                else (None, None, None))
             if d == "LONG":
                 if phase == "SHORT":
                     if st4f:
@@ -272,15 +325,25 @@ def annotate_pro(items: list, extra_ctx: dict = None) -> None:
                         hard_no = "фаза 🔴 — НЕ ЛОНГОВАТЬ"
                 elif phase == "LONG":
                     score += 2; checks.append("✓ фаза 🟢 (+2)")
+                elif nsub == "DOWN":
+                    hard_no = "⚪🔻 шортовая нейтраль — НЕ ЛОНГОВАТЬ (EV −0.7..−1.8)"
                 else:
-                    score += 1; checks.append("· фаза ⚪ (+1)")
+                    score += 1
+                    checks.append("· фаза ⚪🔺 разгон (+1)" if nsub == "UP"
+                                  else "· фаза ⚪▫ плато (+1)")
             else:
                 if phase == "LONG":
                     hard_no = "фаза 🟢 — НЕ ШОРТИТЬ"
                 elif phase == "SHORT":
                     score += 2; checks.append("✓ фаза 🔴 (+2)")
+                elif nsub == "DOWN":
+                    if nage is not None and nage >= 48:
+                        score += 2; checks.append("✓ ⚪🔻 48ч+ — усиленный шорт (EV +1.66) (+2)")
+                    else:
+                        score += 1; checks.append("✓ ⚪🔻 шортовая нейтраль (+1)")
                 else:
-                    score -= 1; checks.append("✗ шорт в ⚪ — минусовой за год (−1)")
+                    score -= 1
+                    checks.append("✗ шорт в ⚪🔺/▫ — без приоритета (−1)")
             # догон
             m24 = ctx.get("mom24")
             if m24 is not None:

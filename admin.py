@@ -3337,9 +3337,29 @@ async def api_market_side():
                                   else "⚠️ перегрев застарел (72% ломаются в 🔴) — ранний шорт +5.4пп, лонг −10пп")
         except Exception:
             pass
+        # ⚪ подфаза (год 248k входов): 🔻 шортовая / 🔺 разгон / ▫ плато
+        neutral_sub = None
+        if side == "NEUTRAL":
+            try:
+                from trade_grade import neutral_subphase
+                nsub, nage, nsl = await asyncio.to_thread(neutral_subphase)
+                if nsub:
+                    neutral_sub = nsub
+                    hints = {
+                        "DOWN": ("🔻 ШОРТОВАЯ нейтраль (возраст 24ч+/breadth падает): "
+                                 "шорты EV +0.95..+1.66, лонги ЗАПРЕЩЕНЫ (−0.7..−1.8)"),
+                        "UP": ("🔺 РАЗГОН (свежая, из 🔴): лонги только с триггером "
+                               "(ST-пробой/🟩), шорты без приоритета"),
+                        "PLATEAU": ("▫ ПЛАТО (после 🟢): обе стороны только с "
+                                    "триггером, лонг чуть предпочтительнее"),
+                    }
+                    phase_hint = hints.get(nsub, phase_hint)
+            except Exception:
+                pass
         return {"side": side, "breadth_pct": pct, "btc_st4": st,
                 "n_pairs": doc.get("total"), "reason": reason,
                 "phase_age_h": phase_age_h, "phase_hint": phase_hint,
+                "neutral_sub": neutral_sub,
                 "updated_at": upd.isoformat() if hasattr(upd, "isoformat") else None}
     except Exception as e:
         return {"side": "?", "error": str(e)}
@@ -3565,10 +3585,20 @@ async def api_entry_picks():
 
         warn = None
         if side == "NEUTRAL":
-            return {"ok": True, "side": side, "age_h": age_h, "picks": [],
-                    "warn": "⚪ мёртвая зона — статистического эджа нет ни у "
-                            "лонгов, ни у шортов; входы не выдаю (год: лонги "
-                            "−1.9пп, шорты −2.6пп)"}
+            # подфаза решает: ⚪🔻 — шортовая (выдаём шорты), 🔺/▫ — только триггеры
+            from trade_grade import neutral_subphase
+            nsub, nage, _nsl = await asyncio.to_thread(neutral_subphase)
+            if nsub == "DOWN":
+                side = "SHORT"
+                warn = (f"⚪🔻 ШОРТОВАЯ нейтраль ({nage}ч): ранний шорт до слома "
+                        f"фазы — EV {'+1.66' if (nage or 0) >= 48 else '+0.95'}%/сделку "
+                        f"(год). Лонги запрещены.")
+            else:
+                lbl = "⚪🔺 разгон" if nsub == "UP" else "⚪▫ плато" if nsub == "PLATEAU" else "⚪"
+                return {"ok": True, "side": "NEUTRAL", "age_h": age_h, "picks": [],
+                        "warn": f"{lbl} — random-входы без эджа; бери только "
+                                "триггеры: 🧨/💣 ST-пробои и 🟩-сигналы из журнала "
+                                "(лонг на пробое в ⚪ даёт +4пп)"}
         if side == "LONG" and age_h is not None and age_h < 4:
             warn = (f"⚠️ фазе всего {age_h}ч — не подтверждена (88% зелёных "
                     f"умирают <8ч): малый размер или дождись 4ч")
@@ -3810,6 +3840,10 @@ async def api_entry_check(symbol: str, direction: str = "LONG"):
         # ── вердикт ──────────────────────────────────────────────
         reasons, score, hard_no = [], 0, None
         E = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴", None: "?"}
+        from trade_grade import neutral_subphase
+        nsub, nage, nsl = (await asyncio.to_thread(neutral_subphase)
+                           if phase == "NEUTRAL" else (None, None, None))
+        NSUB_E = {"DOWN": "⚪🔻 шортовая", "UP": "⚪🔺 разгон", "PLATEAU": "⚪▫ плато"}
         if phase is None:
             reasons.append({"ok": None, "t": "фаза рынка недоступна — ждём скан"})
         elif direction == "LONG":
@@ -3824,18 +3858,30 @@ async def api_entry_check(symbol: str, direction: str = "LONG"):
             elif phase == "LONG":
                 score += 2
                 reasons.append({"ok": True, "t": "фаза 🟢 — лонг по рынку (+2)"})
+            elif nsub == "DOWN":
+                hard_no = ("подфаза ⚪🔻 (возраст/падающий breadth) — шортовая "
+                           "нейтраль, лонги EV −0.7..−1.8 — НЕ ЛОНГОВАТЬ")
             else:
                 score += 1
-                reasons.append({"ok": True, "t": "фаза ⚪ — лонг допустим, но кромка тонкая (+1)"})
+                reasons.append({"ok": True, "t": f"подфаза {NSUB_E.get(nsub, '⚪')} — "
+                                "лонг только с триггером (+1)"})
         else:
             if phase == "LONG":
                 hard_no = "фаза 🟢 LONG — НЕ ШОРТИТЬ (год: WR 34.9%)"
             elif phase == "SHORT":
                 score += 2
                 reasons.append({"ok": True, "t": "фаза 🔴 — шорт по рынку (+2)"})
+            elif nsub == "DOWN":
+                if nage is not None and nage >= 48:
+                    score += 2
+                    reasons.append({"ok": True, "t": "⚪🔻 48ч+ — усиленный шорт-режим (EV +1.66) (+2)"})
+                else:
+                    score += 1
+                    reasons.append({"ok": True, "t": "⚪🔻 шортовая нейтраль — ранний шорт (EV +0.95) (+1)"})
             else:
                 score -= 1
-                reasons.append({"ok": False, "t": "фаза ⚪ — шорты в нейтрали минусовые (−1)"})
+                reasons.append({"ok": False, "t": f"подфаза {NSUB_E.get(nsub, '⚪')} — "
+                                "шорт без приоритета (−1)"})
         # догон
         if direction == "LONG" and mom24 > 20:
             hard_no = hard_no or f"догон: +{mom24:.0f}% за 24ч — покупка верхушки пампа"
