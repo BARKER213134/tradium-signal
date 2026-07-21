@@ -3750,6 +3750,13 @@ async def api_entry_check(symbol: str, direction: str = "LONG"):
         mom24 = (closes[-1] / closes[-25] - 1) * 100 if len(closes) > 25 else 0
         ret7d = ((closes[-1] / closes[-169] - 1) * 100
                  if len(closes) >= 169 else None)
+        atr24 = None
+        if len(c1h) > 26:
+            _trs = [max(c1h[j]["h"] - c1h[j]["l"],
+                        abs(c1h[j]["h"] - c1h[j - 1]["c"]),
+                        abs(c1h[j]["l"] - c1h[j - 1]["c"]))
+                    for j in range(len(c1h) - 24, len(c1h))]
+            atr24 = sum(_trs) / len(_trs) / price * 100 if price else None
         from accum_detector import _rsi4h_value
         _rv = _rsi4h_value(c1h)
         rsi4h = round(_rv[0], 1) if _rv else None
@@ -3962,9 +3969,29 @@ async def api_entry_check(symbol: str, direction: str = "LONG"):
             verdict = "CAUTION"
         else:
             verdict = "NO"
+        # ⭐ ОТБОРНЫЙ вход — профиль победителей (см. trade_grade.annotate_pro)
+        star = False
+        if verdict == "YES":
+            n_dir_sigs = sum(1 for s in sig_rows if s.get("direction") == direction)
+            if direction == "LONG":
+                star = (ret7d is not None and ret7d > 10 and atr24 and atr24 > 1.5
+                        and rsi4h is not None and 55 <= rsi4h <= 72
+                        and mom24 < 10 and score >= 6 and n_dir_sigs >= 3)
+            else:
+                star = (ret7d is not None and ret7d < -10 and atr24 and atr24 > 1.5
+                        and rsi4h is not None and 28 <= rsi4h <= 45
+                        and mom24 > -10 and score >= 6 and n_dir_sigs >= 3)
+            if star:
+                reasons.insert(0, {"ok": True, "t": (
+                    f"⭐ ОТБОРНЫЙ ВХОД — профиль победителей: лидер 7д {ret7d:+.0f}% · "
+                    f"ATR {atr24:.1f}% (монета ходит широко, +10% ей по силам) · "
+                    f"RSI4h {rsi4h:.0f} (рабочая зона, не перегрев) · 24ч {mom24:+.1f}% "
+                    f"(вход на дыхании тренда, не на пике рывка) · {n_dir_sigs} "
+                    f"подтверждающих сигналов · счёт +{score}")})
         k = 1 if direction == "LONG" else -1
         return {"ok": True, "symbol": sym, "direction": direction,
                 "verdict": verdict, "score": score, "hard_no": hard_no,
+                "star": star, "atr24": round(atr24, 2) if atr24 else None,
                 "phase": phase, "phase_emoji": E.get(phase, "?"),
                 "breadth": pct, "reasons": reasons,
                 "price": price, "mom24": round(mom24, 1),

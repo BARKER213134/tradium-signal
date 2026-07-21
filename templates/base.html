@@ -3729,7 +3729,8 @@ window.showEntryCheck = async function(symbol, direction) {
     }[d.verdict] || ['?', '#888', 'transparent'];
     const fmtP = (v) => v == null ? '—' : (+v >= 100 ? (+v).toFixed(1) : +v >= 1 ? (+v).toFixed(4) : (+v).toPrecision(4));
     let html = dirBtns(direction) + `<div style="padding:14px 16px;border-radius:10px;background:${V[2]};border:2px solid ${V[1]};">
-      <div style="font-size:20px;font-weight:900;font-family:var(--font-mono,monospace);color:${V[1]};">${V[0]}</div>
+      <div style="font-size:20px;font-weight:900;font-family:var(--font-mono,monospace);color:${V[1]};">${d.star ? '⭐ ' : ''}${V[0]}</div>` +
+      (d.star ? `<div style="margin-top:6px;padding:7px 12px;border-radius:8px;background:rgba(255,210,62,0.14);border:1px solid rgba(255,210,62,0.55);color:#ffd23e;font-size:12px;font-weight:700;">⭐ ОТБОРНЫЙ ВХОД — совпадает профиль победителей (лидер 7д + широкий ATR + RSI-зона + без догона + 3+ сигналов)</div>` : '') + `
       <div style="font-family:var(--font-mono,monospace);font-size:11px;color:var(--muted,#8a94a6);margin-top:4px;">
         фаза ${d.phase_emoji}${d.phase || '?'} (breadth ${d.breadth ?? '?'}%) · счёт ${d.score >= 0 ? '+' : ''}${d.score} · цена ${fmtP(d.price)} · 24ч ${d.mom24 > 0 ? '+' : ''}${d.mom24}% · 7д ${d.ret7d != null ? (d.ret7d > 0 ? '+' : '') + d.ret7d + '%' : '—'} · RSI4h ${d.rsi4h ?? '—'}
       </div>`;

@@ -282,16 +282,17 @@ def annotate_pro(items: list, extra_ctx: dict = None) -> None:
     flips = _phase_flips()
     phase = flips[-1][1] if flips else None
     now_ts = time.time()
-    # лучший грейд соседних сигналов той же монеты/направления за 48ч
-    best_by_key = {}
+    # лучший грейд + число подтверждений (та же монета/направление, 48ч)
+    best_by_key, cnt_by_key = {}, {}
     for it in items:
         g = it.get("trade_grade")
         d = it.get("direction")
         at = it.get("at_ts") or 0
-        if g and d and at and now_ts - at <= 48 * 3600:
+        if d and at and now_ts - at <= 48 * 3600 and it.get("source") not in _SKIP:
             sym = (it.get("symbol") or (it.get("pair") or "").replace("/", "")).upper()
             k = (sym, d)
-            if k not in best_by_key or g < best_by_key[k]:
+            cnt_by_key[k] = cnt_by_key.get(k, 0) + 1
+            if g and (k not in best_by_key or g < best_by_key[k]):
                 best_by_key[k] = g
     for it in items:
         try:
@@ -404,6 +405,31 @@ def annotate_pro(items: list, extra_ctx: dict = None) -> None:
                 verdict = "МОЖНО"
             else:
                 verdict = "НЕТ"
+            # ⭐ ОТБОРНЫЙ вход — профиль победителей (анатомия TP-сделок
+            # 20.07 + год-валидация компонент): недельный лидер + живой ATR +
+            # RSI в рабочей зоне + без догона + 3+ подтверждений + счёт 6+
+            star = False
+            if verdict == "ДА":
+                r7 = ctx.get("ret7d")
+                atr_ = ctx.get("atr_pct")
+                n_sigs = cnt_by_key.get((sym, d), 0)
+                if d == "LONG":
+                    star = (r7 is not None and r7 > 10 and atr_ and atr_ > 1.5
+                            and r4 is not None and 55 <= r4 <= 72
+                            and m24 is not None and m24 < 10
+                            and score >= 6 and n_sigs >= 3)
+                else:
+                    star = (r7 is not None and r7 < -10 and atr_ and atr_ > 1.5
+                            and r4 is not None and 28 <= r4 <= 45
+                            and m24 is not None and m24 > -10
+                            and score >= 6 and n_sigs >= 3)
+                if star:
+                    checks.insert(0, (f"⭐ ОТБОРНЫЙ ВХОД: лидер 7д {r7:+.0f}% · "
+                                      f"ATR {atr_:.1f}% (ходит широко) · RSI4h {r4:.0f} "
+                                      f"(зона, не перегрев) · 24ч {m24:+.1f}% (без догона) · "
+                                      f"{n_sigs} подтверждений · счёт +{score}. "
+                                      f"Профиль вчерашних TP+10%: 3 из 3 дошли до цели"))
+            it["pro_star"] = star
             it["pro_score"] = score if not hard_no else -99
             it["pro_verdict"] = verdict
             it["pro_checks"] = checks

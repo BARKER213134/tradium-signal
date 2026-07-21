@@ -9957,9 +9957,10 @@ function renderJournal(items, startIdx) {
       const pm = {'ДА': ['✅', '#00e5a0'], 'МОЖНО': ['⚠️', '#ffd23e'],
                   'НЕТ': ['⛔', '#ff4d6d']}[s.pro_verdict];
       if (pm) {
-        const tipP = `🚦 Светофор: ${s.pro_verdict}${s.pro_score > -90 ? ' (счёт ' + (s.pro_score >= 0 ? '+' : '') + s.pro_score + ')' : ''} — детали:\n` +
+        const starP = s.pro_star ? '⭐' : '';
+        const tipP = `${s.pro_star ? '⭐ ОТБОРНЫЙ ВХОД (профиль победителей)\n' : ''}🚦 Светофор: ${s.pro_verdict}${s.pro_score > -90 ? ' (счёт ' + (s.pro_score >= 0 ? '+' : '') + s.pro_score + ')' : ''} — детали:\n` +
           (s.pro_checks || []).join('\n') + '\n\nКлик по 🚦 у монеты — полный разбор с уровнями.';
-        proCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:800;color:${pm[1]};" title="${tipP.replace(/"/g, '&quot;')}">${pm[0]} ${s.pro_verdict}</td>`;
+        proCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:800;color:${pm[1]};${s.pro_star ? 'text-shadow:0 0 8px rgba(255,210,62,0.7);' : ''}" title="${tipP.replace(/"/g, '&quot;')}">${starP}${pm[0]} ${s.pro_verdict}</td>`;
       }
     }
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
