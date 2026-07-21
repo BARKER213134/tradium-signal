@@ -125,6 +125,7 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
                 # без этого старые стэки на графиках оставались без светофора)
                 "svetofor": next((v for v in ("ДА", "МОЖНО", "НЕТ")
                                   if any(m.get("svetofor") == v for m in chain)), None),
+                "svetofor_star": any(m.get("svetofor_star") for m in chain),
                 # Наследуем максимум полезных полей от участников
                 "whale_tier": next((m.get("whale_tier") for m in chain if m.get("whale_tier")), None),
                 "shark_tier": next((m.get("shark_tier") for m in chain if m.get("shark_tier")), None),

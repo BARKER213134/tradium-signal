@@ -446,7 +446,10 @@ def annotate_pro(items: list, extra_ctx: dict = None) -> None:
         if sv in _sv_score:
             it["pro_verdict"] = sv
             it["pro_score"] = _sv_score[sv]
-            it["pro_checks"] = ["вердикт зафиксирован в момент появления сигнала"]
+            it["pro_star"] = bool(it.get("svetofor_star"))
+            it["pro_checks"] = (["⭐ ОТБОРНЫЙ (зафиксирован при появлении): профиль победителей"]
+                                if it.get("svetofor_star") else []) + \
+                ["вердикт зафиксирован в момент появления сигнала"]
 
 
 def svetofor_stamp_recent(hours: float = 2) -> int:
@@ -555,7 +558,8 @@ def svetofor_stamp_recent(hours: float = 2) -> int:
             continue
         ops.setdefault(coll, []).append(UpdateOne(
             {"_id": _id},
-            {"$set": {"svetofor": v, "svetofor_score": it.get("pro_score", 0)}}))
+            {"$set": {"svetofor": v, "svetofor_score": it.get("pro_score", 0),
+                      "svetofor_star": bool(it.get("pro_star"))}}))
     for coll, o in ops.items():
         try:
             r = db[coll].bulk_write(o, ordered=False)

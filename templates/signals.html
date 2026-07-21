@@ -7368,6 +7368,24 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jAllSpecialBtn" style="display:none;"></button>
   <button id="jNearLevelBtn" style="display:none;"></button>
   <button id="jHotOnlyBtn" style="display:none;"></button>
+  <button id="jStarOnlyBtn" onclick="_toggleStarOnly()" title="⭐ Показать только ОТБОРНЫЕ входы — профиль победителей поверх ✅ ДА: лидер 7д (>±10%) + ATR>1.5% + RSI4h в рабочей зоне + без догона + 3+ подтверждений + счёт светофора >=6. Бэктест 3 мес (1005 сигналов): EV +1.28%/сделку, 34% доходят до +10%; режим позиций: +72%/мес суммарного PnL. Редкая метка (~1% сигналов) — пусто значит рынок не даёт профиль." style="background:linear-gradient(135deg, rgba(255,210,62,0.20), rgba(255,140,80,0.10));border:1.5px solid rgba(255,210,62,0.65);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ffd23e;cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;font-weight:700;">⭐ Отборные · OFF</button>
+  <script>
+  window._starOnlyOn = false;
+  window._toggleStarOnly = function() {
+    window._starOnlyOn = !window._starOnlyOn;
+    const b = document.getElementById('jStarOnlyBtn');
+    if (window._starOnlyOn) {
+      b.textContent = '⭐ Отборные · ON';
+      b.style.background = 'linear-gradient(135deg, rgba(255,210,62,0.45), rgba(255,140,80,0.25))';
+      b.style.color = '#0a0e14';
+    } else {
+      b.textContent = '⭐ Отборные · OFF';
+      b.style.background = 'linear-gradient(135deg, rgba(255,210,62,0.20), rgba(255,140,80,0.10))';
+      b.style.color = '#ffd23e';
+    }
+    if (typeof filterJournal === 'function') filterJournal();
+  };
+  </script>
   <button id="jGradeOnlyBtn" onclick="_toggleGradeOnly()" title="🎓 Показать только сигналы с оценкой 🟩 ВХОД: комбинация источник × направление × фаза исторически даёт EV ≥ +0.75%/сделку на сетке под цель +10% (TP+10/SL−5, 96ч, бэктест 3 мес всех сигналов базы). Самый простой режим: жми, бери верхние строки (сортировка по EV кликом на «Вход?»), уровни — в подсказке ячейки." style="background:linear-gradient(135deg, rgba(0,229,160,0.18), rgba(255,210,62,0.10));border:1.5px solid rgba(0,229,160,0.6);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:700;">🟩 Только ВХОД · OFF</button>
   <script>
   window._gradeOnlyOn = false;
@@ -9252,6 +9270,8 @@ function filterJournal() {
     } else if (src && s.source !== src) return false;
     // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
     if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;
+    // ⭐ Отборные — профиль победителей (live pro_star или зафиксированный)
+    if (window._starOnlyOn && !(s.pro_star || s.svetofor_star)) return false;
     if (dir && s.direction !== dir) return false;
     // ── Отбор по тренду монеты (EMA20/50 per TF на момент сигнала) ──
     const trendF = (document.getElementById('jFilterTrend') || {}).value || '';
