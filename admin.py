@@ -45,6 +45,31 @@ async def lifespan(app):
         from watcher import _watcher_running
         print(f"[LIFESPAN] watcher_running={_watcher_running}", flush=True)
 
+        # 🐕 Вачдог event loop: оба падения (18.07, 21.07) — процесс жив,
+        # но loop мёртв → Railway не рестартует (нет exit). Async-задача
+        # обновляет метку; daemon-тред при застое >5 мин делает os._exit(1),
+        # Railway поднимает контейнер заново сам.
+        import threading as _thr
+        import time as _time
+        _loop_beat = {"t": _time.time()}
+
+        async def _wd_beat():
+            while True:
+                _loop_beat["t"] = _time.time()
+                await asyncio.sleep(15)
+
+        def _wd_check():
+            while True:
+                _time.sleep(60)
+                if _time.time() - _loop_beat["t"] > 300:
+                    print("[WATCHDOG] event loop завис >5 мин — hard exit, "
+                          "Railway перезапустит", flush=True)
+                    os._exit(1)
+
+        _bg_tasks.append(asyncio.create_task(_wd_beat()))
+        _thr.Thread(target=_wd_check, daemon=True, name="loop-watchdog").start()
+        print("[LIFESPAN] loop-watchdog запущен (застой >5 мин → рестарт)", flush=True)
+
         if not _watcher_running:
             print("[LIFESPAN] Запускаю watcher/bots...", flush=True)
             from config import BOT_TOKEN, ADMIN_CHAT_ID, BOT4_BOT_TOKEN
