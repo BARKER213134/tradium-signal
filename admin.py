@@ -3735,6 +3735,117 @@ async def api_entry_picks():
         return {"ok": False, "error": str(e)}
 
 
+@app.get("/api/star-picks")
+async def api_star_picks():
+    """⭐ Лучшие звёзды сейчас: живые ⭐ за 24ч → дедуп → live-проверка
+    (фаза-гейт по подфазам, цена не уехала >4% от сигнальной) → ранжир
+    по силе лидера 7д (анатомия 22.07: выигрывают сильнейшие, +32.7% vs
+    +11.2% у проигравших) → топ-3 с готовыми уровнями от текущей цены."""
+    try:
+        from datetime import timedelta
+        from database import _get_db, utcnow
+        db = _get_db()
+        since = utcnow() - timedelta(hours=24)
+        cand = {}
+        for coll, tf in (("new_strategy_signals", "created_at"),
+                         ("supertrend_signals", "flip_at"),
+                         ("confluence", "detected_at"),
+                         ("verified_signals", "created_at")):
+            docs = await asyncio.to_thread(lambda c=coll, t=tf: list(
+                db[c].find({t: {"$gte": since}, "svetofor_star": True},
+                           {"pair": 1, "pair_norm": 1, "symbol": 1, "direction": 1,
+                            "entry": 1, "entry_price": 1, "price": 1,
+                            "svetofor_score": 1, t: 1}).limit(200)))
+            for x in docs:
+                sym = (x.get("symbol") or x.get("pair_norm")
+                       or (x.get("pair") or "").replace("/", "")).upper()
+                d = x.get("direction")
+                if not sym or d not in ("LONG", "SHORT"):
+                    continue
+                k = (sym, d)
+                e = x.get("entry") or x.get("entry_price") or x.get("price")
+                at = x.get(tf)
+                if k not in cand:
+                    cand[k] = dict(sym=sym, d=d, entry=e, at=at, n=1,
+                                   score=x.get("svetofor_score") or 0)
+                else:
+                    cand[k]["n"] += 1
+                    cand[k]["score"] = max(cand[k]["score"], x.get("svetofor_score") or 0)
+                    if at and (not cand[k]["at"] or at > cand[k]["at"]):
+                        cand[k]["at"] = at
+        if not cand:
+            return {"ok": True, "picks": [], "warn": "⭐ за 24ч нет — рынок не даёт "
+                    "полного профиля, это нормально (фильтр пропускает ~1% сигналов)"}
+
+        # live-контекст
+        from trade_grade import neutral_subphase
+        bdoc = await asyncio.to_thread(
+            lambda: db.market_state.find_one({"_id": "breadth"})) or {}
+        pct = bdoc.get("pct")
+        from rider_detector import get_btc_st4
+        st = await asyncio.to_thread(get_btc_st4)
+        phase = None
+        if pct is not None:
+            phase = ("NEUTRAL" if pct > 60 else "SHORT" if pct < 40
+                     else "LONG" if st == "UP" else "SHORT" if st == "DOWN" else "NEUTRAL")
+        nsub, _na, _ns = (await asyncio.to_thread(neutral_subphase)
+                          if phase == "NEUTRAL" else (None, None, None))
+        ctx_by_sym = await asyncio.to_thread(
+            lambda: {c["_id"]: c for c in db.pair_context.find({})})
+        import futures_data as _fd
+        await asyncio.to_thread(_fd._refresh_batch_cache)
+        tickers = (_fd._batch_cache or {}).get("ticker", {})
+
+        picks, skipped = [], []
+        for (sym, d), c in cand.items():
+            price = (tickers.get(sym) or {}).get("price")
+            ctx = ctx_by_sym.get(sym) or {}
+            r7 = ctx.get("ret7d")
+            # live фаза-гейт
+            if d == "LONG" and (phase == "SHORT" or (phase == "NEUTRAL" and nsub == "DOWN")):
+                skipped.append(f"{sym} LONG — фаза против")
+                continue
+            if d == "SHORT" and (phase == "LONG" or (phase == "NEUTRAL" and nsub != "DOWN")):
+                skipped.append(f"{sym} SHORT — фаза против")
+                continue
+            # профиль лидера жив?
+            if r7 is not None and ((d == "LONG" and r7 < 5) or (d == "SHORT" and r7 > -5)):
+                skipped.append(f"{sym} {d} — лидерство 7д истощилось")
+                continue
+            # цена не уехала от сигнальной
+            if price and c.get("entry"):
+                drift = (price / c["entry"] - 1) * 100 * (1 if d == "LONG" else -1)
+                if drift > 4:
+                    skipped.append(f"{sym} {d} — уехала +{drift:.1f}% от сигнала")
+                    continue
+                if drift < -4:
+                    skipped.append(f"{sym} {d} — уже {drift:.1f}%, профиль сломан")
+                    continue
+            kdir = 1 if d == "LONG" else -1
+            picks.append({
+                "symbol": sym, "pair": sym[:-4] + "/USDT",
+                "direction": d, "price": price,
+                "ret7d": r7, "atr_pct": ctx.get("atr_pct"),
+                "rsi4h": ctx.get("rsi4h"),
+                "n_sigs": c["n"], "score": c["score"],
+                "sig_entry": c.get("entry"),
+                "at": c["at"].isoformat() if c.get("at") else None,
+                "rank": abs(r7 or 0),
+                "levels": ({"entry": price,
+                            "stop": round(price * (1 - kdir * 0.05), 8),
+                            "target": round(price * (1 + kdir * 0.10), 8)}
+                           if price else None),
+            })
+        picks.sort(key=lambda p: (-p["rank"], -p["score"], -p["n_sigs"]))
+        return {"ok": True, "phase": phase, "neutral_sub": nsub,
+                "picks": picks[:3], "n_stars": len(cand),
+                "skipped": skipped[:8],
+                "rules": ("вход по рынку · стоп −5% · цель +10% · держать до 96ч · "
+                          "размер = (1-2% депозита) ÷ 5% · не двигать стоп")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/entry-check")
 async def api_entry_check(symbol: str, direction: str = "LONG"):
     """🚦 Проверка входа «как трейдер»: вставил монету + направление →

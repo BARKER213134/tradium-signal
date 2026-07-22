@@ -6782,9 +6782,11 @@ safeInterval(loadForexJournal, 30000);
   <button id="msPlanBtn" onclick="const p=document.getElementById('msPlan');p.style.display=p.style.display==='none'?'block':'none';this.textContent=p.style.display==='none'?'📋 Что делать':'📋 Свернуть';" style="background:rgba(76,201,240,0.10);border:1px solid rgba(76,201,240,0.4);border-radius:8px;color:#4cc9f0;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">📋 Что делать</button>
   <button id="msForecastBtn" onclick="toggleForecast(this)" style="background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.4);border-radius:8px;color:#ffd23e;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">⏳ Когда закончится?</button>
   <button id="msPicksBtn" onclick="togglePicks(this)" style="background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.4);border-radius:8px;color:#00e5a0;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">🎯 Входы сейчас</button>
+  <button id="msStarsBtn" onclick="toggleStars(this)" style="background:linear-gradient(135deg,rgba(255,210,62,0.18),rgba(255,140,80,0.10));border:1.5px solid rgba(255,210,62,0.6);border-radius:8px;color:#ffd23e;font-size:12px;font-weight:800;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">⭐ ЛУЧШИЕ ЗВЁЗДЫ</button>
   <div id="msPlan" style="display:none;flex-basis:100%;margin-top:10px;padding:14px 18px;background:rgba(10,14,20,0.5);border:1px solid var(--border);border-radius:10px;font-size:12.5px;line-height:1.9;color:var(--text);"></div>
   <div id="msForecast" style="display:none;flex-basis:100%;margin-top:10px;padding:14px 18px;background:rgba(10,14,20,0.5);border:1px solid rgba(255,210,62,0.3);border-radius:10px;font-size:12.5px;line-height:1.9;color:var(--text);"></div>
   <div id="msPicks" style="display:none;flex-basis:100%;margin-top:10px;padding:14px 18px;background:rgba(10,14,20,0.5);border:1px solid rgba(0,229,160,0.3);border-radius:10px;font-size:12.5px;line-height:1.7;color:var(--text);"></div>
+  <div id="msStars" style="display:none;flex-basis:100%;margin-top:10px;padding:14px 18px;background:rgba(10,14,20,0.5);border:1.5px solid rgba(255,210,62,0.45);border-radius:10px;font-size:12.5px;line-height:1.7;color:var(--text);"></div>
   <div id="msCands" style="display:none;flex-basis:100%;margin-top:10px;">
     <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);margin-bottom:6px;">
       <b style="color:#ffd23e;">🏆 КАНДИДАТЫ ФАЗЫ</b> — волатильные с импульсом (ловят 2–4 из 10 будущих лидеров против 0.5 у случайного выбора; клик — график)
@@ -6841,6 +6843,61 @@ async function loadForecastPanel() {
       d.lines.map(l => `· ${l}`).join('<br>') +
       spark +
       `<div style="margin-top:6px;font-size:11.5px;color:var(--muted);">${FLIP_HINT[d.side] || ''} · алерт о флипе придёт в боты сам (подтверждение ~2ч)</div>`;
+  } catch (e) {
+    box.innerHTML = '<span style="color:var(--muted);">ошибка загрузки</span>';
+  }
+}
+
+async function toggleStars(btn) {
+  const box = document.getElementById('msStars');
+  if (!box) return;
+  if (box.style.display !== 'none') {
+    box.style.display = 'none';
+    btn.textContent = '⭐ ЛУЧШИЕ ЗВЁЗДЫ';
+    return;
+  }
+  btn.textContent = '⭐ Свернуть';
+  box.style.display = 'block';
+  box.innerHTML = '<span style="color:var(--muted);">отбираю лучшие звёзды…</span>';
+  loadStarsPanel();
+}
+
+async function loadStarsPanel() {
+  const box = document.getElementById('msStars');
+  if (!box || box.style.display === 'none') return;
+  try {
+    const r = await fetch('/api/star-picks');
+    const d = await r.json();
+    if (!d.ok) { box.innerHTML = `<span style="color:var(--muted);">${d.error || 'нет данных'}</span>`; return; }
+    const fmtP = (v) => v == null ? '—' : (+v >= 100 ? (+v).toFixed(1) : +v >= 1 ? (+v).toFixed(4) : (+v).toPrecision(4));
+    let html = `<b style="color:#ffd23e;">⭐ ЛУЧШИЕ ЗВЁЗДЫ СЕЙЧАС</b> <span style="color:var(--muted);font-size:10.5px;font-family:var(--font-mono);">живые ⭐ за 24ч (${d.n_stars ?? 0}) → фаза-гейт → цена не уехала → ранжир по силе лидера · клик по тикеру — скопировать</span>`;
+    if (!d.picks || !d.picks.length) {
+      html += `<div style="margin-top:8px;color:var(--muted);">${d.warn || 'сейчас брать нечего: звёзды есть, но входы неактуальны (фаза против или цена уехала)'}</div>`;
+      if (d.skipped && d.skipped.length) {
+        html += `<div style="margin-top:6px;font-size:10.5px;color:var(--muted);font-family:var(--font-mono);">отсеяно: ${d.skipped.join(' · ')}</div>`;
+      }
+      box.innerHTML = html;
+      return;
+    }
+    html += '<div style="margin-top:10px;display:flex;flex-direction:column;gap:8px;">';
+    d.picks.forEach((p, i) => {
+      const dirB = p.direction === 'LONG'
+        ? '<span style="color:#00e5a0;font-weight:800;">LONG ↑</span>'
+        : '<span style="color:#ff5e9c;font-weight:800;">SHORT ↓</span>';
+      html += `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 14px;border-radius:10px;background:rgba(255,210,62,0.07);border:1.5px solid rgba(255,210,62,0.4);">
+        <b onclick="copyTicker('${p.symbol}', event)" title="Клик — скопировать ${p.symbol}" style="cursor:pointer;font-family:var(--font-mono);font-size:17px;padding:4px 10px;border-radius:8px;background:rgba(255,210,62,0.14);border:1px dashed rgba(255,210,62,0.6);">${i + 1}. ⭐ ${(p.pair || '').replace('/USDT', '')}</b>
+        ${dirB}
+        <span style="font-size:11px;color:var(--muted);flex:1;min-width:200px;">лидер 7д ${p.ret7d > 0 ? '+' : ''}${(p.ret7d ?? 0).toFixed(1)}% · ATR ${p.atr_pct ?? '—'}% · RSI4h ${p.rsi4h ?? '—'} · ${p.n_sigs} сигн. · счёт +${p.score}</span>
+        ${p.levels ? `<span style="font-family:var(--font-mono);font-size:11.5px;white-space:nowrap;">вход <b>${fmtP(p.levels.entry)}</b> · <span style="color:var(--sell);">стоп ${fmtP(p.levels.stop)}</span> · <span style="color:var(--buy);">цель ${fmtP(p.levels.target)}</span></span>` : ''}
+        <span onclick="openPairChart('${p.symbol}')" title="График" style="cursor:pointer;opacity:0.7;font-size:15px;">📈</span>
+      </div>`;
+    });
+    html += '</div>';
+    html += `<div style="margin-top:8px;font-size:11px;color:var(--muted);">📐 ${d.rules || ''}</div>`;
+    if (d.skipped && d.skipped.length) {
+      html += `<div style="margin-top:4px;font-size:10px;color:var(--muted);font-family:var(--font-mono);">отсеяно: ${d.skipped.join(' · ')}</div>`;
+    }
+    box.innerHTML = html;
   } catch (e) {
     box.innerHTML = '<span style="color:var(--muted);">ошибка загрузки</span>';
   }
@@ -7046,16 +7103,18 @@ async function loadMarketSide() {
       } catch (e) {}
       if (typeof loadForecastPanel === 'function') loadForecastPanel();
       if (typeof loadPicksPanel === 'function') loadPicksPanel();
+      if (typeof loadStarsPanel === 'function') loadStarsPanel();
     }
     window._msPrevSide = d.side;
   } catch (e) { /* тихо */ }
 }
 loadMarketSide();
 safeInterval(loadMarketSide, 60000);
-// открытые панели (⏳ прогноз / 🎯 входы) тоже живут без перезагрузки
+// открытые панели (⏳ прогноз / 🎯 входы / ⭐ звёзды) живут без перезагрузки
 safeInterval(() => {
   if (typeof loadForecastPanel === 'function') loadForecastPanel();
   if (typeof loadPicksPanel === 'function') loadPicksPanel();
+  if (typeof loadStarsPanel === 'function') loadStarsPanel();
 }, 120000);
 // вернулся во вкладку (браузер троттлит фоновые таймеры) — обновить сразу
 document.addEventListener('visibilitychange', () => {
