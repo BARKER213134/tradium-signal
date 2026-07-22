@@ -124,10 +124,14 @@ async def _svetofor_stamp_loop():
     while True:
         try:
             await _asyncio.to_thread(_hb, "svetofor")
-            from trade_grade import svetofor_stamp_recent
+            from trade_grade import svetofor_stamp_recent, svetofor_star_upgrade
             n = await _asyncio.to_thread(svetofor_stamp_recent)
             if n:
                 logger.info(f"[svetofor] проштамповано {n} сигналов")
+            # ⭐ дозапись: кластер мог дорасти после первого штампа
+            n2 = await _asyncio.to_thread(svetofor_star_upgrade)
+            if n2:
+                logger.info(f"[svetofor] ⭐ дозаписано {n2}")
         except Exception:
             logger.exception("[svetofor] stamp loop crashed")
         await _asyncio.sleep(600)

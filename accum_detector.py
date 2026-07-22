@@ -437,6 +437,7 @@ def scan_universe(max_pairs: int = 300):
                  "mom24": c["mom24"], "rsi4h": c.get("rsi4h"),
                  "st1_trend": c.get("st1_trend"), "st1_flip": c.get("st1_flip"),
                  "st4_trend": c.get("st4_trend"), "st4_flip": c.get("st4_flip"),
+                 "vol_ratio": c.get("vol_ratio"),
                  "atr_pct": c["atr_pct"], "updated_at": now},
                 upsert=True) for i, c in enumerate(ctx_rows)]
             _get_db().pair_context.bulk_write(ops, ordered=False)

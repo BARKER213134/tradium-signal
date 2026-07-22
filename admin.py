@@ -3919,11 +3919,24 @@ async def api_entry_check(symbol: str, direction: str = "LONG"):
             hard_no = hard_no or f"догон: +{mom24:.0f}% за 24ч — покупка верхушки пампа"
         elif direction == "SHORT" and mom24 < -20:
             hard_no = hard_no or f"догон вниз: {mom24:.0f}% за 24ч — шорт в яму"
+        elif direction == "SHORT" and mom24 > 20:
+            hard_no = hard_no or (f"шорт против рывка +{mom24:.0f}% за 24ч — "
+                                  f"отскок дожимает стопы (кейс LAB 22.07)")
         elif abs(mom24) > 12:
             score -= 1
             reasons.append({"ok": False, "t": f"ход {mom24:+.0f}% за 24ч — поздновато (−1)"})
         else:
             reasons.append({"ok": True, "t": f"без догона ({mom24:+.1f}% за 24ч)"})
+        # объём: зона 1.5-3× — худшая для обеих сторон (бэктест 8k ДА)
+        vol24r = None
+        if len(c1h) > 264:
+            _vb = sum(x["v"] for x in c1h[-264:-24]) / 240
+            if _vb > 0:
+                vol24r = (sum(x["v"] for x in c1h[-24:]) / 24) / _vb
+        if vol24r is not None and 1.5 <= vol24r < 3:
+            score -= 1
+            reasons.append({"ok": False, "t": f"объём {vol24r:.1f}× нормы — "
+                            f"движение уже прошло на объёме (−1)"})
         # RS-сила
         if pctl7d is not None:
             if direction == "LONG" and pctl7d >= 0.85:
@@ -4005,7 +4018,7 @@ async def api_entry_check(symbol: str, direction: str = "LONG"):
             else:
                 star = (ret7d is not None and ret7d < -10 and atr24 and atr24 > 1.5
                         and rsi4h is not None and 28 <= rsi4h <= 45
-                        and mom24 > -10 and score >= 6 and n_dir_sigs >= 3)
+                        and -10 < mom24 < 10 and score >= 6 and n_dir_sigs >= 3)
             if star:
                 reasons.insert(0, {"ok": True, "t": (
                     f"⭐ ОТБОРНЫЙ ВХОД — профиль победителей: лидер 7д {ret7d:+.0f}% · "

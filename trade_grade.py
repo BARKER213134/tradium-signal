@@ -345,15 +345,24 @@ def annotate_pro(items: list, extra_ctx: dict = None) -> None:
                 else:
                     score -= 1
                     checks.append("✗ шорт в ⚪🔺/▫ — без приоритета (−1)")
-            # догон
+            # догон (в обе стороны: LONG после рывка вверх, SHORT после
+            # слива вниз И против свежего отскока — кейс LAB 22.07)
             m24 = ctx.get("mom24")
             if m24 is not None:
                 if d == "LONG" and m24 > 20:
                     hard_no = hard_no or f"догон +{m24:.0f}%/24ч"
                 elif d == "SHORT" and m24 < -20:
                     hard_no = hard_no or f"догон вниз {m24:.0f}%/24ч"
+                elif d == "SHORT" and m24 > 20:
+                    hard_no = hard_no or f"шорт против рывка +{m24:.0f}%/24ч"
                 elif abs(m24) > 12:
                     score -= 1; checks.append(f"✗ ход {m24:+.0f}%/24ч — поздно (−1)")
+            # объём: зона 1.5-3× — худшая для обеих сторон (бэктест 8k ДА:
+            # LONG −2.01%, SHORT −0.46% — «движение уже прошло на объёме»)
+            vr_ = ctx.get("vol_ratio")
+            if vr_ is not None and 1.5 <= vr_ < 3:
+                score -= 1
+                checks.append(f"✗ объём {vr_:.1f}× нормы — движение уже прошло (−1)")
             # RS-сила 7д
             p7 = ctx.get("pctl7d")
             if p7 is not None:
@@ -421,7 +430,7 @@ def annotate_pro(items: list, extra_ctx: dict = None) -> None:
                 else:
                     star = (r7 is not None and r7 < -10 and atr_ and atr_ > 1.5
                             and r4 is not None and 28 <= r4 <= 45
-                            and m24 is not None and m24 > -10
+                            and m24 is not None and -10 < m24 < 10
                             and score >= 6 and n_sigs >= 3)
                 if star:
                     checks.insert(0, (f"⭐ ОТБОРНЫЙ ВХОД: лидер 7д {r7:+.0f}% · "
@@ -567,6 +576,99 @@ def svetofor_stamp_recent(hours: float = 2) -> int:
         except Exception:
             logger.debug(f"[svetofor-stamp] bulk {coll} fail", exc_info=True)
     return n_done
+
+
+def svetofor_star_upgrade(hours: float = 6) -> int:
+    """⭐ Дозапись звёзд: штамп ставится через ~10 мин после рождения
+    сигнала, когда кластер подтверждений ещё из 1-2 — звезда не фиксируется,
+    хотя позже кластер дорастает до 3+ и лента её показывает (22.07: в БД
+    7 звёзд, в ленте 28). Пересматривает свежие ДА без звезды и апгрейдит
+    False→True (даунгрейда нет — заработанная звезда остаётся)."""
+    from datetime import timedelta
+    from database import _get_db, utcnow
+    from pymongo import UpdateOne
+    db = _get_db()
+    since = utcnow() - timedelta(hours=hours)
+    cand = []  # (coll, _id, src_key, direction, sym, at)
+    for n_ in db.new_strategy_signals.find(
+            {"created_at": {"$gte": since}, "svetofor": "ДА",
+             "svetofor_star": {"$ne": True}},
+            {"strategy": 1, "pair": 1, "symbol": 1, "direction": 1, "created_at": 1}).limit(200):
+        sym = (n_.get("symbol") or (n_.get("pair") or "").replace("/", "")).upper()
+        cand.append(("new_strategy_signals", n_["_id"], n_.get("strategy"),
+                     n_["direction"], sym, n_["created_at"]))
+    for s_ in db.supertrend_signals.find(
+            {"flip_at": {"$gte": since}, "svetofor": "ДА",
+             "svetofor_star": {"$ne": True}},
+            {"tier": 1, "pair": 1, "direction": 1, "flip_at": 1}).limit(200):
+        sym = (s_.get("pair") or "").replace("/", "").upper()
+        cand.append(("supertrend_signals", s_["_id"],
+                     f"st_{s_.get('tier') or 'daily'}", s_["direction"], sym, s_["flip_at"]))
+    for c_ in db.confluence.find(
+            {"detected_at": {"$gte": since}, "svetofor": "ДА",
+             "svetofor_star": {"$ne": True}},
+            {"pair": 1, "symbol": 1, "direction": 1, "detected_at": 1, "score": 1}).limit(200):
+        sym = (c_.get("symbol") or (c_.get("pair") or "").replace("/", "")).upper()
+        key = "confluence_5plus" if (c_.get("score") or 0) >= 5 else "confluence_lo"
+        cand.append(("confluence", c_["_id"], key, c_["direction"], sym, c_["detected_at"]))
+    for v_ in db.verified_signals.find(
+            {"created_at": {"$gte": since}, "svetofor": "ДА",
+             "svetofor_star": {"$ne": True}},
+            {"pair": 1, "pair_norm": 1, "direction": 1, "created_at": 1}).limit(200):
+        sym = (v_.get("pair_norm") or (v_.get("pair") or "").replace("/", "")).upper()
+        cand.append(("verified_signals", v_["_id"], "verified", v_["direction"], sym, v_["created_at"]))
+    if not cand:
+        return 0
+    # соседи кандидатов за 48ч — чтобы cnt_by_key считался честно
+    syms = sorted({c[4] for c in cand})
+    nb_since = utcnow() - timedelta(hours=48)
+    nb_items = []
+    pairs_slash = [s[:-4] + "/USDT" for s in syms if s.endswith("USDT")]
+    for n_ in db.new_strategy_signals.find(
+            {"created_at": {"$gte": nb_since},
+             "$or": [{"symbol": {"$in": syms}}, {"pair": {"$in": pairs_slash}}]},
+            {"strategy": 1, "symbol": 1, "pair": 1, "direction": 1, "created_at": 1}).limit(2000):
+        sym = (n_.get("symbol") or (n_.get("pair") or "").replace("/", "")).upper()
+        nb_items.append({"source": n_.get("strategy"), "strategy": n_.get("strategy"),
+                         "direction": n_.get("direction"), "symbol": sym,
+                         "pair": sym[:-4] + "/USDT",
+                         "at_ts": int(n_["created_at"].timestamp())})
+    for s_ in db.supertrend_signals.find(
+            {"flip_at": {"$gte": nb_since}, "pair_norm": {"$in": syms}},
+            {"tier": 1, "pair_norm": 1, "direction": 1, "flip_at": 1}).limit(2000):
+        sym = s_.get("pair_norm")
+        nb_items.append({"source": "supertrend", "st_tier": s_.get("tier"),
+                         "direction": s_.get("direction"), "symbol": sym,
+                         "pair": sym[:-4] + "/USDT",
+                         "at_ts": int(s_["flip_at"].timestamp())})
+    # кандидаты как псевдо-items (для annotate)
+    c_items = []
+    for coll, _id, src, d, sym, at in cand:
+        pseudo_src = ("supertrend" if coll == "supertrend_signals" else
+                      "confluence" if coll == "confluence" else
+                      "verified" if coll == "verified_signals" else src)
+        c_items.append({"source": pseudo_src,
+                        "st_tier": src[3:] if src.startswith("st_") else None,
+                        "score": 5 if src == "confluence_5plus" else 0,
+                        "strategy": src, "direction": d, "symbol": sym,
+                        "pair": sym[:-4] + "/USDT" if sym.endswith("USDT") else sym,
+                        "at_ts": int(at.timestamp())})
+    all_items = c_items + nb_items
+    annotate_items(all_items)
+    annotate_pro(all_items)
+    ops = {}
+    n_up = 0
+    for (coll, _id, src, d, sym, at), it in zip(cand, c_items):
+        if it.get("pro_star"):
+            ops.setdefault(coll, []).append(UpdateOne(
+                {"_id": _id}, {"$set": {"svetofor_star": True}}))
+    for coll, o in ops.items():
+        try:
+            r = db[coll].bulk_write(o, ordered=False)
+            n_up += r.modified_count
+        except Exception:
+            logger.debug(f"[star-upgrade] bulk {coll} fail", exc_info=True)
+    return n_up
 
 
 def annotate_items(items: list) -> None:
