@@ -1572,9 +1572,37 @@ async def _market_side_alert_loop():
                                f"ширина рынка: {pct:.0f}%"
                                + (f" · BTC ST4h {btc}" if btc else "") + "\n"
                                + cand_txt +
+                               ("<b>⚠️ Открыты позиции против новой стороны — "
+                                "закрой или переоцени их сейчас.</b>\n" if prev in ("LONG", "SHORT") else "") +
                                "<i>бэктест год: торгуй только по стороне бейджа "
                                "(+3..+6пп к безубытку), против — минус обеим сторонам</i>")
                         await _market_side_broadcast(txt)
+                        await _asyncio.to_thread(lambda: db.system.update_one(
+                            {"_id": "market_side_state"},
+                            {"$set": {"last_reminder_at": utcnow()}}, upsert=True))
+                else:
+                    # ⏰ повторные напоминания: одно ночное сообщение легко
+                    # проспать (23.07: флип 01:25, алерт 03:25 = 05:25 локали,
+                    # юзер держал лонги против 🔴 10 часов). Пока направленная
+                    # фаза держится — повтор каждые 4ч.
+                    if side in ("LONG", "SHORT") and doc.get("changed_at"):
+                        lr = doc.get("last_reminder_at") or doc.get("changed_at")
+                        age_h = (utcnow() - doc["changed_at"]).total_seconds() / 3600
+                        if age_h >= 4 and (utcnow() - lr).total_seconds() >= 4 * 3600:
+                            E = {"LONG": "🟢 LONG", "SHORT": "🔴 SHORT"}
+                            BAN = {"LONG": "🚫 НЕ ШОРТИТЬ",
+                                   "SHORT": "🚫 НЕ ЛОНГОВАТЬ — закрой лонги, если держишь"}
+                            txt = (f"⏰ <b>НАПОМИНАНИЕ: рынок {E[side]} уже "
+                                   f"{age_h:.0f}ч</b>\n"
+                                   f"<b>{BAN[side]}</b>\n"
+                                   f"ширина рынка: {pct:.0f}%"
+                                   + (f" · BTC ST4h {btc}" if btc else "") + "\n"
+                                   f"<i>подтверждён в {doc['changed_at'].strftime('%H:%M')} UTC · "
+                                   f"повтор каждые 4ч, пока фаза держится</i>")
+                            await _market_side_broadcast(txt)
+                            await _asyncio.to_thread(lambda: db.system.update_one(
+                                {"_id": "market_side_state"},
+                                {"$set": {"last_reminder_at": utcnow()}}, upsert=True))
         except Exception:
             logger.exception("[market-side] alert loop error")
         await _asyncio.sleep(300)
