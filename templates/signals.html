@@ -6777,7 +6777,7 @@ safeInterval(loadForexJournal, 30000);
   <div style="flex:1;min-width:200px;">
     <div id="msReason" style="font-size:12.5px;color:var(--text);line-height:1.5;"></div>
     <div id="msPhase" style="display:none;font-size:12px;font-weight:700;margin-top:4px;font-family:var(--font-mono);"></div>
-    <div id="msClimate" style="display:none;font-size:12px;font-weight:700;margin-top:4px;font-family:var(--font-mono);" title="Глобальная фаза на 12h-барах (та же методика: ширина рынка по RSI12h + BTC ST12h). Год-бэктест: эдж в РАСХОЖДЕНИЯХ этажей — 🔴12ч+🟢4ч лонг WR 58%, перегретый 🟢12ч = шорты; фильтр «оба согласны» эджа не даёт"></div>
+    <div id="msClimate" style="display:none;font-size:12px;font-weight:700;margin-top:6px;padding:6px 10px;border-radius:8px;border:1px dashed;font-family:var(--font-mono);line-height:1.5;" title="Глобальная фаза на 12h-барах (та же методика: ширина рынка по RSI12h + BTC ST12h). Год-бэктест: эдж в РАСХОЖДЕНИЯХ этажей — 🔴12ч+🟢4ч лонг WR 58%, перегретый 🟢12ч = шорты; фильтр «оба согласны» эджа не даёт"></div>
     <div id="msMeta" style="font-size:10px;color:var(--muted);margin-top:3px;font-family:var(--font-mono);"></div>
   </div>
   <button id="msPlanBtn" onclick="const p=document.getElementById('msPlan');p.style.display=p.style.display==='none'?'block':'none';this.textContent=p.style.display==='none'?'📋 Что делать':'📋 Свернуть';" style="background:rgba(76,201,240,0.10);border:1px solid rgba(76,201,240,0.4);border-radius:8px;color:#4cc9f0;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">📋 Что делать</button>
@@ -7072,9 +7072,13 @@ async function loadMarketSide() {
         clim.textContent = `🌡 климат 12ч: ${c12.emoji} ${stTxt}` +
           (c12.pct != null ? ` · ширина ${c12.pct}%` : '') +
           (c12.hint ? ` · ${c12.hint}` : '');
-        clim.style.color = (c12.hint || '').startsWith('🔥') ? '#00e5a0'
+        const climCol = (c12.hint || '').startsWith('🔥') ? '#00e5a0'
           : (c12.hint || '').startsWith('⚠') ? '#ffd23e' : '#9aa4b5';
+        clim.style.color = climCol;
+        clim.style.borderColor = climCol + '66';
+        clim.style.background = climCol + '14';
         clim.style.display = 'block';
+        window._climHint = c12;
       } else {
         clim.style.display = 'none';
       }
@@ -7103,6 +7107,15 @@ async function loadMarketSide() {
 5️⃣ ⚪ ломается в 🔴 в 72% случаев — скорее всего следующий план будет шортовый.`,
       };
       plan.innerHTML = PLANS[d.side] || '';
+      // 🌡 климат-совет в план: комбинация этажей меняет действия
+      if (d.climate12 && d.climate12.state && d.climate12.hint) {
+        const cCol = d.climate12.hint.startsWith('🔥') ? '#00e5a0'
+          : d.climate12.hint.startsWith('⚠') ? '#ffd23e' : '#9aa4b5';
+        plan.innerHTML += `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed ${cCol}55;">` +
+          `<b style="color:${cCol};">🌡 Поправка на климат 12ч (${d.climate12.emoji}` +
+          (d.climate12.pct != null ? `, ширина ${d.climate12.pct}%` : '') + `):</b> ` +
+          `${d.climate12.hint}</div>`;
+      }
     }
     loadPhaseCandidates(d.side);
     const age = d.updated_at ? Math.round((Date.now() - new Date(d.updated_at).getTime()) / 60000) : null;
