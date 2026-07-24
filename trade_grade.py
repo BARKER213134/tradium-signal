@@ -249,6 +249,32 @@ def neutral_subphase():
     return val
 
 
+_clim_cache = {"at": 0.0, "val": None}
+
+
+def climate12():
+    """🌡 12h-климат (глобальная фаза) из 30-мин скана. Год-бэктест
+    (матрица 12h×4h, сетка 10/5/96ч): фильтр «оба этажа согласны» ВРЕДИТ
+    (EV +0.05 vs +0.21 у голой 4h-фазы), весь эдж — в расхождениях:
+    🔴12h + 🟢4h LONG +2.03 (WR 57.8) · 🟢12h SHORT +0.88..+2.73 ·
+    🟢12h + ⚪4h LONG −2.05 (худшая ячейка года). Кэш 120с; None если
+    скан старше 2ч — протухший климат не двигает оценку."""
+    now = time.time()
+    if now - _clim_cache["at"] < 120:
+        return _clim_cache["val"]
+    val = None
+    try:
+        from database import _get_db, utcnow
+        d = _get_db().market_state.find_one({"_id": "climate12"})
+        if d and d.get("state") and d.get("updated_at") is not None:
+            if (utcnow() - d["updated_at"]).total_seconds() < 2 * 3600:
+                val = d["state"]
+    except Exception:
+        logger.debug("[climate12] load fail", exc_info=True)
+    _clim_cache.update(at=now, val=val)
+    return val
+
+
 _ctx_cache = {"at": 0.0, "by_sym": {}}
 
 
@@ -281,6 +307,7 @@ def annotate_pro(items: list, extra_ctx: dict = None) -> None:
         ctx_by_sym.update(extra_ctx)
     flips = _phase_flips()
     phase = flips[-1][1] if flips else None
+    clim = climate12()
     now_ts = time.time()
     # лучший грейд + число подтверждений (та же монета/направление, 48ч)
     best_by_key, cnt_by_key = {}, {}
@@ -345,6 +372,25 @@ def annotate_pro(items: list, extra_ctx: dict = None) -> None:
                 else:
                     score -= 1
                     checks.append("✗ шорт в ⚪🔺/▫ — без приоритета (−1)")
+            # 🌡 12h-климат: эдж в РАСХОЖДЕНИЯХ этажей (год, матрица 12h×4h)
+            if clim:
+                if d == "LONG" and clim == "SHORT" and phase == "LONG":
+                    score += 2
+                    checks.append("✓ 🟢 внутри красного 12ч-климата — ранний "
+                                  "разворот (WR 58, EV +2.0) (+2)")
+                elif d == "SHORT" and clim == "LONG":
+                    if phase == "NEUTRAL":
+                        score += 2
+                        checks.append("✓ перегретый 12ч-климат остывает (⚪) — "
+                                      "фейд вершины (EV +2.7) (+2)")
+                    else:
+                        score += 1
+                        checks.append("✓ климат 12ч 🟢 перегрет — шорт в плюсе "
+                                      "во всех фазах (+1)")
+                elif d == "LONG" and clim == "LONG" and phase == "NEUTRAL":
+                    score -= 2
+                    checks.append("✗ докупка остывающего перегрева (🟢12ч + ⚪) — "
+                                  "худшая ячейка года −2.05 (−2)")
             # догон (в обе стороны: LONG после рывка вверх, SHORT после
             # слива вниз И против свежего отскока — кейс LAB 22.07)
             m24 = ctx.get("mom24")

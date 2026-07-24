@@ -3381,10 +3381,40 @@ async def api_market_side():
                     phase_hint = hints.get(nsub, phase_hint)
             except Exception:
                 pass
+        # 🌡 12h-климат для подсказки в бейдже (год-бэктест: эдж в
+        # расхождениях этажей, фильтр согласия эджа не даёт)
+        climate = None
+        try:
+            cd = await asyncio.to_thread(
+                lambda: _get_db().market_state.find_one({"_id": "climate12"}))
+            if cd and cd.get("state"):
+                cs = cd["state"]
+                CE = {"LONG": "🟢", "NEUTRAL": "⚪", "SHORT": "🔴"}
+                if cs == "SHORT" and side == "LONG":
+                    ch = ("🔥 разворот из красного климата — лучшие лонги года "
+                          "(WR 58%, EV +2.0/сделку)")
+                elif cs == "LONG" and side == "NEUTRAL":
+                    ch = ("⚠️ перегрев 12ч остывает: шорты EV +2.7, "
+                          "лонги −2.1 — НЕ докупать")
+                elif cs == "LONG" and side == "SHORT":
+                    ch = "фейд перегрева — шорты в плюсе, лонги мертвы"
+                elif cs == "LONG" and side == "LONG":
+                    ch = ("оба этажа 🟢 — движение выработано, "
+                          "вход только с триггером")
+                elif cs == "SHORT" and side == "SHORT":
+                    ch = "оба этажа 🔴 — по стороне, но эдж уже средний"
+                elif cs == "SHORT":
+                    ch = "красный климат — лонги только на свежем 🟢-развороте 4ч"
+                else:
+                    ch = "климат нейтрален — решает 4ч-фаза"
+                climate = {"state": cs, "emoji": CE.get(cs, "?"),
+                           "pct": cd.get("pct"), "hint": ch}
+        except Exception:
+            pass
         return {"side": side, "breadth_pct": pct, "btc_st4": st,
                 "n_pairs": doc.get("total"), "reason": reason,
                 "phase_age_h": phase_age_h, "phase_hint": phase_hint,
-                "neutral_sub": neutral_sub,
+                "neutral_sub": neutral_sub, "climate12": climate,
                 "updated_at": upd.isoformat() if hasattr(upd, "isoformat") else None}
     except Exception as e:
         return {"side": "?", "error": str(e)}
@@ -4025,6 +4055,27 @@ async def api_entry_check(symbol: str, direction: str = "LONG"):
                 score -= 1
                 reasons.append({"ok": False, "t": f"подфаза {NSUB_E.get(nsub, '⚪')} — "
                                 "шорт без приоритета (−1)"})
+        # 🌡 12h-климат: эдж в РАСХОЖДЕНИЯХ этажей (год, матрица 12h×4h)
+        from trade_grade import climate12
+        clim = await asyncio.to_thread(climate12)
+        if clim:
+            if direction == "LONG" and clim == "SHORT" and phase == "LONG":
+                score += 2
+                reasons.append({"ok": True, "t": "🟢 внутри красного 12ч-климата — "
+                                "ранний разворот, лучшая ячейка года (WR 58%, EV +2.0) (+2)"})
+            elif direction == "SHORT" and clim == "LONG":
+                if phase == "NEUTRAL":
+                    score += 2
+                    reasons.append({"ok": True, "t": "перегретый 12ч-климат остывает (⚪) — "
+                                    "фейд вершины (WR 61%, EV +2.7) (+2)"})
+                else:
+                    score += 1
+                    reasons.append({"ok": True, "t": "климат 12ч 🟢 перегрет — "
+                                    "шорт в плюсе во всех фазах (+1)"})
+            elif direction == "LONG" and clim == "LONG" and phase == "NEUTRAL":
+                score -= 2
+                reasons.append({"ok": False, "t": "докупка остывающего перегрева "
+                                "(🟢12ч + ⚪4ч) — худшая ячейка года −2.05 (−2)"})
         # догон
         if direction == "LONG" and mom24 > 20:
             hard_no = hard_no or f"догон: +{mom24:.0f}% за 24ч — покупка верхушки пампа"

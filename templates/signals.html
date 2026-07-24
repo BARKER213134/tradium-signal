@@ -6777,6 +6777,7 @@ safeInterval(loadForexJournal, 30000);
   <div style="flex:1;min-width:200px;">
     <div id="msReason" style="font-size:12.5px;color:var(--text);line-height:1.5;"></div>
     <div id="msPhase" style="display:none;font-size:12px;font-weight:700;margin-top:4px;font-family:var(--font-mono);"></div>
+    <div id="msClimate" style="display:none;font-size:12px;font-weight:700;margin-top:4px;font-family:var(--font-mono);" title="Глобальная фаза на 12h-барах (та же методика: ширина рынка по RSI12h + BTC ST12h). Год-бэктест: эдж в РАСХОЖДЕНИЯХ этажей — 🔴12ч+🟢4ч лонг WR 58%, перегретый 🟢12ч = шорты; фильтр «оба согласны» эджа не даёт"></div>
     <div id="msMeta" style="font-size:10px;color:var(--muted);margin-top:3px;font-family:var(--font-mono);"></div>
   </div>
   <button id="msPlanBtn" onclick="const p=document.getElementById('msPlan');p.style.display=p.style.display==='none'?'block':'none';this.textContent=p.style.display==='none'?'📋 Что делать':'📋 Свернуть';" style="background:rgba(76,201,240,0.10);border:1px solid rgba(76,201,240,0.4);border-radius:8px;color:#4cc9f0;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">📋 Что делать</button>
@@ -7060,6 +7061,22 @@ async function loadMarketSide() {
         ph.style.display = 'block';
       } else {
         ph.style.display = 'none';
+      }
+    }
+    // 🌡 12h-климат: подсказка (год: эдж в расхождениях этажей)
+    const clim = document.getElementById('msClimate');
+    if (clim) {
+      if (d.climate12 && d.climate12.state) {
+        const c12 = d.climate12;
+        const stTxt = {LONG: 'LONG (перегрет)', SHORT: 'SHORT', NEUTRAL: 'нейтрален'}[c12.state] || c12.state;
+        clim.textContent = `🌡 климат 12ч: ${c12.emoji} ${stTxt}` +
+          (c12.pct != null ? ` · ширина ${c12.pct}%` : '') +
+          (c12.hint ? ` · ${c12.hint}` : '');
+        clim.style.color = (c12.hint || '').startsWith('🔥') ? '#00e5a0'
+          : (c12.hint || '').startsWith('⚠') ? '#ffd23e' : '#9aa4b5';
+        clim.style.display = 'block';
+      } else {
+        clim.style.display = 'none';
       }
     }
     // 📋 план действий по-тупому — меняется по состоянию

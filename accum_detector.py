@@ -217,14 +217,14 @@ def _delta_series_sig(pair: str, kd: list[dict]) -> Optional[dict]:
         return None
 
 
-def _rsi4h_value(candles: list[dict]):
-    """(RSI14(4h) последнего бара, SMA14 RSI) или None.
-    4h-ресемпл из 1h свечей, Wilder RSI."""
+def _rsi4h_value(candles: list[dict], hours: int = 4):
+    """(RSI14 последнего бара, SMA14 RSI) на ресемпле `hours` или None.
+    Ресемпл из 1h свечей, Wilder RSI. hours=12 — для 12h-климата."""
     try:
         closes = []
         cur_key = None
         for c in candles:
-            k = c["t"] // (4 * 3600_000)
+            k = c["t"] // (hours * 3600_000)
             if k != cur_key:
                 closes.append(c["c"])
                 cur_key = k
@@ -293,14 +293,19 @@ def scan_universe(max_pairs: int = 300):
     first_err = None
     delta_map = []
     breadth_bull = breadth_tot = 0
+    breadth12_bull = breadth12_tot = 0
+    btc_kd = None
     ds_fired = 0
     cand_rows = []
     for sym in pairs:
         pair = sym.replace("USDT", "/USDT") if "/" not in sym else sym
         try:
             # один фьючерсный запрос на пару: и база, и текущая 24ч-дельта
-            kd = _fetch_klines_delta(pair, 320)
+            # (400 баров: 12h-климату нужно >=32 закрытых 12h-свечи)
+            kd = _fetch_klines_delta(pair, 400)
             checked += 1
+            if pair == "BTC/USDT" and kd:
+                btc_kd = kd
             if kd and len(kd) >= 260:
                 _rv = _rsi4h_value(kd)
                 _bull = None if _rv is None else _rv[0] > _rv[1]
@@ -308,6 +313,12 @@ def scan_universe(max_pairs: int = 300):
                     breadth_tot += 1
                     if _bull:
                         breadth_bull += 1
+                # 🌡 ширина на 12h — для глобального климата
+                _rv12 = _rsi4h_value(kd, 12)
+                if _rv12 is not None:
+                    breadth12_tot += 1
+                    if _rv12[0] > _rv12[1]:
+                        breadth12_bull += 1
                 # 💠 серия дельт — инфо-сигнал в журнал (кулдаун 24ч на пару)
                 _ds = _delta_series_sig(pair, kd)
                 if _ds is not None:
@@ -459,6 +470,50 @@ def scan_universe(max_pairs: int = 300):
             _last_scan["breadth"] = f"{breadth_bull}/{breadth_tot}"
     except Exception:
         logger.exception("[accum] breadth store fail")
+    # 🌡 12h-климат (глобальная фаза): та же методика на 12h-барах.
+    # Год-бэктест (матрица 12h×4h, сетка 10/5/96ч): фильтр «оба этажа
+    # согласны» вредит (EV +0.05 vs +0.21), эдж в расхождениях:
+    # 🔴12h+🟢4h LONG +2.03 (WR 58) · 🟢12h SHORT +0.88..+2.73 ·
+    # 🟢12h+⚪4h LONG −2.05 (худшая ячейка года)
+    try:
+        if breadth12_tot >= 50:
+            _pct12 = round(breadth12_bull / breadth12_tot * 100, 1)
+            _bst12 = None
+            try:
+                if btc_kd is None:
+                    btc_kd = _fetch_klines_delta("BTC/USDT", 400)
+                if btc_kd:
+                    from backtest_supertrend import compute_st_series
+                    _b12 = {}
+                    for _x in btc_kd:
+                        _k = _x["t"] // (12 * 3600_000)
+                        if _k not in _b12:
+                            _b12[_k] = dict(_x)
+                        else:
+                            _b12[_k]["h"] = max(_b12[_k]["h"], _x["h"])
+                            _b12[_k]["l"] = min(_b12[_k]["l"], _x["l"])
+                            _b12[_k]["c"] = _x["c"]
+                    _kd12 = [_b12[_k] for _k in sorted(_b12)][:-1]  # закрытые
+                    _s12 = compute_st_series(_kd12, 10, 3.0)
+                    if len(_s12) >= 3:
+                        _bst12 = _s12[-1]["trend"]
+            except Exception:
+                pass
+            _c_state = ("NEUTRAL" if _pct12 > 60 else "SHORT" if _pct12 < 40
+                        else "LONG" if _bst12 == 1 else
+                        "SHORT" if _bst12 == -1 else "NEUTRAL")
+            from database import _get_db, utcnow
+            _get_db().market_state.update_one(
+                {"_id": "climate12"},
+                {"$set": {"pct": _pct12, "bull": breadth12_bull,
+                          "total": breadth12_tot,
+                          "btc_st12": ("UP" if _bst12 == 1 else
+                                       "DOWN" if _bst12 == -1 else None),
+                          "state": _c_state, "updated_at": utcnow()}},
+                upsert=True)
+            _last_scan["climate12"] = f"{_c_state} {_pct12}%"
+    except Exception:
+        logger.exception("[accum] climate12 store fail")
     # sample: сколько пар вообще дали свечи (диагностика get_klines_any)
     try:
         if pairs:
