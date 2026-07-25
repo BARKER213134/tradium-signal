@@ -2339,6 +2339,229 @@ loadCapit();
 safeInterval(loadCapit, 60000);
 </script>
 
+{% elif bot == 'thin_pump' %}
+<!-- ════════════ 💨 ТОНКИЙ ПАМП — шорт роста без объёма (research 25.07) ════════════ -->
+<div class="strategy-box">
+  <div class="strat-icon">💨</div>
+  <div class="strat-body">
+    <div class="strat-title">Стратегия · ТОНКИЙ ПАМП — шорт роста по пустому стакану (research 25.07)</div>
+    Зелёный 1h-бар с ходом <b>больше 2.2× своей медианы-240ч</b>, но на объёме <b>НИЖЕ медианы</b> —
+    рост без реального покупателя, цену двигают по тонкому стакану. Вход шорт по закрытию бара.
+    Сетка <b>TP −10% / SL +5% / 96ч</b>, кулдаун 24ч.<br>
+    Бэктест 90д (тот самый тяжёлый квартал): <b>WR 51.3%, EV +1.36%/сделку</b>, до −10% доходят 27.7%
+    (случайный шорт: 39.8% / −0.22). Единственная торгуемая аномалия из протестированных:
+    абсорбция, объёмный климакс и «аномальный объём» в обе стороны — все ±0.2пп от рандома.
+    Обратная сторона (лонг тонкого слива) отвергнута: −1.32. TG-алерт в BOT16 на каждый сигнал (~6/день).
+  </div>
+</div>
+
+<div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+  <select id="tpState" onchange="loadThinPump()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="">Все статусы</option>
+    <option value="WAITING">⏳ WAITING</option>
+    <option value="TP">✅ TP</option>
+    <option value="SL">❌ SL</option>
+    <option value="TIMEOUT">⌛ TIMEOUT</option>
+  </select>
+  <select id="tpHours" onchange="loadThinPump()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="24">сутки</option>
+    <option value="72">3 дня</option>
+    <option value="168" selected>7 дней</option>
+    <option value="336">14 дней</option>
+    <option value="2208">92 дня (бэкфилл)</option>
+  </select>
+  <span id="tpStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th style="padding:12px 14px;">Время</th>
+      <th style="padding:12px 14px;">Пара</th>
+      <th style="padding:12px 14px;text-align:center;">Фаза</th>
+      <th style="padding:12px 14px;text-align:right;">Ход ×</th>
+      <th style="padding:12px 14px;text-align:right;">Объём ×</th>
+      <th style="padding:12px 14px;">Entry</th>
+      <th style="padding:12px 14px;">TP</th>
+      <th style="padding:12px 14px;">SL</th>
+      <th style="padding:12px 14px;text-align:center;">Статус</th>
+      <th style="padding:12px 14px;text-align:right;">PnL</th>
+    </tr></thead>
+    <tbody id="tpBody">
+      <tr><td colspan="10" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+function _tpFmt(v) {
+  if (v == null) return '—';
+  const n = +v;
+  if (!isFinite(n)) return '—';
+  return n >= 100 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n.toPrecision(4);
+}
+async function loadThinPump() {
+  const tb = document.getElementById('tpBody');
+  try {
+    const hours = document.getElementById('tpHours').value || '168';
+    const r = await fetch('/api/momentum-signals?strat=thin_pump&hours=' + hours);
+    const d = await r.json();
+    let rows = d.items || [];
+    const total = rows.length;
+    const state = document.getElementById('tpState').value;
+    if (state) rows = rows.filter(x => (x.state || 'WAITING') === state);
+    const closed = rows.filter(x => ['TP', 'SL', 'TIMEOUT'].includes(x.state) && x.pnl_pct != null);
+    const wins = closed.filter(x => x.pnl_pct > 0).length;
+    const pnlSum = closed.reduce((a, x) => a + (x.pnl_pct || 0), 0);
+    let statsTxt = `${rows.length} из ${total} сигналов`;
+    if (closed.length) {
+      statsTxt += ` · закрыто ${closed.length}: WR ${Math.round(wins / closed.length * 100)}%` +
+                  `, Σ ${pnlSum >= 0 ? '+' : ''}${pnlSum.toFixed(1)}%`;
+    }
+    document.getElementById('tpStats').textContent = statsTxt;
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;" class="text-muted">' +
+        'Сигналов под фильтр нет. Тонкий памп редкий (~6/день на 300 пар): нужен ход >2.2× нормы на объёме ниже медианы.</td></tr>';
+      return;
+    }
+    const STATE_BADGE = {
+      WAITING: '<span style="color:#ffd23e;font-weight:700;">⏳ WAIT</span>',
+      TP: '<span style="color:var(--buy);font-weight:700;">✅ TP</span>',
+      SL: '<span style="color:var(--sell);font-weight:700;">❌ SL</span>',
+      TIMEOUT: '<span style="color:var(--muted);font-weight:700;">⌛ TIME</span>',
+    };
+    const PHASE_BADGE = {
+      LONG: '<span style="color:var(--buy);font-weight:700;">🟢</span>',
+      NEUTRAL: '<span style="color:#9aa4b5;font-weight:700;">⚪</span>',
+      SHORT: '<span style="color:var(--sell);font-weight:700;">🔴</span>',
+    };
+    tb.innerHTML = rows.slice(0, 300).map(x => {
+      const t = x.at ? new Date(x.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+      const pair = (x.pair || '').replace('/USDT', '');
+      const ind = x.indicators || {};
+      const pnl = x.pnl_pct;
+      const pnlTxt = pnl == null ? '—'
+        : `<span style="color:${pnl >= 0 ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${pnl >= 0 ? '+' : ''}${(+pnl).toFixed(2)}%</span>`;
+      return `<tr>
+        <td class="mono" style="font-size:12px;">${t}</td>
+        <td class="mono fw-700" style="color:var(--text);cursor:pointer;border-bottom:1px dashed rgba(255,210,62,0.4);" onclick="copyTicker('${pair}USDT', event)" title="Клик — скопировать ${pair}USDT">💨 ${pair} <span onclick="openPairChart('${pair}USDT');event.stopPropagation()" title="График ${pair}" style="cursor:pointer;opacity:0.65;">📈</span></td>
+        <td style="text-align:center;">${PHASE_BADGE[ind.phase] || '—'}</td>
+        <td class="mono" style="text-align:right;color:#ff8c50;font-weight:700;">×${ind.rng_x != null ? (+ind.rng_x).toFixed(1) : '—'}</td>
+        <td class="mono" style="text-align:right;color:#9aa4b5;">×${ind.vol_x != null ? (+ind.vol_x).toFixed(2) : '—'}</td>
+        <td class="mono">${_tpFmt(x.entry)}</td>
+        <td class="mono" style="color:var(--buy);">${_tpFmt(x.tp)}</td>
+        <td class="mono" style="color:var(--sell);">${_tpFmt(x.sl)}</td>
+        <td style="text-align:center;">${STATE_BADGE[x.state] || STATE_BADGE.WAITING}</td>
+        <td class="mono" style="text-align:right;">${pnlTxt}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--sell);">Ошибка: ' + e.message + '</td></tr>';
+  }
+}
+loadThinPump();
+safeInterval(loadThinPump, 60000);
+</script>
+
+{% elif bot == 'vol_anomaly' %}
+<!-- ════════════ ⚡ АНОМАЛИИ ОБЪЁМА — скринер событий у экстремумов (research 25.07) ════════════ -->
+<div class="strategy-box" style="border-color:rgba(255,210,62,0.4);">
+  <div class="strat-icon">⚡</div>
+  <div class="strat-body">
+    <div class="strat-title">Скринер · АНОМАЛЬНЫЙ ОБЪЁМ у экстремума — ИНФО, не сигнал</div>
+    Закрытый 1h-бар с объёмом <b>&gt;4× SMA24</b> и крупной дельтой (|Δ|&gt;q75) на <b>новом 48ч-хае или лоу</b> —
+    здесь торговал крупный игрок. Бэктест 90д по всем комбинациям (покупка/продажа × верх/низ × узкий/широкий бар):
+    <b>направление НЕ предсказывает</b> (±0.2пп от рандома) — поэтому это скринер-водопад, а не сигнал со ставкой.<br>
+    Как пользоваться: событие → клик 📈 → кнопка <b>🧮 Кластеры</b> → смотри контекст уровня (кольца ⚡, имбалансы,
+    абсорбция). Кулдаун 12ч/пару, хранение 7 дней. В TG (BOT16) уходят только сверх-аномалии <b>объём &gt;8×</b> (~несколько/день).
+  </div>
+</div>
+
+<div style="display:flex;gap:10px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+  <select id="vaLoc" onchange="loadVolAnoms()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="">Верх и низ</option>
+    <option value="TOP">🔺 на вершине (48ч-хай)</option>
+    <option value="BOT">🔻 на дне (48ч-лоу)</option>
+  </select>
+  <select id="vaHours" onchange="loadVolAnoms()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:12px;font-family:var(--font-mono);">
+    <option value="12">12 часов</option>
+    <option value="24">сутки</option>
+    <option value="48" selected>2 дня</option>
+    <option value="168">7 дней</option>
+  </select>
+  <span id="vaStats" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th style="padding:12px 14px;">Время</th>
+      <th style="padding:12px 14px;">Пара</th>
+      <th style="padding:12px 14px;text-align:center;">Где</th>
+      <th style="padding:12px 14px;text-align:right;">Объём ×</th>
+      <th style="padding:12px 14px;text-align:right;">Дельта</th>
+      <th style="padding:12px 14px;text-align:center;">Кто</th>
+      <th style="padding:12px 14px;">Цена</th>
+      <th style="padding:12px 14px;text-align:center;">Фаза</th>
+    </tr></thead>
+    <tbody id="vaBody">
+      <tr><td colspan="8" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+function _vaNum(v) {
+  const a = Math.abs(+v || 0);
+  return a >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : a >= 1e6 ? (v / 1e6).toFixed(1) + 'M'
+    : a >= 1e3 ? (v / 1e3).toFixed(0) + 'K' : (+v).toFixed(0);
+}
+async function loadVolAnoms() {
+  const tb = document.getElementById('vaBody');
+  try {
+    const hours = document.getElementById('vaHours').value || '48';
+    const r = await fetch('/api/vol-anomalies?hours=' + hours);
+    const d = await r.json();
+    let rows = d.items || [];
+    const total = rows.length;
+    const loc = document.getElementById('vaLoc').value;
+    if (loc) rows = rows.filter(x => x.loc === loc);
+    document.getElementById('vaStats').textContent =
+      `${rows.length} из ${total} событий · 🔺 ${d.items.filter(x => x.loc === 'TOP').length} · 🔻 ${d.items.filter(x => x.loc === 'BOT').length}`;
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;" class="text-muted">' +
+        'Событий нет. Детектор живёт в 30-мин скане с 25.07 — записи копятся (кулдаун 12ч/пару).</td></tr>';
+      return;
+    }
+    const PHASE_BADGE = {
+      LONG: '<span style="color:var(--buy);font-weight:700;">🟢</span>',
+      NEUTRAL: '<span style="color:#9aa4b5;font-weight:700;">⚪</span>',
+      SHORT: '<span style="color:var(--sell);font-weight:700;">🔴</span>',
+    };
+    tb.innerHTML = rows.slice(0, 200).map(x => {
+      const t = x.at ? new Date(x.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+      const pair = (x.pair || '').replace('/USDT', '');
+      const buyer = (x.delta || 0) >= 0;
+      const volHot = (x.vol_x || 0) >= 8;
+      return `<tr>
+        <td class="mono" style="font-size:12px;">${t}</td>
+        <td class="mono fw-700" style="color:var(--text);cursor:pointer;border-bottom:1px dashed rgba(255,210,62,0.4);" onclick="copyTicker('${pair}USDT', event)" title="Клик — скопировать ${pair}USDT">⚡ ${pair} <span onclick="openPairChart('${pair}USDT');event.stopPropagation()" title="График ${pair} (кнопка 🧮 Кластеры внутри)" style="cursor:pointer;opacity:0.65;">📈</span></td>
+        <td style="text-align:center;font-weight:700;">${x.loc === 'TOP' ? '<span style="color:#ff8c50;">🔺 вершина</span>' : '<span style="color:#4cc9f0;">🔻 дно</span>'}</td>
+        <td class="mono" style="text-align:right;font-weight:800;color:${volHot ? '#ffd23e' : 'var(--text)'};">×${(+x.vol_x).toFixed(1)}${volHot ? ' 🔥' : ''}</td>
+        <td class="mono" style="text-align:right;color:${buyer ? 'var(--buy)' : 'var(--sell)'};font-weight:700;">${buyer ? '+' : ''}${_vaNum(x.delta)}</td>
+        <td style="text-align:center;">${buyer ? '<span style="color:var(--buy);">покупатель</span>' : '<span style="color:var(--sell);">продавец</span>'}</td>
+        <td class="mono">${x.price != null ? (+x.price >= 1 ? (+x.price).toFixed(4) : (+x.price).toPrecision(4)) : '—'}</td>
+        <td style="text-align:center;">${PHASE_BADGE[x.phase] || '—'}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    tb.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--sell);">Ошибка: ' + e.message + '</td></tr>';
+  }
+}
+loadVolAnoms();
+safeInterval(loadVolAnoms, 60000);
+</script>
+
 {% elif bot == 'footprint' %}
 <!-- ════════════ 🧮 КЛАСТЕРЫ — footprint-график (замена resonance.vision, 25.07) ════════════ -->
 <div class="strategy-box" style="border-color:rgba(76,201,240,0.4);">
@@ -7680,6 +7903,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="st_break4h">💣 ST-пробой 4h (лонг все фазы, шорт ⚪/🔴)</option>
     <option value="blowoff">🌋 Blowoff (шорт вершины: 24ч-хай + слабое закрытие)</option>
     <option value="capitulation">🛟 Капитуляция (лонг дна: слив + разворот RSI4h)</option>
+    <option value="thin_pump">💨 Тонкий памп (шорт роста без объёма)</option>
   </select>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все</option>
@@ -9675,7 +9899,7 @@ function filterJournal() {
     if (minTs && !sourceExplicit && (s.at_ts || 0) < minTs) return false;
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
-      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','rider_short','ten','delta_series','st_break','st_break4h','blowoff','capitulation'].includes(s.source)) return false;
+      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','rider_short','ten','delta_series','st_break','st_break4h','blowoff','capitulation','thin_pump'].includes(s.source)) return false;
     } else if (src && s.source !== src) return false;
     // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
     if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;
@@ -11715,7 +11939,7 @@ async function openJournalChart(idx, forceTF) {
     whale:'WHALE', shark:'SHARK', combo:'COMBO', volume_surge:'Volume Surge',
     triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano',
     second_flip:'Second Flip', rsi_cross_12h:'RSI Cross 12h', verified:'Verified',
-    accum:'🧊 Накопление', delta_series:'🫧 Серия дельт', st_break:'🧨 ST-пробой', st_break4h:'💣 ST-пробой 4h', blowoff:'🌋 Blowoff', capitulation:'🛟 Капитуляция'})[s.source]
+    accum:'🧊 Накопление', delta_series:'🫧 Серия дельт', st_break:'🧨 ST-пробой', st_break4h:'💣 ST-пробой 4h', blowoff:'🌋 Blowoff', capitulation:'🛟 Капитуляция', thin_pump:'💨 Тонкий памп'})[s.source]
     || (s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐ STRONG' : 'Confluence') : (s.source || 'Signal'));
   const patternInfo = s.pattern ? ` · ${s.pattern}` : '';
   const scoreInfo = s.score ? ` · ${s.score}` : '';

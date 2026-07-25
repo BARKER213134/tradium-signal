@@ -3715,7 +3715,7 @@ async def api_entry_picks():
                        "capitulation")
                       if side == "LONG"
                       else ("impulse", "shark", "delta_series", "rider_short",
-                            "st_break", "st_break4h", "blowoff"))
+                            "st_break", "st_break4h", "blowoff", "thin_pump"))
         sigs_raw = await asyncio.to_thread(lambda: list(
             db.new_strategy_signals.find(
                 {"created_at": {"$gte": since}, "direction": side,
@@ -3758,6 +3758,7 @@ async def api_entry_picks():
                 emoji = {"ignition": "💥", "ten": "💰", "impulse": "⚡",
                          "shark": "🦈", "delta_series": "🫧", "st_break": "🧨",
                          "st_break4h": "💣", "blowoff": "🌋", "capitulation": "🛟",
+                         "thin_pump": "💨",
                          "rider_short": "🏇"}.get(sig["strategy"], "•")
                 score += 3
                 reasons.append(f"{emoji} {sig['strategy']} {ago:.1f}ч назад")
@@ -4256,6 +4257,30 @@ async def api_btc_st4():
         return {"state": st or "?"}
     except Exception as e:
         return {"state": "?", "error": str(e)}
+
+
+@app.get("/api/vol-anomalies")
+async def api_vol_anomalies(hours: int = 48):
+    """⚡ События аномального объёма у экстремумов (скринер, НЕ сигнал):
+    из 30-мин скана, кулдаун 12ч/пару, хранение 7д. Бэктест 90д: направление
+    не предсказывает — юзер смотрит контекст на кластерах."""
+    try:
+        from datetime import timedelta
+        from database import _get_db, utcnow
+        since = utcnow() - timedelta(hours=max(1, min(hours, 168)))
+        rows = await asyncio.to_thread(lambda: list(
+            _get_db().anomaly_events.find({"at": {"$gte": since}})
+            .sort("at", -1).limit(400)))
+        out = []
+        for r in rows:
+            out.append({"pair": r.get("pair"), "symbol": r.get("symbol"),
+                        "loc": r.get("loc"), "vol_x": r.get("vol_x"),
+                        "delta": r.get("delta"), "price": r.get("price"),
+                        "phase": r.get("phase"),
+                        "at": r["at"].isoformat() if r.get("at") is not None else None})
+        return {"ok": True, "items": out}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.get("/footprint-view", response_class=HTMLResponse)
@@ -9361,7 +9386,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "impulse": "🚀", "fade": "🎣", "ignition": "💥",
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
-                        "capitulation": "🛟"}
+                        "capitulation": "🛟", "thin_pump": "💨"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -9371,7 +9396,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "rider_short": "RIDER SHORT", "ten": "TEN",
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
                        "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
-                       "capitulation": "КАПИТУЛЯЦИЯ"}
+                       "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -9775,7 +9800,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "shark": "🦈", "impulse": "🚀", "fade": "🎣", "ignition": "💥",
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
-                        "capitulation": "🛟"}
+                        "capitulation": "🛟", "thin_pump": "💨"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
@@ -9784,7 +9809,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "rider_short": "RIDER SHORT", "ten": "TEN",
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
                        "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
-                       "capitulation": "КАПИТУЛЯЦИЯ"}
+                       "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
@@ -9797,7 +9822,7 @@ def _compute_journal_sync(_fast_only: bool = False):
         _seen_nss = {d["_id"] for d in _nss_docs}
         _nss_docs += [d for d in nss_col.find(
             {"created_at": {"$gte": nss_since},
-             "strategy": {"$in": ["blowoff", "capitulation"]}})
+             "strategy": {"$in": ["blowoff", "capitulation", "thin_pump"]}})
             .sort("created_at", -1).limit(600) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
             at_dt = n.get("created_at")
@@ -9818,6 +9843,12 @@ def _compute_journal_sync(_fast_only: bool = False):
                 _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
                 extra = (f" · вершина: разгон +{_bi.get('mom24', '?')}%/24ч · "
                          f"фитиль {_bi.get('wick_pct', '?')}% · фаза {_phe}{_ph or '?'}")
+            elif strat == "thin_pump":
+                _ti = n.get("indicators") or {}
+                _ph = _ti.get("phase")
+                _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
+                extra = (f" · тонкий памп: ход ×{_ti.get('rng_x', '?')} на объёме "
+                         f"×{_ti.get('vol_x', '?')} медианы · фаза {_phe}{_ph or '?'}")
             elif strat == "capitulation":
                 _ci = n.get("indicators") or {}
                 _ph = _ci.get("phase")

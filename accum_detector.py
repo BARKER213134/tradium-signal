@@ -257,6 +257,105 @@ def _blowoff_sig(pair: str, kd: list[dict]):
         return None
 
 
+def _tg16(txt: str) -> None:
+    """TG в BOT16 (whale-канал) из sync-треда скана — прямой REST."""
+    try:
+        from config import BOT16_BOT_TOKEN, WHALE_CHAT_ID
+        if BOT16_BOT_TOKEN and WHALE_CHAT_ID:
+            import requests
+            requests.post(
+                f"https://api.telegram.org/bot{BOT16_BOT_TOKEN}/sendMessage",
+                data={"chat_id": WHALE_CHAT_ID, "text": txt,
+                      "parse_mode": "HTML"}, timeout=10)
+    except Exception:
+        logger.debug("[tg16] send fail", exc_info=True)
+
+
+def _thin_pump_sig(pair: str, kd: list[dict]):
+    """💨 Тонкий памп → SHORT: зелёный 1h-бар с ходом >2.2× медианы-240ч
+    на объёме НИЖЕ медианы-240ч — рост по пустому стакану без реального
+    покупателя, фейдится. Бэктест 90д (581 соб., сетка −10/+5/96ч):
+    WR 51.3%, EV +1.36%/сделку (случайный шорт: 39.8% / −0.22).
+    Обратная сторона (тонкий слив → лонг) проверена и ОТВЕРГНУТА (−1.32).
+    Аномальный объём сам по себе — тоже (все комбо ±0.2пп от рандома)."""
+    try:
+        if len(kd) < 300:
+            return None
+        b = kd[-2]                        # последний закрытый бар
+        hist = kd[-242:-2]
+        if len(hist) < 150 or not b.get("c") or not b.get("o"):
+            return None
+        rngs = sorted((x["h"] - x["l"]) / x["c"] * 100 for x in hist if x["c"])
+        vols = sorted(x["v"] for x in hist)
+        rng_med = rngs[len(rngs) // 2]
+        v_med = vols[len(vols) // 2]
+        if rng_med <= 0 or v_med <= 0:
+            return None
+        rng = (b["h"] - b["l"]) / b["c"] * 100
+        if not (b["c"] > b["o"] and rng > 2.2 * rng_med and b["v"] < v_med):
+            return None
+        phase = None
+        try:
+            from supertrend_tracker import _market_phase_now
+            phase = _market_phase_now()
+        except Exception:
+            pass
+        price = b["c"]
+        return {"strategy": "thin_pump", "direction": "SHORT",
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": price, "tp": price * 0.90, "sl": price * 1.05,
+                "horizon_h": 96,
+                "indicators": {"rng_x": round(rng / rng_med, 1),
+                               "vol_x": round(b["v"] / v_med, 2),
+                               "phase": phase}}
+    except Exception:
+        return None
+
+
+def _vol_anomaly_event(pair: str, kd: list[dict]):
+    """⚡ ИНФО-событие «аномальный объём у экстремума» (для вкладки-скринера,
+    НЕ торговый сигнал): закрытый 1h-бар с объёмом >4×SMA24 и крупной
+    дельтой (|d|>q75-240ч) на новом 48ч-хае или лоу. Бэктест 90д: направление
+    НЕ предсказывает (все стороны ±0.2пп от рандома) — контекст смотрит юзер
+    на кластерном графике. TG — только сверх-аномалии (объём >8×)."""
+    try:
+        if len(kd) < 300:
+            return None
+        b = kd[-2]
+        hist = kd[-242:-2]
+        if len(hist) < 150:
+            return None
+        v24 = [x["v"] for x in kd[-26:-2]]
+        sma24 = sum(v24) / len(v24) if v24 else 0
+        if not sma24 or b["v"] < 4 * sma24:
+            return None
+        d_hist = sorted(abs(2 * x["tb"] - x["v"]) for x in hist)
+        q75 = d_hist[int(len(d_hist) * 0.75)]
+        d_bar = 2 * b["tb"] - b["v"]
+        if abs(d_bar) <= q75:
+            return None
+        hi48 = max(x["h"] for x in kd[-50:-2])
+        lo48 = min(x["l"] for x in kd[-50:-2])
+        if b["h"] >= hi48:
+            loc = "TOP"
+        elif b["l"] <= lo48:
+            loc = "BOT"
+        else:
+            return None
+        phase = None
+        try:
+            from supertrend_tracker import _market_phase_now
+            phase = _market_phase_now()
+        except Exception:
+            pass
+        return {"pair": pair, "symbol": pair.replace("/", "").upper(),
+                "loc": loc, "vol_x": round(b["v"] / sma24, 1),
+                "delta": round(d_bar, 0), "price": b["c"],
+                "bar_t": int(b["t"]), "phase": phase}
+    except Exception:
+        return None
+
+
 def _capitulation_sig(pair: str, kd: list[dict]):
     """🛟 Капитуляция → LONG: за последние 48ч была капитуляция-свеча
     (новый 24ч-лоу + закрытие в ВЕРХНЕЙ половине бара + слив <−10%/24ч)
@@ -418,6 +517,7 @@ def scan_universe(max_pairs: int = 300):
     btc_kd = None
     ds_fired = 0
     cand_rows = []
+    vol_anoms = []
     for sym in pairs:
         pair = sym.replace("USDT", "/USDT") if "/" not in sym else sym
         try:
@@ -467,6 +567,29 @@ def scan_universe(max_pairs: int = 300):
                             ds_fired += 1
                     except Exception:
                         pass
+                # 💨 тонкий памп → SHORT (кулдаун 24ч, TG — боевой сигнал)
+                _tp_ = _thin_pump_sig(pair, kd)
+                if _tp_ is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_tp_, cooldown_h=24):
+                            ds_fired += 1
+                            _i = _tp_["indicators"]
+                            _tg16(f"💨 <b>ТОНКИЙ ПАМП · "
+                                  f"{pair.replace('/USDT', '')}</b>\n"
+                                  f"🔴 SHORT @ {_tp_['entry']:.6g}\n"
+                                  f"ход ×{_i['rng_x']} от нормы на объёме "
+                                  f"×{_i['vol_x']} медианы — рост по пустому "
+                                  f"стакану\n"
+                                  f"TP −10% · SL +5% · до 96ч\n"
+                                  f"<i>бэктест 90д: WR 51.3%, "
+                                  f"EV +1.36%/сделку</i>")
+                    except Exception:
+                        pass
+                # ⚡ инфо-событие «аномальный объём у экстремума» (скринер)
+                _va = _vol_anomaly_event(pair, kd)
+                if _va is not None:
+                    vol_anoms.append(_va)
                 dz24 = _delta_z(kd, len(kd) - 24)
                 # 🏆 кандидаты фазы: ATR%, импульс 24ч, объём-ратио
                 # (год-бэктест: ATR ловит 2.2-3.9 из 10 реальных лидеров
@@ -653,6 +776,37 @@ def scan_universe(max_pairs: int = 300):
             _last_scan["climate12"] = f"{_c_state} {_pct12}%"
     except Exception:
         logger.exception("[accum] climate12 store fail")
+    # ⚡ события аномального объёма: запись с кулдауном 12ч/пару, TG >8×,
+    # чистка старше 7д. НЕ сигнал — скринер (вкладка «Аномалии объёма»)
+    try:
+        if vol_anoms:
+            from datetime import timedelta
+            from database import _get_db, utcnow
+            db_ = _get_db()
+            now_ = utcnow()
+            cut = now_ - timedelta(hours=12)
+            fresh = {d_["symbol"] for d_ in db_.anomaly_events.find(
+                {"at": {"$gte": cut}}, {"symbol": 1})}
+            new_ev = [dict(e, at=now_) for e in vol_anoms
+                      if e["symbol"] not in fresh]
+            if new_ev:
+                db_.anomaly_events.insert_many(new_ev)
+                for e in new_ev:
+                    if e["vol_x"] >= 8:
+                        _d = e["delta"]
+                        _tg16(f"⚡ <b>АНОМАЛЬНЫЙ ОБЪЁМ · "
+                              f"{e['pair'].replace('/USDT', '')}</b>\n"
+                              f"{'🔺 на вершине (новый 48ч-хай)' if e['loc'] == 'TOP' else '🔻 на дне (новый 48ч-лоу)'}\n"
+                              f"объём ×{e['vol_x']} нормы · дельта "
+                              f"{'+' if _d >= 0 else ''}{_d:,.0f} "
+                              f"({'покупатель' if _d >= 0 else 'продавец'})\n"
+                              f"<i>инфо-событие: направление не предсказывает — "
+                              f"открой 🧮 Кластеры и смотри контекст</i>")
+            db_.anomaly_events.delete_many(
+                {"at": {"$lt": now_ - timedelta(days=7)}})
+            _last_scan["vol_anoms"] = len(new_ev)
+    except Exception:
+        logger.exception("[accum] vol_anoms store fail")
     # sample: сколько пар вообще дали свечи (диагностика get_klines_any)
     try:
         if pairs:
