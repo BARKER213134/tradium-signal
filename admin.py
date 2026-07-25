@@ -4359,28 +4359,43 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
                 urls = [VISION, FAPI]
         except Exception:
             pass
+        import time as _time
+
+        def _get(url, params):
+            # ретраи с бэкоффом: fapi на проде временами 418/429 — без них
+            # фьючерс-онли тикеры (1000BONK) «мигали» (25.07)
+            for att in range(3):
+                try:
+                    r = rq.get(url, params=params, timeout=12)
+                    if r.status_code == 200:
+                        js = r.json()
+                        if js:
+                            return js
+                        return None
+                    if r.status_code in (418, 429):
+                        _time.sleep(0.7 * (att + 1))
+                        continue
+                    return None
+                except Exception:
+                    _time.sleep(0.4)
+            return None
+
         for url in urls:
-            try:
-                r = rq.get(url, params=dict(symbol=sym, interval=sub_tf,
-                                            limit=min(need, 1000)), timeout=12)
-                if r.status_code != 200:
-                    continue
-                js = r.json()
-                if js and len(js) > 30:
-                    rows = js
-                    # добор страницами назад (до 4), пока не наберём need
-                    pages = 0
-                    while len(rows) < need and pages < 4:
-                        r2 = rq.get(url, params=dict(
-                            symbol=sym, interval=sub_tf, limit=1000,
-                            endTime=int(rows[0][0]) - 1), timeout=12)
-                        if r2.status_code != 200 or not r2.json():
-                            break
-                        rows = r2.json() + rows
-                        pages += 1
-                    break
-            except Exception:
-                continue
+            js = _get(url, dict(symbol=sym, interval=sub_tf,
+                                limit=min(need, 1000)))
+            if js and len(js) > 30:
+                rows = js
+                # добор страницами назад (до 4), пока не наберём need
+                pages = 0
+                while len(rows) < need and pages < 4:
+                    js2 = _get(url, dict(symbol=sym, interval=sub_tf,
+                                         limit=1000,
+                                         endTime=int(rows[0][0]) - 1))
+                    if not js2:
+                        break
+                    rows = js2 + rows
+                    pages += 1
+                break
         if not rows:
             return {"ok": False, "error": f"нет свечей по {sym}"}
         subs = [dict(t=int(x[0]), o=float(x[1]), h=float(x[2]), l=float(x[3]),
