@@ -318,6 +318,47 @@ def _thin_pump_sig(pair: str, kd: list[dict]):
         return None
 
 
+def _floor_buy_sig(pair: str, kd: list[dict]):
+    """💎 Дно+покупатель → LONG (инфо/вход с триггером): закрытый 1h-бар
+    ставит новый 48ч-лоу, но >=65% его объёма — агрессивные ПОКУПКИ
+    маркетом при объёме >1.5× медианы-240ч. Так покупают только те, кто
+    спешит: жадный сбор дна. Бэктест 90д (216 соб., сетка +10/−5/96ч):
+    WR 52.3%, EV +0.67 — единственная рабочая ячейка имбаланса; продажа
+    на хае +0.18, всё вне экстремумов — ноль."""
+    try:
+        if len(kd) < 300:
+            return None
+        b = kd[-2]
+        if not b.get("v") or b["v"] <= 0:
+            return None
+        hist = kd[-242:-2]
+        if len(hist) < 150:
+            return None
+        vols = sorted(x["v"] for x in hist)
+        v_med = vols[len(vols) // 2]
+        lo48 = min(x["l"] for x in kd[-50:-2])
+        d_bar = 2 * b["tb"] - b["v"]
+        if not (b["l"] <= lo48 and b["v"] > 1.5 * v_med
+                and d_bar / b["v"] >= 0.65):
+            return None
+        phase = None
+        try:
+            from supertrend_tracker import _market_phase_now
+            phase = _market_phase_now()
+        except Exception:
+            pass
+        price = b["c"]
+        return {"strategy": "floor_buy", "direction": "LONG",
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": price, "tp": price * 1.10, "sl": price * 0.95,
+                "horizon_h": 96,
+                "indicators": {"imb": round(d_bar / b["v"], 2),
+                               "vol_x": round(b["v"] / v_med, 1),
+                               "phase": phase}}
+    except Exception:
+        return None
+
+
 def _vol_anomaly_event(pair: str, kd: list[dict]):
     """⚡ ИНФО-событие «аномальный объём у экстремума» (для вкладки-скринера,
     НЕ торговый сигнал): закрытый 1h-бар с объёмом >4×SMA24 и крупной
@@ -593,6 +634,15 @@ def scan_universe(max_pairs: int = 300):
                                       f"TP −10% · SL +5% · до 96ч\n"
                                       f"<i>бэктест 90д: WR 51.3%, "
                                       f"EV +1.36%/сделку</i>")
+                    except Exception:
+                        pass
+                # 💎 дно+покупатель → LONG (кулдаун 24ч)
+                _fb = _floor_buy_sig(pair, kd)
+                if _fb is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_fb, cooldown_h=24):
+                            ds_fired += 1
                     except Exception:
                         pass
                 # ⚡ инфо-событие «аномальный объём у экстремума» (скринер)

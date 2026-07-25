@@ -201,7 +201,7 @@ function fpRender() {
   const g = cv.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, W, H);
-  const { bars, phases } = fpSlice();
+  const { bars, phases, i0 } = fpSlice();
   const n = bars.length;
   const bw = chartW / n;
   const gMin = d.p_min, tick = d.tick;
@@ -282,6 +282,24 @@ function fpRender() {
   });
   // ⚠ аномалии ордерфлоу (кольца ячеек + значки над барами)
   _fpAnomCache = _fpAnom ? fpFindAnomalies(bars) : null;
+  // 💎 дно+покупатель: новый 48ч-лоу + >=65% объёма бара в покупку
+  // (90д: лонг WR 52.3%, EV +0.67 — единственная рабочая ячейка имбаланса)
+  if (_fpAnomCache) {
+    const all = d.bars;
+    const volsAll = all.map(b => b.v).sort((x, y) => x - y);
+    const vMedAll = volsAll[Math.floor(volsAll.length / 2)];
+    bars.forEach((b, i) => {
+      const gi = i0 + i;
+      if (gi < 48 || !b.v) return;
+      let lo = Infinity;
+      for (let k = gi - 48; k < gi; k++) if (all[k].l < lo) lo = all[k].l;
+      if (b.l <= lo && b.v > 1.5 * vMedAll && b.d / b.v >= 0.65) {
+        _fpAnomCache.bars.push({ i, icon: '💎', top: false });
+        (_fpAnomCache.notes[i] = _fpAnomCache.notes[i] || []).push(
+          '💎 дно+покупатель: ≥65% объёма в покупку на новом 48ч-лоу (90д: лонг WR 52%, EV +0.67)');
+      }
+    });
+  }
   if (_fpAnomCache) {
     const AC = { vol: '#4cc9f0', bi: '#00e5a0', si: '#ff4d6d' };
     _fpAnomCache.cells.forEach(m => {

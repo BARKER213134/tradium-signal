@@ -3712,7 +3712,7 @@ async def api_entry_picks():
         # свежие сигналы за 12ч по направлению фазы
         since = utcnow() - timedelta(hours=12)
         sig_strats = (("ignition", "ten", "impulse", "st_break", "st_break4h",
-                       "capitulation")
+                       "capitulation", "floor_buy")
                       if side == "LONG"
                       else ("impulse", "shark", "delta_series", "rider_short",
                             "st_break", "st_break4h", "blowoff", "thin_pump"))
@@ -3758,7 +3758,7 @@ async def api_entry_picks():
                 emoji = {"ignition": "💥", "ten": "💰", "impulse": "⚡",
                          "shark": "🦈", "delta_series": "🫧", "st_break": "🧨",
                          "st_break4h": "💣", "blowoff": "🌋", "capitulation": "🛟",
-                         "thin_pump": "💨",
+                         "thin_pump": "💨", "floor_buy": "💎",
                          "rider_short": "🏇"}.get(sig["strategy"], "•")
                 score += 3
                 reasons.append(f"{emoji} {sig['strategy']} {ago:.1f}ч назад")
@@ -4319,7 +4319,7 @@ button,input,select{outline:none}
   <canvas id="fpCanvas" style="width:100%;display:block;border-radius:5px;"></canvas>
   <div id="fpTip" style="display:none;position:absolute;pointer-events:none;background:rgba(10,14,22,0.95);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:10.5px;line-height:1.55;z-index:5;white-space:nowrap;"></div>
 </div>
-<script src="/static/footprint.js?v=2"></script>
+<script src="/static/footprint.js?v=3"></script>
 </body></html>""")
 
 
@@ -9386,7 +9386,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "impulse": "🚀", "fade": "🎣", "ignition": "💥",
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
-                        "capitulation": "🛟", "thin_pump": "💨"}
+                        "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -9396,7 +9396,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "rider_short": "RIDER SHORT", "ten": "TEN",
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
                        "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
-                       "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП"}
+                       "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП",
+                       "floor_buy": "ДНО+ПОКУПАТЕЛЬ"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -9800,7 +9801,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "shark": "🦈", "impulse": "🚀", "fade": "🎣", "ignition": "💥",
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
-                        "capitulation": "🛟", "thin_pump": "💨"}
+                        "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
@@ -9809,7 +9810,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "rider_short": "RIDER SHORT", "ten": "TEN",
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
                        "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
-                       "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП"}
+                       "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП",
+                       "floor_buy": "ДНО+ПОКУПАТЕЛЬ"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
@@ -9822,7 +9824,7 @@ def _compute_journal_sync(_fast_only: bool = False):
         _seen_nss = {d["_id"] for d in _nss_docs}
         _nss_docs += [d for d in nss_col.find(
             {"created_at": {"$gte": nss_since},
-             "strategy": {"$in": ["blowoff", "capitulation", "thin_pump"]}})
+             "strategy": {"$in": ["blowoff", "capitulation", "thin_pump", "floor_buy"]}})
             .sort("created_at", -1).limit(600) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
             at_dt = n.get("created_at")
@@ -9843,6 +9845,13 @@ def _compute_journal_sync(_fast_only: bool = False):
                 _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
                 extra = (f" · вершина: разгон +{_bi.get('mom24', '?')}%/24ч · "
                          f"фитиль {_bi.get('wick_pct', '?')}% · фаза {_phe}{_ph or '?'}")
+            elif strat == "floor_buy":
+                _fi = n.get("indicators") or {}
+                _ph = _fi.get("phase")
+                _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
+                extra = (f" · дно+покупатель: {int((_fi.get('imb') or 0) * 100)}% объёма "
+                         f"в покупку на новом 48ч-лоу · объём ×{_fi.get('vol_x', '?')} · "
+                         f"фаза {_phe}{_ph or '?'}")
             elif strat == "thin_pump":
                 _ti = n.get("indicators") or {}
                 _ph = _ti.get("phase")
