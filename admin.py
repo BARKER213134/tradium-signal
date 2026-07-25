@@ -4258,6 +4258,45 @@ async def api_btc_st4():
         return {"state": "?", "error": str(e)}
 
 
+@app.get("/footprint-view", response_class=HTMLResponse)
+async def footprint_view(pair: str = "BTCUSDT", tf: str = "1h"):
+    """🧮 Мини-страница кластерного графика — для iframe в модалке журнала
+    (кнопка «Кластеры»: та же монета и ТФ, то же окно). Движок общий:
+    /static/footprint.js читает pair/tf из query."""
+    return HTMLResponse("""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--dark:#0d1117;--border:#2a3140;--text:#e6eef8;--muted:#9aa4b5;
+--buy:#00e5a0;--sell:#ff4d6d;--font-mono:ui-monospace,Consolas,'Courier New',monospace}
+body{margin:0;background:#0a0e14;color:var(--text);font-family:var(--font-mono);padding:10px}
+button,input,select{outline:none}
+</style></head><body>
+<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap;">
+  <input id="fpPair" value="BTCUSDT" spellcheck="false"
+    style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;font-family:var(--font-mono);width:130px;text-transform:uppercase;"
+    onkeydown="if(event.key==='Enter')loadFootprint()">
+  <div id="fpTfs" style="display:flex;gap:4px;">
+    <button data-tf="15m" onclick="fpSetTf(this)" style="background:var(--dark);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;padding:6px 10px;font-family:var(--font-mono);">15m</button>
+    <button data-tf="1h" onclick="fpSetTf(this)" style="background:rgba(76,201,240,0.15);border:1px solid rgba(76,201,240,0.5);border-radius:6px;color:#4cc9f0;font-size:11px;font-weight:700;cursor:pointer;padding:6px 10px;font-family:var(--font-mono);">1h</button>
+    <button data-tf="4h" onclick="fpSetTf(this)" style="background:var(--dark);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;padding:6px 10px;font-family:var(--font-mono);">4h</button>
+    <button data-tf="1d" onclick="fpSetTf(this)" style="background:var(--dark);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;padding:6px 10px;font-family:var(--font-mono);">1D</button>
+  </div>
+  <select id="fpBars" onchange="loadFootprint()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;font-family:var(--font-mono);">
+    <option value="40">40</option><option value="60" selected>60</option>
+    <option value="90">90</option><option value="120">120</option><option value="240">240</option>
+  </select>
+  <button onclick="loadFootprint()" style="background:rgba(0,229,160,0.12);border:1px solid rgba(0,229,160,0.45);border-radius:6px;color:#00e5a0;font-size:11px;font-weight:800;cursor:pointer;padding:6px 12px;font-family:var(--font-mono);">Построить</button>
+  <span id="fpStatus" style="font-size:10.5px;color:var(--muted);"></span>
+</div>
+<div id="fpAnalysis" style="display:none;flex-wrap:wrap;gap:5px;margin-bottom:8px;font-size:10.5px;line-height:1.4;"></div>
+<div style="position:relative;background:rgba(8,12,18,0.7);border:1px solid var(--border);border-radius:8px;padding:6px;">
+  <canvas id="fpCanvas" style="width:100%;display:block;border-radius:5px;"></canvas>
+  <div id="fpTip" style="display:none;position:absolute;pointer-events:none;background:rgba(10,14,22,0.95);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:10.5px;line-height:1.55;z-index:5;white-space:nowrap;"></div>
+</div>
+<script src="/static/footprint.js?v=1"></script>
+</body></html>""")
+
+
 @app.get("/api/footprint")
 async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
     """🧮 Кластерный график (замена resonance.vision): ячейки объёма по
