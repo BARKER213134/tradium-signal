@@ -4258,6 +4258,135 @@ async def api_btc_st4():
         return {"state": "?", "error": str(e)}
 
 
+@app.get("/api/footprint")
+async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
+    """🧮 Кластерный график (замена resonance.vision): ячейки объёма по
+    ценовым уровням внутри каждой свечи, раскрашенные по дельте (Binance
+    поле 9 = taker buy volume). Строится из свечей младшего ТФ: 15m←1m,
+    1h←5m, 4h←15m, 1d←1h. Тиковый футпринт не нужен — гранулярность
+    суб-свечи достаточна для картинки уровней. + фаза рынка по бару."""
+    SUB = {"15m": ("1m", 15), "1h": ("5m", 12), "4h": ("15m", 16),
+           "1d": ("1h", 24)}
+    TFMS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000,
+            "1d": 86_400_000}
+    tf = (tf or "1h").lower()
+    if tf not in SUB:
+        return {"ok": False, "error": f"tf {tf}: только {list(SUB)}"}
+    bars = max(20, min(int(bars or 60), 120))
+    sym = (pair or "").upper().replace("/", "").strip()
+    if not sym.endswith("USDT"):
+        sym += "USDT"
+
+    def _sync():
+        import requests as rq
+        sub_tf, per_bar = SUB[tf]
+        need = min(bars * per_bar + per_bar, 1500)
+        rows = None
+        urls = ["https://fapi.binance.com/fapi/v1/klines",
+                "https://data-api.binance.vision/api/v3/klines"]
+        try:
+            from fapi_budget import allow
+            if not allow(tag="footprint"):
+                urls = urls[1:]
+        except Exception:
+            pass
+        for url in urls:
+            try:
+                r = rq.get(url, params=dict(symbol=sym, interval=sub_tf,
+                                            limit=min(need, 1000)), timeout=12)
+                if r.status_code != 200:
+                    continue
+                js = r.json()
+                if js and len(js) > 30:
+                    rows = js
+                    # добор второй страницей, если нужно больше 1000
+                    if need > 1000:
+                        st0 = int(js[0][0]) - (need - 1000) * \
+                            {"1m": 60_000, "5m": 300_000,
+                             "15m": 900_000, "1h": 3_600_000}[sub_tf]
+                        r2 = rq.get(url, params=dict(
+                            symbol=sym, interval=sub_tf, limit=1000,
+                            startTime=st0, endTime=int(js[0][0]) - 1),
+                            timeout=12)
+                        if r2.status_code == 200 and r2.json():
+                            rows = r2.json() + rows
+                    break
+            except Exception:
+                continue
+        if not rows:
+            return {"ok": False, "error": f"нет свечей по {sym}"}
+        subs = [dict(t=int(x[0]), o=float(x[1]), h=float(x[2]), l=float(x[3]),
+                     c=float(x[4]), v=float(x[5]), tb=float(x[9]))
+                for x in rows]
+        tfms = TFMS[tf]
+        by_bar: dict = {}
+        order: list = []
+        for s_ in subs:
+            k = s_["t"] // tfms
+            if k not in by_bar:
+                by_bar[k] = []
+                order.append(k)
+            by_bar[k].append(s_)
+        order = order[-bars:]
+        if not order:
+            return {"ok": False, "error": "пусто"}
+        p_min = min(s_["l"] for k in order for s_ in by_bar[k])
+        p_max = max(s_["h"] for k in order for s_ in by_bar[k])
+        if p_max <= p_min:
+            return {"ok": False, "error": "плоская цена"}
+        n_lv = 60
+        tick = (p_max - p_min) / n_lv
+        out_bars = []
+        for k in order:
+            ss = by_bar[k]
+            o_, c_ = ss[0]["o"], ss[-1]["c"]
+            h_, l_ = max(x["h"] for x in ss), min(x["l"] for x in ss)
+            v_ = sum(x["v"] for x in ss)
+            d_ = sum(2 * x["tb"] - x["v"] for x in ss)
+            cells: dict = {}
+            for x in ss:
+                lo = int((x["l"] - p_min) / tick)
+                hi = int((x["h"] - p_min) / tick)
+                lo = max(0, min(lo, n_lv - 1))
+                hi = max(lo, min(hi, n_lv - 1))
+                nb = hi - lo + 1
+                dv = x["v"] / nb
+                dd = (2 * x["tb"] - x["v"]) / nb
+                for b in range(lo, hi + 1):
+                    cell = cells.setdefault(b, [0.0, 0.0])
+                    cell[0] += dv
+                    cell[1] += dd
+            out_bars.append({
+                "t": int(k * tfms), "o": o_, "h": h_, "l": l_, "c": c_,
+                "v": round(v_, 2), "d": round(d_, 2),
+                "cells": [[b, round(vv, 2), round(dd_, 2)]
+                          for b, (vv, dd_) in sorted(cells.items())]})
+        # фаза рынка по времени бара (market_side_history)
+        phases = []
+        try:
+            from database import _get_db
+            from datetime import datetime as _dt, timezone as _tz
+            t0 = _dt.fromtimestamp(out_bars[0]["t"] / 1000, _tz.utc).replace(tzinfo=None)
+            hist = list(_get_db().market_side_history.find(
+                {}, {"at": 1, "side": 1}).sort("at", 1))
+            for b_ in out_bars:
+                bt = _dt.fromtimestamp(b_["t"] / 1000, _tz.utc).replace(tzinfo=None)
+                ph = None
+                for f_ in hist:
+                    if f_["at"] <= bt:
+                        ph = f_["side"]
+                    else:
+                        break
+                phases.append(ph)
+        except Exception:
+            phases = [None] * len(out_bars)
+        return {"ok": True, "pair": sym, "tf": tf, "p_min": p_min,
+                "tick": tick, "n_lv": n_lv, "bars": out_bars,
+                "phases": phases}
+
+    return await asyncio.to_thread(_sync)
+
+
 # ── 🧊 ACCUMULATION watchlist ────────────────────────────────────────────────
 
 @app.get("/api/accumulation")
