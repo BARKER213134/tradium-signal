@@ -744,6 +744,7 @@
           st_break:'🧨',     // 🧨 пробой 1h ST по фазе (⚪/🟢 лонг +4/+12.8пп, 🔴 шорт +4.3пп)
           st_break4h:'💣',   // 💣 пробой 4h ST (лонг все фазы EV +0.5..+2.4%, шорт ⚪/🔴)
           blowoff:'🌋',      // 🌋 вершина-фейд: 24ч-хай + слабое закрытие (шорт, EV +0.59)
+          capitulation:'🛟', // 🛟 дно: слив + разворот RSI4h из <=25 (лонг, EV +0.81)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
         return prefix + base;
@@ -781,6 +782,7 @@
         if (src === 'st_break') return '🧨';
         if (src === 'st_break4h') return '💣';
         if (src === 'blowoff') return '🌋';
+        if (src === 'capitulation') return '🛟';
         return ({anomaly:'⚠', paper:'🤖', cluster:'💠'})[src] || '•';
       };
 

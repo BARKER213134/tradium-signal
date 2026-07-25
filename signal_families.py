@@ -64,7 +64,8 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
     """
     # accum — инфо-событие, не голос; st_break/st_break4h — боевые триггеры
     # со своими TP/SL (пробой ST по фазе), в 🧩 их глотало ST-эхо того же флипа
-    NO_GROUP = {"paper", "stack", "accum", "st_break", "st_break4h", "blowoff"}
+    NO_GROUP = {"paper", "stack", "accum", "st_break", "st_break4h", "blowoff",
+                "capitulation"}
     from collections import defaultdict
 
     groupable = [it for it in items

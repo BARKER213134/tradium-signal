@@ -3711,7 +3711,8 @@ async def api_entry_picks():
 
         # свежие сигналы за 12ч по направлению фазы
         since = utcnow() - timedelta(hours=12)
-        sig_strats = (("ignition", "ten", "impulse", "st_break", "st_break4h")
+        sig_strats = (("ignition", "ten", "impulse", "st_break", "st_break4h",
+                       "capitulation")
                       if side == "LONG"
                       else ("impulse", "shark", "delta_series", "rider_short",
                             "st_break", "st_break4h", "blowoff"))
@@ -3756,7 +3757,7 @@ async def api_entry_picks():
                 ago = (utcnow() - sig["created_at"]).total_seconds() / 3600
                 emoji = {"ignition": "💥", "ten": "💰", "impulse": "⚡",
                          "shark": "🦈", "delta_series": "🫧", "st_break": "🧨",
-                         "st_break4h": "💣", "blowoff": "🌋",
+                         "st_break4h": "💣", "blowoff": "🌋", "capitulation": "🛟",
                          "rider_short": "🏇"}.get(sig["strategy"], "•")
                 score += 3
                 reasons.append(f"{emoji} {sig['strategy']} {ago:.1f}ч назад")
@@ -4061,13 +4062,20 @@ async def api_entry_check(symbol: str, direction: str = "LONG"):
             reasons.append({"ok": None, "t": "фаза рынка недоступна — ждём скан"})
         elif direction == "LONG":
             if phase == "SHORT":
+                _has_cap = any(s_[0] == "capitulation" and s_[1] == "LONG"
+                               for s_ in sigs)
                 if st4_flip:
                     score += 1
                     reasons.append({"ok": None, "t": "🔴 фаза, но свежий флип 4h ST вверх — "
                                     "реверсал с дна (валидное исключение, агрессивно: SL срабатывает в 48%)"})
+                elif _has_cap:
+                    score += 1
+                    reasons.append({"ok": None, "t": "🔴 фаза, но свежая 🛟 капитуляция "
+                                    "с разворотом RSI4h — реверсал с дна (год: EV +0.82 "
+                                    "именно в красной фазе) (+1)"})
                 else:
                     hard_no = ("фаза 🔴 SHORT — НЕ ЛОНГОВАТЬ (год: WR 26.9%). "
-                               "Исключение только флип 4h ST вверх — его нет")
+                               "Исключения: флип 4h ST вверх или 🛟 капитуляция — их нет")
             elif phase == "LONG":
                 score += 2
                 reasons.append({"ok": True, "t": "фаза 🟢 — лонг по рынку (+2)"})
@@ -9191,7 +9199,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "whale": "🐋", "shark": "🦈",
                         "impulse": "🚀", "fade": "🎣", "ignition": "💥",
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
-                        "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋"}
+                        "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
+                        "capitulation": "🛟"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -9200,7 +9209,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
                        "rider_short": "RIDER SHORT", "ten": "TEN",
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
-                       "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF"}
+                       "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
+                       "capitulation": "КАПИТУЛЯЦИЯ"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -9603,7 +9613,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "second_flip": "♻️", "combo": "🧠", "whale": "🐋",
                         "shark": "🦈", "impulse": "🚀", "fade": "🎣", "ignition": "💥",
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
-                        "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋"}
+                        "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
+                        "capitulation": "🛟"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
@@ -9611,7 +9622,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
                        "rider_short": "RIDER SHORT", "ten": "TEN",
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
-                       "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF"}
+                       "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
+                       "capitulation": "КАПИТУЛЯЦИЯ"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
@@ -9623,8 +9635,9 @@ def _compute_journal_sync(_fast_only: bool = False):
         # (25.07 в ленте была 1 строка из ~100) → отдельная выборка
         _seen_nss = {d["_id"] for d in _nss_docs}
         _nss_docs += [d for d in nss_col.find(
-            {"created_at": {"$gte": nss_since}, "strategy": "blowoff"})
-            .sort("created_at", -1).limit(300) if d["_id"] not in _seen_nss]
+            {"created_at": {"$gte": nss_since},
+             "strategy": {"$in": ["blowoff", "capitulation"]}})
+            .sort("created_at", -1).limit(600) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -9644,6 +9657,13 @@ def _compute_journal_sync(_fast_only: bool = False):
                 _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
                 extra = (f" · вершина: разгон +{_bi.get('mom24', '?')}%/24ч · "
                          f"фитиль {_bi.get('wick_pct', '?')}% · фаза {_phe}{_ph or '?'}")
+            elif strat == "capitulation":
+                _ci = n.get("indicators") or {}
+                _ph = _ci.get("phase")
+                _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
+                extra = (f" · дно: RSI4h {_ci.get('rsi4h_prev', '?')}→"
+                         f"{_ci.get('rsi4h', '?')} · капитуляция была ≤48ч · "
+                         f"фаза {_phe}{_ph or '?'}")
             elif strat == "delta_series":
                 _di = n.get("indicators") or {}
                 extra = (f" · Σ {_di.get('sigma', '?')}σ · vol {_di.get('vol_ratio', '?')}×"

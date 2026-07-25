@@ -257,6 +257,87 @@ def _blowoff_sig(pair: str, kd: list[dict]):
         return None
 
 
+def _capitulation_sig(pair: str, kd: list[dict]):
+    """🛟 Капитуляция → LONG: за последние 48ч была капитуляция-свеча
+    (новый 24ч-лоу + закрытие в ВЕРХНЕЙ половине бара + слив <−10%/24ч)
+    И RSI4h опустился <=25 и развернулся вверх (по ЗАКРЫТЫМ 4h-барам).
+    Год-бэктест (1723 соб., сетка +10/−5/96ч): EV +0.81%, hit10 34.9%;
+    в 🔴-фазе +0.82/35.7 — второй легальный лонг в красной фазе после
+    💣-реверсала. Дно — процесс: свеча одна (−0.36) и RSI один (+0.21)
+    не работают, работает последовательность. Вершина наоборот — событие
+    (см. _blowoff_sig)."""
+    try:
+        if len(kd) < 340:
+            return None
+        # RSI14 по закрытым 4h-барам: разворот вверх из зоны <=25
+        closes4, cur_key = [], None
+        for c in kd:
+            k = c["t"] // (4 * 3600_000)
+            if k != cur_key:
+                closes4.append(c["c"])
+                cur_key = k
+            else:
+                closes4[-1] = c["c"]
+        closes4 = closes4[:-1]           # незакрытый 4h-бакет не считаем
+        if len(closes4) < 40:
+            return None
+        rsis = []
+        ag = al = 0.0
+        for i in range(1, len(closes4)):
+            ch = closes4[i] - closes4[i - 1]
+            g, lo = max(ch, 0.0), max(-ch, 0.0)
+            if i <= 14:
+                ag += g; al += lo
+                if i == 14:
+                    ag /= 14; al /= 14
+                    rsis.append(100.0 if al == 0 else 100 - 100 / (1 + ag / al))
+            else:
+                ag = (ag * 13 + g) / 14
+                al = (al * 13 + lo) / 14
+                rsis.append(100.0 if al == 0 else 100 - 100 / (1 + ag / al))
+        if len(rsis) < 2:
+            return None
+        r_prev, r_last = rsis[-2], rsis[-1]
+        if not (r_prev <= 25 and r_last > r_prev):
+            return None
+        # капитуляция-свеча среди последних 48 закрытых 1h-баров
+        cap_bar = None
+        for j in range(len(kd) - 49, len(kd) - 1):
+            if j < 50:
+                continue
+            b = kd[j]
+            lo24 = min(x["l"] for x in kd[j - 23:j])
+            if b["l"] > lo24:
+                continue
+            if (b["h"] - b["l"]) <= 0 or b["c"] <= (b["h"] + b["l"]) / 2:
+                continue
+            c24 = kd[j - 24]["c"]
+            if not c24 or (b["c"] / c24 - 1) * 100 >= -10:
+                continue
+            cap_bar = b
+        if cap_bar is None:
+            return None
+        phase = None
+        try:
+            from supertrend_tracker import _market_phase_now
+            phase = _market_phase_now()
+        except Exception:
+            pass
+        price = kd[-2]["c"]
+        c24n = kd[-26]["c"]
+        mom24 = (kd[-2]["c"] / c24n - 1) * 100 if c24n else 0
+        return {"strategy": "capitulation", "direction": "LONG",
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": price, "tp": price * 1.10, "sl": price * 0.95,
+                "horizon_h": 96,
+                "indicators": {"rsi4h_prev": round(r_prev, 1),
+                               "rsi4h": round(r_last, 1),
+                               "mom24": round(mom24, 1),
+                               "phase": phase}}
+    except Exception:
+        return None
+
+
 def _rsi4h_value(candles: list[dict], hours: int = 4):
     """(RSI14 последнего бара, SMA14 RSI) на ресемпле `hours` или None.
     Ресемпл из 1h свечей, Wilder RSI. hours=12 — для 12h-климата."""
@@ -374,6 +455,15 @@ def scan_universe(max_pairs: int = 300):
                     try:
                         from impulse_detector import store_signal
                         if store_signal(_bo, cooldown_h=24):
+                            ds_fired += 1
+                    except Exception:
+                        pass
+                # 🛟 капитуляция-дно → LONG (кулдаун 24ч на пару)
+                _cp = _capitulation_sig(pair, kd)
+                if _cp is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_cp, cooldown_h=24):
                             ds_fired += 1
                     except Exception:
                         pass

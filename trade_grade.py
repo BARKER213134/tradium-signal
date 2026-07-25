@@ -154,6 +154,11 @@ EDGE = {
     ('blowoff', 'SHORT', 'по фазе'): (965, 39.7, 0.80, 36.6),
     ('blowoff', 'SHORT', 'против'): (252, 43.7, 1.27, 38.1),
     ('blowoff', 'SHORT', 'нейтраль'): (2531, 39.7, 0.45, 29.4),
+    # 🛟 капитуляция-дно (год, 25.07: кап-свеча 48ч + RSI4h<=25 разворот,
+    # сетка LONG +10/−5/96ч; «против» = лонг в 🔴 — легален, физика дна)
+    ('capitulation', 'LONG', 'ВСЕ'): (1723, 40.6, 0.81, 34.9),
+    ('capitulation', 'LONG', 'против'): (1424, 40.3, 0.82, 35.7),
+    ('capitulation', 'LONG', 'нейтраль'): (280, 41.8, 0.62, 30.0),
 }
 
 _SKIP = {"stack", "paper", "accum", "cluster", "anomaly"}
@@ -354,6 +359,12 @@ def annotate_pro(items: list, extra_ctx: dict = None) -> None:
                     if st4f:
                         score += 1
                         checks.append("· 🔴, но флип 4h ST вверх — реверсал (агрессивно)")
+                    elif src == "capitulation" or it.get("strategy") == "capitulation":
+                        # 🛟 второй легальный лонг в 🔴: дно после слива
+                        # (год: EV +0.82, hit10 35.7 именно в красной фазе)
+                        score += 1
+                        checks.append("· 🔴, но капитуляция с разворотом RSI4h — "
+                                      "реверсал с дна (EV +0.82) (+1)")
                     else:
                         hard_no = "фаза 🔴 — НЕ ЛОНГОВАТЬ"
                 elif phase == "LONG":
