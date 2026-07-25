@@ -70,6 +70,39 @@ async def lifespan(app):
         _thr.Thread(target=_wd_check, daemon=True, name="loop-watchdog").start()
         print("[LIFESPAN] loop-watchdog запущен (застой >5 мин → рестарт)", flush=True)
 
+        # ⚕️ HTTP-самопроверка: 25.07 03:42 сайт отдавал 502 при живом
+        # процессе (loop-вачдог слеп — loop бился, HTTP мёртв), Railway
+        # 502 сам не лечит → 6.7ч простоя. Курлим свой /healthz с
+        # локалхоста; 5 фейлов подряд (~5 мин) → hard exit → рестарт.
+        def _wd_http_check():
+            import urllib.request
+            port = os.environ.get("PORT", "8080")
+            url = f"http://127.0.0.1:{port}/healthz"
+            fails = 0
+            _time.sleep(180)   # грейс на старт uvicorn
+            while True:
+                _time.sleep(60)
+                try:
+                    with urllib.request.urlopen(url, timeout=10) as r:
+                        ok = (r.status == 200)
+                except Exception:
+                    ok = False
+                if ok:
+                    fails = 0
+                else:
+                    fails += 1
+                    print(f"[WATCHDOG] healthz fail {fails}/5", flush=True)
+                    if fails >= 5:
+                        print("[WATCHDOG] HTTP мёртв ~5 мин при живом "
+                              "процессе — hard exit, Railway перезапустит",
+                              flush=True)
+                        os._exit(1)
+
+        _thr.Thread(target=_wd_http_check, daemon=True,
+                    name="http-watchdog").start()
+        print("[LIFESPAN] http-watchdog запущен (healthz 5 фейлов → рестарт)",
+              flush=True)
+
         if not _watcher_running:
             print("[LIFESPAN] Запускаю watcher/bots...", flush=True)
             from config import BOT_TOKEN, ADMIN_CHAT_ID, BOT4_BOT_TOKEN
