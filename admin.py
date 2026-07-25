@@ -4406,6 +4406,32 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
                     pages += 1
                 break
         if not rows:
+            # фьючерс-онли 1000X/1MX при лежащем fapi: строим из спотового
+            # базового тикера с пересчётом цены (×1000/×1M) — картинка
+            # уровней идентична, объёмы шкалируются обратно
+            for pfx, mult in (("1000", 1000.0), ("1M", 1_000_000.0)):
+                if not sym.startswith(pfx):
+                    continue
+                alt = sym[len(pfx):]
+                js = _get(VISION, dict(symbol=alt, interval=sub_tf,
+                                       limit=min(need, 1000)))
+                if js and len(js) > 30:
+                    rows = js
+                    pages = 0
+                    while len(rows) < need and pages < 4:
+                        js2 = _get(VISION, dict(symbol=alt, interval=sub_tf,
+                                                limit=1000,
+                                                endTime=int(rows[0][0]) - 1))
+                        if not js2:
+                            break
+                        rows = js2 + rows
+                        pages += 1
+                    rows = [[x[0], float(x[1]) * mult, float(x[2]) * mult,
+                             float(x[3]) * mult, float(x[4]) * mult,
+                             float(x[5]) / mult, 0, 0, 0,
+                             float(x[9]) / mult] for x in rows]
+                break
+        if not rows:
             return {"ok": False, "error": f"нет свечей по {sym}"}
         subs = [dict(t=int(x[0]), o=float(x[1]), h=float(x[2]), l=float(x[3]),
                      c=float(x[4]), v=float(x[5]), tb=float(x[9]))
