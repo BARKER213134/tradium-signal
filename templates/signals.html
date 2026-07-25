@@ -2373,6 +2373,9 @@ safeInterval(loadCapit, 60000);
   <span id="fpStatus" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);"></span>
 </div>
 
+<!-- 🧠 авто-анализ видимого окна: пересчитывается при зуме/прокрутке -->
+<div id="fpAnalysis" style="display:none;flex-wrap:wrap;gap:6px;margin-bottom:10px;font-family:var(--font-mono);font-size:11px;line-height:1.4;"></div>
+
 <div style="position:relative;background:rgba(8,12,18,0.7);border:1px solid var(--border);border-radius:10px;padding:8px;">
   <canvas id="fpCanvas" style="width:100%;display:block;border-radius:6px;"></canvas>
   <div id="fpTip" style="display:none;position:absolute;pointer-events:none;background:rgba(10,14,22,0.95);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-family:var(--font-mono);font-size:11px;line-height:1.55;z-index:5;white-space:nowrap;"></div>
@@ -2417,6 +2420,67 @@ function fpStatus() {
   document.getElementById('fpStatus').textContent =
     `${d.pair} · ${d.tf} · вижу ${cnt} из ${n} · Σ дельта ${dSum >= 0 ? '+' : ''}${fpNum(dSum)}` +
     ` · 🖱 тяни · колесо — зум · 2×клик — всё окно`;
+  fpAnalyze();
+}
+function fpChip(txt, tone) {
+  const C = { good: ['rgba(0,229,160,0.10)', 'rgba(0,229,160,0.4)', '#00e5a0'],
+              bad: ['rgba(255,77,109,0.10)', 'rgba(255,77,109,0.4)', '#ff5e9c'],
+              warn: ['rgba(255,210,62,0.10)', 'rgba(255,210,62,0.45)', '#ffd23e'],
+              mute: ['rgba(154,164,181,0.08)', 'rgba(154,164,181,0.3)', '#9aa4b5'] }[tone || 'mute'];
+  return `<span style="padding:4px 9px;border-radius:6px;background:${C[0]};border:1px solid ${C[1]};color:${C[2]};white-space:nowrap;">${txt}</span>`;
+}
+function fpAnalyze() {
+  // 🧠 выводы по ВИДИМОМУ окну (пересчёт при зуме/прокрутке)
+  const box = document.getElementById('fpAnalysis');
+  if (!box || !_fpData) return;
+  const { bars, phases } = fpSlice();
+  const n = bars.length;
+  if (n < 5) { box.style.display = 'none'; return; }
+  const last = bars[n - 1];
+  const chg = (last.c / bars[0].o - 1) * 100;
+  const dSum = bars.reduce((a, b) => a + b.d, 0);
+  const dLast5 = bars.slice(-5).reduce((a, b) => a + b.d, 0);
+  let vb = bars[0];
+  bars.forEach(b => { if (b.v > vb.v) vb = b; });
+  const lvl = {};
+  bars.forEach(b => b.cells.forEach(c => { lvl[c[0]] = (lvl[c[0]] || 0) + c[1]; }));
+  let hk = -1, hv = 0;
+  Object.entries(lvl).forEach(([k, v]) => { if (v > hv) { hv = v; hk = +k; } });
+  const hvnP = _fpData.p_min + (hk + 0.5) * _fpData.tick;
+  const distHvn = (last.c / hvnP - 1) * 100;
+  const chips = [];
+  chips.push(fpChip(`${chg >= 0 ? '📈' : '📉'} окно ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%`,
+                    chg >= 0 ? 'good' : 'bad'));
+  const agree = (chg >= 0) === (dSum >= 0);
+  if (agree) {
+    chips.push(fpChip(chg >= 0
+      ? '✅ рост подтверждён дельтой — платит покупатель'
+      : '✅ падение подтверждено дельтой — давит продавец', 'mute'));
+  } else {
+    chips.push(fpChip(chg >= 0
+      ? '⚠️ дивергенция: рост на продажах маркетом — распределение, рост хрупкий'
+      : '⚠️ дивергенция: слив выкупают маркетом — абсорбция/набор', 'warn'));
+  }
+  chips.push(fpChip(`послед. 5 баров: Δ ${dLast5 >= 0 ? '+' : ''}${fpNum(dLast5)} — ` +
+                    `${dLast5 >= 0 ? 'покупатель у руля' : 'продавец у руля'}`,
+                    dLast5 >= 0 ? 'good' : 'bad'));
+  const vbDt = new Date(vb.t).toLocaleString('ru', _fpTf === '1d'
+    ? { day: '2-digit', month: '2-digit' } : { day: '2-digit', month: '2-digit', hour: '2-digit' });
+  chips.push(fpChip(`🔥 max-объём ${vbDt}: Δ ${vb.d >= 0 ? '+' : ''}${fpNum(vb.d)} ` +
+                    `${vb.d >= 0 ? '(агрессивная покупка)' : '(агрессивная продажа)'}`,
+                    vb.d >= 0 ? 'good' : 'bad'));
+  chips.push(fpChip(`🧲 HVN ${fpPrice(hvnP)} · цена ${distHvn >= 0 ? 'выше' : 'ниже'} на ` +
+                    `${Math.abs(distHvn).toFixed(1)}%` +
+                    (Math.abs(distHvn) > 7 ? ' — растяжка от магнита объёма' : ' — у магнита объёма'),
+                    Math.abs(distHvn) > 7 ? 'warn' : 'mute'));
+  const ph = phases[n - 1];
+  if (ph) {
+    const PE = { LONG: ['🟢 фаза LONG', 'good'], SHORT: ['🔴 фаза SHORT', 'bad'],
+                 NEUTRAL: ['⚪ без стороны', 'mute'] }[ph];
+    if (PE) chips.push(fpChip(PE[0], PE[1]));
+  }
+  box.innerHTML = chips.join('');
+  box.style.display = 'flex';
 }
 function fpNum(v) {
   const a = Math.abs(v);
@@ -2601,33 +2665,37 @@ function fpRender() {
   cv.style.cursor = 'crosshair';
   cv.addEventListener('mousedown', ev => {
     if (!_fpData) return;
-    _fpDrag = { x: ev.clientX, off: _fpView.off };
+    ev.preventDefault();
+    _fpDrag = { x: ev.clientX, off: _fpView.off, cnt: fpSlice().cnt };
+    _fpMouse = null;
+    document.getElementById('fpTip').style.display = 'none';
     cv.style.cursor = 'grabbing';
   });
   window.addEventListener('mouseup', () => {
     _fpDrag = null;
     cv.style.cursor = 'crosshair';
   });
+  // драг на уровне окна — не обрывается при выходе курсора за канвас
+  window.addEventListener('mousemove', ev => {
+    if (!_fpDrag || !_fpData) return;
+    const { chartW } = fpGeom(cv);
+    const bw = chartW / _fpDrag.cnt;
+    const dx = ev.clientX - _fpDrag.x;
+    const shift = Math.round(dx / bw);
+    const nAll = _fpData.bars.length;
+    const off = Math.max(0, Math.min(_fpDrag.off + shift, nAll - _fpDrag.cnt));
+    if (off !== _fpView.off) { _fpView.off = off; fpRender(); fpStatus(); }
+  });
   cv.addEventListener('mousemove', ev => {
     const d = _fpData;
     const tip = document.getElementById('fpTip');
     if (!d) { if (tip) tip.style.display = 'none'; return; }
+    if (_fpDrag) { tip.style.display = 'none'; return; }
     const rect = cv.getBoundingClientRect();
     const x = ev.clientX - rect.left, yPx = ev.clientY - rect.top;
     const { chartW } = fpGeom(cv);
     const sl = fpSlice();
     const bw = chartW / sl.bars.length;
-    if (_fpDrag) {
-      tip.style.display = 'none';
-      _fpMouse = null;
-      const dx = ev.clientX - _fpDrag.x;
-      const shift = Math.round(dx / bw);
-      const nAll = d.bars.length;
-      const off = Math.max(0, Math.min(_fpDrag.off + shift, nAll - sl.cnt));
-      if (off !== _fpView.off) { _fpView.off = off; fpStatus(); }
-      fpRender();
-      return;
-    }
     _fpMouse = { x, y: yPx };
     fpRender();
     const i = Math.floor(x / bw);
