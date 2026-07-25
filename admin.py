@@ -4062,20 +4062,13 @@ async def api_entry_check(symbol: str, direction: str = "LONG"):
             reasons.append({"ok": None, "t": "фаза рынка недоступна — ждём скан"})
         elif direction == "LONG":
             if phase == "SHORT":
-                _has_cap = any(s_[0] == "capitulation" and s_[1] == "LONG"
-                               for s_ in sigs)
                 if st4_flip:
                     score += 1
                     reasons.append({"ok": None, "t": "🔴 фаза, но свежий флип 4h ST вверх — "
                                     "реверсал с дна (валидное исключение, агрессивно: SL срабатывает в 48%)"})
-                elif _has_cap:
-                    score += 1
-                    reasons.append({"ok": None, "t": "🔴 фаза, но свежая 🛟 капитуляция "
-                                    "с разворотом RSI4h — реверсал с дна (год: EV +0.82 "
-                                    "именно в красной фазе) (+1)"})
                 else:
                     hard_no = ("фаза 🔴 SHORT — НЕ ЛОНГОВАТЬ (год: WR 26.9%). "
-                               "Исключения: флип 4h ST вверх или 🛟 капитуляция — их нет")
+                               "Исключение только флип 4h ST вверх — его нет")
             elif phase == "LONG":
                 score += 2
                 reasons.append({"ok": True, "t": "фаза 🟢 — лонг по рынку (+2)"})
