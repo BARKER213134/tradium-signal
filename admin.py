@@ -3714,7 +3714,7 @@ async def api_entry_picks():
         sig_strats = (("ignition", "ten", "impulse", "st_break", "st_break4h")
                       if side == "LONG"
                       else ("impulse", "shark", "delta_series", "rider_short",
-                            "st_break", "st_break4h"))
+                            "st_break", "st_break4h", "blowoff"))
         sigs_raw = await asyncio.to_thread(lambda: list(
             db.new_strategy_signals.find(
                 {"created_at": {"$gte": since}, "direction": side,
@@ -3756,7 +3756,7 @@ async def api_entry_picks():
                 ago = (utcnow() - sig["created_at"]).total_seconds() / 3600
                 emoji = {"ignition": "💥", "ten": "💰", "impulse": "⚡",
                          "shark": "🦈", "delta_series": "🫧", "st_break": "🧨",
-                         "st_break4h": "💣",
+                         "st_break4h": "💣", "blowoff": "🌋",
                          "rider_short": "🏇"}.get(sig["strategy"], "•")
                 score += 3
                 reasons.append(f"{emoji} {sig['strategy']} {ago:.1f}ч назад")
@@ -9191,7 +9191,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "whale": "🐋", "shark": "🦈",
                         "impulse": "🚀", "fade": "🎣", "ignition": "💥",
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
-                        "st_break": "🧨", "st_break4h": "💣"}
+                        "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -9200,7 +9200,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
                        "rider_short": "RIDER SHORT", "ten": "TEN",
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
-                       "st_break4h": "ST-пробой 4h"}
+                       "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -9603,7 +9603,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "second_flip": "♻️", "combo": "🧠", "whale": "🐋",
                         "shark": "🦈", "impulse": "🚀", "fade": "🎣", "ignition": "💥",
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
-                        "st_break": "🧨", "st_break4h": "💣"}
+                        "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
@@ -9611,12 +9611,13 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
                        "rider_short": "RIDER SHORT", "ten": "TEN",
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
-                       "st_break4h": "ST-пробой 4h"}
+                       "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
         for n in nss_col.find({"created_at": {"$gte": nss_since},
-                               "indicators.backfill": {"$ne": True}}).sort("created_at", -1).limit(2000):
+                               "$or": [{"indicators.backfill": {"$ne": True}},
+                                       {"strategy": "blowoff"}]}).sort("created_at", -1).limit(2000):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
             em = STRAT_EMOJI.get(strat, "✨")
@@ -9629,6 +9630,12 @@ def _compute_journal_sync(_fast_only: bool = False):
                 _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
                 _tf = "4h" if strat == "st_break4h" else "1h"
                 extra = f" · {_tf} флип · фаза {_phe}{_ph or '?'}"
+            elif strat == "blowoff":
+                _bi = n.get("indicators") or {}
+                _ph = _bi.get("phase")
+                _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
+                extra = (f" · вершина: разгон +{_bi.get('mom24', '?')}%/24ч · "
+                         f"фитиль {_bi.get('wick_pct', '?')}% · фаза {_phe}{_ph or '?'}")
             elif strat == "delta_series":
                 _di = n.get("indicators") or {}
                 extra = (f" · Σ {_di.get('sigma', '?')}σ · vol {_di.get('vol_ratio', '?')}×"
