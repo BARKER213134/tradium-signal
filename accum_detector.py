@@ -359,6 +359,102 @@ def _floor_buy_sig(pair: str, kd: list[dict]):
         return None
 
 
+def _vol_anomaly_sig(pair: str, kd: list[dict]):
+    """⚡ Аномалия объёма ГДЕ УГОДНО (1h) → инфо-сигнал в журнал: закрытый
+    бар с объёмом >8×SMA24 и дельтой >q90-240ч. Направление = знак дельты
+    (инфо: бэктест 90д — направление не предсказывает, ±0.2пп от рандома).
+    Порог 8× по частоте: 45/день на 300 пар (4× дало бы 116/день)."""
+    try:
+        if len(kd) < 300:
+            return None
+        b = kd[-2]
+        v24 = [x["v"] for x in kd[-26:-2]]
+        sma24 = sum(v24) / len(v24) if v24 else 0
+        if not sma24 or b["v"] < 8 * sma24:
+            return None
+        hist = kd[-242:-2]
+        d_hist = sorted(abs(2 * x["tb"] - x["v"]) for x in hist)
+        q90 = d_hist[int(len(d_hist) * 0.90)]
+        d_bar = 2 * b["tb"] - b["v"]
+        if abs(d_bar) <= q90:
+            return None
+        hi48 = max(x["h"] for x in kd[-50:-2])
+        lo48 = min(x["l"] for x in kd[-50:-2])
+        loc = ("TOP" if b["h"] >= hi48 else
+               "BOT" if b["l"] <= lo48 else "MID")
+        phase = None
+        try:
+            from supertrend_tracker import _market_phase_now
+            phase = _market_phase_now()
+        except Exception:
+            pass
+        price = b["c"]
+        want = 1 if d_bar >= 0 else -1
+        return {"strategy": "vol_anomaly", "direction": "LONG" if want > 0 else "SHORT",
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": price, "tp": price * (1 + want * 0.10),
+                "sl": price * (1 - want * 0.05), "horizon_h": 96,
+                "indicators": {"vol_x": round(b["v"] / sma24, 1),
+                               "delta": round(d_bar, 0), "loc": loc,
+                               "imb": round(d_bar / b["v"], 2) if b["v"] else None,
+                               "phase": phase}}
+    except Exception:
+        return None
+
+
+def _vol_anomaly4h_sig(pair: str, kd: list[dict]):
+    """🌩 Аномалия объёма на ЗАКРЫТОМ 4h-баре → инфо-сигнал в журнал:
+    объём 4h-бара >6× среднего последних 24 4h-баров и |дельта 4h| выше
+    q75 последних 60 баров. Скан каждые 30 мин видит закрытый бар в
+    течение получаса после закрытия; кулдаун 3.5ч = раз на бар.
+    Порог 6× по частоте: 29/день (4× дало бы 55/день)."""
+    try:
+        buckets: dict = {}
+        order: list = []
+        for x in kd:
+            k = x["t"] // 14_400_000
+            if k not in buckets:
+                buckets[k] = {"o": x["o"], "h": x["h"], "l": x["l"],
+                              "c": x["c"], "v": 0.0, "d": 0.0, "n": 0}
+                order.append(k)
+            bb = buckets[k]
+            bb["h"] = max(bb["h"], x["h"]); bb["l"] = min(bb["l"], x["l"])
+            bb["c"] = x["c"]; bb["v"] += x["v"]
+            bb["d"] += 2 * x["tb"] - x["v"]; bb["n"] += 1
+        if order and buckets[order[-1]]["n"] < 4:
+            order = order[:-1]              # незакрытый бакет не считаем
+        if len(order) < 70:
+            return None
+        arr = [buckets[k] for k in order]
+        b = arr[-1]
+        prev24 = [a["v"] for a in arr[-25:-1]]
+        ma24 = sum(prev24) / len(prev24) if prev24 else 0
+        if not ma24 or b["v"] < 6 * ma24:
+            return None
+        d_hist = sorted(abs(a["d"]) for a in arr[-61:-1])
+        q75 = d_hist[int(len(d_hist) * 0.75)]
+        if abs(b["d"]) <= q75:
+            return None
+        phase = None
+        try:
+            from supertrend_tracker import _market_phase_now
+            phase = _market_phase_now()
+        except Exception:
+            pass
+        price = b["c"]
+        want = 1 if b["d"] >= 0 else -1
+        return {"strategy": "vol_anomaly4h", "direction": "LONG" if want > 0 else "SHORT",
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": price, "tp": price * (1 + want * 0.10),
+                "sl": price * (1 - want * 0.05), "horizon_h": 96,
+                "indicators": {"vol_x": round(b["v"] / ma24, 1),
+                               "delta": round(b["d"], 0),
+                               "imb": round(b["d"] / b["v"], 2) if b["v"] else None,
+                               "phase": phase}}
+    except Exception:
+        return None
+
+
 def _vol_anomaly_event(pair: str, kd: list[dict]):
     """⚡ ИНФО-событие «аномальный объём у экстремума» (для вкладки-скринера,
     НЕ торговый сигнал): закрытый 1h-бар с объёмом >4×SMA24 и крупной
@@ -649,6 +745,24 @@ def scan_universe(max_pairs: int = 300):
                 _va = _vol_anomaly_event(pair, kd)
                 if _va is not None:
                     vol_anoms.append(_va)
+                # ⚡ аномалия 1h где угодно → журнал (кулдаун 12ч)
+                _vs = _vol_anomaly_sig(pair, kd)
+                if _vs is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_vs, cooldown_h=12):
+                            ds_fired += 1
+                    except Exception:
+                        pass
+                # 🌩 аномалия на закрытом 4h-баре → журнал (раз на бар)
+                _v4 = _vol_anomaly4h_sig(pair, kd)
+                if _v4 is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_v4, cooldown_h=3.5):
+                            ds_fired += 1
+                    except Exception:
+                        pass
                 dz24 = _delta_z(kd, len(kd) - 24)
                 # 🏆 кандидаты фазы: ATR%, импульс 24ч, объём-ратио
                 # (год-бэктест: ATR ловит 2.2-3.9 из 10 реальных лидеров
