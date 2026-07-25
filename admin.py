@@ -4272,7 +4272,7 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
     tf = (tf or "1h").lower()
     if tf not in SUB:
         return {"ok": False, "error": f"tf {tf}: только {list(SUB)}"}
-    bars = max(20, min(int(bars or 60), 120))
+    bars = max(20, min(int(bars or 60), 240))
     sym = (pair or "").upper().replace("/", "").strip()
     if not sym.endswith("USDT"):
         sym += "USDT"
@@ -4280,7 +4280,7 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
     def _sync():
         import requests as rq
         sub_tf, per_bar = SUB[tf]
-        need = min(bars * per_bar + per_bar, 1500)
+        need = min(bars * per_bar + per_bar, 5000)
         rows = None
         urls = ["https://fapi.binance.com/fapi/v1/klines",
                 "https://data-api.binance.vision/api/v3/klines"]
@@ -4299,17 +4299,16 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
                 js = r.json()
                 if js and len(js) > 30:
                     rows = js
-                    # добор второй страницей, если нужно больше 1000
-                    if need > 1000:
-                        st0 = int(js[0][0]) - (need - 1000) * \
-                            {"1m": 60_000, "5m": 300_000,
-                             "15m": 900_000, "1h": 3_600_000}[sub_tf]
+                    # добор страницами назад (до 4), пока не наберём need
+                    pages = 0
+                    while len(rows) < need and pages < 4:
                         r2 = rq.get(url, params=dict(
                             symbol=sym, interval=sub_tf, limit=1000,
-                            startTime=st0, endTime=int(js[0][0]) - 1),
-                            timeout=12)
-                        if r2.status_code == 200 and r2.json():
-                            rows = r2.json() + rows
+                            endTime=int(rows[0][0]) - 1), timeout=12)
+                        if r2.status_code != 200 or not r2.json():
+                            break
+                        rows = r2.json() + rows
+                        pages += 1
                     break
             except Exception:
                 continue
@@ -4334,7 +4333,7 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
         p_max = max(s_["h"] for k in order for s_ in by_bar[k])
         if p_max <= p_min:
             return {"ok": False, "error": "плоская цена"}
-        n_lv = 60
+        n_lv = 120
         tick = (p_max - p_min) / n_lv
         out_bars = []
         for k in order:
