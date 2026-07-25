@@ -4323,6 +4323,51 @@ button,input,select{outline:none}
 </body></html>""")
 
 
+@app.get("/api/research/fapi")
+async def api_research_fapi(kind: str, symbol: str, limit: int = 500,
+                            interval: str = "1h", period: str = "1h",
+                            startTime: int = 0, endTime: int = 0):
+    """Прокси fapi для локальных research-скриптов (локальная сеть 451):
+    kind=oi (openInterestHist) | funding (fundingRate) | klines. Сырой JSON.
+    Под админ-куки, ретраи на 418/429."""
+    def _sync():
+        import time as _t
+        import requests as _rq
+        sym = (symbol or "").upper().replace("/", "")
+        if not sym.endswith("USDT"):
+            sym += "USDT"
+        if kind == "oi":
+            url = "https://fapi.binance.com/futures/data/openInterestHist"
+            params = {"symbol": sym, "period": period,
+                      "limit": max(1, min(int(limit), 500))}
+        elif kind == "funding":
+            url = "https://fapi.binance.com/fapi/v1/fundingRate"
+            params = {"symbol": sym, "limit": max(1, min(int(limit), 1000))}
+        elif kind == "klines":
+            url = "https://fapi.binance.com/fapi/v1/klines"
+            params = {"symbol": sym, "interval": interval,
+                      "limit": max(1, min(int(limit), 1000))}
+        else:
+            return {"error": "kind: oi|funding|klines"}
+        if startTime:
+            params["startTime"] = int(startTime)
+        if endTime:
+            params["endTime"] = int(endTime)
+        for att in range(3):
+            try:
+                r = _rq.get(url, params=params, timeout=12)
+                if r.status_code == 200:
+                    return r.json()
+                if r.status_code in (418, 429):
+                    _t.sleep(1.0 * (att + 1))
+                    continue
+                return {"error": f"http {r.status_code}"}
+            except Exception:
+                _t.sleep(0.5)
+        return {"error": "fail"}
+    return await asyncio.to_thread(_sync)
+
+
 _fp_fapi_down = 0.0   # предохранитель fapi для кластеров
 
 
