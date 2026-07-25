@@ -11693,6 +11693,10 @@ async function openJournalChart(idx, forceTF) {
   // forceTF нужен для перезагрузки графика после _setModalTF (чтобы применить новый tf).
   if (forceTF) _modalTF = forceTF;
   _setActiveTF('jModalTFBar', _modalTF);
+  // 🧮 листание сигналов при открытых кластерах — перегружаем под новую монету
+  if (window._resonanceOn && typeof _fpModalLoad === 'function') {
+    try { _fpModalLoad(); } catch (e) {}
+  }
   const s = _journalFiltered[idx];
   if (!s) return;
 
