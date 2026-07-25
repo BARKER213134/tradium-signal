@@ -1,6 +1,76 @@
 let _fpTf = '1h', _fpData = null;
 let _fpView = { cnt: 0, off: 0 };   // off = баров скрыто справа
 let _fpDrag = null, _fpMouse = null;
+let _fpAnom = true, _fpAnomCache = null;
+function fpToggleAnom(btn) {
+  _fpAnom = !_fpAnom;
+  if (btn) {
+    btn.style.background = _fpAnom ? 'rgba(255,210,62,0.15)' : 'var(--dark)';
+    btn.style.borderColor = _fpAnom ? 'rgba(255,210,62,0.5)' : 'var(--border)';
+    btn.style.color = _fpAnom ? '#ffd23e' : 'var(--muted)';
+  }
+  fpRender();
+}
+function fpFindAnomalies(bars) {
+  // все пороги — относительно ВИДИМОГО окна (robust-перцентили)
+  const cellVols = [];
+  bars.forEach(b => b.cells.forEach(c => { if (c[1] > 0) cellVols.push(c[1]); }));
+  const out = { cells: [], bars: [], notes: {} };
+  if (cellVols.length < 30) return out;
+  const cs = [...cellVols].sort((x, y) => x - y);
+  const q = f => cs[Math.min(cs.length - 1, Math.floor(f * cs.length))];
+  const med = q(0.5), p99 = q(0.99), p95 = q(0.95);
+  const vols = bars.map(b => b.v).sort((x, y) => x - y);
+  const vMed = vols[Math.floor(vols.length / 2)];
+  const dAbs = bars.map(b => Math.abs(b.d)).sort((x, y) => x - y);
+  const dQ75 = dAbs[Math.floor(dAbs.length * 0.75)];
+  const rngs = bars.map(b => (b.h - b.l) / b.c * 100).sort((x, y) => x - y);
+  const rMed = rngs[Math.floor(rngs.length / 2)];
+  let maxH = -Infinity, minL = Infinity;
+  bars.forEach(b => { if (b.h > maxH) maxH = b.h; if (b.l < minL) minL = b.l; });
+  const note = (i, t) => { (out.notes[i] = out.notes[i] || []).push(t); };
+  bars.forEach((b, i) => {
+    b.cells.forEach(c => {
+      const [lvl, vol, dd] = c;
+      if (vol >= p99 && vol >= 4 * med) {
+        out.cells.push({ i, lvl, kind: 'vol' });
+        note(i, `⚡ аномальный объём уровня (${fpNum(vol)})`);
+      } else if (vol >= 3 * med && Math.abs(dd) / vol >= 0.65) {
+        out.cells.push({ i, lvl, kind: dd >= 0 ? 'bi' : 'si' });
+        note(i, dd >= 0 ? `🟩 имбаланс покупок на уровне (Δ +${fpNum(dd)})`
+                        : `🟥 имбаланс продаж на уровне (Δ ${fpNum(dd)})`);
+      }
+    });
+    const up = b.c >= b.o;
+    if (dQ75 > 0 && up && b.d < -dQ75) {
+      out.bars.push({ i, icon: '🧲', top: false });
+      note(i, '🧲 абсорбция: рост при крупных продажах — лимитный покупатель');
+    } else if (dQ75 > 0 && !up && b.d > dQ75) {
+      out.bars.push({ i, icon: '🧲', top: true });
+      note(i, '🧲 абсорбция: падение при крупных покупках — лимитный продавец');
+    }
+    const rng = (b.h - b.l) / b.c * 100;
+    if (rng > 2.2 * rMed && b.v < vMed) {
+      out.bars.push({ i, icon: '💨', top: !up });
+      note(i, '💨 ход без объёма — тонкий стакан, склонно к возврату');
+    }
+    if (b.h >= maxH && b.cells.length) {
+      const topCell = b.cells.reduce((acc, c) => c[0] > acc[0] ? c : acc);
+      if (topCell[1] >= p95) {
+        out.bars.push({ i, icon: '🛑', top: true });
+        note(i, '🛑 stopping volume на хае — крупный продавец остановил рост');
+      }
+    }
+    if (b.l <= minL && b.cells.length) {
+      const botCell = b.cells.reduce((acc, c) => c[0] < acc[0] ? c : acc);
+      if (botCell[1] >= p95) {
+        out.bars.push({ i, icon: '🛡', top: false });
+        note(i, '🛡 stopping volume на лоу — крупный покупатель держит дно');
+      }
+    }
+  });
+  return out;
+}
 function fpSetTf(btn) {
   _fpTf = btn.dataset.tf;
   document.querySelectorAll('#fpTfs button').forEach(b => {
@@ -210,6 +280,39 @@ function fpRender() {
       g.font = '10px monospace';
     }
   });
+  // ⚠ аномалии ордерфлоу (кольца ячеек + значки над барами)
+  _fpAnomCache = _fpAnom ? fpFindAnomalies(bars) : null;
+  if (_fpAnomCache) {
+    const AC = { vol: '#4cc9f0', bi: '#00e5a0', si: '#ff4d6d' };
+    _fpAnomCache.cells.forEach(m => {
+      const x0 = m.i * bw + 1.5;
+      const cw = Math.max(2, bw - 3);
+      const yy = y(gMin + (m.lvl + 1) * tick);
+      if (yy > chartH + cellH || yy < -cellH) return;
+      g.strokeStyle = AC[m.kind] || '#fff';
+      g.lineWidth = 1.6;
+      g.strokeRect(x0 - 0.5, yy - 0.5, cw + 1, Math.max(2.5, cellH));
+      g.lineWidth = 1;
+    });
+    if (bw >= 7) {
+      g.font = `${Math.min(14, Math.max(10, bw * 0.5))}px sans-serif`;
+      g.textAlign = 'center';
+      const usedTop = {}, usedBot = {};
+      _fpAnomCache.bars.forEach(m => {
+        const b = bars[m.i];
+        const xc = m.i * bw + bw / 2;
+        if (m.top) {
+          const off = (usedTop[m.i] = (usedTop[m.i] || 0) + 1);
+          g.fillText(m.icon, xc, Math.max(12, y(b.h) - 4 - (off - 1) * 15));
+        } else {
+          const off = (usedBot[m.i] = (usedBot[m.i] || 0) + 1);
+          g.fillText(m.icon, xc, Math.min(chartH - 2, y(b.l) + 12 + (off - 1) * 15));
+        }
+      });
+      g.textAlign = 'left';
+      g.font = '10px monospace';
+    }
+  }
   // пунктир последней цены
   const lastC = d.bars[d.bars.length - 1].c;
   if (lastC >= pLo && lastC <= pHi) {
@@ -323,6 +426,10 @@ function fpRender() {
       ` ${E[sl.phases[i]] || ''}<br>` +
       `O ${fpPrice(b.o)} · H ${fpPrice(b.h)}<br>L ${fpPrice(b.l)} · C ${fpPrice(b.c)}<br>` +
       `Vol ${fpNum(b.v)} · <span style="color:${b.d >= 0 ? 'var(--buy)' : 'var(--sell)'};">Δ ${b.d >= 0 ? '+' : ''}${fpNum(b.d)}</span>`;
+    if (_fpAnomCache && _fpAnomCache.notes[i]) {
+      tip.innerHTML += '<br>' + _fpAnomCache.notes[i].slice(0, 4)
+        .map(t => `<span style="color:#ffd23e;">${t}</span>`).join('<br>');
+    }
     tip.style.display = 'block';
     tip.style.left = Math.min(x + 16, cv.clientWidth - 195) + 'px';
     tip.style.top = Math.max(4, yPx - 64) + 'px';
