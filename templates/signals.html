@@ -11626,7 +11626,10 @@ function _fpModalLoad() {
   if (openLink) { openLink.href = `/signals?bot=footprint`; openLink.textContent = '↗ вкладка'; }
   if (iframe) {
     iframe.style.display = 'block';
-    iframe.src = `/footprint-view?pair=${encodeURIComponent(pair)}&tf=${tf}`;
+    const url = `/footprint-view?pair=${encodeURIComponent(pair)}&tf=${tf}&_=${Date.now()}`;
+    // replace: гарантированный релоад без накопления истории в iframe
+    try { iframe.contentWindow.location.replace(url); }
+    catch (e) { iframe.src = url; }
   }
 }
 
