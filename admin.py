@@ -9390,7 +9390,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "impulse": "🚀", "fade": "🎣", "ignition": "💥",
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
-                        "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎"}
+                        "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
+                        "vol_anomaly": "⚡", "vol_anomaly4h": "🌩"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -9401,7 +9402,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
                        "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
                        "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП",
-                       "floor_buy": "ДНО+ПОКУПАТЕЛЬ"}
+                       "floor_buy": "ДНО+ПОКУПАТЕЛЬ",
+                       "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -9805,7 +9807,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "shark": "🦈", "impulse": "🚀", "fade": "🎣", "ignition": "💥",
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
-                        "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎"}
+                        "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
+                        "vol_anomaly": "⚡", "vol_anomaly4h": "🌩"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
@@ -9815,7 +9818,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
                        "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
                        "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП",
-                       "floor_buy": "ДНО+ПОКУПАТЕЛЬ"}
+                       "floor_buy": "ДНО+ПОКУПАТЕЛЬ",
+                       "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
@@ -9849,6 +9853,18 @@ def _compute_journal_sync(_fast_only: bool = False):
                 _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
                 extra = (f" · вершина: разгон +{_bi.get('mom24', '?')}%/24ч · "
                          f"фитиль {_bi.get('wick_pct', '?')}% · фаза {_phe}{_ph or '?'}")
+            elif strat in ("vol_anomaly", "vol_anomaly4h"):
+                _ai = n.get("indicators") or {}
+                _ph = _ai.get("phase")
+                _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
+                _dd = _ai.get("delta") or 0
+                _lc = {"TOP": "на вершине", "BOT": "на дне",
+                       "MID": "в середине"}.get(_ai.get("loc"), "")
+                extra = (f" · объём ×{_ai.get('vol_x', '?')} нормы · Δ "
+                         f"{'+' if _dd >= 0 else ''}{_dd:,.0f} "
+                         f"({'покупатель' if _dd >= 0 else 'продавец'})"
+                         + (f" · {_lc}" if _lc else "")
+                         + f" · ИНФО (направление 50/50) · фаза {_phe}{_ph or '?'}")
             elif strat == "floor_buy":
                 _fi = n.get("indicators") or {}
                 _ph = _fi.get("phase")
