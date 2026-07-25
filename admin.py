@@ -4323,6 +4323,9 @@ button,input,select{outline:none}
 </body></html>""")
 
 
+_fp_fapi_down = 0.0   # предохранитель fapi для кластеров
+
+
 @app.get("/api/footprint")
 async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
     """🧮 Кластерный график (замена resonance.vision): ячейки объёма по
@@ -4347,37 +4350,43 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
         sub_tf, per_bar = SUB[tf]
         need = min(bars * per_bar + per_bar, 5000)
         rows = None
+        import time as _time
         FAPI = "https://fapi.binance.com/fapi/v1/klines"
         VISION = "https://data-api.binance.vision/api/v3/klines"
         # фьючерс-онли тикеры (1000BONK/1000PEPE/1MBABYDOGE и т.п.) на
         # споте не существуют — fapi всегда в списке хотя бы последним
         # фолбэком, иначе «нет свечей» при исчерпанном бюджете (25.07)
         urls = [FAPI, VISION]
-        try:
-            from fapi_budget import allow
-            if not allow(tag="footprint"):
-                urls = [VISION, FAPI]
-        except Exception:
-            pass
-        import time as _time
+        # предохранитель: fapi недавно падал → спот первым, без ретрай-
+        # лестницы на каждый график («строить кластеры долго», 25.07)
+        global _fp_fapi_down
+        if _time.time() < _fp_fapi_down:
+            urls = [VISION, FAPI]
+        else:
+            try:
+                from fapi_budget import allow
+                if not allow(tag="footprint"):
+                    urls = [VISION, FAPI]
+            except Exception:
+                pass
 
         def _get(url, params):
-            # ретраи с бэкоффом: fapi на проде временами 418/429 — без них
-            # фьючерс-онли тикеры (1000BONK) «мигали» (25.07)
-            for att in range(3):
+            # короткие ретраи: 2 попытки, таймаут 8с, бэкофф только на
+            # 418/429; полный отказ fapi взводит предохранитель на 5 мин
+            for att in range(2):
                 try:
-                    r = rq.get(url, params=params, timeout=12)
+                    r = rq.get(url, params=params, timeout=8)
                     if r.status_code == 200:
                         js = r.json()
-                        if js:
-                            return js
-                        return None
+                        return js or None
                     if r.status_code in (418, 429):
-                        _time.sleep(0.7 * (att + 1))
+                        _time.sleep(0.5 * (att + 1))
                         continue
-                    return None
+                    break
                 except Exception:
-                    _time.sleep(0.4)
+                    pass
+            if url is FAPI:
+                globals()["_fp_fapi_down"] = _time.time() + 300
             return None
 
         for url in urls:
