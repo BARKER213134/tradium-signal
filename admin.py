@@ -4319,7 +4319,7 @@ button,input,select{outline:none}
   <canvas id="fpCanvas" style="width:100%;display:block;border-radius:5px;"></canvas>
   <div id="fpTip" style="display:none;position:absolute;pointer-events:none;background:rgba(10,14,22,0.95);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:10.5px;line-height:1.55;z-index:5;white-space:nowrap;"></div>
 </div>
-<script src="/static/footprint.js?v=3"></script>
+<script src="/static/footprint.js?v=4"></script>
 </body></html>""")
 
 
