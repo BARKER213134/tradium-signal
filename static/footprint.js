@@ -331,63 +331,6 @@ function fpRender() {
       g.font = '10px monospace';
     }
   }
-  // 📊 профиль объёма видимого окна (VPVR): гистограмма справа,
-  // POC окна (жёлтый пунктир) + Value Area 70% (VAH/VAL)
-  {
-    const lvlVol = {}, lvlDelta = {};
-    bars.forEach(b => b.cells.forEach(c2 => {
-      lvlVol[c2[0]] = (lvlVol[c2[0]] || 0) + c2[1];
-      lvlDelta[c2[0]] = (lvlDelta[c2[0]] || 0) + c2[2];
-    }));
-    const lvls = Object.keys(lvlVol).map(Number);
-    if (lvls.length > 3) {
-      let vpMax = 0, pocLvl = lvls[0];
-      lvls.forEach(lv => { if (lvlVol[lv] > vpMax) { vpMax = lvlVol[lv]; pocLvl = lv; } });
-      const profW = chartW * 0.22;
-      lvls.forEach(lv => {
-        const w = lvlVol[lv] / vpMax * profW;
-        const yy = y(gMin + (lv + 1) * tick);
-        if (yy > chartH || yy + cellH < 0) return;
-        g.fillStyle = (lvlDelta[lv] >= 0) ? 'rgba(0,229,160,0.18)' : 'rgba(255,77,109,0.18)';
-        g.fillRect(chartW - w, yy + 0.5, w, Math.max(1.5, cellH - 1));
-      });
-      // Value Area 70% от POC наружу
-      const totV = lvls.reduce((acc, lv) => acc + lvlVol[lv], 0);
-      const lvMin = Math.min(...lvls), lvMax = Math.max(...lvls);
-      let acc = lvlVol[pocLvl], up = pocLvl + 1, dn = pocLvl - 1;
-      let vah = pocLvl, val = pocLvl;
-      while (acc < totV * 0.7 && (up <= lvMax || dn >= lvMin)) {
-        const vu = up <= lvMax ? (lvlVol[up] || 0) : -1;
-        const vd = dn >= lvMin ? (lvlVol[dn] || 0) : -1;
-        if (vu >= vd) { acc += Math.max(vu, 0); vah = up; up++; }
-        else { acc += Math.max(vd, 0); val = dn; dn--; }
-      }
-      const pocP = gMin + (pocLvl + 0.5) * tick;
-      const pocY = y(pocP);
-      if (pocY >= 0 && pocY <= chartH) {
-        g.strokeStyle = 'rgba(255,210,62,0.8)';
-        g.setLineDash([6, 3]);
-        g.beginPath(); g.moveTo(0, pocY); g.lineTo(chartW, pocY); g.stroke();
-        g.setLineDash([]);
-        g.fillStyle = '#ffd23e';
-        g.font = '9px monospace';
-        g.fillText('POC окна ' + fpPrice(pocP), 4, pocY - 3);
-      }
-      const vahY = y(gMin + (vah + 1) * tick);
-      const valY = y(gMin + val * tick);
-      g.strokeStyle = 'rgba(76,201,240,0.4)';
-      g.setLineDash([2, 4]);
-      [vahY, valY].forEach(yy => {
-        if (yy < 0 || yy > chartH) return;
-        g.beginPath(); g.moveTo(0, yy); g.lineTo(chartW, yy); g.stroke();
-      });
-      g.setLineDash([]);
-      g.fillStyle = 'rgba(76,201,240,0.8)';
-      if (vahY >= 0 && vahY <= chartH) g.fillText('VAH', 4, vahY - 2);
-      if (valY >= 0 && valY <= chartH) g.fillText('VAL', 4, valY + 9);
-      g.font = '10px monospace';
-    }
-  }
   // пунктир последней цены
   const lastC = d.bars[d.bars.length - 1].c;
   if (lastC >= pLo && lastC <= pHi) {
@@ -417,27 +360,6 @@ function fpRender() {
   });
   g.fillStyle = 'rgba(154,164,181,0.6)';
   g.fillText('Delta', chartW + 6, dTop + FP_DELTA / 2 + 3);
-  // 📈 CVD — кумулятивная дельта видимого окна (линия поверх гистограммы):
-  // дивергенция «цена растёт / CVD падает» = распределение, и наоборот
-  {
-    let cum = 0;
-    const cvd = bars.map(b => (cum += b.d));
-    const cMin = Math.min(0, ...cvd), cMax = Math.max(0, ...cvd);
-    if (cMax - cMin > 0) {
-      g.strokeStyle = '#4cc9f0';
-      g.lineWidth = 1.5;
-      g.beginPath();
-      cvd.forEach((cv2, i) => {
-        const xx = i * bw + bw / 2;
-        const yy = dTop + 2 + (1 - (cv2 - cMin) / (cMax - cMin)) * (FP_DELTA - 6);
-        if (i) g.lineTo(xx, yy); else g.moveTo(xx, yy);
-      });
-      g.stroke();
-      g.lineWidth = 1;
-      g.fillStyle = '#4cc9f0';
-      g.fillText('CVD', chartW + 6, dTop + 12);
-    }
-  }
   // фаза рынка
   const phTop = dTop + FP_DELTA + 2;
   const PC = { LONG: 'rgba(0,229,160,0.65)', SHORT: 'rgba(255,77,109,0.65)', NEUTRAL: 'rgba(154,164,181,0.4)' };
