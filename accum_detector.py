@@ -292,7 +292,12 @@ def _thin_pump_sig(pair: str, kd: list[dict]):
         if rng_med <= 0 or v_med <= 0:
             return None
         rng = (b["h"] - b["l"]) / b["c"] * 100
-        if not (b["c"] > b["o"] and rng > 2.2 * rng_med and b["v"] < v_med):
+        # двухуровневый порог (сенситивити 25.07): strict vol<1.0×медианы —
+        # 6.5/день, WR 51.3, EV +1.36 (идёт в TG); loose vol<1.25× —
+        # 12.6/день, WR 49.0, EV +0.98 (только журнал). Дальше ослаблять
+        # нельзя: 1.8×/1.5 → 62/день при EV +0.43 (спам)
+        if not (b["c"] > b["o"] and rng > 2.2 * rng_med
+                and b["v"] < 1.25 * v_med):
             return None
         phase = None
         try:
@@ -307,6 +312,7 @@ def _thin_pump_sig(pair: str, kd: list[dict]):
                 "horizon_h": 96,
                 "indicators": {"rng_x": round(rng / rng_med, 1),
                                "vol_x": round(b["v"] / v_med, 2),
+                               "tier": "strict" if b["v"] < v_med else "loose",
                                "phase": phase}}
     except Exception:
         return None
@@ -575,15 +581,18 @@ def scan_universe(max_pairs: int = 300):
                         if store_signal(_tp_, cooldown_h=24):
                             ds_fired += 1
                             _i = _tp_["indicators"]
-                            _tg16(f"💨 <b>ТОНКИЙ ПАМП · "
-                                  f"{pair.replace('/USDT', '')}</b>\n"
-                                  f"🔴 SHORT @ {_tp_['entry']:.6g}\n"
-                                  f"ход ×{_i['rng_x']} от нормы на объёме "
-                                  f"×{_i['vol_x']} медианы — рост по пустому "
-                                  f"стакану\n"
-                                  f"TP −10% · SL +5% · до 96ч\n"
-                                  f"<i>бэктест 90д: WR 51.3%, "
-                                  f"EV +1.36%/сделку</i>")
+                            # TG — только строгий уровень (~6/день), loose
+                            # (~ещё 6/день) остаётся в журнале/вкладке
+                            if _i.get("tier") == "strict":
+                                _tg16(f"💨 <b>ТОНКИЙ ПАМП · "
+                                      f"{pair.replace('/USDT', '')}</b>\n"
+                                      f"🔴 SHORT @ {_tp_['entry']:.6g}\n"
+                                      f"ход ×{_i['rng_x']} от нормы на объёме "
+                                      f"×{_i['vol_x']} медианы — рост по "
+                                      f"пустому стакану\n"
+                                      f"TP −10% · SL +5% · до 96ч\n"
+                                      f"<i>бэктест 90д: WR 51.3%, "
+                                      f"EV +1.36%/сделку</i>")
                     except Exception:
                         pass
                 # ⚡ инфо-событие «аномальный объём у экстремума» (скринер)
