@@ -11622,14 +11622,13 @@ function _fpModalLoad() {
   });
   if (img) img.style.display = 'none';
   if (status) status.style.display = 'none';
-  if (title) title.innerHTML = `🧮 Кластеры · <span style="color:#fff;">${pairFull}</span> · ${tf} · колесо — зум · тяни — история`;
+  if (title) title.innerHTML = `🧮 Кластеры · <span style="color:#fff;">${pairFull}</span> · ${tf} · колесо — зум · тяни — история · <span style="opacity:0.5;">v3</span>`;
   if (openLink) { openLink.href = `/signals?bot=footprint`; openLink.textContent = '↗ вкладка'; }
   if (iframe) {
     iframe.style.display = 'block';
-    const url = `/footprint-view?pair=${encodeURIComponent(pair)}&tf=${tf}&_=${Date.now()}`;
-    // replace: гарантированный релоад без накопления истории в iframe
-    try { iframe.contentWindow.location.replace(url); }
-    catch (e) { iframe.src = url; }
+    // src-присвоение с антикэшем навигирует ВСЕГДА (contentWindow.replace
+    // молча фейлился после about:blank — кластеры оставались от прошлой монеты)
+    iframe.src = `/footprint-view?pair=${encodeURIComponent(pair)}&tf=${tf}&_=${Date.now()}`;
   }
 }
 
@@ -11641,8 +11640,6 @@ window._toggleResonance = function _toggleResonance() {
   if (window._resonanceOn) {
     window._resonanceOn = false;
     if (overlay) overlay.style.display = 'none';
-    const ifr = document.getElementById('jResonanceIframe');
-    if (ifr) ifr.src = 'about:blank';
     if (btn) {
       btn.textContent = '🧮 Кластеры';
       btn.style.background = 'linear-gradient(135deg,rgba(180,140,255,0.18),rgba(140,100,255,0.10))';
