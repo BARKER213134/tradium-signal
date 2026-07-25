@@ -4347,12 +4347,16 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
         sub_tf, per_bar = SUB[tf]
         need = min(bars * per_bar + per_bar, 5000)
         rows = None
-        urls = ["https://fapi.binance.com/fapi/v1/klines",
-                "https://data-api.binance.vision/api/v3/klines"]
+        FAPI = "https://fapi.binance.com/fapi/v1/klines"
+        VISION = "https://data-api.binance.vision/api/v3/klines"
+        # фьючерс-онли тикеры (1000BONK/1000PEPE/1MBABYDOGE и т.п.) на
+        # споте не существуют — fapi всегда в списке хотя бы последним
+        # фолбэком, иначе «нет свечей» при исчерпанном бюджете (25.07)
+        urls = [FAPI, VISION]
         try:
             from fapi_budget import allow
             if not allow(tag="footprint"):
-                urls = urls[1:]
+                urls = [VISION, FAPI]
         except Exception:
             pass
         for url in urls:
