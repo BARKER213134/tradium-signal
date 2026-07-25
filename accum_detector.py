@@ -217,6 +217,46 @@ def _delta_series_sig(pair: str, kd: list[dict]) -> Optional[dict]:
         return None
 
 
+def _blowoff_sig(pair: str, kd: list[dict]):
+    """🌋 Blowoff-вершина → SHORT: последний ЗАКРЫТЫЙ 1h-бар ставит новый
+    24ч-хай, но закрывается в нижней половине своего диапазона, при разгоне
+    >+10%/24ч — покупателя вынесли на пике (фитиль сверху).
+    Год-бэктест (3748 соб., сетка −10/+5/96ч): EV +0.59%, hit10 31.8%
+    (🟢 +1.27/38.1%, 🔴 +0.80/36.6%) против случайного шорта +0.33/21.6%.
+    RSI-перегрев как триггер проверен и ОТВЕРГНУТ (−0.21, хуже случайного)."""
+    try:
+        if len(kd) < 60:
+            return None
+        b = kd[-2]                       # последний закрытый бар
+        prev = kd[-25:-2]                # 23 бара до него (окно 24 с ним)
+        if len(prev) < 23:
+            return None
+        if b["h"] < max(x["h"] for x in prev):
+            return None                  # не новый 24ч-хай
+        if (b["h"] - b["l"]) <= 0 or b["c"] >= (b["h"] + b["l"]) / 2:
+            return None                  # закрытие не в нижней половине
+        c24 = kd[-26]["c"]
+        mom24 = (b["c"] / c24 - 1) * 100 if c24 else 0
+        if mom24 <= 10:
+            return None
+        phase = None
+        try:
+            from supertrend_tracker import _market_phase_now
+            phase = _market_phase_now()
+        except Exception:
+            pass
+        price = b["c"]
+        return {"strategy": "blowoff", "direction": "SHORT",
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": price, "tp": price * 0.90, "sl": price * 1.05,
+                "horizon_h": 96,
+                "indicators": {"mom24": round(mom24, 1),
+                               "wick_pct": round((b["h"] - b["c"]) / price * 100, 2),
+                               "phase": phase}}
+    except Exception:
+        return None
+
+
 def _rsi4h_value(candles: list[dict], hours: int = 4):
     """(RSI14 последнего бара, SMA14 RSI) на ресемпле `hours` или None.
     Ресемпл из 1h свечей, Wilder RSI. hours=12 — для 12h-климата."""
@@ -325,6 +365,15 @@ def scan_universe(max_pairs: int = 300):
                     try:
                         from impulse_detector import store_signal
                         if store_signal(_ds, cooldown_h=24):
+                            ds_fired += 1
+                    except Exception:
+                        pass
+                # 🌋 blowoff-вершина → SHORT (кулдаун 24ч на пару)
+                _bo = _blowoff_sig(pair, kd)
+                if _bo is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_bo, cooldown_h=24):
                             ds_fired += 1
                     except Exception:
                         pass
