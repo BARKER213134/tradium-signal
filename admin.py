@@ -9615,9 +9615,17 @@ def _compute_journal_sync(_fast_only: bool = False):
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
-        for n in nss_col.find({"created_at": {"$gte": nss_since},
-                               "$or": [{"indicators.backfill": {"$ne": True}},
-                                       {"strategy": "blowoff"}]}).sort("created_at", -1).limit(2000):
+        _nss_docs = list(nss_col.find(
+            {"created_at": {"$gte": nss_since},
+             "indicators.backfill": {"$ne": True}}).sort("created_at", -1).limit(2000))
+        # 🌋 blowoff: вся история пока бэкфилл (кэш до 20.07) — в общий
+        # limit(2000) не пролезает за свежими доками других стратегий
+        # (25.07 в ленте была 1 строка из ~100) → отдельная выборка
+        _seen_nss = {d["_id"] for d in _nss_docs}
+        _nss_docs += [d for d in nss_col.find(
+            {"created_at": {"$gte": nss_since}, "strategy": "blowoff"})
+            .sort("created_at", -1).limit(300) if d["_id"] not in _seen_nss]
+        for n in _nss_docs:
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
             em = STRAT_EMOJI.get(strat, "✨")
