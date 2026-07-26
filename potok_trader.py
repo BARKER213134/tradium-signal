@@ -133,27 +133,30 @@ def _channel_state(direction: str) -> dict:
 
 
 def _live_prices() -> dict:
-    """Свежие цены напрямую (fapi→vision, один запрос все пары) — мимо
-    2-минутного batch-кэша: живой PnL на вкладке и точные выходы."""
+    """Свежие цены: слияние batch-кэш → спот → фьюч (свежее поверх).
+    Фьючерс-онли пары (BLUAI) не теряются при отказе fapi — остаётся
+    цена из batch-кэша (фьючерсные тикеры, ≤2 мин)."""
     import requests
-    for url in ("https://fapi.binance.com/fapi/v1/ticker/price",
-                "https://data-api.binance.vision/api/v3/ticker/price"):
+    out = dict(_prices() or {})
+    for url in ("https://data-api.binance.vision/api/v3/ticker/price",
+                "https://fapi.binance.com/fapi/v1/ticker/price"):
         try:
             r = requests.get(url, timeout=8)
-            if r.status_code == 200:
-                out = {}
-                for x in r.json():
-                    s = x.get("symbol", "")
-                    if s.endswith("USDT"):
-                        try:
-                            out[s] = float(x["price"])
-                        except Exception:
-                            pass
-                if len(out) > 100:
-                    return out
+            if r.status_code != 200:
+                continue
+            fresh = {}
+            for x in r.json():
+                s = x.get("symbol", "")
+                if s.endswith("USDT"):
+                    try:
+                        fresh[s] = float(x["price"])
+                    except Exception:
+                        pass
+            if len(fresh) > 100:
+                out.update(fresh)
         except Exception:
             continue
-    return _prices()
+    return out
 
 
 def _prices() -> dict:
