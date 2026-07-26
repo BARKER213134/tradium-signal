@@ -2184,6 +2184,9 @@ def _setup_bot6():
 
 async def _send_open_alert(pos: dict, decision: dict):
     """Алерт при открытии позиции."""
+    import os
+    if os.getenv("PAPER_TG_ALERTS", "0") != "1":
+        return   # 26.07: BOT6 отдан каналу 🌊 ПОТОК — старый пейпер молчит
     if not _bot6:
         _setup_bot6()
     if not _bot6:
@@ -2219,6 +2222,9 @@ async def _send_open_alert(pos: dict, decision: dict):
 
 async def _send_close_alert(trade: dict, review: str = ""):
     """Алерт при закрытии позиции."""
+    import os
+    if os.getenv("PAPER_TG_ALERTS", "0") != "1":
+        return   # 26.07: BOT6 отдан каналу 🌊 ПОТОК — старый пейпер молчит
     if not _bot6:
         _setup_bot6()
     if not _bot6:

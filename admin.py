@@ -9603,6 +9603,10 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
         "st_passed":1, "pump_score":1, "is_top_pick":1,
         "top_pick_confirmations_count":1, "detected_at":1, "svetofor":1, "svetofor_star":1,
     }).sort("detected_at", -1):
+        # конфлюенс-ЛОНГИ скрыты и с графиков (бэктест 90д: −0.53, 🟥 C,
+        # ковровый шум маркеров; шорты остаются)
+        if c.get("direction") == "LONG":
+            continue
         items.append({
             "source": "confluence",
             "symbol": c.get("symbol", ""),
