@@ -152,6 +152,7 @@ BOTS = [
     {"id": "blowoff", "label": "🌋 Blowoff", "category": "crypto"},
     {"id": "capitulation", "label": "🛟 Капитуляция", "category": "crypto"},
     {"id": "footprint", "label": "🧮 Кластеры", "category": "crypto"},
+    {"id": "potok", "label": "🌊 ПОТОК (авто)", "category": "crypto"},
     {"id": "thin_pump", "label": "💨 Тонкий памп", "category": "crypto"},
     {"id": "vol_anomaly", "label": "⚡ Аномалии объёма", "category": "crypto"},
     {"id": "accum_entry", "label": "🧊💥 База→Вход", "category": "crypto"},

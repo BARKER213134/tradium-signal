@@ -4389,6 +4389,77 @@ button,input,select{outline:none}
 </body></html>""")
 
 
+@app.get("/api/potok")
+async def api_potok():
+    """🌊 ПОТОК: статус каналов (circuit-breaker), открытые позиции с
+    живым PnL, последние сделки, сводная статистика."""
+    def _sync():
+        from datetime import timedelta
+        from database import _get_db, utcnow
+        import potok_trader as pt
+        db = _get_db()
+        now = utcnow()
+        chan = {d: pt._channel_state(d) for d in ("LONG", "SHORT")}
+        prices = pt._prices()
+        poss = []
+        for p in db.potok_positions.find({}).sort("opened_at", -1):
+            want = 1 if p["direction"] == "LONG" else -1
+            pr = prices.get(p["symbol"])
+            pnl = (pr / p["entry"] - 1) * 100 * want if pr else None
+            poss.append({
+                "pair": p.get("pair"), "symbol": p.get("symbol"),
+                "direction": p["direction"], "src": p.get("src"),
+                "entry": p.get("entry"), "tp": p.get("tp"), "sl": p.get("sl"),
+                "price": pr, "pnl": round(pnl, 2) if pnl is not None else None,
+                "peak": p.get("peak_pnl"), "mult": p.get("size_mult"),
+                "kit": p.get("kit"), "star": p.get("star"),
+                "score": p.get("score"), "funding": p.get("funding"),
+                "cvd24": p.get("cvd24"), "anom_age_h": p.get("anom_age_h"),
+                "phase": p.get("phase"), "climate": p.get("climate"),
+                "age_h": round((now - p["opened_at"]).total_seconds() / 3600, 1),
+                "opened_at": p["opened_at"].isoformat()})
+        trades = []
+        for t_ in db.potok_trades.find({}).sort("closed_at", -1).limit(60):
+            trades.append({
+                "pair": t_.get("pair"), "direction": t_.get("direction"),
+                "src": t_.get("src"), "pnl": t_.get("pnl_pct"),
+                "reason": t_.get("reason"), "hold_h": t_.get("hold_h"),
+                "mult": t_.get("size_mult"), "kit": t_.get("kit"),
+                "closed_at": t_["closed_at"].isoformat()
+                if t_.get("closed_at") else None})
+
+        def _stats(rows):
+            if not rows:
+                return {"n": 0, "wr": None, "sum_pp": 0, "depo": 0}
+            pn = [r.get("pnl_pct") or 0 for r in rows]
+            dep = sum((r.get("pnl_pct") or 0) / 5 * (r.get("size_mult") or 1)
+                      for r in rows)
+            return {"n": len(pn),
+                    "wr": round(sum(1 for x in pn if x > 0) / len(pn) * 100, 1),
+                    "sum_pp": round(sum(pn), 1), "depo": round(dep, 2)}
+
+        allr = list(db.potok_trades.find({}, {"pnl_pct": 1, "size_mult": 1,
+                                              "closed_at": 1, "direction": 1}))
+        d7 = [r for r in allr if r.get("closed_at")
+              and r["closed_at"] >= now - timedelta(days=7)]
+        day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        d1 = [r for r in allr if r.get("closed_at") and r["closed_at"] >= day0]
+        fund_doc = db.market_state.find_one({"_id": "funding_now"}) or {}
+        fu = fund_doc.get("updated_at")
+        return {"ok": True, "channels": chan, "positions": poss,
+                "trades": trades, "slots": pt.SLOTS,
+                "stats": {"всего": _stats(allr), "7д": _stats(d7),
+                          "сегодня": _stats(d1),
+                          "LONG": _stats([r for r in allr if r.get("direction") == "LONG"]),
+                          "SHORT": _stats([r for r in allr if r.get("direction") == "SHORT"])},
+                "funding_age_min": round((now - fu).total_seconds() / 60)
+                if fu is not None else None}
+    try:
+        return await asyncio.to_thread(_sync)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/health-beats")
 async def api_health_beats(hours: int = 6):
     """📦 Чёрный ящик: RSS/треды/лаг лупа за N часов + рестарты."""

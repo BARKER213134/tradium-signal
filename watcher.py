@@ -137,6 +137,27 @@ async def _svetofor_stamp_loop():
         await _asyncio.sleep(600)
 
 
+async def _potok_loop():
+    """🌊 ПОТОК — авто-канал paper: сигнал+поток (бэктесты 25-26.07).
+    Каждые 5 мин: funding-снапшот (15-мин кэш), ведение позиций
+    (TP/SL/тайм/smart/фаза), новые входы по гейтам каналов."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(300)
+    while True:
+        try:
+            await _asyncio.to_thread(_hb, "potok")
+            import potok_trader as pt
+            r = await _asyncio.wait_for(
+                _asyncio.to_thread(pt.tick), timeout=120.0)
+            if r.get("opened") or r.get("closed"):
+                logger.info(f"[potok] открыто {r['opened']} · закрыто {r['closed']}")
+        except _asyncio.TimeoutError:
+            logger.warning("[potok] tick TIMEOUT 120s")
+        except Exception:
+            logger.exception("[potok] loop crashed")
+        await _asyncio.sleep(300)
+
+
 async def _whale_scanner_loop():
     """🐋 WHALE safety-net scanner — каждые 30 мин. TG dispatch напрямую
     из fired_docs (раньше был баг: query по created_at brought 0 because
@@ -3955,6 +3976,7 @@ async def start_watcher():
     # 🚦 штамп светофора на свежие сигналы (галочки на графиках)
     try:
         asyncio.create_task(_svetofor_stamp_loop())
+        asyncio.create_task(_potok_loop())
         logger.info("[svetofor] stamp loop started")
     except Exception:
         logger.exception("[svetofor] failed to start loop")

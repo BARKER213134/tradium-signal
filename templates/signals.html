@@ -2563,6 +2563,122 @@ loadVolAnoms();
 safeInterval(loadVolAnoms, 60000);
 </script>
 
+{% elif bot == 'potok' %}
+<!-- ════════════ 🌊 ПОТОК — авто-канал paper: сигнал+поток (research 25-26.07) ════════════ -->
+<div class="strategy-box" style="border-color:rgba(76,201,240,0.45);">
+  <div class="strat-icon">🌊</div>
+  <div class="strat-body">
+    <div class="strat-title">Автоторговля «ПОТОК» (paper) — сигнал, подтверждённый потоком крупного игрока</div>
+    <b>🟢 LONG</b>: сигнал (whale/tc/st_mtf/st_vip/💎/confluence) + светофор ДА + BUY-аномалия ≤12ч +
+    CVD24&gt;0 + funding≥0 → <i>90д: WR 52%, EV +2.21%/сделку · год: 8/13 мес в плюсе</i> · полный размер.<br>
+    <b>🔴 SHORT</b>: сигнал (shark/tc/second_flip/💨/confluence) + ДА + funding&gt;−0.05% →
+    <i>90д: WR 53%, EV +1.48%</i> · год режимный → <b>полразмера</b> + circuit-breaker.<br>
+    Выход: один ордер <b>TP +20% / SL −5%</b> · тайм-стоп 48ч&lt;+2% · smart-выход лонгов (пик≥+4% и sell-климакс) ·
+    потолок 96ч · закрытие минусовых при развороте фазы. Трейлинг/лестницы проверены и отвергнуты (режут хвосты).<br>
+    Предохранители: 8 слотов · кулдаун 24ч/пара · дневной стоп −15пп · канал 30д в минусе → полразмера,
+    &lt;−50пп → пауза. Учёт: 1R = 1% депо (вклад сделки = pnl/5 × размер). Отчёты в TG (paper-бот).
+  </div>
+</div>
+
+<div id="ptChan" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;"></div>
+<div id="ptStats" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;font-family:var(--font-mono);font-size:11.5px;"></div>
+
+<div style="font-family:var(--font-mono);font-size:12px;color:#4cc9f0;font-weight:800;margin:6px 0;">ОТКРЫТЫЕ ПОЗИЦИИ</div>
+<div class="table-wrap"><table>
+  <thead><tr>
+    <th style="padding:10px 12px;">Пара</th><th>Напр</th><th>Источник</th>
+    <th style="text-align:right;">Вход</th><th style="text-align:right;">Цена</th>
+    <th style="text-align:right;">PnL</th><th style="text-align:right;">Пик</th>
+    <th style="text-align:right;">Возраст</th><th style="text-align:center;">Размер</th>
+    <th>Поток при входе</th><th style="text-align:center;">Рынок</th>
+  </tr></thead>
+  <tbody id="ptPos"><tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Загрузка…</td></tr></tbody>
+</table></div>
+
+<div style="font-family:var(--font-mono);font-size:12px;color:#4cc9f0;font-weight:800;margin:14px 0 6px;">ПОСЛЕДНИЕ СДЕЛКИ</div>
+<div class="table-wrap"><table>
+  <thead><tr>
+    <th style="padding:10px 12px;">Закрыта</th><th>Пара</th><th>Напр</th><th>Источник</th>
+    <th style="text-align:right;">PnL</th><th style="text-align:right;">≈депо</th>
+    <th>Причина</th><th style="text-align:right;">Держали</th>
+  </tr></thead>
+  <tbody id="ptTr"><tr><td colspan="8" style="text-align:center;padding:40px;" class="text-muted">Сделок пока нет — канал только запущен, входы по гейтам.</td></tr></tbody>
+</table></div>
+
+<script>
+function _ptN(v, d) { return v == null ? '—' : (+v).toFixed(d == null ? 2 : d); }
+function _ptPx(v) {
+  if (v == null) return '—';
+  const n = +v;
+  return n >= 100 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n.toPrecision(4);
+}
+async function loadPotok() {
+  try {
+    const r = await fetch('/api/potok');
+    const d = await r.json();
+    if (!d.ok) return;
+    const PE = { LONG: '🟢', SHORT: '🔴', NEUTRAL: '⚪' };
+    // каналы
+    const ch = document.getElementById('ptChan');
+    ch.innerHTML = ['LONG', 'SHORT'].map(dir => {
+      const c = d.channels[dir];
+      const paused = c.mult <= 0;
+      const col = paused ? '#ff5e9c' : c.mult < (dir === 'LONG' ? 1 : 0.5) ? '#ffd23e' : '#00e5a0';
+      return `<div style="flex:1;min-width:240px;padding:10px 14px;border:1px solid ${col}55;border-radius:10px;background:${col}0d;font-family:var(--font-mono);">
+        <div style="font-size:13px;font-weight:800;color:${col};">${PE[dir]} канал ${dir} · размер ${c.mult.toFixed(2)}R</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">статус: ${c.status} · 30д: ${c.sum30 >= 0 ? '+' : ''}${c.sum30}пп (${c.n30} сдел.) · сегодня: ${c.sum_day >= 0 ? '+' : ''}${c.sum_day}пп</div>
+      </div>`;
+    }).join('');
+    // статистика
+    const st = document.getElementById('ptStats');
+    st.innerHTML = Object.entries(d.stats).map(([k, s]) => {
+      const col = (s.depo || 0) > 0 ? '#00e5a0' : (s.depo || 0) < 0 ? '#ff5e9c' : '#9aa4b5';
+      return `<span style="padding:5px 10px;border:1px solid var(--border);border-radius:8px;">
+        <b>${k}</b>: ${s.n} сдел${s.wr != null ? ' · WR ' + s.wr + '%' : ''} ·
+        <span style="color:${col};font-weight:700;">${(s.sum_pp || 0) >= 0 ? '+' : ''}${s.sum_pp}пп ≈ ${(s.depo || 0) >= 0 ? '+' : ''}${s.depo}% депо</span></span>`;
+    }).join('') + `<span style="padding:5px 10px;color:var(--muted);">слоты ${d.positions.length}/${d.slots} · funding обновлён ${d.funding_age_min != null ? d.funding_age_min + ' мин назад' : '—'}</span>`;
+    // позиции
+    const tb = document.getElementById('ptPos');
+    tb.innerHTML = d.positions.length ? d.positions.map(p => {
+      const pc = (p.pnl || 0) >= 0 ? 'var(--buy)' : 'var(--sell)';
+      return `<tr>
+        <td class="mono fw-700" style="cursor:pointer;border-bottom:1px dashed rgba(255,210,62,0.4);" onclick="copyTicker('${p.symbol}', event)">${(p.pair || '').replace('/USDT', '')}${p.kit ? ' 🐋' : ''}${p.star ? ' ⭐' : ''} <span onclick="openPairChart('${p.symbol}');event.stopPropagation()" style="cursor:pointer;opacity:0.65;">📈</span></td>
+        <td>${p.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>'}</td>
+        <td class="mono" style="font-size:11px;">${p.src || '—'} (сч.${p.score ?? '—'})</td>
+        <td class="mono" style="text-align:right;">${_ptPx(p.entry)}</td>
+        <td class="mono" style="text-align:right;">${_ptPx(p.price)}</td>
+        <td class="mono" style="text-align:right;color:${pc};font-weight:800;">${p.pnl == null ? '—' : (p.pnl >= 0 ? '+' : '') + p.pnl.toFixed(2) + '%'}</td>
+        <td class="mono" style="text-align:right;color:var(--muted);">${_ptN(p.peak, 1)}%</td>
+        <td class="mono" style="text-align:right;">${_ptN(p.age_h, 0)}ч</td>
+        <td class="mono" style="text-align:center;">${_ptN(p.mult, 2)}R</td>
+        <td class="mono" style="font-size:10.5px;color:var(--muted);">${p.direction === 'LONG' ? `аном ${_ptN(p.anom_age_h, 0)}ч · CVD ${p.cvd24 != null ? (p.cvd24 >= 0 ? '+' : '') + (Math.abs(p.cvd24) >= 1e6 ? (p.cvd24 / 1e6).toFixed(1) + 'M' : (p.cvd24 / 1e3).toFixed(0) + 'K') : '—'}` : ''} f ${p.funding != null ? (p.funding * 100).toFixed(3) + '%' : '—'}</td>
+        <td style="text-align:center;">${PE[p.phase] || '?'}${PE[p.climate] || '?'}</td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Открытых позиций нет — жду совпадения гейтов (сигнал ДА + поток + funding).</td></tr>';
+    // сделки
+    const tt = document.getElementById('ptTr');
+    if (d.trades.length) {
+      tt.innerHTML = d.trades.map(t => {
+        const pc = (t.pnl || 0) > 0 ? 'var(--buy)' : 'var(--sell)';
+        const depo = ((t.pnl || 0) / 5 * (t.mult || 1));
+        return `<tr>
+          <td class="mono" style="font-size:11px;">${t.closed_at ? new Date(t.closed_at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—'}</td>
+          <td class="mono fw-700">${(t.pair || '').replace('/USDT', '')}${t.kit ? ' 🐋' : ''}</td>
+          <td>${t.direction === 'LONG' ? '🟢' : '🔴'}</td>
+          <td class="mono" style="font-size:11px;">${t.src || '—'}</td>
+          <td class="mono" style="text-align:right;color:${pc};font-weight:800;">${(t.pnl >= 0 ? '+' : '') + _ptN(t.pnl)}%</td>
+          <td class="mono" style="text-align:right;color:${pc};">${(depo >= 0 ? '+' : '') + depo.toFixed(2)}%</td>
+          <td class="mono" style="font-size:11px;">${t.reason || '—'}</td>
+          <td class="mono" style="text-align:right;">${_ptN(t.hold_h, 0)}ч</td>
+        </tr>`;
+      }).join('');
+    }
+  } catch (e) { /* тихо */ }
+}
+loadPotok();
+safeInterval(loadPotok, 30000);
+</script>
+
 {% elif bot == 'footprint' %}
 <!-- ════════════ 🧮 КЛАСТЕРЫ — footprint-график (замена resonance.vision, 25.07) ════════════ -->
 <div class="strategy-box" style="border-color:rgba(76,201,240,0.4);">

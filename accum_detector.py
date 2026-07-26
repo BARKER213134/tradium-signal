@@ -807,8 +807,33 @@ def scan_universe(max_pairs: int = 300):
                                      and bool(_s4[-2]["trend"]))
                     except Exception:
                         pass
+                    # 🌊 ПОТОК: CVD24 + свежесть аномалий потока (закрытые бары)
+                    _dl = [2 * x["tb"] - x["v"] for x in kd]
+                    _cvd24 = sum(_dl[-25:-1])
+                    _ab_ts = _as_ts = None
+                    try:
+                        _vh = sorted(x["v"] for x in kd[-241:-1])
+                        _vm_ = _vh[len(_vh) // 2] if _vh else 0
+                        _dh = sorted(abs(x_) for x_ in _dl[-241:-1])
+                        _q75_ = _dh[int(len(_dh) * 0.75)] if _dh else 0
+                        for _j in range(max(26, len(kd) - 14), len(kd) - 1):
+                            _bv, _bd = kd[_j]["v"], _dl[_j]
+                            _sma_ = sum(x["v"] for x in kd[_j - 24:_j]) / 24
+                            _big = _sma_ and _bv > 4 * _sma_ and abs(_bd) > _q75_
+                            _imb = (_vm_ and _bv > 1.5 * _vm_ and _bv > 0
+                                    and abs(_bd) / _bv >= 0.65)
+                            if _big or _imb:
+                                if _bd > 0:
+                                    _ab_ts = int(kd[_j]["t"]) + 3600_000
+                                else:
+                                    _as_ts = int(kd[_j]["t"]) + 3600_000
+                    except Exception:
+                        pass
                     cand_rows.append({"pair": pair,
                                       "symbol": pair.replace("/", "").upper(),
+                                      "cvd24": round(_cvd24, 0),
+                                      "anom_buy_ts": _ab_ts,
+                                      "anom_sell_ts": _as_ts,
                                       "atr_pct": round(_atrp, 2),
                                       "mom24": round(_mom, 2),
                                       "vol_ratio": round(_vr, 2),
@@ -880,6 +905,11 @@ def scan_universe(max_pairs: int = 300):
                 {"_id": c["symbol"]},
                 {"_id": c["symbol"], "pair": c["pair"],
                  "ret7d": c["ret7d"], "pctl7d": pctl[i],
+                 "cvd24": c.get("cvd24"),
+                 "anom_buy_ts": c.get("anom_buy_ts"),
+                 "anom_sell_ts": c.get("anom_sell_ts"),
+                 "dz24": c.get("dz24"),
+                 "price": c.get("price"),
                  "mom24": c["mom24"], "rsi4h": c.get("rsi4h"),
                  "st1_trend": c.get("st1_trend"), "st1_flip": c.get("st1_flip"),
                  "st4_trend": c.get("st4_trend"), "st4_flip": c.get("st4_flip"),
