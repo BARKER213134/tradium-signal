@@ -744,6 +744,7 @@ async function _loadStStats() {
     const r = await fetch('/api/supertrend-stats?days=14');
     const d = await r.json();
     if (!d.ok) return;
+    window._ptLastUpd = Date.now();
     const bt = d.by_tier || {};
     const fmt = (t) => `${t.total || 0} (${t.LONG || 0}L / ${t.SHORT || 0}S)`;
     document.getElementById('st-stats').innerHTML =
@@ -2580,6 +2581,7 @@ safeInterval(loadVolAnoms, 60000);
   </div>
 </div>
 
+<div style="text-align:right;margin-bottom:4px;"><span id="ptLive" style="font-family:var(--font-mono);font-size:11px;font-weight:800;color:#00e5a0;">● LIVE</span></div>
 <div id="ptChan" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;"></div>
 <div id="ptStats" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;font-family:var(--font-mono);font-size:11.5px;"></div>
 
@@ -2589,10 +2591,12 @@ safeInterval(loadVolAnoms, 60000);
     <th style="padding:10px 12px;">Пара</th><th>Напр</th><th>Источник</th>
     <th style="text-align:right;">Вход</th><th style="text-align:right;">Цена</th>
     <th style="text-align:right;">PnL</th><th style="text-align:right;">Пик</th>
+    <th style="text-align:center;">До TP / SL</th>
     <th style="text-align:right;">Возраст</th><th style="text-align:center;">Размер</th>
+    <th>Монета сейчас</th>
     <th>Поток при входе</th><th style="text-align:center;">Рынок</th>
   </tr></thead>
-  <tbody id="ptPos"><tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Загрузка…</td></tr></tbody>
+  <tbody id="ptPos"><tr><td colspan="13" style="text-align:center;padding:40px;" class="text-muted">Загрузка…</td></tr></tbody>
 </table></div>
 
 <div style="font-family:var(--font-mono);font-size:12px;color:#4cc9f0;font-weight:800;margin:14px 0 6px;">ПОСЛЕДНИЕ СДЕЛКИ</div>
@@ -2649,12 +2653,14 @@ async function loadPotok() {
         <td class="mono" style="text-align:right;">${_ptPx(p.price)}</td>
         <td class="mono" style="text-align:right;color:${pc};font-weight:800;">${p.pnl == null ? '—' : (p.pnl >= 0 ? '+' : '') + p.pnl.toFixed(2) + '%'}</td>
         <td class="mono" style="text-align:right;color:var(--muted);">${_ptN(p.peak, 1)}%</td>
-        <td class="mono" style="text-align:right;">${_ptN(p.age_h, 0)}ч</td>
+        <td class="mono" style="text-align:center;font-size:11px;"><span style="color:var(--buy);">${_ptN(p.dist_tp, 1)}%</span> / <span style="color:var(--sell);">${_ptN(p.dist_sl, 1)}%</span></td>
+        <td class="mono" style="text-align:right;">${_ptN(p.age_h, 0)}ч${p.ts48_in_h != null && p.ts48_in_h > 0 ? `<div style="font-size:9.5px;color:var(--muted);">т-стоп через ${_ptN(p.ts48_in_h, 0)}ч</div>` : ''}</td>
         <td class="mono" style="text-align:center;">${_ptN(p.mult, 2)}R</td>
+        <td class="mono" style="font-size:10.5px;color:var(--muted);">RSI4h ${p.rsi4h != null ? (+p.rsi4h).toFixed(0) : '—'} · 24ч ${p.mom24 != null ? (p.mom24 >= 0 ? '+' : '') + (+p.mom24).toFixed(1) + '%' : '—'}<br>7д ${p.ret7d != null ? (p.ret7d >= 0 ? '+' : '') + (+p.ret7d).toFixed(0) + '%' : '—'}${p.pctl7d != null ? ' (топ ' + Math.max(1, Math.round((1 - p.pctl7d) * 100)) + '%)' : ''}</td>
         <td class="mono" style="font-size:10.5px;color:var(--muted);">${p.direction === 'LONG' ? `аном ${_ptN(p.anom_age_h, 0)}ч · CVD ${p.cvd24 != null ? (p.cvd24 >= 0 ? '+' : '') + (Math.abs(p.cvd24) >= 1e6 ? (p.cvd24 / 1e6).toFixed(1) + 'M' : (p.cvd24 / 1e3).toFixed(0) + 'K') : '—'}` : ''} f ${p.funding != null ? (p.funding * 100).toFixed(3) + '%' : '—'}</td>
         <td style="text-align:center;">${PE[p.phase] || '?'}${PE[p.climate] || '?'}</td>
       </tr>`;
-    }).join('') : '<tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Открытых позиций нет — жду совпадения гейтов (сигнал ДА + поток + funding).</td></tr>';
+    }).join('') : '<tr><td colspan="13" style="text-align:center;padding:40px;" class="text-muted">Открытых позиций нет — жду совпадения гейтов (сигнал ДА + поток + funding).</td></tr>';
     // сделки
     const tt = document.getElementById('ptTr');
     if (d.trades.length) {
@@ -2675,8 +2681,17 @@ async function loadPotok() {
     }
   } catch (e) { /* тихо */ }
 }
+window._ptLastUpd = 0;
 loadPotok();
-safeInterval(loadPotok, 30000);
+safeInterval(loadPotok, 10000);
+setInterval(() => {
+  const el = document.getElementById('ptLive');
+  if (el && window._ptLastUpd) {
+    const s2 = Math.round((Date.now() - window._ptLastUpd) / 1000);
+    el.textContent = `● LIVE · обновлено ${s2}с назад`;
+    el.style.color = s2 < 15 ? '#00e5a0' : s2 < 40 ? '#ffd23e' : '#ff5e9c';
+  }
+}, 1000);
 </script>
 
 {% elif bot == 'footprint' %}

@@ -132,6 +132,30 @@ def _channel_state(direction: str) -> dict:
             "sum_day": round(sum_day, 1), "n30": len(rows30)}
 
 
+def _live_prices() -> dict:
+    """Свежие цены напрямую (fapi→vision, один запрос все пары) — мимо
+    2-минутного batch-кэша: живой PnL на вкладке и точные выходы."""
+    import requests
+    for url in ("https://fapi.binance.com/fapi/v1/ticker/price",
+                "https://data-api.binance.vision/api/v3/ticker/price"):
+        try:
+            r = requests.get(url, timeout=8)
+            if r.status_code == 200:
+                out = {}
+                for x in r.json():
+                    s = x.get("symbol", "")
+                    if s.endswith("USDT"):
+                        try:
+                            out[s] = float(x["price"])
+                        except Exception:
+                            pass
+                if len(out) > 100:
+                    return out
+        except Exception:
+            continue
+    return _prices()
+
+
 def _prices() -> dict:
     """Текущие цены из batch-кэша тикеров (1 запрос на всё)."""
     try:
@@ -313,7 +337,7 @@ def manage() -> int:
     poss = list(db.potok_positions.find({}))
     if not poss:
         return 0
-    prices = _prices()
+    prices = _live_prices()
     ctx_all = {d["_id"]: d for d in db.pair_context.find(
         {"_id": {"$in": [p["symbol"] for p in poss]}})}
     phase = _phase_now()

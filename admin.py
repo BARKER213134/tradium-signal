@@ -4460,12 +4460,18 @@ async def api_potok():
         db = _get_db()
         now = utcnow()
         chan = {d: pt._channel_state(d) for d in ("LONG", "SHORT")}
-        prices = pt._prices()
+        pos_docs = list(db.potok_positions.find({}).sort("opened_at", -1))
+        prices = pt._live_prices() if pos_docs else {}
+        ctx_all = {c["_id"]: c for c in db.pair_context.find(
+            {"_id": {"$in": [p["symbol"] for p in pos_docs]}},
+            {"rsi4h": 1, "mom24": 1, "ret7d": 1, "pctl7d": 1})}
         poss = []
-        for p in db.potok_positions.find({}).sort("opened_at", -1):
+        for p in pos_docs:
             want = 1 if p["direction"] == "LONG" else -1
             pr = prices.get(p["symbol"])
             pnl = (pr / p["entry"] - 1) * 100 * want if pr else None
+            age_h = (now - p["opened_at"]).total_seconds() / 3600
+            cx = ctx_all.get(p["symbol"]) or {}
             poss.append({
                 "pair": p.get("pair"), "symbol": p.get("symbol"),
                 "direction": p["direction"], "src": p.get("src"),
@@ -4476,7 +4482,13 @@ async def api_potok():
                 "score": p.get("score"), "funding": p.get("funding"),
                 "cvd24": p.get("cvd24"), "anom_age_h": p.get("anom_age_h"),
                 "phase": p.get("phase"), "climate": p.get("climate"),
-                "age_h": round((now - p["opened_at"]).total_seconds() / 3600, 1),
+                "age_h": round(age_h, 1),
+                # живые данные по монете + план выхода
+                "dist_tp": round(abs(p["tp"] / pr - 1) * 100, 2) if pr else None,
+                "dist_sl": round(abs(p["sl"] / pr - 1) * 100, 2) if pr else None,
+                "ts48_in_h": round(max(0, 48 - age_h), 1),
+                "rsi4h": cx.get("rsi4h"), "mom24": cx.get("mom24"),
+                "ret7d": cx.get("ret7d"), "pctl7d": cx.get("pctl7d"),
                 "opened_at": p["opened_at"].isoformat()})
         trades = []
         for t_ in db.potok_trades.find({}).sort("closed_at", -1).limit(60):
