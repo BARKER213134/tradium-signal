@@ -26,8 +26,9 @@ from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
-LONG_SRC = {"whale", "triple_confluence", "st_mtf", "st_vip", "floor_buy",
-            "confluence_5plus", "confluence_lo"}
+# конфлюенсы убраны из LONG (бэктест 26.07: 90д score5 LONG −0.67,
+# с ДА −0.48 — устаревший EDGE давал им незаслуженный 🟩)
+LONG_SRC = {"whale", "triple_confluence", "st_mtf", "st_vip", "floor_buy"}
 SHORT_SRC = {"shark", "triple_confluence", "second_flip", "thin_pump",
              "st_mtf", "st_vip", "confluence_5plus", "confluence_lo"}
 SLOTS = 8
