@@ -164,6 +164,22 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
            "star": bool(star), "funding": rate,
            "cvd24": ctx.get("cvd24"), "phase": phase, "climate": clim,
            "anom_age_h": ctx.get("_anom_age_h")}
+    # 🌊 запись входа в журнал (маркер на графиках); state='OPEN' —
+    # generic-трекер её не трогает, исход проставит manage() при закрытии
+    try:
+        jr = db.new_strategy_signals.insert_one({
+            "strategy": "potok", "direction": d_, "pair": pair,
+            "symbol": sym, "entry": price, "tp": doc["tp"], "sl": doc["sl"],
+            "horizon_h": HORIZON_H, "created_at": doc["opened_at"],
+            "state": "OPEN",
+            "indicators": {"src": src, "score": score, "mult": mult,
+                           "kit": bool(kit), "phase": phase,
+                           "climate": clim, "funding": rate,
+                           "cvd24": ctx.get("cvd24"),
+                           "anom_age_h": ctx.get("_anom_age_h")}})
+        doc["journal_id"] = jr.inserted_id
+    except Exception:
+        logger.debug("[potok] journal insert fail", exc_info=True)
     db.potok_positions.insert_one(doc)
     E = {"LONG": "🟢 LONG", "SHORT": "🔴 SHORT"}
     PE = {"LONG": "🟢", "SHORT": "🔴", "NEUTRAL": "⚪", None: "?"}
@@ -338,6 +354,15 @@ def manage() -> int:
                  "pnl_pct": round(pnl, 2), "reason": reason,
                  "hold_h": round(age_h, 1)}
         db.potok_trades.insert_one(trade)
+        if p.get("journal_id") is not None:
+            try:
+                db.new_strategy_signals.update_one(
+                    {"_id": p["journal_id"]},
+                    {"$set": {"state": reason.split("(")[0],
+                              "pnl_pct": round(pnl, 2),
+                              "exit_price": price, "exit_at": now}})
+            except Exception:
+                pass
         closed += 1
         st = _channel_state(d_)
         depo = round(pnl / 5 * (p.get("size_mult") or 1), 2)

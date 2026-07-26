@@ -166,7 +166,10 @@ BOTS = [
     # {"id": "prepump", "label": "🔥 Pre-Pump", "category": "crypto"},
     # HOT NOW убран — не работает нормально. Template остаётся для direct URL access.
     # {"id": "hot_now", "label": "🔥 HOT NOW", "category": "crypto"},
-    {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
+    # {"id": "autotrading", "label": "Авто-торговля", "category": "crypto"},
+    # — кнопка скрыта 26.07: заменена каналом 🌊 ПОТОК. Старая вкладка жива
+    # по прямому URL /signals?bot=autotrading (momentum-paper продолжает
+    # работать в фоне). Вернуть: раскомментировать строку.
     {"id": "forex_fvg", "label": "Forex FVG 1H", "category": "stocks"},
     {"id": "forex_journal", "label": "Forex Журнал", "category": "stocks"},
 ]

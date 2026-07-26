@@ -9645,7 +9645,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
-                        "vol_anomaly": "⚡", "vol_anomaly4h": "🌩"}
+                        "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -9657,7 +9657,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
                        "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП",
                        "floor_buy": "ДНО+ПОКУПАТЕЛЬ",
-                       "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h"}
+                       "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h",
+                       "potok": "ПОТОК·АВТО"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -10062,7 +10063,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
-                        "vol_anomaly": "⚡", "vol_anomaly4h": "🌩"}
+                        "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
@@ -10073,7 +10074,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
                        "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП",
                        "floor_buy": "ДНО+ПОКУПАТЕЛЬ",
-                       "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h"}
+                       "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h",
+                       "potok": "ПОТОК·АВТО"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
@@ -10108,6 +10110,15 @@ def _compute_journal_sync(_fast_only: bool = False):
                 _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
                 extra = (f" · вершина: разгон +{_bi.get('mom24', '?')}%/24ч · "
                          f"фитиль {_bi.get('wick_pct', '?')}% · фаза {_phe}{_ph or '?'}")
+            elif strat == "potok":
+                _pi = n.get("indicators") or {}
+                _ph = _pi.get("phase")
+                _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
+                extra = (f" · авто-вход: {_pi.get('src', '?')} · счёт {_pi.get('score', '?')} · "
+                         f"{_pi.get('mult', 1):.2f}R{' · 🐋КИТ' if _pi.get('kit') else ''} · "
+                         f"фаза {_phe}{_ph or '?'}"
+                         + (f" · закрыт {n.get('state')} {n.get('pnl_pct'):+.1f}%"
+                            if n.get('pnl_pct') is not None else ""))
             elif strat in ("vol_anomaly", "vol_anomaly4h"):
                 _ai = n.get("indicators") or {}
                 _ph = _ai.get("phase")
