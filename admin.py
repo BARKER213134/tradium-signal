@@ -4389,6 +4389,66 @@ button,input,select{outline:none}
 </body></html>""")
 
 
+@app.get("/api/runners")
+async def api_runners(hours: int = 6, min_sigs: int = 3):
+    """🚀 «Разгоняются»: монеты с N+ LONG-сигналов за окно (любой вердикт
+    светофора). Ловец EUL-ов: ракеты, которые светофор системно режет
+    (догон >20% / красная фаза) — по году их профиль 1 ракета на 5-6
+    стопов, поэтому это ИНФО для ручного решения, не автовход."""
+    def _sync():
+        from datetime import timedelta
+        from collections import Counter, defaultdict
+        from database import _get_db, utcnow
+        db = _get_db()
+        since = utcnow() - timedelta(hours=max(1, min(hours, 24)))
+
+        def _n(p):
+            s = (p or "").replace("/", "").upper()
+            return s if s.endswith("USDT") else s + "USDT"
+
+        cnt = Counter()
+        srcs = defaultdict(set)
+        INFO = {"vol_anomaly", "vol_anomaly4h", "delta_series", "accum", "potok"}
+        for d_ in db.new_strategy_signals.find(
+                {"created_at": {"$gte": since}, "direction": "LONG"},
+                {"strategy": 1, "symbol": 1, "pair": 1}).limit(3000):
+            if d_.get("strategy") in INFO:
+                continue
+            sym = d_.get("symbol") or _n(d_.get("pair"))
+            cnt[sym] += 1
+            srcs[sym].add(d_.get("strategy") or "?")
+        for d_ in db.supertrend_signals.find(
+                {"flip_at": {"$gte": since}, "direction": "LONG"},
+                {"pair": 1, "tier": 1}).limit(3000):
+            sym = _n(d_.get("pair"))
+            cnt[sym] += 1
+            srcs[sym].add(f"st_{d_.get('tier') or 'daily'}")
+        for d_ in db.confluence.find(
+                {"detected_at": {"$gte": since}, "direction": "LONG"},
+                {"symbol": 1, "pair": 1}).limit(3000):
+            sym = d_.get("symbol") or _n(d_.get("pair"))
+            cnt[sym] += 1
+            srcs[sym].add("confluence")
+        hot = [s for s, c in cnt.items() if c >= max(2, min(min_sigs, 10))]
+        ctx = {d["_id"]: d for d in db.pair_context.find(
+            {"_id": {"$in": hot}}, {"mom24": 1, "ret7d": 1})}
+        anoms = Counter(d["symbol"] for d in db.anomaly_events.find(
+            {"at": {"$gte": since}, "symbol": {"$in": hot}}, {"symbol": 1}))
+        rows = []
+        for s in hot:
+            c_ = ctx.get(s) or {}
+            rows.append({"symbol": s, "n_sigs": cnt[s],
+                         "srcs": sorted(srcs[s])[:5],
+                         "mom24": c_.get("mom24"), "ret7d": c_.get("ret7d"),
+                         "anoms": anoms.get(s, 0)})
+        rows.sort(key=lambda r: (-r["n_sigs"], -(r["mom24"] or 0)))
+        return {"ok": True, "items": rows[:10], "hours": hours}
+    try:
+        return await asyncio.to_thread(_sync)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/potok")
 async def api_potok():
     """🌊 ПОТОК: статус каналов (circuit-breaker), открытые позиции с

@@ -7436,6 +7436,7 @@ safeInterval(loadForexJournal, 30000);
     <div id="msReason" style="font-size:12.5px;color:var(--text);line-height:1.5;"></div>
     <div id="msPhase" style="display:none;font-size:12px;font-weight:700;margin-top:4px;font-family:var(--font-mono);"></div>
     <div id="msClimate" style="display:none;font-size:12px;font-weight:700;margin-top:6px;padding:6px 10px;border-radius:8px;border:1px dashed;font-family:var(--font-mono);line-height:1.5;" title="Глобальная фаза на 12h-барах (та же методика: ширина рынка по RSI12h + BTC ST12h). Год-бэктест: эдж в РАСХОЖДЕНИЯХ этажей — 🔴12ч+🟢4ч лонг WR 58%, перегретый 🟢12ч = шорты; фильтр «оба согласны» эджа не даёт"></div>
+    <div id="msRunners" style="display:none;margin-top:6px;font-family:var(--font-mono);font-size:11.5px;line-height:1.8;" title="Монеты с 3+ LONG-сигналами за 6ч (любой вердикт). Светофор такие режет намеренно (догон/фаза: по году 1 ракета на 5-6 стопов) — это ИНФО для ручного решения: открой кластеры и решай сам, малым размером"></div>
     <div id="msMeta" style="font-size:10px;color:var(--muted);margin-top:3px;font-family:var(--font-mono);"></div>
   </div>
   <button id="msPlanBtn" onclick="const p=document.getElementById('msPlan');p.style.display=p.style.display==='none'?'block':'none';this.textContent=p.style.display==='none'?'📋 Что делать':'📋 Свернуть';" style="background:rgba(76,201,240,0.10);border:1px solid rgba(76,201,240,0.4);border-radius:8px;color:#4cc9f0;font-size:12px;font-weight:700;cursor:pointer;padding:8px 16px;font-family:var(--font-mono);white-space:nowrap;">📋 Что делать</button>
@@ -7798,6 +7799,26 @@ async function loadMarketSide() {
 }
 loadMarketSide();
 safeInterval(loadMarketSide, 60000);
+// 🚀 «разгоняются»: 3+ LONG-сигнала за 6ч — ловец EUL-ов (инфо, не автовход)
+async function loadRunners() {
+  try {
+    const r = await fetch('/api/runners?hours=6&min_sigs=3');
+    const d = await r.json();
+    const box = document.getElementById('msRunners');
+    if (!box) return;
+    const items = (d.items || []).filter(x => x.n_sigs >= 3);
+    if (!d.ok || !items.length) { box.style.display = 'none'; return; }
+    box.innerHTML = '<b style="color:#ff8c50;">🚀 РАЗГОНЯЮТСЯ:</b> ' + items.map(x => {
+      const sym = (x.symbol || '').replace('USDT', '');
+      const mom = x.mom24 != null ? ` ${x.mom24 >= 0 ? '+' : ''}${(+x.mom24).toFixed(0)}%` : '';
+      const hot = (x.mom24 || 0) > 20;
+      return `<span onclick="copyTicker('${x.symbol}', event)" title="${x.n_sigs} LONG-сигн/6ч · источники: ${(x.srcs || []).join(', ')}${x.anoms ? ' · ⚡×' + x.anoms : ''} · клик — скопировать" style="cursor:pointer;display:inline-block;margin:1px 3px;padding:3px 9px;border-radius:7px;background:rgba(255,140,80,${hot ? '0.22' : '0.10'});border:1px solid rgba(255,140,80,${hot ? '0.7' : '0.4'});color:#ff8c50;font-weight:800;">${sym}${mom} ×${x.n_sigs}<span onclick="openPairChart('${x.symbol}');event.stopPropagation()" title="График (внутри — кнопка 🧮 Кластеры)" style="opacity:0.7;margin-left:4px;">📈</span></span>`;
+    }).join('') + '<span style="color:var(--muted);font-size:10px;margin-left:6px;">светофор их режет намеренно (1 ракета/5-6 стопов) — решай сам на кластерах, малым размером</span>';
+    box.style.display = 'block';
+  } catch (e) { /* тихо */ }
+}
+loadRunners();
+safeInterval(loadRunners, 120000);
 // открытые панели (⏳ прогноз / 🎯 входы / ⭐ звёзды) живут без перезагрузки
 safeInterval(() => {
   if (typeof loadForecastPanel === 'function') loadForecastPanel();
