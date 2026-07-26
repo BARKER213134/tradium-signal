@@ -103,6 +103,72 @@ async def lifespan(app):
         print("[LIFESPAN] http-watchdog запущен (healthz 5 фейлов → рестарт)",
               flush=True)
 
+        # 📦 ЧЁРНЫЙ ЯЩИК: 26.07 третье падение — процесс замер ЦЕЛИКОМ
+        # (оба вачдога-треда не сработали → фриз всего интерпретатора:
+        # OOM-удушение или GIL-фриз). Телеметрия каждые 60с в Mongo +
+        # маркер рестарта с TG-диагнозом «что было перед смертью».
+        def _bb_rss_mb():
+            try:
+                with open("/proc/self/status") as f:
+                    for line in f:
+                        if line.startswith("VmRSS"):
+                            return int(line.split()[1]) // 1024
+            except Exception:
+                return None
+
+        def _black_box():
+            from datetime import timedelta as _td2
+            from database import _get_db as _gdb2, utcnow as _un2
+            while True:
+                _time.sleep(60)
+                try:
+                    doc = {"at": _un2(), "rss_mb": _bb_rss_mb(),
+                           "threads": _thr.active_count(),
+                           "loop_lag_s": round(_time.time() - _loop_beat["t"], 1)}
+                    dbb = _gdb2()
+                    dbb.health_beats.insert_one(dict(doc))
+                    dbb.system.update_one({"_id": "health_last"},
+                                          {"$set": doc}, upsert=True)
+                    if int(_time.time()) % 3600 < 60:
+                        dbb.health_beats.delete_many(
+                            {"at": {"$lt": _un2() - _td2(days=3)}})
+                except Exception:
+                    pass
+
+        _thr.Thread(target=_black_box, daemon=True, name="black-box").start()
+
+        def _boot_marker():
+            try:
+                from database import _get_db as _gdb3, utcnow as _un3
+                dbb = _gdb3()
+                last = dbb.system.find_one({"_id": "health_last"}) or {}
+                dbb.boot_log.insert_one({"at": _un3(),
+                                         "prev_beat": {k: last.get(k) for k in
+                                                       ("at", "rss_mb", "threads",
+                                                        "loop_lag_s")}})
+                if last.get("at") is not None:
+                    gap_min = (_un3() - last["at"]).total_seconds() / 60
+                    if gap_min > 3:
+                        from config import BOT16_BOT_TOKEN, WHALE_CHAT_ID
+                        if BOT16_BOT_TOKEN and WHALE_CHAT_ID:
+                            import requests as _rq2
+                            _rq2.post(
+                                f"https://api.telegram.org/bot{BOT16_BOT_TOKEN}/sendMessage",
+                                data={"chat_id": WHALE_CHAT_ID, "parse_mode": "HTML",
+                                      "text": (f"♻️ <b>Tradium: рестарт после "
+                                               f"{gap_min:.0f} мин тишины</b>\n"
+                                               f"перед смертью: RSS {last.get('rss_mb')}MB · "
+                                               f"тредов {last.get('threads')} · "
+                                               f"лаг лупа {last.get('loop_lag_s')}с · "
+                                               f"beat {last['at'].strftime('%H:%M')} UTC\n"
+                                               f"<i>чёрный ящик: /api/health-beats</i>")},
+                                timeout=10)
+            except Exception:
+                pass
+
+        _thr.Thread(target=_boot_marker, daemon=True, name="boot-marker").start()
+        print("[LIFESPAN] black-box запущен (RSS/треды/лаг каждые 60с)", flush=True)
+
         if not _watcher_running:
             print("[LIFESPAN] Запускаю watcher/bots...", flush=True)
             from config import BOT_TOKEN, ADMIN_CHAT_ID, BOT4_BOT_TOKEN
@@ -4321,6 +4387,28 @@ button,input,select{outline:none}
 </div>
 <script src="/static/footprint.js?v=3"></script>
 </body></html>""")
+
+
+@app.get("/api/health-beats")
+async def api_health_beats(hours: int = 6):
+    """📦 Чёрный ящик: RSS/треды/лаг лупа за N часов + рестарты."""
+    try:
+        from datetime import timedelta
+        from database import _get_db, utcnow
+        since = utcnow() - timedelta(hours=max(1, min(hours, 72)))
+        db = _get_db()
+        beats = await asyncio.to_thread(lambda: list(
+            db.health_beats.find({"at": {"$gte": since}}).sort("at", 1)))
+        boots = await asyncio.to_thread(lambda: list(
+            db.boot_log.find({"at": {"$gte": since}}).sort("at", 1)))
+        return {"ok": True,
+                "beats": [{"at": b["at"].isoformat(), "rss_mb": b.get("rss_mb"),
+                           "threads": b.get("threads"),
+                           "loop_lag_s": b.get("loop_lag_s")} for b in beats],
+                "boots": [{"at": b["at"].isoformat(),
+                           "prev_beat": b.get("prev_beat")} for b in boots]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.get("/api/research/fapi")
