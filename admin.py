@@ -9743,6 +9743,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "combo_score": 1, "vol_ratio": 1, "source_count": 1,
             "setup_verdict": 1,  # server-side verdict from setup_checker
             "svetofor": 1, "svetofor_star": 1,       # 🚦 вердикт на момент сигнала (галочка на графике)
+            "indicators.entry_bar_t": 1,  # 🌋 точный бар входа для маркера
         }).sort("created_at", -1).limit(200):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -9768,9 +9769,15 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 pattern_txt += " · " + " · ".join(extra_parts)
             if at_dt and hasattr(at_dt, "isoformat"):
                 at_iso = at_dt.isoformat()
-                at_ts = int(at_dt.timestamp())
+                at_ts = int(_cal.timegm(at_dt.timetuple()))
             else:
                 at_iso = None; at_ts = 0
+            # 🌋 маркер ставим на БАР ВХОДА (open красного бара), а не на
+            # момент обнаружения — скан срабатывает уже на следующем баре
+            # и nearest() уносил эмодзи на свечу вперёд (зелёную)
+            _ebt = (n.get("indicators") or {}).get("entry_bar_t")
+            if _ebt:
+                at_ts = int(_ebt)
             items.append({
                 "source": strat,  # 'whale' / 'shark' / 'combo' / ...
                 "symbol": (n.get("pair") or "").replace("/", "").upper(),

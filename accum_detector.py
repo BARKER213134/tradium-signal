@@ -272,6 +272,10 @@ def _blowoff_sig(pair: str, kd: list[dict]):
                 "indicators": {"mom24": round(mom24, 1),
                                "wick_pct": round((cb["h"] - cb["c"]) / cb["c"] * 100, 2),
                                "climax_ago_h": n - 2 - climax_j,
+                               # open красного бара входа (сек) — маркер на
+                               # графике ставится на ЭТОТ бар, а не на время
+                               # обнаружения (скан идёт уже на следующем баре)
+                               "entry_bar_t": int(last["t"] // 1000),
                                "entry_hint": "вход СЕЙЧАС по рынку (первый красный после кульминации)",
                                "phase": phase}}
     except Exception:
