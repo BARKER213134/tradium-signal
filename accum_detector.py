@@ -589,13 +589,20 @@ def _capitulation_sig(pair: str, kd: list[dict]):
         price = kd[-2]["c"]
         c24n = kd[-26]["c"]
         mom24 = (kd[-2]["c"] / c24n - 1) * 100 if c24n else 0
+        # стоп СТРУКТУРНЫЙ — под лоу кап-структуры (48ч) −1% (бэктест
+        # триггеров 26.07, 1800/год: EV +0.82→+2.02, WR 50, выбивание
+        # 56→38%). Ждать подтверждения НЕЛЬЗЯ — отскок стартует сразу
+        # (зелёный бар +1.72, отложка +1.54 — хуже немедленного входа)
+        lo_struct = min(x["l"] for x in kd[-49:-1])
         return {"strategy": "capitulation", "direction": "LONG",
                 "pair": pair, "symbol": pair.replace("/", "").upper(),
-                "entry": price, "tp": price * 1.10, "sl": price * 0.95,
+                "entry": price, "tp": price * 1.10,
+                "sl": round(lo_struct * 0.99, 10),
                 "horizon_h": 96,
                 "indicators": {"rsi4h_prev": round(r_prev, 1),
                                "rsi4h": round(r_last, 1),
                                "mom24": round(mom24, 1),
+                               "entry_hint": "вход СРАЗУ по рынку · стоп под лоу капитуляции",
                                "phase": phase}}
     except Exception:
         return None
@@ -734,13 +741,26 @@ def scan_universe(max_pairs: int = 300):
                                   f"выбивание 31%</i>")
                     except Exception:
                         pass
-                # 🛟 капитуляция-дно → LONG (кулдаун 24ч на пару)
+                # 🛟 капитуляция-дно → LONG (кулдаун 24ч; вход сразу,
+                # структурный стоп; TG с пометкой режимности)
                 _cp = _capitulation_sig(pair, kd)
                 if _cp is not None:
                     try:
                         from impulse_detector import store_signal
                         if store_signal(_cp, cooldown_h=24):
                             ds_fired += 1
+                            _ci = _cp["indicators"]
+                            _slp = (1 - _cp["sl"] / _cp["entry"]) * 100
+                            _tg16(f"🛟 <b>КАПИТУЛЯЦИЯ · ВХОД СЕЙЧАС · "
+                                  f"{pair.replace('/USDT', '')}</b>\n"
+                                  f"🟢 LONG по рынку @ {_cp['entry']:.6g}\n"
+                                  f"RSI4h {_ci['rsi4h_prev']}→{_ci['rsi4h']} "
+                                  f"(разворот из ямы) · слив был >10%/24ч\n"
+                                  f"SL {_cp['sl']:.6g} (под лоу капитуляции, "
+                                  f"−{_slp:.1f}%) · TP +10% · до 96ч\n"
+                                  f"<i>бэктест 1800/год: EV +2.02/сигнал, WR 50% · "
+                                  f"⚠️ режимный: в затяжном красном слабее — "
+                                  f"сверяйся со светофором</i>")
                     except Exception:
                         pass
                 # 💨 тонкий памп → SHORT (кулдаун 24ч, TG — боевой сигнал)
