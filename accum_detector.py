@@ -225,38 +225,54 @@ def _blowoff_sig(pair: str, kd: list[dict]):
     (🟢 +1.27/38.1%, 🔴 +0.80/36.6%) против случайного шорта +0.33/21.6%.
     RSI-перегрев как триггер проверен и ОТВЕРГНУТ (−0.21, хуже случайного)."""
     try:
-        if len(kd) < 60:
+        n = len(kd)
+        if n < 60:
             return None
-        b = kd[-2]                       # последний закрытый бар
-        prev = kd[-25:-2]                # 23 бара до него (окно 24 с ним)
-        if len(prev) < 23:
+        last = kd[-2]                    # последний закрытый бар
+        if not last.get("o") or last["c"] >= last["o"]:
+            return None                  # сигнал = ПЕРВЫЙ красный бар
+        # ищем кульминацию в последних 24 закрытых барах до него
+        climax_j = None
+        for j in range(max(26, n - 26), n - 2):
+            b = kd[j]
+            if b["h"] < max(x["h"] for x in kd[j - 23:j]):
+                continue                 # не новый 24ч-хай
+            if (b["h"] - b["l"]) <= 0 or b["c"] >= (b["h"] + b["l"]) / 2:
+                continue                 # закрытие не в нижней половине
+            c24 = kd[j - 24]["c"]
+            if not c24 or (b["c"] / c24 - 1) * 100 <= 10:
+                continue                 # без разгона >10%/24ч
+            climax_j = j
+        if climax_j is None:
             return None
-        if b["h"] < max(x["h"] for x in prev):
-            return None                  # не новый 24ч-хай
-        if (b["h"] - b["l"]) <= 0 or b["c"] >= (b["h"] + b["l"]) / 2:
-            return None                  # закрытие не в нижней половине
-        c24 = kd[-26]["c"]
-        mom24 = (b["c"] / c24 - 1) * 100 if c24 else 0
-        if mom24 <= 10:
-            return None
+        # last — именно ПЕРВЫЙ красный после кульминации (между ними
+        # красных не было; повторные красные отсекает и кулдаун 24ч)
+        for j in range(climax_j + 1, n - 2):
+            if kd[j].get("o") and kd[j]["c"] < kd[j]["o"]:
+                return None
+        cb = kd[climax_j]
+        c24 = kd[climax_j - 24]["c"]
+        mom24 = (cb["c"] / c24 - 1) * 100 if c24 else 0
+        struct_high = max(x["h"] for x in kd[climax_j:n - 1])
         phase = None
         try:
             from supertrend_tracker import _market_phase_now
             phase = _market_phase_now()
         except Exception:
             pass
-        price = b["c"]
-        # стоп СТРУКТУРНЫЙ — над хаем кульминации +1% (бэктест триггеров
-        # 26.07: фикс −5% выбивало 59% сделок, структурный — 26%, EV
-        # +0.54→+0.63; лучший вход — первый красный бар: EV +0.75, WR 44)
+        price = last["c"]
+        # сигнал приходит В МОМЕНТ ВХОДА (бэктест триггеров 26.07,
+        # 4023/год): вход на первом красном + структурный стоп = EV
+        # +0.75/сигнал против +0.54 «в лоб», выбивание 31% против 59%
         return {"strategy": "blowoff", "direction": "SHORT",
                 "pair": pair, "symbol": pair.replace("/", "").upper(),
                 "entry": price, "tp": price * 0.90,
-                "sl": round(b["h"] * 1.01, 10),
+                "sl": round(struct_high * 1.01, 10),
                 "horizon_h": 96,
                 "indicators": {"mom24": round(mom24, 1),
-                               "wick_pct": round((b["h"] - b["c"]) / price * 100, 2),
-                               "entry_hint": "вход: первый красный бар · стоп над кульминацией",
+                               "wick_pct": round((cb["h"] - cb["c"]) / cb["c"] * 100, 2),
+                               "climax_ago_h": n - 2 - climax_j,
+                               "entry_hint": "вход СЕЙЧАС по рынку (первый красный после кульминации)",
                                "phase": phase}}
     except Exception:
         return None
@@ -697,13 +713,25 @@ def scan_universe(max_pairs: int = 300):
                             ds_fired += 1
                     except Exception:
                         pass
-                # 🌋 blowoff-вершина → SHORT (кулдаун 24ч на пару)
+                # 🌋 blowoff-вершина → SHORT (кулдаун 24ч; сигнал = момент
+                # входа: первый красный после кульминации, TG-карточка)
                 _bo = _blowoff_sig(pair, kd)
                 if _bo is not None:
                     try:
                         from impulse_detector import store_signal
                         if store_signal(_bo, cooldown_h=24):
                             ds_fired += 1
+                            _bi = _bo["indicators"]
+                            _sl_pct = (_bo["sl"] / _bo["entry"] - 1) * 100
+                            _tg16(f"🌋 <b>BLOWOFF · ВХОД СЕЙЧАС · "
+                                  f"{pair.replace('/USDT', '')}</b>\n"
+                                  f"🔴 SHORT по рынку @ {_bo['entry']:.6g}\n"
+                                  f"кульминация была {_bi['climax_ago_h']}ч назад "
+                                  f"(разгон +{_bi['mom24']}%), это первый красный бар\n"
+                                  f"SL {_bo['sl']:.6g} (над кульминацией, "
+                                  f"+{_sl_pct:.1f}%) · TP −10% · до 96ч\n"
+                                  f"<i>бэктест 4023/год: EV +0.75/сигнал, WR 44%, "
+                                  f"выбивание 31%</i>")
                     except Exception:
                         pass
                 # 🛟 капитуляция-дно → LONG (кулдаун 24ч на пару)
