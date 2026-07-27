@@ -2,6 +2,30 @@ let _fpTf = '1h', _fpData = null;
 let _fpView = { cnt: 0, off: 0 };   // off = баров скрыто справа
 let _fpDrag = null, _fpMouse = null;
 let _fpAnom = true, _fpAnomCache = null;
+let _fpSigs = null, _fpSigPair = null, _fpSigNotes = {};
+async function fpLoadSigs(pair) {
+  // 🪧 эмодзи сигналов журнала на кластерном графике (поверх, в канавке)
+  if (_fpSigPair === pair && _fpSigs) return;
+  _fpSigPair = pair; _fpSigs = null;
+  try {
+    const r = await fetch(`/api/journal/by-symbol?symbol=${pair}&days=90`);
+    const j = await r.json();
+    const items = j.signals || j.items || (Array.isArray(j) ? j : []);
+    _fpSigs = items.map(s => {
+      const ts = (s.at_ts || 0) * 1000;
+      if (!ts) return null;
+      let icon = '';
+      try {
+        const m = (s.pattern || '').match(/^\s*(\p{Extended_Pictographic}[️‍]*)/u);
+        if (m) icon = m[1];
+      } catch (e) {}
+      if (!icon) icon = s.direction === 'LONG' ? '🔺' : s.direction === 'SHORT' ? '🔻' : '·';
+      return { ts, icon, isLong: s.direction === 'LONG',
+               txt: `${s.pattern || s.source || ''}${s.direction ? ' · ' + s.direction : ''}` };
+    }).filter(Boolean);
+    if (_fpSigPair === pair && _fpData) fpRender();
+  } catch (e) { _fpSigs = []; }
+}
 function fpToggleAnom(btn) {
   _fpAnom = !_fpAnom;
   if (btn) {
@@ -93,6 +117,7 @@ async function loadFootprint() {
     if (!d.ok) { st.textContent = '⛔ ' + (d.error || 'ошибка'); return; }
     _fpData = d;
     _fpView = { cnt: Math.min(60, d.bars.length), off: 0 };
+    fpLoadSigs(pair);
     fpRender();
     fpStatus();
   } catch (e) { st.textContent = '⛔ ' + e.message; }
@@ -281,6 +306,9 @@ function fpRender() {
     }
   });
   // ⚠ аномалии ордерфлоу (кольца ячеек + значки над барами)
+  // usedTop/usedBot — общие стеки значков: сначала аномалии (ближе к бару),
+  // затем эмодзи сигналов журнала (дальше) — друг друга не перекрывают
+  const usedTop = {}, usedBot = {};
   _fpAnomCache = _fpAnom ? fpFindAnomalies(bars) : null;
   // 💎 дно+покупатель: новый 48ч-лоу + >=65% объёма бара в покупку
   // (90д: лонг WR 52.3%, EV +0.67 — единственная рабочая ячейка имбаланса)
@@ -315,7 +343,6 @@ function fpRender() {
     if (bw >= 7) {
       g.font = `${Math.min(14, Math.max(10, bw * 0.5))}px sans-serif`;
       g.textAlign = 'center';
-      const usedTop = {}, usedBot = {};
       _fpAnomCache.bars.forEach(m => {
         const b = bars[m.i];
         const xc = m.i * bw + bw / 2;
@@ -330,6 +357,49 @@ function fpRender() {
       g.textAlign = 'left';
       g.font = '10px monospace';
     }
+  }
+  // 🪧 эмодзи сигналов журнала: SHORT — над баром, LONG — под баром,
+  // в продолжение стека аномалий (не закрывают ни ячейки, ни значки)
+  _fpSigNotes = {};
+  if (_fpSigs && _fpSigs.length && bw >= 6) {
+    const dur = ({ '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[_fpTf] || 3600) * 1000;
+    const gTop = {}, gBot = {};
+    _fpSigs.forEach(s => {
+      let i = Math.floor((s.ts - bars[0].t) / dur);
+      if (i < 0 || i >= n) return;
+      if (!(bars[i].t <= s.ts && s.ts < bars[i].t + dur)) {
+        i = -1;   // дырка в барах — честный поиск
+        for (let k = 0; k < n; k++) {
+          if (bars[k].t <= s.ts && s.ts < bars[k].t + dur) { i = k; break; }
+        }
+        if (i < 0) return;
+      }
+      const tgt = s.isLong ? gBot : gTop;
+      (tgt[i] = tgt[i] || new Set()).add(s.icon);
+      (_fpSigNotes[i] = _fpSigNotes[i] || []).push(s.txt);
+    });
+    g.textAlign = 'center';
+    g.globalAlpha = 0.9;
+    g.font = `${Math.min(13, Math.max(9, bw * 0.45))}px sans-serif`;
+    const drawSig = (map, top) => {
+      Object.keys(map).forEach(k => {
+        const i = +k, b = bars[i];
+        const xc = i * bw + bw / 2;
+        const txt = [...map[k]].join('');
+        if (top) {
+          const off = (usedTop[i] = (usedTop[i] || 0) + 1);
+          g.fillText(txt, xc, Math.max(12, y(b.h) - 4 - (off - 1) * 15));
+        } else {
+          const off = (usedBot[i] = (usedBot[i] || 0) + 1);
+          g.fillText(txt, xc, Math.min(chartH - 2, y(b.l) + 12 + (off - 1) * 15));
+        }
+      });
+    };
+    drawSig(gTop, true);
+    drawSig(gBot, false);
+    g.globalAlpha = 1;
+    g.textAlign = 'left';
+    g.font = '10px monospace';
   }
   // пунктир последней цены
   const lastC = d.bars[d.bars.length - 1].c;
@@ -447,6 +517,10 @@ function fpRender() {
     if (_fpAnomCache && _fpAnomCache.notes[i]) {
       tip.innerHTML += '<br>' + _fpAnomCache.notes[i].slice(0, 4)
         .map(t => `<span style="color:#ffd23e;">${t}</span>`).join('<br>');
+    }
+    if (_fpSigNotes[i]) {
+      tip.innerHTML += '<br>' + _fpSigNotes[i].slice(0, 5)
+        .map(t => `<span style="color:#9fd0ff;">${t}</span>`).join('<br>');
     }
     tip.style.display = 'block';
     tip.style.left = Math.min(x + 16, cv.clientWidth - 195) + 'px';
