@@ -246,12 +246,17 @@ def _blowoff_sig(pair: str, kd: list[dict]):
         except Exception:
             pass
         price = b["c"]
+        # стоп СТРУКТУРНЫЙ — над хаем кульминации +1% (бэктест триггеров
+        # 26.07: фикс −5% выбивало 59% сделок, структурный — 26%, EV
+        # +0.54→+0.63; лучший вход — первый красный бар: EV +0.75, WR 44)
         return {"strategy": "blowoff", "direction": "SHORT",
                 "pair": pair, "symbol": pair.replace("/", "").upper(),
-                "entry": price, "tp": price * 0.90, "sl": price * 1.05,
+                "entry": price, "tp": price * 0.90,
+                "sl": round(b["h"] * 1.01, 10),
                 "horizon_h": 96,
                 "indicators": {"mom24": round(mom24, 1),
                                "wick_pct": round((b["h"] - b["c"]) / price * 100, 2),
+                               "entry_hint": "вход: первый красный бар · стоп над кульминацией",
                                "phase": phase}}
     except Exception:
         return None
