@@ -291,6 +291,17 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
                             "created_at": {"$gte": cutoff}})
         if dup:
             return False
+        # 🔁 номер повтора стратегии на паре за 14д (бэктест 28.07:
+        # thin_pump повтор EV +1.44/+1.64 против +0.72 у первого;
+        # blowoff 3-я+ вершина +0.89 против +0.27 — повтор = усилитель).
+        # Пишем в sig тоже — вызывающий код строит TG-карточку по нему.
+        try:
+            rep = col.count_documents({
+                "strategy": sig["strategy"], "pair": sig["pair"],
+                "created_at": {"$gte": utcnow() - timedelta(days=14)}})
+            sig["rep_seq"] = rep + 1
+        except Exception:
+            pass
         doc = {**sig, "created_at": utcnow(), "state": "WAITING"}
         col.insert_one(doc)
         logger.info(f"[{sig['strategy']}] fired {sig['pair']} {sig['direction']} "

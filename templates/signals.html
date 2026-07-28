@@ -3469,6 +3469,7 @@ async function _scRenderChart(d, tf) {
       g.items.push(s);
       // 🐳 второй кит (повтор ≤14д) — другой эмодзи + бирюзовый маркер
       if (s.source === 'whale' && (s.whale_seq || 1) >= 2) { g.emojis.add('🐳'); g.hasW2 = true; }
+      else if (s.rep_hot) { g.emojis.add('🔁' + (srcEmoji[s.source] || '•')); g.hasRep = true; }
       else g.emojis.add(srcEmoji[s.source] || '•');
     }
     for (const g of byTime.values()) {
@@ -3476,7 +3477,7 @@ async function _scRenderChart(d, tf) {
       markers.push({
         time: g.time,
         position: g.isLong ? 'belowBar' : 'aboveBar',
-        color: g.hasW2 ? '#4cc9f0' : (g.isLong ? '#00e5a0' : '#ff4d6d'),
+        color: g.hasW2 ? '#4cc9f0' : (g.hasRep ? '#ffd23e' : (g.isLong ? '#00e5a0' : '#ff4d6d')),
         shape: g.isLong ? 'arrowUp' : 'arrowDown',
         text: emojis + (g.items.length > 1 ? ` ×${g.items.length}` : ''),
         size: g.items.length >= 3 ? 2 : 1});
@@ -5176,9 +5177,10 @@ async function _drawPaperHistChart(idx) {
       if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: isL, icons: new Set(), items: [] });
       const g = byTime.get(key);
       const _strong = window.isStrongSignal ? window.isStrongSignal(s) : false;
-      const icon = window.sigIcon(s.source, s.score, { is_top_pick: !!s.is_top_pick, strong: _strong, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq });
+      const icon = window.sigIcon(s.source, s.score, { is_top_pick: !!s.is_top_pick, strong: _strong, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot });
       g.icons.add(icon);
       if (s.source === 'whale' && (s.whale_seq || 1) >= 2) g.hasW2 = true;
+      if (s.rep_hot) g.hasRep = true;
       g.items.push(s);
     }
     for (const g of byTime.values()) {
@@ -5189,7 +5191,7 @@ async function _drawPaperHistChart(idx) {
       markers.push({
         time: g.time,
         position: g.isLong ? 'belowBar' : 'aboveBar',
-        color: isMoonshot ? '#ff8c50' : (g.hasW2 ? '#4cc9f0' : (g.isLong ? '#00e5a0' : '#ff4d6d')),
+        color: isMoonshot ? '#ff8c50' : (g.hasW2 ? '#4cc9f0' : (g.hasRep ? '#ffd23e' : (g.isLong ? '#00e5a0' : '#ff4d6d'))),
         shape: g.isLong ? 'arrowUp' : 'arrowDown',
         text: icons + (g.items.length > 1 ? ` ×${g.items.length}` : ''),
         size: isMoonshot ? 2 : 0});
@@ -5448,9 +5450,10 @@ async function _renderPaperChart(idx, tf) {
       const g = byKey.get(key);
       const _pMeta = Object.assign({}, m.meta || {}, {
         strong: window.isStrongSignal ? window.isStrongSignal(m) : false,
-        whale_seq: m.whale_seq});
+        whale_seq: m.whale_seq, rep_hot: m.rep_hot});
       g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, _pMeta));
       if (m.source === 'whale' && (m.whale_seq || 1) >= 2) g.hasW2 = true;
+      if (m.rep_hot) g.hasRep = true;
       g.items.push(m);
       if (!paperMarkerMap.has(mcc.time)) paperMarkerMap.set(mcc.time, m);
     }
@@ -5460,7 +5463,7 @@ async function _renderPaperChart(idx, tf) {
       markers.push({
         time: g.time,
         position: g.isLong ? 'belowBar' : 'aboveBar',
-        color: g.hasW2 ? '#4cc9f0' : (g.isLong ? '#00e5a0' : '#ff4d6d'),
+        color: g.hasW2 ? '#4cc9f0' : (g.hasRep ? '#ffd23e' : (g.isLong ? '#00e5a0' : '#ff4d6d')),
         shape: g.isLong ? 'arrowUp' : 'arrowDown',
         text: g.main ? `🤖 ${p.entry}` : icons + (g.items.length > 1 ? ` ×${g.items.length}` : ''),
         size: 0});
@@ -9749,7 +9752,7 @@ async function loadCoinChart(coin) {
       }
       const isLong = s.direction === 'LONG';
       const _strongM = window.isStrongSignal ? window.isStrongSignal(s) : false;
-      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _strongM, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq});
+      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _strongM, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot});
       markers.push({
         time: mc.time,
         direction: s.direction,
@@ -9867,7 +9870,7 @@ function _showJournalToast(newSignals) {
 
   const count = newSignals.length;
   const previews = newSignals.slice(0, 3).map(s => {
-    const src = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, whale_tier: s.whale_tier, whale_seq: s.whale_seq});
+    const src = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot});
     const pair = (s.symbol || s.pair || '').replace('USDT','').replace('/','');
     const dir = s.direction === 'LONG' ? '🟢' : '🔴';
     const score = s.score ? ` · ${s.score}` : '';
@@ -10694,7 +10697,7 @@ function renderJournal(items, startIdx) {
     const time = s.at ? new Date(s.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
     const isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
     const srcBadge = window.sigIcon
-      ? window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq})
+      ? window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot})
       : ((s.is_top_pick ? '👑 ' : (isStrong ? '⭐ ' : '')) +
          ({anomaly:'⚠', paper:'🤖', confluence:'🎯', supertrend:'🌀', verified:'✨'}[s.source] || '•'));
     const srcName = ({
@@ -12118,7 +12121,7 @@ async function openJournalChart(idx, forceTF) {
   const dirE = s.direction === 'LONG' ? '🟢' : s.direction === 'SHORT' ? '🔴' : '';
 
   const _isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
-  const srcBadge = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq});
+  const srcBadge = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot});
   const srcName = ({anomaly:'Аномалия', cluster:'Cluster', paper:'Paper', supertrend:'SuperTrend',
     whale:'WHALE', shark:'SHARK', combo:'COMBO', volume_surge:'Volume Surge',
     triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano',

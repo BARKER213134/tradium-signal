@@ -9745,6 +9745,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "svetofor": 1, "svetofor_star": 1,       # 🚦 вердикт на момент сигнала (галочка на графике)
             "indicators.entry_bar_t": 1,  # 🌋 точный бар входа для маркера
             "whale_seq": 1, "whale_rel": 1, "whale_rel_pct": 1,  # 🐳 повторный кит
+            "rep_seq": 1,  # 🔁 повтор-усилитель (thin_pump/blowoff)
         }).sort("created_at", -1).limit(200):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -9775,6 +9776,14 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 extra_parts.append(f"score {n['combo_score']}")
             elif strat == "volume_surge" and n.get('vol_ratio'):
                 extra_parts.append(f"vol {n['vol_ratio']}×")
+            # 🔁 повтор-усилитель (бэктест 28.07): thin_pump 2-й+ /
+            # blowoff 3-я+ вершина — повтор отрабатывает сильнее первого
+            _rs2 = n.get("rep_seq") or 1
+            _rep_hot2 = ((strat == "thin_pump" and _rs2 >= 2) or
+                         (strat == "blowoff" and _rs2 >= 3))
+            if _rep_hot2:
+                em = "🔁" + em
+                extra_parts.append(f"повтор №{_rs2} за 14д — усилитель")
             pattern_txt = f"{em} {label}"
             if extra_parts:
                 pattern_txt += " · " + " · ".join(extra_parts)
@@ -9809,6 +9818,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "whale_score": n.get("whale_score"),
                 "whale_seq": n.get("whale_seq"),
                 "whale_rel": n.get("whale_rel"),
+                "rep_seq": n.get("rep_seq"),
+                "rep_hot": _rep_hot2,
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),
                 "svetofor": n.get("svetofor"), "svetofor_star": n.get("svetofor_star"),
@@ -10195,6 +10206,11 @@ def _compute_journal_sync(_fast_only: bool = False):
             pair_raw = n.get("pair") or ""
             pair_norm = pair_raw.replace("/", "").upper()
             extra = ""
+            # 🔁 повтор-усилитель (бэктест 28.07): thin_pump 2-й+ EV +1.44/+1.64
+            # против +0.72; blowoff 3-я+ вершина +0.89 против +0.27
+            _rs = n.get("rep_seq") or 1
+            _rep_hot = ((strat == "thin_pump" and _rs >= 2) or
+                        (strat == "blowoff" and _rs >= 3))
             if strat in ("st_break", "st_break4h"):
                 _ph = (n.get("indicators") or {}).get("phase")
                 _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
@@ -10336,6 +10352,12 @@ def _compute_journal_sync(_fast_only: bool = False):
                 if ind.get('failed_breakout_wick'): parts.append("upper_wick")
                 if ind.get('rsi_cross_below_sma'): parts.append("rsi×")
                 extra = " · " + " · ".join(parts) if parts else ""
+            if _rep_hot:
+                em = "🔁" + em
+                extra += (f" · 🔁 повтор №{_rs} за 14д — усилитель "
+                          + ("(EV +1.44/+1.64 против +0.72 у первого)"
+                             if strat == "thin_pump"
+                             else "(EV +0.89 против +0.27 у первой)"))
             pattern_txt = f"{em} {label}{extra}"
             items.append({
                 "source": strat,  # 'volume_surge' / 'triple_confluence' / 'vol_accum'
@@ -10361,6 +10383,9 @@ def _compute_journal_sync(_fast_only: bool = False):
                 # 🐳 повторный кит — фронт красит маркер и меняет эмодзи
                 "whale_seq": n.get("whale_seq"),
                 "whale_rel": n.get("whale_rel"),
+                # 🔁 повтор-усилитель (thin_pump 2-й+, blowoff 3-я+)
+                "rep_seq": n.get("rep_seq"),
+                "rep_hot": _rep_hot,
                 # SHARK tier (тот же mechanism — для filtering и UI tooltip)
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),
