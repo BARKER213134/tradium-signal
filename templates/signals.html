@@ -8062,6 +8062,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="volcano">🌋 Volcano Breakout ★</option>
     <option value="second_flip">♻️ Second Flip Confirmation</option>
     <option value="whale">🐋 WHALE (ST flip 2H UP + vol spike + amplifiers, LONG)</option>
+    <option value="whale2">🐳 ВТОРОЙ КИТ (повтор ≤14д; ниже 1-го EV +2.2)</option>
     <option value="shark">🦈 SHARK (ST flip 2H DOWN + distribution top + multi-top, SHORT)</option>
     <option value="impulse">🚀 IMPULSE (LONG momentum, WR 82%)</option>
     <option value="ignition">💥 IGNITION (ранний LONG, WR 70%)</option>
@@ -8077,6 +8078,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="blowoff">🌋 Blowoff (шорт вершины: 24ч-хай + слабое закрытие)</option>
     <option value="capitulation">🛟 Капитуляция (лонг дна: слив + разворот RSI4h)</option>
     <option value="thin_pump">💨 Тонкий памп (шорт роста без объёма)</option>
+    <option value="rep_hot">🔁 Повтор-усилитель (💨 2-й+ памп / 🌋 3-я+ вершина)</option>
     <option value="floor_buy">💎 Дно+покупатель (имбаланс-покупка на 48ч-лоу)</option>
     <option value="vol_anomaly">⚡ Аномалия объёма 1h (&gt;8× нормы, где угодно, инфо)</option>
     <option value="vol_anomaly4h">🌩 Аномалия объёма 4h (&gt;6× нормы, инфо)</option>
@@ -10087,6 +10089,12 @@ function filterJournal() {
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
       if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','rider_short','ten','delta_series','st_break','st_break4h','blowoff','capitulation','thin_pump','floor_buy','vol_anomaly','vol_anomaly4h','potok'].includes(s.source)) return false;
+    } else if (src === 'whale2') {
+      // 🐳 повторный кит ≤14д (бэктест 28.07: ниже 1-го EV +2.2)
+      if (!(s.source === 'whale' && (s.whale_seq || 1) >= 2)) return false;
+    } else if (src === 'rep_hot') {
+      // 🔁 повтор-усилитель: thin_pump 2-й+ / blowoff 3-я+ вершина
+      if (!s.rep_hot) return false;
     } else if (src && s.source !== src) return false;
     // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
     if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;
@@ -12122,7 +12130,8 @@ async function openJournalChart(idx, forceTF) {
 
   const _isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
   const srcBadge = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot});
-  const srcName = ({anomaly:'Аномалия', cluster:'Cluster', paper:'Paper', supertrend:'SuperTrend',
+  const srcName = (s.source === 'whale' && (s.whale_seq || 1) >= 2) ? 'ВТОРОЙ КИТ'
+    : ({anomaly:'Аномалия', cluster:'Cluster', paper:'Paper', supertrend:'SuperTrend',
     whale:'WHALE', shark:'SHARK', combo:'COMBO', volume_surge:'Volume Surge',
     triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano',
     second_flip:'Second Flip', rsi_cross_12h:'RSI Cross 12h', verified:'Verified',
