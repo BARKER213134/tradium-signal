@@ -39,6 +39,40 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+
+def whale_seq_fields(db, pair: str, entry: float, at_dt) -> dict:
+    """🐳 «Второй кит»: был ли кит на паре за 14д до сигнала.
+    Бэктест 28.07 (813 китов, LONG +10/−5/96ч): 1-й кит EV +2.56,
+    2-й EV +1.75; но 2-й НИЖЕ первого (>1%) — EV +2.22 (торгуем),
+    на уровне ±1% — EV +0.40 (пропускать), выше — +1.50.
+    Возвращает whale_seq / whale_rel / whale_prev_* для дока."""
+    try:
+        from datetime import timedelta, timezone as _tz
+        bd = at_dt
+        if getattr(bd, 'tzinfo', None) is not None:
+            bd = bd.astimezone(_tz.utc).replace(tzinfo=None)
+        win = {'pair': pair, 'strategy': 'whale',
+               'created_at': {'$gte': bd - timedelta(days=14), '$lt': bd}}
+        prev = db.new_strategy_signals.find_one(win, sort=[('created_at', -1)])
+        if not prev:
+            return {'whale_seq': 1}
+        seq = db.new_strategy_signals.count_documents(win) + 1
+        out = {'whale_seq': seq,
+               'whale_prev_at': prev.get('created_at'),
+               'whale_prev_entry': prev.get('entry'),
+               'whale_prev_gap_h': round(
+                   (bd - prev['created_at']).total_seconds() / 3600, 1)}
+        pe = prev.get('entry')
+        if pe and entry:
+            d = (float(entry) / float(pe) - 1) * 100
+            out['whale_rel'] = ('below' if d < -1 else
+                                'above' if d > 1 else 'same')
+            out['whale_rel_pct'] = round(d, 2)
+        return out
+    except Exception:
+        logger.debug('[whale-seq] fail', exc_info=True)
+        return {}
+
 # ── Scoring weights ─────────────────────────────────────────────
 CORE_SCORE = 30  # base for ST_flip_2H + vol_spike_2x
 
@@ -478,6 +512,7 @@ def scan_recent_flips_for_whale(pairs: list[str] | None = None,
                 'state': 'SCANNED',  # SCANNED = safety-net pickup
                 'tp_R': 2.0,
             }
+            doc.update(whale_seq_fields(db, pair, entry, flip_dt))
             try:
                 # Avoid duplicate insert (same flip_dt)
                 if db.new_strategy_signals.find_one({
@@ -596,6 +631,7 @@ def maybe_fire_whale(signal_data: dict) -> dict | None:
             'state': 'NEW',
             'tp_R': 2.0,
         }
+        doc.update(whale_seq_fields(db, pair, entry, doc['created_at']))
         try:
             db.new_strategy_signals.insert_one(doc)
             logger.info(f'[whale-live] 🐋 FIRED {pair} {tier} '

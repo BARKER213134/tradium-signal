@@ -714,6 +714,9 @@
       window.sigIcon = function(src, score, meta) {
         const isTopPick = meta && meta.is_top_pick;
         const isStrong = meta && meta.strong;
+        // 🐳 ВТОРОЙ КИТ — повтор ≤14д (бэктест 28.07: ниже 1-го EV +2.2)
+        if (src === 'whale' && meta && (meta.whale_seq || 1) >= 2)
+          return (meta.whale_tier === 'PREMIUM' ? '👑' : '') + '🐳';
         // 🐋👑 WHALE PREMIUM / 🦈👑 SHARK PREMIUM — most premium tier
         // ~4 в день в среднем, score 80-95. Visually outstanding.
         if (src === 'whale' && meta && meta.whale_tier === 'PREMIUM') return '👑🐋';
@@ -761,7 +764,9 @@
       // чтобы не загромождать). Top Pick визуализируется цветом через color param.
       // Exception: WHALE/SHARK PREMIUM — крупные эмодзи 👑🐋/👑🦈 чтоб
       // PREMIUM signals (4 в день) сразу бросались в глаза на чарте.
-      window.sigIconCompact = function(src, score, tier) {
+      window.sigIconCompact = function(src, score, tier, whaleSeq) {
+        if (src === 'whale' && (whaleSeq || 1) >= 2)
+          return (tier === 'PREMIUM' ? '👑' : '') + '🐳';
         if (src === 'whale' && tier === 'PREMIUM') return '👑🐋';
         if (src === 'shark' && tier === 'PREMIUM') return '👑🦈';
         if (src === 'confluence') {
@@ -4061,7 +4066,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           return bars[idx];
         };
         (d.items || []).filter(s => s.at_ts && s.at_ts * 1000 >= t0).slice(0, 300).forEach(s => {
-          const emoji0 = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier) : '•';
+          const emoji0 = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq) : '•';
           // ✅ галочка — светофор на момент сигнала говорил ДА; ⭐ — отборный
           // вход (профиль победителей, бэкфилл 60д + live-штамп)
           const sv = s.svetofor || s.pro_verdict;

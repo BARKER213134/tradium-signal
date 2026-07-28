@@ -9744,6 +9744,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "setup_verdict": 1,  # server-side verdict from setup_checker
             "svetofor": 1, "svetofor_star": 1,       # 🚦 вердикт на момент сигнала (галочка на графике)
             "indicators.entry_bar_t": 1,  # 🌋 точный бар входа для маркера
+            "whale_seq": 1, "whale_rel": 1, "whale_rel_pct": 1,  # 🐳 повторный кит
         }).sort("created_at", -1).limit(200):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -9752,6 +9753,16 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             # Strategy-specific extras для tooltip pattern_txt
             extra_parts = []
             if strat == "whale":
+                # 🐳 повторный кит ≤14д — другой эмодзи/подпись на графике
+                if (n.get("whale_seq") or 1) >= 2:
+                    em = "🐳"
+                    label = "ВТОРОЙ КИТ"
+                    _rt = {"below": "ниже 1-го (EV +2.2)",
+                           "same": "на уровне 1-го (слабо, +0.4)",
+                           "above": "выше 1-го (+1.5)"}.get(n.get("whale_rel"), "")
+                    if _rt:
+                        _rp = n.get("whale_rel_pct")
+                        extra_parts.append(_rt + (f" {_rp:+.1f}%" if _rp is not None else ""))
                 if n.get("whale_tier"): extra_parts.append(f"tier {n['whale_tier']}")
                 if n.get("whale_score"): extra_parts.append(f"score {n['whale_score']}")
             elif strat == "shark":
@@ -9796,6 +9807,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "ns_state": n.get("state", "WAITING"),
                 "whale_tier": n.get("whale_tier"),
                 "whale_score": n.get("whale_score"),
+                "whale_seq": n.get("whale_seq"),
+                "whale_rel": n.get("whale_rel"),
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),
                 "svetofor": n.get("svetofor"), "svetofor_star": n.get("svetofor_star"),
@@ -10275,6 +10288,21 @@ def _compute_journal_sync(_fast_only: bool = False):
             elif strat == "whale":
                 # WHALE: backtest 30d STANDARD WR 53.8% MFE 5.56% — top LONG signal
                 parts = []
+                # 🐳 повторный кит ≤14д (бэктест 28.07: ниже 1-го EV +2.22,
+                # на уровне +0.40, выше +1.50; 1-й кит +2.56)
+                if (n.get('whale_seq') or 1) >= 2:
+                    em = "🐳"
+                    label = "ВТОРОЙ КИТ"
+                    _rel = n.get('whale_rel')
+                    _rp = n.get('whale_rel_pct')
+                    _rt = {"below": "НИЖЕ 1-го — лучший повтор (EV +2.2)",
+                           "same": "на уровне 1-го — слабо (EV +0.4), пропускать",
+                           "above": "выше 1-го (EV +1.5)"}.get(_rel, "")
+                    if _rt:
+                        parts.append(_rt + (f" {_rp:+.1f}%" if _rp is not None else ""))
+                    _gh = n.get('whale_prev_gap_h')
+                    if _gh:
+                        parts.append(f"через {_gh/24:.1f}д после 1-го")
                 tier = n.get('whale_tier')
                 if tier: parts.append(f"tier {tier}")
                 sc = n.get('whale_score')
@@ -10330,6 +10358,9 @@ def _compute_journal_sync(_fast_only: bool = False):
                 # WHALE tier (используется в TOP-7 filter в журнале)
                 "whale_tier": n.get("whale_tier"),
                 "whale_score": n.get("whale_score"),
+                # 🐳 повторный кит — фронт красит маркер и меняет эмодзи
+                "whale_seq": n.get("whale_seq"),
+                "whale_rel": n.get("whale_rel"),
                 # SHARK tier (тот же mechanism — для filtering и UI tooltip)
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),

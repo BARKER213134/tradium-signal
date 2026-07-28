@@ -1817,13 +1817,35 @@ async def _whale_send_telegram(doc: dict):
         header = f"👑🐋 <b>WHALE PREMIUM — RARE</b> ⭐\n"
     else:
         header = f"🐋 <b>WHALE {tier_emoji} {tier}</b>\n"
+    # 🐳 повторный кит (≤14д после предыдущего) — свой заголовок + вывод
+    # бэктеста 28.07: докупка НИЖЕ 1-го EV +2.22 (лучший повтор),
+    # на уровне ±1% EV +0.40 (пропускать), выше +1.50
+    seq_line = ""
+    if (doc.get('whale_seq') or 1) >= 2:
+        rel = doc.get('whale_rel')
+        gap_h = doc.get('whale_prev_gap_h') or 0
+        gap_txt = f"{gap_h / 24:.1f}д" if gap_h >= 24 else f"{gap_h:.0f}ч"
+        rel_pct = doc.get('whale_rel_pct')
+        rel_ptxt = f" ({rel_pct:+.1f}%)" if rel_pct is not None else ""
+        if rel == 'below':
+            header = f"🐳 <b>ВТОРОЙ КИТ — докупка НИЖЕ</b> {tier_emoji}\n"
+            seq_line = (f"🐳 повтор через {gap_txt}, ниже 1-го{rel_ptxt} — "
+                        f"лучший вариант повтора (EV +2.2)\n")
+        elif rel == 'same':
+            header = f"🐳 <b>ВТОРОЙ КИТ — на уровне 1-го</b> {tier_emoji}\n"
+            seq_line = (f"⚠️ повтор через {gap_txt} на уровне 1-го{rel_ptxt} — "
+                        f"исторически слабо (EV +0.4), лучше пропустить\n")
+        else:
+            header = f"🐳 <b>ВТОРОЙ КИТ — выше 1-го</b> {tier_emoji}\n"
+            seq_line = (f"🐳 повтор через {gap_txt}, выше 1-го{rel_ptxt} — "
+                        f"тренд уже пошёл (EV +1.5)\n")
     txt = (header +
            f"━━━━━━━━━━━━━━━━━━\n"
            f"<b>{pair}</b> · LONG\n"
            f"<b>Entry:</b> {entry}\n"
            f"<b>Score:</b> {score}\n"
            f"<b>Amplifiers:</b> {', '.join(amps) if amps else '—'}\n"
-           f"━━━━━━━━━━━━━━━━━━\n"
+           f"━━━━━━━━━━━━━━━━━━\n" + seq_line +
            f"📊 base {ind.get('base_days', 0)}d · vol {ind.get('vol_ratio_max', 0)}× · "
            f"DT {ind.get('prior_downtrend_pct', 0)}%\n"
            f"💡 Range Breakout setup (backtest WR 53.8% / MFE 5.56%)\n"
