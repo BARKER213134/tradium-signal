@@ -2985,7 +2985,7 @@ async function bcLoadSignals(pair, bars) {
     items.forEach(s => {
       const ts = s.at_ts * 1000;
       if (ts < t0) return;
-      const emoji = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq) : '•';
+      const emoji = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot) : '•';
       const long = s.direction === 'LONG';
       chart.createOverlay({
         name: 'simpleAnnotation', groupId: 'sig', lock: true,
@@ -8078,7 +8078,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="blowoff">🌋 Blowoff (шорт вершины: 24ч-хай + слабое закрытие)</option>
     <option value="capitulation">🛟 Капитуляция (лонг дна: слив + разворот RSI4h)</option>
     <option value="thin_pump">💨 Тонкий памп (шорт роста без объёма)</option>
-    <option value="rep_hot">🔁 Повтор-усилитель (💨 2-й+ памп / 🌋 3-я+ вершина)</option>
+    <option value="rep_hot">🔁 Повторные (🐳 кит / 💨 памп / 🌋 вершина)</option>
     <option value="floor_buy">💎 Дно+покупатель (имбаланс-покупка на 48ч-лоу)</option>
     <option value="vol_anomaly">⚡ Аномалия объёма 1h (&gt;8× нормы, где угодно, инфо)</option>
     <option value="vol_anomaly4h">🌩 Аномалия объёма 4h (&gt;6× нормы, инфо)</option>
@@ -10093,8 +10093,8 @@ function filterJournal() {
       // 🐳 повторный кит ≤14д (бэктест 28.07: ниже 1-го EV +2.2)
       if (!(s.source === 'whale' && (s.whale_seq || 1) >= 2)) return false;
     } else if (src === 'rep_hot') {
-      // 🔁 повтор-усилитель: thin_pump 2-й+ / blowoff 3-я+ вершина
-      if (!s.rep_hot) return false;
+      // 🔁 повторные: 🐳 кит 2-й+ / 💨 памп 2-й+ / 🌋 3-я+ вершина
+      if (!(s.rep_hot || (s.source === 'whale' && (s.whale_seq || 1) >= 2))) return false;
     } else if (src && s.source !== src) return false;
     // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
     if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;

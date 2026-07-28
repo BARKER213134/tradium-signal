@@ -768,9 +768,10 @@
       // чтобы не загромождать). Top Pick визуализируется цветом через color param.
       // Exception: WHALE/SHARK PREMIUM — крупные эмодзи 👑🐋/👑🦈 чтоб
       // PREMIUM signals (4 в день) сразу бросались в глаза на чарте.
-      window.sigIconCompact = function(src, score, tier, whaleSeq) {
+      window.sigIconCompact = function(src, score, tier, whaleSeq, repHot) {
         if (src === 'whale' && (whaleSeq || 1) >= 2)
           return (tier === 'PREMIUM' ? '👑' : '') + '🐳';
+        if (repHot) return '🔁' + ({thin_pump: '💨', blowoff: '🌋'}[src] || '•');
         if (src === 'whale' && tier === 'PREMIUM') return '👑🐋';
         if (src === 'shark' && tier === 'PREMIUM') return '👑🦈';
         if (src === 'confluence') {
@@ -4070,7 +4071,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           return bars[idx];
         };
         (d.items || []).filter(s => s.at_ts && s.at_ts * 1000 >= t0).slice(0, 300).forEach(s => {
-          const emoji0 = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq) : '•';
+          const emoji0 = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot) : '•';
           // ✅ галочка — светофор на момент сигнала говорил ДА; ⭐ — отборный
           // вход (профиль победителей, бэкфилл 60д + live-штамп)
           const sv = s.svetofor || s.pro_verdict;
@@ -4079,7 +4080,8 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           const ts = s.at_ts * 1000;
           const bar = barAt(ts);
           const long = s.direction === 'LONG';
-          const color = long ? '#00e5a0' : '#ff6b6b';
+          const _isW2 = s.source === 'whale' && (s.whale_seq || 1) >= 2;
+          const color = _isW2 ? '#4cc9f0' : (s.rep_hot ? '#ffd23e' : (long ? '#00e5a0' : '#ff6b6b'));
           const dt = new Date(ts).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
           const phL = window.phaseLabelAt(ts);
           const phC = !phL ? '' : phL.startsWith('🟢') ? '#00e5a0' : phL.startsWith('🔴') ? '#ff6b6b' : '#aab3c2';
@@ -4321,6 +4323,9 @@ function _sigTooltipHTML(o) {
       score: score,
       pattern: o.pattern || meta.pattern,
     }) : false,
+    whale_tier: o.whale_tier || meta.whale_tier,
+    whale_seq: o.whale_seq || meta.whale_seq,
+    rep_hot: o.rep_hot || meta.rep_hot,
   });
   const srcIcon = window.sigIcon ? window.sigIcon(o.source, score, _tipMeta) : '';
   const titleStr = (srcIcon ? srcIcon + ' ' : '') + (o.title || o.symbol || '');
@@ -4546,9 +4551,14 @@ async function _renderLwcSignalChart(containerId, opts) {
           score: mScore,
           pattern: m.pattern || m.meta?.pattern,
         }) : false,
+        whale_tier: m.whale_tier || (m.meta || {}).whale_tier,
+        whale_seq: m.whale_seq || (m.meta || {}).whale_seq,
+        rep_hot: m.rep_hot || (m.meta || {}).rep_hot,
       });
       const iconResult = _sigIconLookup(m.source, mScore, _mkMeta);
       g.icons.add(iconResult);
+      if (m.source === 'whale' && ((m.whale_seq || (m.meta || {}).whale_seq) || 1) >= 2) g.hasW2 = true;
+      if (m.rep_hot || (m.meta || {}).rep_hot) g.hasRep = true;
       g.items.push(m);
       markerMap.set(mc.time, m);
     }
@@ -4558,7 +4568,7 @@ async function _renderLwcSignalChart(containerId, opts) {
       markers.push({
         time: g.time,
         position: g.isLong ? 'belowBar' : 'aboveBar',
-        color: g.isLong ? '#00e5a0' : '#ff4d6d',
+        color: g.hasW2 ? '#4cc9f0' : (g.hasRep ? '#ffd23e' : (g.isLong ? '#00e5a0' : '#ff4d6d')),
         shape: g.isLong ? 'arrowUp' : 'arrowDown',
         text: icons + (g.items.length > 1 ? ` ×${g.items.length}` : price),
         size: 0,
