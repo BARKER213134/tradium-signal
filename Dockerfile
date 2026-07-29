@@ -5,6 +5,13 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# 🔧 29.07: RSS тёк +37МБ/мин при СТАБИЛЬНЫХ python-объектах (tracemalloc
+# ~200МБ против RSS 3.7ГБ) — фрагментация glibc-арен: сотни тредов ×
+# аллокации создают до 8×CPU арен, освобождённая память ОС не возвращается.
+# Стандартное лечение для тредастых python-сервисов + malloc_trim в
+# чёрном ящике каждые 5 мин.
+ENV MALLOC_ARENA_MAX=2
+
 WORKDIR /app
 
 # Системные зависимости для matplotlib/mplfinance + Chromium для Resonance.
