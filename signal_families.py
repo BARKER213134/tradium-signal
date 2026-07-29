@@ -107,6 +107,7 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
                 (f"{s}×{n}" if n > 1 else s)
                 for s, n in sorted(src_counts.items(), key=lambda kv: -kv[1]))
             fam_emojis = "".join(FAMILY_EMOJI.get(f, "•") for f in fams)
+            last = chain[-1]
             stack_row = {
                 "source": "stack",
                 "symbol": first.get("symbol") or pair.replace("/", "").upper(),
@@ -114,7 +115,8 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
                 "direction": direction,
                 "entry": first.get("entry"),
                 "tp1": None, "sl": None,
-                "pattern": f"🧩 STACK ×{len(chain)} · {fam_emojis} {len(fams)} fam · {comp}"[:160],
+                "pattern": (f"🧩 STACK ×{len(chain)} · {fam_emojis} {len(fams)} fam · {comp}"
+                            + (f" · 🆕 {last.get('source')}" if len(chain) > 1 else ""))[:160],
                 "score": len(fams) * 10 + len(chain),
                 "st_passed": None, "pump_score": 0,
                 "is_top_pick": len(fams) >= 3,
@@ -138,8 +140,14 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
                 "stack_long": max((m.get("stack_long") or 0) for m in chain),
                 "stack_short": max((m.get("stack_short") or 0) for m in chain),
                 "q_score": max((m.get("q_score") or 0) for m in chain),
-                "at": first.get("at"),
-                "at_ts": first.get("at_ts"),
+                # 29.07 «сигнал не появляется одновременно с TG»: раньше стек
+                # наследовал время ПЕРВОГО участника — свежий сигнал доклеивался
+                # в цепочку и строка оставалась со старым временем глубоко в
+                # ленте. Теперь время ПОСЛЕДНЕГО: стек всплывает наверх сразу.
+                "at": last.get("at"),
+                "at_ts": last.get("at_ts"),
+                "first_at_ts": first.get("at_ts"),
+                "last_source": last.get("source"),
             }
             out.append(stack_row)
 

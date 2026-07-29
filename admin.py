@@ -10642,6 +10642,9 @@ def _compute_journal_sync(_fast_only: bool = False):
     try:
         from signal_families import collapse_stacks
         items = collapse_stacks(items)
+        # 29.07: стек теперь наследует время ПОСЛЕДНЕГО участника — пересорт,
+        # чтобы обновлённый стек всплывал наверх ленты сразу (как TG)
+        items.sort(key=lambda x: x.get("at_ts") or 0, reverse=True)
     except Exception as _cse:
         logging.getLogger(__name__).warning(f"[journal] collapse fail: {_cse}")
 
