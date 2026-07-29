@@ -9969,6 +9969,13 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             _ten2 = ((strat == "whale" and (_wseq2 == 1 or n.get("whale_rel") == "below"))
                      or (strat == "blowoff" and
                          ((n.get("indicators") or {}).get("mom24") or 0) > 15))
+            if _ten2 and strat == "whale":
+                try:
+                    from trade_grade import _pair_context
+                    if n.get("pair") not in _pair_context():
+                        _ten2 = False
+                except Exception:
+                    pass
             if _ten2:
                 extra_parts.append("🏅 ДЕСЯТКА — кандидат +10% (WR 36-39%)")
             pattern_txt = f"{em} {label}"
@@ -10407,6 +10414,16 @@ def _compute_journal_sync(_fast_only: bool = False):
                 (strat == "whale" and (_wseq == 1 or n.get("whale_rel") == "below"))
                 or (strat == "blowoff" and
                     ((n.get("indicators") or {}).get("mom24") or 0) > 15))
+            # 29.07 добор исходов: киты на фьючерс-онли/свежелистнутых
+            # WR(+10) ~18% (хуже базы!) против 34.4% на спот-универсуме —
+            # десятка только для пар основного спот-скана
+            if _ten_plus and strat == "whale":
+                try:
+                    from trade_grade import _pair_context
+                    if pair_raw not in _pair_context():
+                        _ten_plus = False
+                except Exception:
+                    pass
             if strat in ("st_break", "st_break4h"):
                 _ph = (n.get("indicators") or {}).get("phase")
                 _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")

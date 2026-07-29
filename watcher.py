@@ -1855,6 +1855,14 @@ async def _whale_send_telegram(doc: dict):
     # Медаль выносится В ЗАГОЛОВОК — десятку видно с первой строки.
     seq_v = doc.get('whale_seq') or 1
     _is_ten = (seq_v == 1 or doc.get('whale_rel') == 'below')
+    # десятка только для спот-универсума (фьючерс-онли киты WR ~18%)
+    if _is_ten:
+        try:
+            from trade_grade import _pair_context
+            if doc.get('pair') not in _pair_context():
+                _is_ten = False
+        except Exception:
+            pass
     ten_line = ("🏅 <b>ДЕСЯТКА</b> — кандидат +10%/сделку (WR 37-39%)\n"
                 if _is_ten else "")
     if _is_ten:
