@@ -1078,6 +1078,29 @@ def scan_universe(max_pairs: int = 300):
                               f"({'покупатель' if _d >= 0 else 'продавец'})\n"
                               f"<i>инфо-событие: направление не предсказывает — "
                               f"открой 🧮 Кластеры и смотри контекст</i>")
+                        # 29.07 «в TG пришло, в журнале нет»: TG-событие
+                        # скринера зеркалим в журнал (⚡ vol_anomaly); свой
+                        # детектор журнала имеет кулдаун 12ч и мог молчать
+                        try:
+                            from impulse_detector import store_signal
+                            store_signal({
+                                "strategy": "vol_anomaly",
+                                "pair": e["pair"],
+                                "symbol": e["symbol"],
+                                "direction": "LONG" if _d >= 0 else "SHORT",
+                                "entry": e.get("price"),
+                                "tp": None, "sl": None,
+                                "horizon_h": 96,
+                                "indicators": {"vol_x": e["vol_x"],
+                                               "delta": _d,
+                                               "loc": e.get("loc"),
+                                               "phase": e.get("phase"),
+                                               "entry_bar_t": int(e["bar_t"] // 1000)
+                                               if e.get("bar_t") else None,
+                                               "src": "screener_tg"},
+                            }, cooldown_h=3)
+                        except Exception:
+                            logger.debug("[vol-anom] mirror fail", exc_info=True)
             db_.anomaly_events.delete_many(
                 {"at": {"$lt": now_ - timedelta(days=7)}})
             _last_scan["vol_anoms"] = len(new_ev)
