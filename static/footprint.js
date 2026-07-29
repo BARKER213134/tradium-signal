@@ -20,6 +20,7 @@ async function fpLoadSigs(pair) {
         if (m) icon = m[1];
       } catch (e) {}
       if (!icon) icon = s.direction === 'LONG' ? '🔺' : s.direction === 'SHORT' ? '🔻' : '·';
+      if (s.ten_plus) icon = '🏅' + icon;   // ДЕСЯТКА — кандидат +10%/сделку
       return { ts, icon, isLong: s.direction === 'LONG',
                txt: `${s.pattern || s.source || ''}${s.direction ? ' · ' + s.direction : ''}` };
     }).filter(Boolean);

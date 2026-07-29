@@ -2748,7 +2748,7 @@ setInterval(() => {
 
 <script>
 </script>
-<script src="/static/footprint.js?v=6">
+<script src="/static/footprint.js?v=7">
 </script>
 
 {% elif bot == 'accum_entry' %}
@@ -2985,7 +2985,7 @@ async function bcLoadSignals(pair, bars) {
     items.forEach(s => {
       const ts = s.at_ts * 1000;
       if (ts < t0) return;
-      const emoji = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot) : '•';
+      const emoji = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot, s.ten_plus) : '•';
       const long = s.direction === 'LONG';
       chart.createOverlay({
         name: 'simpleAnnotation', groupId: 'sig', lock: true,
@@ -3363,10 +3363,12 @@ async function _scRenderChart(d, tf) {
       if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: s.direction === 'LONG', items: [], emojis: new Set() });
       const g = byTime.get(key);
       g.items.push(s);
-      // 🐳 второй кит (повтор ≤14д) — другой эмодзи + бирюзовый маркер
-      if (s.source === 'whale' && (s.whale_seq || 1) >= 2) { g.emojis.add('🐳'); g.hasW2 = true; }
-      else if (s.rep_hot) { g.emojis.add('🔁' + (srcEmoji[s.source] || '•')); g.hasRep = true; }
-      else g.emojis.add(srcEmoji[s.source] || '•');
+      // 🐳 второй кит (повтор ≤14д) — другой эмодзи + бирюзовый маркер;
+      // 🏅 ДЕСЯТКА — префикс-медаль (кит / blowoff-разгон>15)
+      const _tp = s.ten_plus ? '🏅' : '';
+      if (s.source === 'whale' && (s.whale_seq || 1) >= 2) { g.emojis.add(_tp + '🐳'); g.hasW2 = true; }
+      else if (s.rep_hot) { g.emojis.add(_tp + '🔁' + (srcEmoji[s.source] || '•')); g.hasRep = true; }
+      else g.emojis.add(_tp + (srcEmoji[s.source] || '•'));
     }
     for (const g of byTime.values()) {
       const emojis = [...g.emojis].slice(0, 4).join('');
