@@ -3,6 +3,34 @@ import base64
 import logging
 import os
 
+# 🔎 ОХОТА 29.07: перехват создания БЕЗЫМЯННЫХ ThreadPoolExecutor —
+# после именования всех наших пулов анонимные всё равно растут до 118
+# (+70МБ/мин RSS). Стек создателя пишется в concurrent.futures.
+# _anon_tpe_births, чёрный ящик выгружает топ в health_beats.
+import concurrent.futures as _cf_trace
+import traceback as _tb_trace
+_cf_trace._anon_tpe_births = {}
+_orig_tpe_init = _cf_trace.ThreadPoolExecutor.__init__
+
+
+def _tpe_init_traced(self, *a, **kw):
+    try:
+        pref = kw.get("thread_name_prefix", a[1] if len(a) > 1 else "")
+        if not pref:
+            st = _tb_trace.extract_stack()[-9:-1]
+            key = " <- ".join(
+                f"{f.filename.replace(chr(92), '/').rsplit('/', 1)[-1]}:{f.lineno}:{f.name}"
+                for f in reversed(st)
+                if "concurrent" not in f.filename)[:400]
+            b = _cf_trace._anon_tpe_births
+            b[key] = b.get(key, 0) + 1
+    except Exception:
+        pass
+    return _orig_tpe_init(self, *a, **kw)
+
+
+_cf_trace.ThreadPoolExecutor.__init__ = _tpe_init_traced
+
 import uvicorn
 
 from database import init_db

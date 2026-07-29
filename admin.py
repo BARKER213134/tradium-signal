@@ -184,6 +184,15 @@ async def lifespan(app):
                            "threads_top": _bb_thread_names(),
                            "anon_stacks": _bb_anon_stacks(),
                            "loop_lag_s": round(_time.time() - _loop_beat["t"], 1)}
+                    # 🔎 кто создавал безымянные пулы (трейсер в main.py)
+                    try:
+                        import concurrent.futures as _cf_bb
+                        _b = getattr(_cf_bb, "_anon_tpe_births", None)
+                        if _b:
+                            doc["anon_births"] = dict(sorted(
+                                _b.items(), key=lambda x: -x[1])[:5])
+                    except Exception:
+                        pass
                     dbb = _gdb2()
                     dbb.health_beats.insert_one(dict(doc))
                     dbb.system.update_one({"_id": "health_last"},
