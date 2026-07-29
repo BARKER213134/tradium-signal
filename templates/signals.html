@@ -9882,7 +9882,12 @@ async function loadJournal() {
     } catch (e) {
       console.warn('[journal] enrich fail:', e);
     }
-  } catch {}
+  } catch (e) {
+    // 29.07 «при перезагрузке сигналы не отображаются»: неудачная первая
+    // загрузка (обрыв/рестарт сервера) — ретрай через 3с, не ждём 20с-полла
+    console.warn('[journal] load fail, retry 3s:', e);
+    if (!_journalData || !_journalData.length) setTimeout(loadJournal, 3000);
+  }
 }
 
 function filterJournal() {

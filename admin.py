@@ -21,6 +21,9 @@ _EX_RSI_FILL = _TPE_shared(max_workers=10, thread_name_prefix="rsi-fill")
 _BG_FILL_BUSY = {"delta": False}
 # ⚡ свежайший сигнал — для мгновенного сброса кэша журнала (синхронность с TG)
 _JOURNAL_NEWEST_SIG = {"ts": None}
+# ⚡ последняя удачная сборка журнала — stale-while-revalidate: страница
+# никогда не видит пустую таблицу, пересборка после сброса кэша идёт в фоне
+_JOURNAL_LAST_GOOD = {"data": None, "refreshing": False}
 # 🧮 кластеры: параллельная догрузка страниц + кэш готовых футпринтов
 _EX_FP = _TPE_shared(max_workers=6, thread_name_prefix="fp-pages")
 _FP_CACHE: dict = {}   # (sym, tf, bars) -> (ts, payload); TTL 120с
@@ -9002,21 +9005,45 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     async def _compute_in_thread():
         return await asyncio.to_thread(_compute_journal_sync)
 
-    # HARD TIMEOUT 40s — защита от зависающих inline fill'ов / Mongo stalls.
-    # Compute обычно 8-15с на Railway (Atlas Stockholm), 30-40с локально.
-    # Увеличили с 25→40 после добавления resonance prior-candles range query
-    # (~3х больше Mongo-данных но всё ещё в пределах разумного на Railway).
-    try:
-        full = await asyncio.wait_for(
-            journal_cache.get_or_compute("journal_all", _compute_in_thread),
-            timeout=150.0,  # было 90s, бампнули после добавления ema_cross блока
-        )
-    except asyncio.TimeoutError:
-        # Возвращаем stale cache если есть, иначе пустой
-        full = journal_cache.get("journal_all") or {"items": []}
-        logging.getLogger(__name__).warning(
-            "[api/journal] compute timeout 150s — returning stale/empty"
-        )
+    # ⚡ 29.07 stale-while-revalidate: «при перезагрузке страницы сигналы
+    # не отображаются» — холодный кэш собирается 8-15с (а после синхро-
+    # низации с TG сбрасывается на каждом новом сигнале), и юзер видел
+    # пустую таблицу. Теперь отдаём ПОСЛЕДНЮЮ удачную сборку мгновенно,
+    # пересборка идёт в фоне; refresh=1 по-прежнему ждёт свежую.
+    full = None
+    if not refresh and journal_cache.get("journal_all") is None \
+            and _JOURNAL_LAST_GOOD.get("data") is not None:
+        full = _JOURNAL_LAST_GOOD["data"]
+        if not _JOURNAL_LAST_GOOD.get("refreshing"):
+            _JOURNAL_LAST_GOOD["refreshing"] = True
+
+            async def _bg_recompute():
+                try:
+                    fresh = await journal_cache.get_or_compute(
+                        "journal_all", _compute_in_thread)
+                    if isinstance(fresh, dict) and fresh.get("items"):
+                        _JOURNAL_LAST_GOOD["data"] = fresh
+                except Exception:
+                    pass
+                finally:
+                    _JOURNAL_LAST_GOOD["refreshing"] = False
+            asyncio.create_task(_bg_recompute())
+    if full is None:
+        # HARD TIMEOUT — защита от зависающих inline fill'ов / Mongo stalls.
+        # Compute обычно 8-15с на Railway (Atlas Stockholm).
+        try:
+            full = await asyncio.wait_for(
+                journal_cache.get_or_compute("journal_all", _compute_in_thread),
+                timeout=150.0,
+            )
+            if isinstance(full, dict) and full.get("items"):
+                _JOURNAL_LAST_GOOD["data"] = full
+        except asyncio.TimeoutError:
+            full = journal_cache.get("journal_all") \
+                or _JOURNAL_LAST_GOOD.get("data") or {"items": []}
+            logging.getLogger(__name__).warning(
+                "[api/journal] compute timeout 150s — returning stale/empty"
+            )
     items = full.get("items", []) if isinstance(full, dict) else []
     total = len(items)
 
