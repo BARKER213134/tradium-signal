@@ -394,19 +394,44 @@ function fpRender() {
       (_fpSigNotes[i] = _fpSigNotes[i] || []).push(s.txt);
     });
     g.textAlign = 'center';
-    g.font = `${Math.min(16, Math.max(11, bw * 0.6))}px sans-serif`;
+    // 29.07 «не видно совсем» → бейджи: тёмная плашка + цветная рамка
+    // (🟢 LONG под баром / 🔴 SHORT над баром) + крупный эмодзи
+    const EM = Math.max(13, Math.min(17, bw * 0.8));
+    g.font = `${EM}px sans-serif`;
     const drawSig = (map, top) => {
       Object.keys(map).forEach(k => {
         const i = +k, b = bars[i];
         const xc = i * bw + bw / 2;
         const txt = [...map[k]].join('');
-        if (top) {
-          const off = (usedTop[i] = (usedTop[i] || 0) + 1);
-          g.fillText(txt, xc, Math.max(12, y(b.h) - 4 - (off - 1) * 15));
-        } else {
-          const off = (usedBot[i] = (usedBot[i] || 0) + 1);
-          g.fillText(txt, xc, Math.min(chartH - 2, y(b.l) + 12 + (off - 1) * 15));
-        }
+        const tw = g.measureText(txt).width;
+        const bwd = tw + 10, bh = EM + 8;
+        const off = top ? (usedTop[i] = (usedTop[i] || 0) + 1)
+                        : (usedBot[i] = (usedBot[i] || 0) + 1);
+        const yc = top
+          ? Math.max(bh / 2 + 2, y(b.h) - 10 - (off - 1) * (bh + 4))
+          : Math.min(chartH - bh / 2 - 2, y(b.l) + 10 + (off - 1) * (bh + 4));
+        // плашка
+        g.fillStyle = 'rgba(8,11,17,0.94)';
+        g.strokeStyle = top ? '#ff4d6d' : '#00e5a0';
+        g.lineWidth = 1.6;
+        const rx = xc - bwd / 2, ry = yc - bh / 2, rr = 5;
+        g.beginPath();
+        g.moveTo(rx + rr, ry);
+        g.arcTo(rx + bwd, ry, rx + bwd, ry + bh, rr);
+        g.arcTo(rx + bwd, ry + bh, rx, ry + bh, rr);
+        g.arcTo(rx, ry + bh, rx, ry, rr);
+        g.arcTo(rx, ry, rx + bwd, ry, rr);
+        g.closePath();
+        g.fill();
+        g.stroke();
+        // хвостик к бару
+        g.beginPath();
+        if (top) { g.moveTo(xc, ry + bh); g.lineTo(xc, ry + bh + 4); }
+        else { g.moveTo(xc, ry); g.lineTo(xc, ry - 4); }
+        g.stroke();
+        g.lineWidth = 1;
+        g.fillStyle = '#fff';
+        g.fillText(txt, xc, yc + EM * 0.36);
       });
     };
     drawSig(gTop, true);
