@@ -208,13 +208,12 @@ async def lifespan(app):
                                 for s in stats]
                     except Exception:
                         pass
-                    # 🧹 malloc_trim: вернуть ОС освобождённую glibc-память
-                    # (фрагментация арен — причина роста RSS при стабильных
-                    # python-объектах; вместе с MALLOC_ARENA_MAX=2)
+                    # 🧹 malloc_trim КАЖДУЮ минуту: вернуть ОС освобождённую
+                    # glibc-память (фрагментация арен; 16:18 29.07 — первый
+                    # в истории спад RSS без рестарта, рост +37→+16 МБ/мин)
                     try:
-                        if int(_time.time()) % 300 < 60:
-                            import ctypes as _ct_bb
-                            _ct_bb.CDLL("libc.so.6").malloc_trim(0)
+                        import ctypes as _ct_bb
+                        _ct_bb.CDLL("libc.so.6").malloc_trim(0)
                     except Exception:
                         pass
                     dbb = _gdb2()

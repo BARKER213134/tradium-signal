@@ -34,7 +34,7 @@ _cf_trace.ThreadPoolExecutor.__init__ = _tpe_init_traced
 # 🔎 ОХОТА НА ПАМЯТЬ 29.07: треды побеждены (плато 250), но RSS течёт
 # +37МБ/мин. tracemalloc назовёт файл:строку аллокаций; чёрный ящик
 # выгружает топ в health_beats.mem_top. Выключается MEM_TRACE=0.
-if os.getenv("MEM_TRACE", "1") == "1":
+if os.getenv("MEM_TRACE", "0") == "1":  # выключен: виновник найден (арены)
     import tracemalloc
     tracemalloc.start(1)
 
