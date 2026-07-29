@@ -7,6 +7,17 @@ import logging
 import os
 import secrets
 import time
+from concurrent.futures import ThreadPoolExecutor as _TPE_shared
+
+# 🔒 ОБЩИЕ пулы вместо пер-запросных ThreadPoolExecutor. 29.07 пятое
+# падение: 754 треда / RSS 3.7ГБ → OOM-фриз. shutdown(wait=False) НЕ
+# убивает зависшие воркеры, а журнал создавал НОВЫЙ пул (16+10 тредов)
+# на каждый запрос — при зависших фетчах треды копились бесконечно.
+# Синглтоны ограничивают потолок: висяки насыщают пул (обогащение
+# журнала временно отвалится), но процесс не умирает.
+_EX_DELTA_INLINE = _TPE_shared(max_workers=16, thread_name_prefix="delta-inline")
+_EX_RSI_FILL = _TPE_shared(max_workers=10, thread_name_prefix="rsi-fill")
+_BG_FILL_BUSY = {"delta": False}
 from typing import Set
 
 from fastapi import FastAPI, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect, status
@@ -11101,26 +11112,26 @@ def _compute_journal_sync(_fast_only: bool = False):
                         return (p, ts, snap)
                     except Exception:
                         return (p, ts, None)
-                # FIX: with ThreadPoolExecutor блокирует на __exit__ ожидая
-                # все futures. Используем manual shutdown(wait=False, cancel_futures)
-                # чтобы не зависать на медленных fetch'ах.
-                ex_delta = ThreadPoolExecutor(max_workers=16)
+                # 🔒 общий пул _EX_DELTA_INLINE (утечка тредов 29.07):
+                # пер-запросный пул + shutdown(wait=False) копил зависшие
+                # воркеры до 754 тредов. Незапущенные futures отменяем сами.
+                futs = [_EX_DELTA_INLINE.submit(_fetch_one, p, ts)
+                        for (p, ts) in inline_list]
                 try:
-                    futs = [ex_delta.submit(_fetch_one, p, ts) for (p, ts) in inline_list]
-                    try:
-                        # budget 4s — даём reasonable окно для 16 параллельных
-                        # aggTrades fetches (~0.6-1s каждый)
-                        for f in as_completed(futs, timeout=4.0):
-                            try:
-                                p, ts, snap = f.result(timeout=0.05)
-                                if snap:
-                                    inline_results[(p, ts)] = snap
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
+                    # budget 4s — даём reasonable окно для 16 параллельных
+                    # aggTrades fetches (~0.6-1s каждый)
+                    for f in as_completed(futs, timeout=4.0):
+                        try:
+                            p, ts, snap = f.result(timeout=0.05)
+                            if snap:
+                                inline_results[(p, ts)] = snap
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
                 finally:
-                    ex_delta.shutdown(wait=False, cancel_futures=True)
+                    for f in futs:
+                        f.cancel()
                 # Распихиваем результаты обратно в items + считаем резонанс
                 # из cluster_delta cache prior candles, если inline snap дал только
                 # signal-only delta (aggTrades path не возвращает резонанс).
@@ -11169,9 +11180,12 @@ def _compute_journal_sync(_fast_only: bool = False):
                 if it.get('delta_15m') is not None or it.get('delta_1h') is not None:
                     continue
                 missing_keys.add((pair, ats))
-            if missing_keys:
+            if missing_keys and not _BG_FILL_BUSY["delta"]:
+                # 🔒 guard: один bg-fill за раз (29.07 — треды копились,
+                # когда фетчи висли, а каждый запрос журнала плодил новый)
                 import threading as _th
                 missing_list = list(missing_keys)[:30]
+                _BG_FILL_BUSY["delta"] = True
                 def _bg_fill():
                     try:
                         from delta_calculator import (get_delta_snapshot_fast,
@@ -11186,6 +11200,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                                 pass
                     except Exception:
                         pass
+                    finally:
+                        _BG_FILL_BUSY["delta"] = False
                 _th.Thread(target=_bg_fill, daemon=True,
                           name='delta-bg-fill').start()
 
@@ -11347,19 +11363,19 @@ def _compute_journal_sync(_fast_only: bool = False):
                 break
         if top_recent:
             _t_start = _t_rsi.time()
-            ex_rsi = ThreadPoolExecutor(max_workers=10)
+            # 🔒 общий пул _EX_RSI_FILL (утечка тредов 29.07)
+            futs = [_EX_RSI_FILL.submit(fill_pair_rsi, p) for p in top_recent]
             try:
-                futs = [ex_rsi.submit(fill_pair_rsi, p) for p in top_recent]
-                try:
-                    for f in as_completed(futs, timeout=3.0):
-                        try:
-                            f.result(timeout=0.05)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                for f in as_completed(futs, timeout=3.0):
+                    try:
+                        f.result(timeout=0.05)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             finally:
-                ex_rsi.shutdown(wait=False, cancel_futures=True)
+                for f in futs:
+                    f.cancel()
             # PERF: re-read ТОЛЬКО для заполненных пар (10 шт), не всех 10000+
             # Раньше бесполезно повторял bulk_get по всему items (8 сек).
             if _t_rsi.time() - _t_start < 3.5:

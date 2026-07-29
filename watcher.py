@@ -37,6 +37,15 @@ async def get_klines_any(pair, timeframe, limit=50):
 
 logger = logging.getLogger(__name__)
 
+
+# 🔒 ОБЩИЕ пулы фоновых циклов (утечка тредов 29.07: пер-итерационный
+# ThreadPoolExecutor + shutdown(wait=False) копил зависшие воркеры до
+# 754 тредов / 3.7ГБ → OOM). Синглтоны ограничивают потолок.
+from concurrent.futures import ThreadPoolExecutor as _TPE_bg
+_EX_LEVELS = _TPE_bg(max_workers=12, thread_name_prefix="levels-pool")
+_EX_RSI_LOOP = _TPE_bg(max_workers=16, thread_name_prefix="rsi-pool")
+_EX_TREND = _TPE_bg(max_workers=16, thread_name_prefix="trend-pool")
+
 POLL_INTERVAL = 30  # секунд (было 15, снижаем нагрузку)
 
 _bot = None
@@ -3222,12 +3231,12 @@ async def _levels_refresher_loop():
                 await _asyncio.sleep(600)
                 continue
             logger.info(f"[levels] refreshing {len(pairs)} pairs × 4 TF (12 workers)")
-            from concurrent.futures import ThreadPoolExecutor, as_completed as _ac
+            from concurrent.futures import as_completed as _ac
             import time as _t
             _t0 = _t.time()
-            ex_pool = ThreadPoolExecutor(max_workers=12)
+            # 🔒 общий пул _EX_LEVELS (утечка тредов 29.07)
+            futs = [_EX_LEVELS.submit(refresh_pair_levels, p) for p in pairs]
             try:
-                futs = [ex_pool.submit(refresh_pair_levels, p) for p in pairs]
                 try:
                     for f in await _asyncio.to_thread(
                         lambda: list(_ac(futs, timeout=240.0))
@@ -3240,7 +3249,8 @@ async def _levels_refresher_loop():
                     pass
                 logger.info(f"[levels] done {len(pairs)} pairs in {_t.time()-_t0:.0f}s")
             finally:
-                ex_pool.shutdown(wait=False, cancel_futures=True)
+                for f in futs:
+                    f.cancel()
         except Exception:
             logger.exception('[levels] loop error')
         await _asyncio.sleep(600)  # 10 мин
@@ -3296,12 +3306,9 @@ async def _rsi_cache_loop():
                 await _asyncio.sleep(300)
                 continue
             logger.info(f"[rsi-cache] filling 4 TF for {len(pairs)} pairs (16 workers, FAPI)")
-            from concurrent.futures import ThreadPoolExecutor
-            # 16 workers с FAPI fetcher (single-call) — ~30-60s на 500 пар.
-            # Раньше было 4 worker × CDN day-by-day = 10+ мин (не успевал).
-            ex_pool = ThreadPoolExecutor(max_workers=16)
+            # 🔒 общий пул _EX_RSI_LOOP (утечка тредов 29.07)
             try:
-                fut_list = [ex_pool.submit(fill_pair_rsi, p) for p in pairs]
+                fut_list = [_EX_RSI_LOOP.submit(fill_pair_rsi, p) for p in pairs]
                 # Timeout 180s — после этого новый цикл начинается, недокачанное доделается потом
                 import time as _t_loop
                 _t0 = _t_loop.time()
@@ -3318,7 +3325,8 @@ async def _rsi_cache_loop():
                     pass
                 logger.info(f"[rsi-cache] done {len(pairs)} pairs in {_t_loop.time()-_t0:.0f}s")
             finally:
-                ex_pool.shutdown(wait=False, cancel_futures=True)
+                for f in fut_list:
+                    f.cancel()
         except Exception:
             logger.exception('[rsi-cache] loop error')
         await _asyncio.sleep(300)
@@ -3370,12 +3378,12 @@ async def _trend_cache_loop():
                 await _asyncio.sleep(360)
                 continue
             logger.info(f"[trend-cache] filling 4 TF for {len(pairs)} pairs (16 workers, FAPI)")
-            from concurrent.futures import ThreadPoolExecutor, as_completed as _ac_tr
+            from concurrent.futures import as_completed as _ac_tr
             import time as _t_tr_loop
-            ex_pool_tr = ThreadPoolExecutor(max_workers=16)
             _t0_tr = _t_tr_loop.time()
+            # 🔒 общий пул _EX_TREND (утечка тредов 29.07)
             try:
-                fut_list_tr = [ex_pool_tr.submit(fill_pair_trend, p) for p in pairs]
+                fut_list_tr = [_EX_TREND.submit(fill_pair_trend, p) for p in pairs]
                 try:
                     for f in await _asyncio.to_thread(
                         lambda: list(_ac_tr(fut_list_tr, timeout=180.0))
@@ -3388,7 +3396,8 @@ async def _trend_cache_loop():
                     pass
                 logger.info(f"[trend-cache] done {len(pairs)} pairs in {_t_tr_loop.time()-_t0_tr:.0f}s")
             finally:
-                ex_pool_tr.shutdown(wait=False, cancel_futures=True)
+                for f in fut_list_tr:
+                    f.cancel()
             # Invalidate journal cache
             try:
                 from cache_utils import journal_cache
