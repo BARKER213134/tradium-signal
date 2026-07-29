@@ -10540,7 +10540,8 @@ function renderJournal(items, startIdx) {
       paper: 'Paper',
       supertrend: 'ST ' + (s.st_tier ? s.st_tier.toUpperCase() : ''),
       verified: 'Verified',
-      whale: 'WHALE' + (s.whale_tier ? ' ' + s.whale_tier : ''),
+      whale: ((s.whale_seq || 1) >= 2 ? 'ВТОРОЙ КИТ' : 'WHALE')
+             + (s.whale_tier ? ' ' + s.whale_tier : ''),
       shark: 'SHARK' + (s.shark_tier ? ' ' + s.shark_tier : ''),
       stack: 'STACK ×' + (s.stack_size || '?'),
       impulse: 'IMPULSE', fade: 'FADE', ignition: 'IGNITION',
