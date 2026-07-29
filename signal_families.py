@@ -71,6 +71,10 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
 
     groupable = [it for it in items
                  if it.get("source") not in NO_GROUP
+                 # 🐳 повторный кит (29.07) — самостоятельный сигнал с бэктестом
+                 # (ниже 1-го EV +2.2), в стеке он растворялся и пропадал из ленты
+                 and not (it.get("source") == "whale"
+                          and (it.get("whale_seq") or 1) >= 2)
                  and it.get("pair") and it.get("at_ts")
                  and it.get("direction") in ("LONG", "SHORT")]
     g_ids = {id(it) for it in groupable}
