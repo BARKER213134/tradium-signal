@@ -297,15 +297,46 @@ def _compute_supertrend(candles: list[dict], period: int = 10,
     }
 
 
+_bias_lock = None
+
+
 def get_market_bias(force_refresh: bool = False) -> dict:
     """Returns {bias, label, color, st_4h, st_1d, history, ...}.
 
     bias ∈ {LONG, SHORT, WAIT, LONG_CAUTION, SHORT_CAUTION}
+
+    29.07 single-flight: при протухании кэша пересобирает ТОЛЬКО один
+    вызов, остальные получают протухший кэш. Раньше все конкурентные
+    запросы (журнал-поллы × клиенты) собирали одновременно — чёрный ящик
+    поймал 110 тредов total2 в момент (11 сборок × 2 пула × 10) →
+    исчерпание httpx-пула → зависшие треды → вклад в OOM-падения.
     """
+    global _bias_lock
+    if _bias_lock is None:
+        import threading as _thr_mt
+        _bias_lock = _thr_mt.Lock()
     now = time.time()
     cached = _cache.get("bias")
     if cached and not force_refresh and (now - cached[0]) < _CACHE_TTL:
         return cached[1]
+    if not _bias_lock.acquire(blocking=False):
+        if cached:
+            return cached[1]     # протухший, но без толпы пересборок
+        _bias_lock.acquire()     # кэша нет вовсе — ждём первого сборщика
+        try:
+            c2 = _cache.get("bias")
+            if c2:
+                return c2[1]
+        finally:
+            _bias_lock.release()
+        _bias_lock.acquire()
+    try:
+        return _compute_market_bias(now)
+    finally:
+        _bias_lock.release()
+
+
+def _compute_market_bias(now: float) -> dict:
 
     # Compute TOTAL2 on 4h
     series_4h = _compute_total2_series("4h")
