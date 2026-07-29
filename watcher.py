@@ -43,6 +43,8 @@ logger = logging.getLogger(__name__)
 # 754 тредов / 3.7ГБ → OOM). Синглтоны ограничивают потолок.
 from concurrent.futures import ThreadPoolExecutor as _TPE_bg
 _EX_LEVELS = _TPE_bg(max_workers=12, thread_name_prefix="levels-pool")
+_EX_RSI_WARM = _TPE_bg(max_workers=15, thread_name_prefix="rsi-warm")
+_EX_CDELTA = _TPE_bg(max_workers=8, thread_name_prefix="cdelta-pool")
 _EX_RSI_LOOP = _TPE_bg(max_workers=16, thread_name_prefix="rsi-pool")
 _EX_TREND = _TPE_bg(max_workers=16, thread_name_prefix="trend-pool")
 
@@ -2851,22 +2853,22 @@ async def _rsi12h_warmer_loop():
                 except Exception:
                     pass
             pair_list = list(pairs)[:150]
-            from concurrent.futures import ThreadPoolExecutor as _Exec, as_completed as _done
+            from concurrent.futures import as_completed as _done
             if pair_list:
-                ex = _Exec(max_workers=15)
+                # 🔒 общий пул _EX_RSI_WARM (трассировщик 29.07)
                 try:
-                    # Parallel fill for BOTH 4h and 12h per pair
                     futs = []
                     for p in pair_list:
-                        futs.append(ex.submit(r12.get_state, p))
-                        futs.append(ex.submit(r4.get_state, p))
+                        futs.append(_EX_RSI_WARM.submit(r12.get_state, p))
+                        futs.append(_EX_RSI_WARM.submit(r4.get_state, p))
                     try:
                         for f in _done(futs, timeout=90.0):
                             try: f.result(timeout=0.2)
                             except Exception: pass
                     except Exception: pass
                 finally:
-                    ex.shutdown(wait=False, cancel_futures=True)
+                    for f in futs:
+                        f.cancel()
                 logger.info(f"[rsi-state-warm] cached 4h+12h × {len(pair_list)} pairs")
         except Exception:
             logger.debug("[rsi-state-warm] error", exc_info=True)
@@ -3521,19 +3523,29 @@ async def _cluster_delta_cache_loop():
                 await _asyncio.sleep(420)
                 continue
             logger.info(f"[cluster-delta] filling for {len(todo)} pair+ts pairs")
-            from concurrent.futures import ThreadPoolExecutor
             def _one(p, ms):
                 try:
                     return get_delta_snapshot_fast(p, ms)
                 except Exception:
                     return None
             filled = 0
-            with ThreadPoolExecutor(max_workers=8) as ex:
-                futs = [ex.submit(_one, p, ms) for (p, ms) in todo]
-                results = await _asyncio.to_thread(
-                    lambda: [f.result() for f in futs])
-                filled = sum(1 for r in results
-                             if r and (r.get('15m') or r.get('1h')))
+            # 🔒 общий пул _EX_CDELTA + таймаут на result (трассировщик
+            # 29.07: with-пул зависал навсегда на висящем фетче)
+            futs = [_EX_CDELTA.submit(_one, p, ms) for (p, ms) in todo]
+
+            def _collect_cd():
+                out = []
+                for f in futs:
+                    try:
+                        out.append(f.result(timeout=30))
+                    except Exception:
+                        out.append(None)
+                return out
+            results = await _asyncio.to_thread(_collect_cd)
+            for f in futs:
+                f.cancel()
+            filled = sum(1 for r in results
+                         if r and (r.get('15m') or r.get('1h')))
             logger.info(f"[cluster-delta] cache loop done: {filled}/{len(todo)} filled")
             # Invalidate journal cache → следующий рендер увидит новые поля
             try:

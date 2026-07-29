@@ -11536,19 +11536,19 @@ def _compute_journal_sync(_fast_only: bool = False):
                 break
         if top_recent_tr:
             _t_start_tr = _t_tr.time()
-            ex_tr = _TPE_tr(max_workers=10)
+            # 🔒 общий пул (трассировщик 29.07: 4-5 пулов на каждый рендер)
+            futs = [_EX_JOURNAL.submit(fill_pair_trend, p) for p in top_recent_tr]
             try:
-                futs = [ex_tr.submit(fill_pair_trend, p) for p in top_recent_tr]
-                try:
-                    for f in _ac_tr(futs, timeout=3.0):
-                        try:
-                            f.result(timeout=0.05)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                for f in _ac_tr(futs, timeout=3.0):
+                    try:
+                        f.result(timeout=0.05)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             finally:
-                ex_tr.shutdown(wait=False, cancel_futures=True)
+                for f in futs:
+                    f.cancel()
             # PERF: re-read только для заполненных пар (10 шт)
             if _t_tr.time() - _t_start_tr < 3.5:
                 try:
