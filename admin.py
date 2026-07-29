@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor as _TPE_shared
 # Синглтоны ограничивают потолок: висяки насыщают пул (обогащение
 # журнала временно отвалится), но процесс не умирает.
 _EX_DELTA_INLINE = _TPE_shared(max_workers=16, thread_name_prefix="delta-inline")
+_EX_JOURNAL = _TPE_shared(max_workers=24, thread_name_prefix="journal-enrich")
 _EX_RSI_FILL = _TPE_shared(max_workers=10, thread_name_prefix="rsi-fill")
 _BG_FILL_BUSY = {"delta": False}
 from typing import Set
@@ -10574,7 +10575,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         if sq_now - sq_cache.get(p, {}).get('ts', 0) > SQ_TTL]
         need_compute = need_compute[:40]  # cap чтобы не блокировать journal надолго
         if need_compute:
-            sq_ex = _SQExec(max_workers=8)
+            sq_ex = _EX_JOURNAL  # 🔒 общий пул (утечка тредов 29.07)
             try:
                 futs = {sq_ex.submit(compute_squeeze_score, p, '1h', 80): p
                         for p in need_compute}
@@ -10589,7 +10590,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                 except Exception:
                     pass
             finally:
-                sq_ex.shutdown(wait=False, cancel_futures=True)
+                pass  # 🔒 общий пул не закрываем
         # Apply squeeze_score to ALL items (для top-moonshot pairs)
         for it in items:
             p = it.get('pair') or ''
@@ -10731,7 +10732,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                     return (p, div, vp)
                 except Exception:
                     return (p, None, None)
-            cs_ex = _CSExec(max_workers=8)
+            cs_ex = _EX_JOURNAL  # 🔒 общий пул (утечка тредов 29.07)
             try:
                 futs = {cs_ex.submit(_compute_one, p): p for p in need_compute}
                 try:
@@ -10745,7 +10746,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                 except Exception:
                     pass
             finally:
-                cs_ex.shutdown(wait=False, cancel_futures=True)
+                pass  # 🔒 общий пул не закрываем
         # Apply divergence/vp/score per item
         for it in items:
             p = it.get('pair') or ''
@@ -10788,7 +10789,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                            > (1800 if _r4_mod._cache[p].get('state') else 300)]
         cold_pairs_4 = cold_pairs_4[:80]
         if cold_pairs_4 and (_t_r4.time() - r4_t0) < R4_BUDGET_S:
-            ex_r4 = _4hExec(max_workers=10)
+            ex_r4 = _EX_JOURNAL  # 🔒 общий пул (утечка тредов 29.07)
             try:
                 remaining = max(2.0, R4_BUDGET_S - (_t_r4.time() - r4_t0))
                 futs = {ex_r4.submit(_r4_mod.get_state, p): p for p in cold_pairs_4}
@@ -10798,7 +10799,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         except Exception: pass
                 except Exception: pass
             finally:
-                ex_r4.shutdown(wait=False, cancel_futures=True)
+                pass  # 🔒 общий пул не закрываем
         for it in items:
             p = it.get('pair') or ''
             if not p:
@@ -10845,7 +10846,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                          > (3600 if _r12_mod._cache[p].get('state') else 300)]
         cold_pairs = cold_pairs[:80]
         if cold_pairs and (_t_r12.time() - r12_t0) < R12_BUDGET_S:
-            ex_rc = _RsiExec(max_workers=10)
+            ex_rc = _EX_JOURNAL  # 🔒 общий пул (утечка тредов 29.07)
             try:
                 remaining = max(2.0, R12_BUDGET_S - (_t_r12.time() - r12_t0))
                 futs = {ex_rc.submit(_r12_mod.get_state, p): p for p in cold_pairs}
@@ -10855,7 +10856,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         except Exception: pass
                 except Exception: pass
             finally:
-                ex_rc.shutdown(wait=False, cancel_futures=True)
+                pass  # 🔒 общий пул не закрываем
         # Apply per item from cache (instant, no fetch)
         for it in items:
             p = it.get('pair') or ''
@@ -10913,7 +10914,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                 ec_tasks.append((p, ats))
         ec_tasks = ec_tasks[:40]
         if ec_tasks and (_t_ec.time() - ec_t0) < EC_BUDGET_S:
-            ex_ec = _ECExec(max_workers=10)
+            ex_ec = _EX_JOURNAL  # 🔒 общий пул (утечка тредов 29.07)
             try:
                 remaining = max(2.0, EC_BUDGET_S - (_t_ec.time() - ec_t0))
                 futs = {ex_ec.submit(_ec_mod.get_state, p, ats): (p, ats) for p, ats in ec_tasks}
@@ -10923,7 +10924,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         except Exception: pass
                 except Exception: pass
             finally:
-                ex_ec.shutdown(wait=False, cancel_futures=True)
+                pass  # 🔒 общий пул не закрываем
         # Apply per item from cache
         for it in items:
             p = it.get('pair') or ''

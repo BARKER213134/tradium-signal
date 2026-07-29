@@ -177,7 +177,7 @@ def _fetch_klines_vision(symbol: str, interval: str = "4h",
             } for row in rows if row and row[0].isdigit()]
         except Exception:
             return []
-    with ThreadPoolExecutor(max_workers=10) as tp:
+    with ThreadPoolExecutor(max_workers=10, thread_name_prefix='total2') as tp:
         for r in tp.map(_fetch_day, dates):
             out.extend(r)
     # Dedupe + sort
@@ -207,7 +207,7 @@ def _compute_total2_series(interval: str = "4h") -> list[dict]:
         sym, cg_id = item
         return (sym, cg_id, _fetch_klines_binance(sym, interval, 360))
 
-    with ThreadPoolExecutor(max_workers=10) as tp:
+    with ThreadPoolExecutor(max_workers=10, thread_name_prefix='total2') as tp:
         for sym, cg_id, klines in tp.map(_fetch, TOP_ALTS):
             klines_by_symbol[(sym, cg_id)] = klines
 
