@@ -2172,11 +2172,32 @@ async def _cluster_check_on_signal(pair: str, direction: str, at=None):
 
 
 async def _send_confluence_alert(r: dict):
-    """Отправляет confluence алерт в BOT5."""
+    """Отправляет confluence алерт в BOT5.
+
+    29.07 гейт по бэктесту (10 225 симуляций, сетка ±10/∓5/96ч):
+    конфлюенс работает ТОЛЬКО при светофоре ДА (SHORT sc5 +0.92,
+    SHORT sc4 +0.63, LONG sc4 +0.54); МОЖНО/НЕТ — минус (до −1.04).
+    В TG идут только ДА; остальные пишутся в базу как раньше
+    (видны фильтром «Confluence» в журнале)."""
     if not _bot5:
         _setup_bot5()
     if not _bot5 or not _admin_chat_id:
         return
+    try:
+        import time as _t_cf
+        from trade_grade import annotate_pro
+        _it = {"source": "confluence", "symbol": r.get("symbol", ""),
+               "direction": r.get("direction"), "score": r.get("score", 0),
+               "at_ts": int(_t_cf.time())}
+        await asyncio.to_thread(annotate_pro, [_it])
+        _v = _it.get("pro_verdict")
+        if _v != "ДА":
+            logger.info(f"[confluence] TG skip {r.get('symbol')} "
+                        f"{r.get('direction')} — светофор {_v}")
+            return
+        r["_svetofor_live"] = _v
+    except Exception:
+        logger.debug("[confluence] gate fail — шлём как раньше", exc_info=True)
 
     dir_emoji = "🟢" if r["direction"] == "LONG" else "🔴" if r["direction"] == "SHORT" else "⚪"
     pair = r["pair"].replace("/USDT", "")
