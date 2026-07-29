@@ -190,6 +190,21 @@ function fpAnalyze() {
                  NEUTRAL: ['⚪ без стороны', 'mute'] }[ph];
     if (PE) chips.push(fpChip(PE[0], PE[1]));
   }
+  // 🪧 сигналы платформы в видимом окне (грузятся из журнала по-монетно)
+  try {
+    if (_fpSigs && _fpSigs.length && bars.length) {
+      const dur = ({ '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[_fpTf] || 3600) * 1000;
+      let nl = 0, ns = 0;
+      _fpSigs.forEach(s => {
+        const i = Math.floor((s.ts - bars[0].t) / dur);
+        if (i >= 0 && i < n) { if (s.isLong) nl++; else ns++; }
+      });
+      chips.push(fpChip(nl + ns
+        ? `🪧 сигналов в окне: ${nl + ns} (▲${nl} ▼${ns}) — эмодзи над/под барами`
+        : '🪧 в видимом окне сигналов нет — отдались (2×клик) или листай назад',
+        (nl + ns) ? 'mute' : 'warn'));
+    }
+  } catch (e) {}
   box.innerHTML = chips.join('');
   box.style.display = 'flex';
 }
@@ -361,7 +376,7 @@ function fpRender() {
   // 🪧 эмодзи сигналов журнала: SHORT — над баром, LONG — под баром,
   // в продолжение стека аномалий (не закрывают ни ячейки, ни значки)
   _fpSigNotes = {};
-  if (_fpSigs && _fpSigs.length && bw >= 6) {
+  if (_fpSigs && _fpSigs.length && bw >= 4) {
     const dur = ({ '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[_fpTf] || 3600) * 1000;
     const gTop = {}, gBot = {};
     _fpSigs.forEach(s => {
@@ -379,8 +394,7 @@ function fpRender() {
       (_fpSigNotes[i] = _fpSigNotes[i] || []).push(s.txt);
     });
     g.textAlign = 'center';
-    g.globalAlpha = 0.9;
-    g.font = `${Math.min(13, Math.max(9, bw * 0.45))}px sans-serif`;
+    g.font = `${Math.min(16, Math.max(11, bw * 0.6))}px sans-serif`;
     const drawSig = (map, top) => {
       Object.keys(map).forEach(k => {
         const i = +k, b = bars[i];
@@ -397,7 +411,6 @@ function fpRender() {
     };
     drawSig(gTop, true);
     drawSig(gBot, false);
-    g.globalAlpha = 1;
     g.textAlign = 'left';
     g.font = '10px monospace';
   }

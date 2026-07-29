@@ -21,6 +21,9 @@ _EX_RSI_FILL = _TPE_shared(max_workers=10, thread_name_prefix="rsi-fill")
 _BG_FILL_BUSY = {"delta": False}
 # ⚡ свежайший сигнал — для мгновенного сброса кэша журнала (синхронность с TG)
 _JOURNAL_NEWEST_SIG = {"ts": None}
+# 🧮 кластеры: параллельная догрузка страниц + кэш готовых футпринтов
+_EX_FP = _TPE_shared(max_workers=6, thread_name_prefix="fp-pages")
+_FP_CACHE: dict = {}   # (sym, tf, bars) -> (ts, payload); TTL 120с
 from typing import Set
 
 from fastapi import FastAPI, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect, status
@@ -4442,7 +4445,7 @@ button,input,select{outline:none}
   <canvas id="fpCanvas" style="width:100%;display:block;border-radius:5px;"></canvas>
   <div id="fpTip" style="display:none;position:absolute;pointer-events:none;background:rgba(10,14,22,0.95);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:10.5px;line-height:1.55;z-index:5;white-space:nowrap;"></div>
 </div>
-<script src="/static/footprint.js?v=4"></script>
+<script src="/static/footprint.js?v=5"></script>
 </body></html>""")
 
 
@@ -4678,6 +4681,13 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
     if not sym.endswith("USDT"):
         sym += "USDT"
 
+    # ⚡ кэш готовых футпринтов 120с — повторное открытие мгновенно
+    import time as _t_fp
+    _ck = (sym, tf, bars)
+    _ce = _FP_CACHE.get(_ck)
+    if _ce and _t_fp.time() - _ce[0] < 120:
+        return _ce[1]
+
     def _sync():
         import requests as rq
         sub_tf, per_bar = SUB[tf]
@@ -4722,21 +4732,39 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
                 globals()["_fp_fapi_down"] = _time.time() + 300
             return None
 
+        SUB_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000,
+                  "1h": 3_600_000}
         for url in urls:
             js = _get(url, dict(symbol=sym, interval=sub_tf,
                                 limit=min(need, 1000)))
             if js and len(js) > 30:
                 rows = js
-                # добор страницами назад (до 4), пока не наберём need
-                pages = 0
-                while len(rows) < need and pages < 4:
-                    js2 = _get(url, dict(symbol=sym, interval=sub_tf,
-                                         limit=1000,
-                                         endTime=int(rows[0][0]) - 1))
-                    if not js2:
-                        break
-                    rows = js2 + rows
-                    pages += 1
+                # 29.07 «кластера долго открываются»: добор страниц назад
+                # ПАРАЛЛЕЛЬНО — окна времени детерминированы (страница j =
+                # 1000 суб-баров назад от первой), было последовательно
+                # до 4×(0.5-8с)
+                if len(rows) < need:
+                    sub_ms = SUB_MS.get(sub_tf, 300_000)
+                    first_ts = int(rows[0][0])
+                    n_pages = min(4, (need - len(rows) + 999) // 1000)
+                    futs = [_EX_FP.submit(
+                        _get, url, dict(symbol=sym, interval=sub_tf,
+                                        limit=1000,
+                                        endTime=first_ts - 1 - j * 1000 * sub_ms))
+                            for j in range(n_pages)]
+                    extra = []
+                    for f in futs:
+                        try:
+                            pg = f.result(timeout=20)
+                            if pg:
+                                extra.extend(pg)
+                        except Exception:
+                            pass
+                    if extra:
+                        seen_ts = {int(x[0]) for x in rows}
+                        rows = ([x for x in extra
+                                 if int(x[0]) not in seen_ts] + rows)
+                        rows.sort(key=lambda x: int(x[0]))
                 break
         if not rows:
             # фьючерс-онли 1000X/1MX при лежащем fapi: строим из спотового
@@ -4835,7 +4863,15 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
                 "tick": tick, "n_lv": n_lv, "bars": out_bars,
                 "phases": phases}
 
-    return await asyncio.to_thread(_sync)
+    _res = await asyncio.to_thread(_sync)
+    if isinstance(_res, dict) and _res.get("ok"):
+        _FP_CACHE[_ck] = (_t_fp.time(), _res)
+        # не даём кэшу расползаться: чистка протухших при >60 ключах
+        if len(_FP_CACHE) > 60:
+            _cut = _t_fp.time() - 120
+            for _k in [k for k, v in _FP_CACHE.items() if v[0] < _cut]:
+                _FP_CACHE.pop(_k, None)
+    return _res
 
 
 # ── 🧊 ACCUMULATION watchlist ────────────────────────────────────────────────
