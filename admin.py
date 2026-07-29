@@ -141,6 +141,30 @@ async def lifespan(app):
             except Exception:
                 return None
 
+        def _bb_anon_stacks():
+            """Стеки безымянных ThreadPoolExecutor-тредов (до 3 шт, по 4
+            кадра) — 29.07 ч.3: именованные пулы починены, а анонимные всё
+            растут; стек назовёт файл:строку создателя."""
+            try:
+                import sys as _sys_bb, traceback as _tb_bb
+                frames = _sys_bb._current_frames()
+                out = []
+                for t in _thr.enumerate():
+                    if not (t.name or "").startswith("ThreadPoolExecutor"):
+                        continue
+                    fr = frames.get(t.ident)
+                    if fr is None:
+                        continue
+                    st = _tb_bb.extract_stack(fr)[-4:]
+                    out.append(" <- ".join(
+                        f"{x.filename.rsplit('/', 1)[-1]}:{x.lineno}:{x.name}"
+                        for x in reversed(st)))
+                    if len(out) >= 3:
+                        break
+                return out or None
+            except Exception:
+                return None
+
         def _black_box():
             from datetime import timedelta as _td2
             from database import _get_db as _gdb2, utcnow as _un2
@@ -150,6 +174,7 @@ async def lifespan(app):
                     doc = {"at": _un2(), "rss_mb": _bb_rss_mb(),
                            "threads": _thr.active_count(),
                            "threads_top": _bb_thread_names(),
+                           "anon_stacks": _bb_anon_stacks(),
                            "loop_lag_s": round(_time.time() - _loop_beat["t"], 1)}
                     dbb = _gdb2()
                     dbb.health_beats.insert_one(dict(doc))
