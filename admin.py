@@ -193,6 +193,18 @@ async def lifespan(app):
                                 _b.items(), key=lambda x: -x[1])[:5])
                     except Exception:
                         pass
+                    # 🔎 охота на память: топ-аллокаторы раз в 5 минут
+                    try:
+                        import tracemalloc as _tm_bb
+                        if _tm_bb.is_tracing() and int(_time.time()) % 300 < 60:
+                            snap = _tm_bb.take_snapshot()
+                            stats = snap.statistics("lineno")[:8]
+                            doc["mem_top"] = [
+                                f"{s.size / 1048576:.0f}MB×{s.count} "
+                                f"{str(s.traceback[0]).replace(chr(92), '/').rsplit('/', 1)[-1]}"
+                                for s in stats]
+                    except Exception:
+                        pass
                     dbb = _gdb2()
                     dbb.health_beats.insert_one(dict(doc))
                     dbb.system.update_one({"_id": "health_last"},

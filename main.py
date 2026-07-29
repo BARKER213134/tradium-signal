@@ -31,6 +31,13 @@ def _tpe_init_traced(self, *a, **kw):
 
 _cf_trace.ThreadPoolExecutor.__init__ = _tpe_init_traced
 
+# 🔎 ОХОТА НА ПАМЯТЬ 29.07: треды побеждены (плато 250), но RSS течёт
+# +37МБ/мин. tracemalloc назовёт файл:строку аллокаций; чёрный ящик
+# выгружает топ в health_beats.mem_top. Выключается MEM_TRACE=0.
+if os.getenv("MEM_TRACE", "1") == "1":
+    import tracemalloc
+    tracemalloc.start(1)
+
 import uvicorn
 
 from database import init_db
