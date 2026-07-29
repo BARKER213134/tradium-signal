@@ -3186,160 +3186,130 @@ async function _scCheck() {
 
 function _renderSetupResult(d) {
   const result = document.getElementById('sc-result');
-  // ── Verdict big banner ──
-  let verdictBg, verdictColor, verdictEmoji, verdictText;
-  if (d.verdict === 'ENTER_LONG') {
-    verdictBg = 'linear-gradient(135deg,rgba(0,229,160,0.30),rgba(0,229,160,0.10))';
-    verdictColor = '#00e5a0';
-    verdictEmoji = '🟢';
-    verdictText = 'ENTER LONG';
-  } else if (d.verdict === 'ENTER_SHORT') {
-    verdictBg = 'linear-gradient(135deg,rgba(255,77,109,0.30),rgba(255,77,109,0.10))';
-    verdictColor = '#ff4d6d';
-    verdictEmoji = '🔴';
-    verdictText = 'ENTER SHORT';
-  } else if (d.verdict === 'WAIT') {
-    verdictBg = 'linear-gradient(135deg,rgba(255,210,62,0.25),rgba(255,140,80,0.10))';
-    verdictColor = '#ffd23e';
-    verdictEmoji = '⏳';
-    verdictText = 'WAIT';
-  } else if (d.verdict === 'NO_DATA') {
-    verdictBg = 'rgba(255,255,255,0.04)'; verdictColor = '#888';
-    verdictEmoji = '❓'; verdictText = 'NO DATA';
-  } else {
-    verdictBg = 'rgba(255,77,109,0.15)'; verdictColor = '#ff4d6d';
-    verdictEmoji = '❌'; verdictText = d.verdict || 'ERROR';
-  }
+  const m = d.metrics || {};
+  const fp = (v) => v == null ? '—' : (+v).toPrecision(5).replace(/\.?0+$/, '');
+  const fnum = (v) => {
+    if (v == null) return '—';
+    const a = Math.abs(v);
+    return (v >= 0 ? '+' : '') + (a >= 1e9 ? (v/1e9).toFixed(1)+'B' : a >= 1e6 ? (v/1e6).toFixed(1)+'M' : a >= 1e3 ? (v/1e3).toFixed(1)+'K' : v.toFixed(0));
+  };
+  // ── Verdict banner ──
+  let vBg, vColor, vEmoji, vText;
+  if (d.verdict === 'ENTER_LONG') { vBg='linear-gradient(135deg,rgba(0,229,160,0.30),rgba(0,229,160,0.10))'; vColor='#00e5a0'; vEmoji='🟢'; vText='ЛОНГ'; }
+  else if (d.verdict === 'ENTER_SHORT') { vBg='linear-gradient(135deg,rgba(255,77,109,0.30),rgba(255,77,109,0.10))'; vColor='#ff4d6d'; vEmoji='🔴'; vText='ШОРТ'; }
+  else if (d.verdict === 'WAIT') { vBg='linear-gradient(135deg,rgba(255,210,62,0.25),rgba(255,140,80,0.10))'; vColor='#ffd23e'; vEmoji='⏳'; vText='ЖДАТЬ'; }
+  else if (d.verdict === 'NO_DATA') { vBg='rgba(255,255,255,0.04)'; vColor='#888'; vEmoji='❓'; vText='НЕТ ДАННЫХ'; }
+  else { vBg='rgba(255,77,109,0.15)'; vColor='#ff4d6d'; vEmoji='❌'; vText=d.verdict||'ERROR'; }
 
-  const st2h = d.st_2h || {};
-  const st4h = d.st_4h || {};
-  const bias = d.total2_bias || {};
-  const c2 = st2h.state === 'UP' ? '#00e5a0' : (st2h.state === 'DOWN' ? '#ff4d6d' : '#888');
-  const c4 = st4h.state === 'UP' ? '#00e5a0' : (st4h.state === 'DOWN' ? '#ff4d6d' : '#888');
-  const cb = bias.bias === 'LONG' ? '#00e5a0' : (bias.bias === 'SHORT' ? '#ff4d6d' : '#888');
-
-  // ── Recent signals list (ALL sources за 72h) + cluster bias header ──
-  const srcEmoji = {whale:'🐋', shark:'🦈', triple_confluence:'🐉',
-                    st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', anomaly:'⚠', volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
-                    second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', rider_short:'🏄', ten:'💰', accum:'🧊'};
-  const longCnt = d.cluster_long || 0;
-  const shortCnt = d.cluster_short || 0;
-  const clusterBias = d.cluster_bias || 'NEUTRAL';
-  const clBiasColor = clusterBias === 'LONG' ? '#00e5a0' : (clusterBias === 'SHORT' ? '#ff4d6d' : '#888');
-  const clusterHeader = `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;margin-bottom:8px;border-bottom:1px solid var(--border);">
-    <div style="font-size:11px;color:var(--muted);">📊 Cluster bias за 72h (TOP-7 sources):</div>
-    <div style="display:flex;gap:14px;align-items:center;font-family:var(--font-mono);">
-      <span style="color:#00e5a0;font-weight:700;">${longCnt} LONG</span>
-      <span style="color:#ff4d6d;font-weight:700;">${shortCnt} SHORT</span>
-      <span style="color:${clBiasColor};font-weight:800;padding:2px 10px;border:1px solid ${clBiasColor};border-radius:6px;">${clusterBias}</span>
-    </div>
+  const cvdCol = (v) => v == null ? 'var(--muted)' : v >= 0 ? '#00e5a0' : '#ff4d6d';
+  const momCol = (v) => v == null ? 'var(--muted)' : v >= 0 ? '#00e5a0' : '#ff4d6d';
+  const lb = m.last_bar || {};
+  const tile = (label, val, col) => `<div style="flex:1;min-width:105px;padding:10px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:8px;text-align:center;">
+      <div style="font-size:9px;color:var(--muted);letter-spacing:0.08em;">${label}</div>
+      <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${col||'var(--text)'};">${val}</div>
+    </div>`;
+  const metricsHtml = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+    ${tile('ЦЕНА', fp(m.price))}
+    ${tile('24Ч', (m.mom24>=0?'+':'')+m.mom24+'%', momCol(m.mom24))}
+    ${tile('7Д', m.mom7d==null?'—':(m.mom7d>=0?'+':'')+m.mom7d+'%', momCol(m.mom7d))}
+    ${tile('ОТ 24Ч-ХАЯ', m.dist_hi24+'%', m.dist_hi24>-3?'#ffd23e':'var(--muted)')}
+    ${tile('ОТ 24Ч-ЛОЯ', '+'+m.dist_lo24+'%', m.dist_lo24<3?'#ffd23e':'var(--muted)')}
+    ${tile('RSI 1H/4H', (m.rsi1h??'—')+' / '+(m.rsi4h??'—'))}
+    ${tile('CVD 24Ч', fnum(m.cvd24), cvdCol(m.cvd24))}
+    ${tile('CVD 72Ч', fnum(m.cvd72), cvdCol(m.cvd72))}
+    ${tile('ОБЪЁМ 24Ч', 'x'+(m.vol24_x??'—'), m.vol24_x>=2?'#ffd23e':'var(--muted)')}
+    ${tile('FUNDING', m.funding_pct==null?'—':(m.funding_pct>=0?'+':'')+m.funding_pct+'%', Math.abs(m.funding_pct||0)>=0.05?'#ff4d6d':'var(--muted)')}
+    ${tile('ФАЗА 4H', (m.phase_emoji||'?')+' '+(m.phase||'—'))}
+    ${tile('КЛИМАТ 12H', (m.climate12_emoji||'?')+' '+(m.climate12||'—'))}
+    ${tile('ПОСЛЕДНИЙ ЧАС', (lb.green?'🟩':'🟥')+' закр. '+(lb.close_pos??'—')+'%', lb.green?'#00e5a0':'#ff4d6d')}
   </div>`;
+
+  const gradeCol = (g) => g === 'ДА' ? '#00e5a0' : g === 'МОЖНО' ? '#ffd23e'
+    : (g||'').startsWith('ЖДАТЬ') ? '#ffa94d' : '#ff4d6d';
+  const sideCard = (label, emoji, side, accent) => {
+    if (!side || !side.grade) return '';
+    const g = side.grade;
+    const pros = (side.pros||[]).map(x => `<div style="padding:3px 0;font-size:12px;color:#9fe8c8;">✚ ${x}</div>`).join('') || '<div style="font-size:12px;color:var(--muted);">— нет аргументов за</div>';
+    const cons = (side.cons||[]).map(x => `<div style="padding:3px 0;font-size:12px;color:#ff9db0;">✖ ${x}</div>`).join('') || '<div style="font-size:12px;color:var(--muted);">— нет аргументов против</div>';
+    const pl = side.plan || {};
+    const zone = (pl.entry_zone && pl.entry_zone[0] !== pl.entry_zone[1])
+      ? `${fp(pl.entry_zone[0])} – ${fp(pl.entry_zone[1])}`
+      : `по рынку ${fp((pl.entry_zone||[])[0])}`;
+    const planHtml = pl.stop ? `<div style="margin-top:10px;padding:10px;background:rgba(255,255,255,0.03);border:1px dashed var(--border);border-radius:8px;font-family:var(--font-mono);font-size:12px;">
+        📐 вход <b>${zone}</b> · <span style="color:var(--sell);">стоп ${fp(pl.stop)}</span> · <span style="color:var(--buy);">цель ${fp(pl.target)}</span>${pl.rr ? ` · R:R ${pl.rr}` : ''}
+        <div style="color:var(--muted);font-size:11px;margin-top:4px;">${pl.note||''}</div>
+      </div>` : '';
+    return `<div style="padding:14px;background:var(--card);border:1.5px solid ${accent};border-radius:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:${accent};">${emoji} ${label}</span>
+        <span style="font-family:var(--font-mono);font-size:17px;font-weight:900;color:${gradeCol(g)};padding:2px 12px;border:1.5px solid ${gradeCol(g)};border-radius:8px;">${g}</span>
+      </div>
+      ${pros}
+      <div style="height:6px;"></div>
+      ${cons}
+      ${planHtml}
+    </div>`;
+  };
+
+  const atEmoji = {blowoff:'🌋', thin_pump:'💨', capitulation:'🛟', floor_buy:'💎'};
+  const activeHtml = (d.active_trades||[]).map(t => {
+    const col = (t.pnl_now??0) >= 0 ? '#00e5a0' : '#ff4d6d';
+    return `<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;font-family:var(--font-mono);">
+      <span>${atEmoji[t.strategy]||'•'} ${t.strategy}</span>
+      <span style="color:${t.direction==='LONG'?'#00e5a0':'#ff4d6d'};font-weight:700;">${t.direction}</span>
+      <span>@ ${fp(t.entry)}</span>
+      <span style="color:var(--muted);">tp ${fp(t.tp)} · sl ${fp(t.sl)}</span>
+      <span style="color:${col};font-weight:700;">${t.pnl_now!=null?(t.pnl_now>=0?'+':'')+t.pnl_now+'%':''}</span>
+      <span style="margin-left:auto;color:var(--muted);">${t.age_h}ч в пути</span>
+    </div>`;
+  }).join('');
+
+  const srcEmoji = {whale:'🐋', shark:'🦈', triple_confluence:'🐉',
+                    st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
+                    second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', rider_short:'🏄', ten:'💰', accum:'🧊',
+                    blowoff:'🌋', capitulation:'🛟', thin_pump:'💨', floor_buy:'💎', st_break:'🧨', st_break4h:'💣',
+                    vol_anomaly:'⚡', vol_anomaly4h:'🌩', delta_series:'🫧', potok:'🌊'};
   const recentHtml = (d.recent_signals || []).slice(0, 30).map(rs => {
-    const em = srcEmoji[rs.source] || '•';
+    let em = srcEmoji[rs.source] || '•';
+    if (rs.source === 'whale' && (rs.whale_seq||1) >= 2) em = '🐳';
+    else if ((rs.source === 'thin_pump' && rs.rep_seq >= 2) || (rs.source === 'blowoff' && rs.rep_seq >= 3)) em = '🔁' + em;
     const dirColor = rs.direction === 'LONG' ? '#00e5a0' : (rs.direction === 'SHORT' ? '#ff4d6d' : 'var(--muted)');
     const dt = rs.at ? new Date(rs.at).toLocaleString('ru-RU') : '';
     const age = rs.age_hours != null ? `${rs.age_hours}h` : '';
     const tierBadge = rs.tier ? `<span style="padding:1px 6px;background:rgba(255,210,62,0.15);border:1px solid rgba(255,210,62,0.4);border-radius:4px;color:#ffd23e;font-size:10px;">${rs.tier}</span>` : '';
-    const scoreBadge = rs.score != null ? `<span style="color:var(--muted);">score ${rs.score}</span>` : '';
     return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">
-      <span style="font-size:16px;width:24px;text-align:center;">${em}</span>
+      <span style="font-size:16px;width:34px;text-align:center;">${em}</span>
       <span style="min-width:130px;font-weight:600;">${(rs.source||'?').toUpperCase()}</span>
       <span style="color:${dirColor};font-weight:700;width:55px;">${rs.direction || '?'}</span>
-      <span style="color:var(--muted);width:80px;">@ ${rs.entry || '—'}</span>
+      <span style="color:var(--muted);width:90px;">@ ${rs.entry || '—'}</span>
       ${tierBadge}
-      ${scoreBadge}
       <span style="margin-left:auto;color:var(--muted);font-size:10px;">${age} назад · ${dt}</span>
     </div>`;
   }).join('') || '<div style="color:var(--muted);padding:6px 0;">Нет сигналов за 72h</div>';
 
-  // Reasons list
-  const reasonsHtml = (d.reasons || []).map(r =>
-    `<div style="padding:4px 0;font-size:13px;">• ${r}</div>`
-  ).join('');
-
-  const waitForHtml = (d.wait_for || []).map(w =>
-    `<div style="padding:4px 0;font-size:13px;color:#ffd23e;">⏳ ${w}</div>`
-  ).join('');
-
-  // LONG / SHORT score breakdown
-  const longAmps = Object.entries(d.long_breakdown || {})
-    .filter(([k,v]) => !k.startsWith('core_'))
-    .map(([k,v]) => `<div style="font-size:11px;color:var(--muted);">+${v} ${k}</div>`).join('') || '<div style="font-size:11px;color:var(--muted);">—</div>';
-  const shortAmps = Object.entries(d.short_breakdown || {})
-    .filter(([k,v]) => !k.startsWith('core_'))
-    .map(([k,v]) => `<div style="font-size:11px;color:var(--muted);">+${v} ${k}</div>`).join('') || '<div style="font-size:11px;color:var(--muted);">—</div>';
-
   result.innerHTML = `
     <!-- Verdict banner -->
-    <div style="display:flex;justify-content:center;align-items:center;gap:18px;padding:24px;margin-bottom:18px;background:${verdictBg};border:2.5px solid ${verdictColor};border-radius:14px;">
-      <span style="font-size:48px;">${verdictEmoji}</span>
+    <div style="display:flex;justify-content:center;align-items:center;gap:18px;padding:22px;margin-bottom:14px;background:${vBg};border:2.5px solid ${vColor};border-radius:14px;">
+      <span style="font-size:44px;">${vEmoji}</span>
       <div style="text-align:left;">
-        <div style="font-family:var(--font-mono);font-size:36px;font-weight:900;letter-spacing:0.1em;color:${verdictColor};">${verdictText}</div>
-        <div style="font-family:var(--font-mono);font-size:14px;color:var(--muted);margin-top:4px;">${d.pair} · confidence ${d.confidence}%</div>
+        <div style="font-family:var(--font-mono);font-size:32px;font-weight:900;letter-spacing:0.1em;color:${vColor};">${vText}</div>
+        <div style="font-family:var(--font-mono);font-size:13px;color:var(--muted);margin-top:4px;">${d.pair}${d.confidence ? ' · уверенность ' + d.confidence + '%' : ''}</div>
+        ${d.verdict_note ? `<div style="font-size:13px;color:${vColor};margin-top:6px;font-weight:600;">${d.verdict_note}</div>` : ''}
       </div>
     </div>
 
-    <!-- TF + bias summary -->
-    <div style="display:flex;gap:14px;margin-bottom:18px;flex-wrap:wrap;">
-      <div style="flex:1;min-width:140px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
-        <div style="font-size:10px;color:var(--muted);letter-spacing:0.1em;margin-bottom:4px;">ST 2H</div>
-        <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:${c2};">${st2h.state || '?'} <small style="color:var(--muted);">${st2h.duration || ''}</small></div>
-      </div>
-      <div style="flex:1;min-width:140px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
-        <div style="font-size:10px;color:var(--muted);letter-spacing:0.1em;margin-bottom:4px;">ST 4H</div>
-        <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:${c4};">${st4h.state || '?'} <small style="color:var(--muted);">${st4h.duration || ''}</small></div>
-      </div>
-      <div style="flex:1;min-width:140px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
-        <div style="font-size:10px;color:var(--muted);letter-spacing:0.1em;margin-bottom:4px;">TOTAL2 bias</div>
-        <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:${cb};">${bias.label || '?'}</div>
-      </div>
+    ${metricsHtml}
+
+    <!-- LONG / SHORT разбор -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+      ${sideCard('ЛОНГ', '🟢', d.long, '#00e5a0')}
+      ${sideCard('ШОРТ', '🔴', d.short, '#ff4d6d')}
     </div>
 
-    <!-- LONG vs SHORT scores -->
-    ${(() => {
-      // Если score есть но tier None — это "потенциал" (vol_spike не прошёл)
-      // Показываем сколько % от STANDARD threshold (60) набрано
-      const longScore = d.long_score || 0;
-      const shortScore = d.short_score || 0;
-      const longPotPct = Math.min(100, Math.round(longScore / 60 * 100));
-      const shortPotPct = Math.min(100, Math.round(shortScore / 60 * 100));
-      const longPotBadge = (!d.long_tier && longScore >= 20)
-        ? `<div style="margin-top:4px;padding:4px 8px;background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.35);border-radius:5px;font-size:10px;color:#ffd23e;font-family:var(--font-mono);">🌱 ПОТЕНЦИАЛ ${longPotPct}% (нужен vol spike для STANDARD)</div>`
-        : '';
-      const shortPotBadge = (!d.short_tier && shortScore >= 20)
-        ? `<div style="margin-top:4px;padding:4px 8px;background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.35);border-radius:5px;font-size:10px;color:#ffd23e;font-family:var(--font-mono);">🌱 ПОТЕНЦИАЛ ${shortPotPct}% (нужен vol spike для STANDARD)</div>`
-        : '';
-      return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
-        <div style="padding:14px;background:var(--card);border:1.5px solid ${d.verdict==='ENTER_LONG' ? '#00e5a0' : 'var(--border)'};border-radius:10px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:#00e5a0;">🐋 LONG (WHALE)</span>
-            <span style="font-family:var(--font-mono);font-size:20px;font-weight:900;color:#00e5a0;">${longScore}</span>
-          </div>
-          <div style="font-size:11px;color:var(--muted);">Tier: <b style="color:${d.long_tier==='PREMIUM'?'#ffd23e':(d.long_tier==='STANDARD'?'#00e5a0':'var(--muted)')};">${d.long_tier || '—'}</b></div>
-          ${longPotBadge}
-          <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">${longAmps}</div>
-        </div>
-        <div style="padding:14px;background:var(--card);border:1.5px solid ${d.verdict==='ENTER_SHORT' ? '#ff4d6d' : 'var(--border)'};border-radius:10px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:#ff4d6d;">🦈 SHORT (SHARK)</span>
-            <span style="font-family:var(--font-mono);font-size:20px;font-weight:900;color:#ff4d6d;">${shortScore}</span>
-          </div>
-          <div style="font-size:11px;color:var(--muted);">Tier: <b style="color:${d.short_tier==='PREMIUM'?'#ffd23e':(d.short_tier==='STANDARD'?'#ff4d6d':'var(--muted)')};">${d.short_tier || '—'}</b></div>
-          ${shortPotBadge}
-          <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">${shortAmps}</div>
-        </div>
-      </div>`;
-    })()}
-
-    <!-- Reasons + WaitFor -->
-    <div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:14px;">
-      <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;margin-bottom:8px;">📋 ПРИЧИНЫ</div>
-      ${reasonsHtml}
-      ${waitForHtml ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);"><div style="font-family:var(--font-mono);font-size:11px;color:#ffd23e;letter-spacing:0.1em;margin-bottom:6px;">⏳ ЖДАТЬ:</div>${waitForHtml}</div>` : ''}
-    </div>
-
-    <!-- 🔬 MAX VERIFICATION — все доступные данные платформы -->
-    ${_renderVerification(d)}
+    ${activeHtml ? `<div style="padding:12px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:14px;">
+      <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;margin-bottom:6px;">🎯 АКТИВНЫЕ СИГНАЛЫ-СДЕЛКИ В ПУТИ</div>
+      ${activeHtml}
+    </div>` : ''}
 
     <!-- 📈 CHART — свечи + все сигналы маркерами (как в журнале) -->
     <div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:14px;">
@@ -3357,10 +3327,9 @@ function _renderSetupResult(d) {
       </div>
     </div>
 
-    <!-- Recent signals (ALL sources за 72h) + cluster bias -->
+    <!-- Recent signals -->
     <div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;">
       <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;margin-bottom:8px;">🕐 ВСЕ СИГНАЛЫ ЗА 72H (${(d.recent_signals||[]).length})</div>
-      ${clusterHeader}
       ${recentHtml}
     </div>
   `;
@@ -3498,76 +3467,6 @@ async function _scRenderChart(d, tf) {
     console.warn('[sc-chart]', e);
     chartDiv.innerHTML = '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#ff4d6d;">Ошибка: ' + (e.message || e) + '</div>';
   }
-}
-
-function _renderVerification(d) {
-  const rsi = d.rsi_multi || {};
-  const vol = d.volume_2h || {};
-  const fund = d.funding;
-  const delta = d.delta || {};
-  const resonance = d.resonance || {};
-  const struc = d.structure;
-  const price = d.price_now;
-  const vol24 = d.volume_24h_usd;
-
-  // RSI multi-TF row
-  const rsiRow = ['1H','4H','12H'].map(tf => {
-    const r = rsi[tf];
-    if (!r) return `<div style="flex:1;padding:8px;text-align:center;color:var(--muted);font-size:10px;">${tf}: —</div>`;
-    const v = r.rsi;
-    const col = v >= 70 ? '#ff4d6d' : v >= 60 ? '#ffa94d' : v <= 30 ? '#00e5a0' : v <= 40 ? '#88d8a3' : 'var(--muted)';
-    const sigil = r.state === 'above_sma' ? '↑' : '↓';
-    return `<div style="flex:1;padding:8px;text-align:center;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:6px;">
-      <div style="font-size:9px;color:var(--muted);letter-spacing:0.1em;">RSI ${tf}</div>
-      <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:${col};">${v} ${sigil}</div>
-      <div style="font-size:9px;color:var(--muted);">${r.state === 'above_sma' ? 'выше SMA' : 'ниже SMA'}</div>
-    </div>`;
-  }).join('');
-
-  // Volume metrics
-  let volHtml = '';
-  if (vol.ratio_sma9 != null) {
-    const volColor = vol.ratio_sma9 >= 3 ? '#ff4d6d' : vol.ratio_sma9 >= 2 ? '#ffd23e' : vol.ratio_sma9 >= 1 ? '#00e5a0' : 'var(--muted)';
-    volHtml = `<div style="display:flex;gap:14px;align-items:center;padding:10px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:6px;">
-      <div style="font-size:10px;color:var(--muted);letter-spacing:0.1em;min-width:60px;">VOL 2H</div>
-      <div style="font-family:var(--font-mono);font-size:16px;color:${volColor};font-weight:700;">${vol.ratio_sma9}× SMA9</div>
-      <div style="font-family:var(--font-mono);font-size:12px;color:var(--muted);">· ${vol.ratio_sma30}× SMA30</div>
-      ${vol24 ? `<div style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--muted);">24h: $${(vol24/1e6).toFixed(1)}M</div>` : ''}
-    </div>`;
-  }
-
-  // Funding
-  let fundHtml = '';
-  if (fund && fund.rate_pct != null) {
-    const fcolor = Math.abs(fund.rate_pct) >= 0.05 ? '#ff4d6d' : Math.abs(fund.rate_pct) >= 0.02 ? '#ffa94d' : '#00e5a0';
-    fundHtml = `<div style="display:flex;gap:14px;align-items:center;padding:10px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:6px;">
-      <div style="font-size:10px;color:var(--muted);letter-spacing:0.1em;min-width:60px;">FUNDING</div>
-      <div style="font-family:var(--font-mono);font-size:16px;color:${fcolor};font-weight:700;">${fund.rate_pct >= 0 ? '+' : ''}${fund.rate_pct}%</div>
-      <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);">${fund.interpretation}</div>
-    </div>`;
-  }
-
-  // Delta / Resonance / Structure (compact row)
-  const extras = [];
-  if (delta.d15m != null) extras.push(`<span style="color:var(--muted);">Δ 15m: <b style="color:${delta.d15m >= 0 ? '#00e5a0' : '#ff4d6d'};">${delta.d15m >= 0 ? '+' : ''}${delta.d15m}</b></span>`);
-  if (delta.d1h != null) extras.push(`<span style="color:var(--muted);">Δ 1h: <b style="color:${delta.d1h >= 0 ? '#00e5a0' : '#ff4d6d'};">${delta.d1h >= 0 ? '+' : ''}${delta.d1h}</b></span>`);
-  if (resonance.r15m != null) extras.push(`<span style="color:var(--muted);">R 15m: <b>${resonance.r15m}</b></span>`);
-  if (resonance.r1h != null) extras.push(`<span style="color:var(--muted);">R 1h: <b>${resonance.r1h}</b></span>`);
-  if (struc) extras.push(`<span style="color:var(--muted);">📐 структура: <b>${struc}</b></span>`);
-  if (price) extras.push(`<span style="color:var(--muted);">price: <b>${price}</b></span>`);
-  const extrasHtml = extras.length
-    ? `<div style="padding:10px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:6px;font-family:var(--font-mono);font-size:12px;display:flex;gap:14px;flex-wrap:wrap;">${extras.join(' · ')}</div>`
-    : '';
-
-  return `<div style="padding:14px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:14px;">
-    <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--muted);letter-spacing:0.1em;margin-bottom:10px;">🔬 MAX VERIFICATION — данные платформы</div>
-    <div style="display:flex;gap:8px;margin-bottom:10px;">${rsiRow}</div>
-    ${volHtml}
-    ${volHtml && fundHtml ? '<div style="height:8px;"></div>' : ''}
-    ${fundHtml}
-    ${(volHtml || fundHtml) && extrasHtml ? '<div style="height:8px;"></div>' : ''}
-    ${extrasHtml}
-  </div>`;
 }
 
 // Auto-focus input on load
