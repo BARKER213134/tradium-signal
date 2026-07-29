@@ -116,6 +116,19 @@ async def lifespan(app):
             except Exception:
                 return None
 
+        def _bb_thread_names():
+            """Гистограмма имён тредов (цифры срезаны) — 29.07 пятое падение:
+            перед смертью 754 треда / RSS 3.7ГБ, но КТО плодит — неизвестно.
+            Топ-8 имён в каждом бите назовёт виновника при следующем OOM."""
+            try:
+                import re as _re_bb
+                from collections import Counter as _Cnt
+                c = _Cnt(_re_bb.sub(r"[\d\-_]+$", "", t.name or "?")
+                         for t in _thr.enumerate())
+                return dict(c.most_common(8))
+            except Exception:
+                return None
+
         def _black_box():
             from datetime import timedelta as _td2
             from database import _get_db as _gdb2, utcnow as _un2
@@ -124,6 +137,7 @@ async def lifespan(app):
                 try:
                     doc = {"at": _un2(), "rss_mb": _bb_rss_mb(),
                            "threads": _thr.active_count(),
+                           "threads_top": _bb_thread_names(),
                            "loop_lag_s": round(_time.time() - _loop_beat["t"], 1)}
                     dbb = _gdb2()
                     dbb.health_beats.insert_one(dict(doc))
@@ -145,6 +159,7 @@ async def lifespan(app):
                 dbb.boot_log.insert_one({"at": _un3(),
                                          "prev_beat": {k: last.get(k) for k in
                                                        ("at", "rss_mb", "threads",
+                                                        "threads_top",
                                                         "loop_lag_s")}})
                 if last.get("at") is not None:
                     gap_min = (_un3() - last["at"]).total_seconds() / 60
