@@ -1851,10 +1851,14 @@ async def _whale_send_telegram(doc: dict):
             seq_line = (f"🐳 повтор через {gap_txt}, выше 1-го{rel_ptxt} — "
                         f"тренд уже пошёл (EV +1.5)\n")
     # 🏅 ДЕСЯТКА: кит seq1 / 🐳-ниже — кандидат +10%/сделку (бэктест 180д
-    # WR(+10) 37-39% против базовых 22.6%; реплей: месяцы ≥+15% депо)
+    # WR(+10) 37-39% против базовых 22.6%; реплей: месяцы ≥+15% депо).
+    # Медаль выносится В ЗАГОЛОВОК — десятку видно с первой строки.
     seq_v = doc.get('whale_seq') or 1
+    _is_ten = (seq_v == 1 or doc.get('whale_rel') == 'below')
     ten_line = ("🏅 <b>ДЕСЯТКА</b> — кандидат +10%/сделку (WR 37-39%)\n"
-                if (seq_v == 1 or doc.get('whale_rel') == 'below') else "")
+                if _is_ten else "")
+    if _is_ten:
+        header = "🏅 " + header
     txt = (header +
            f"━━━━━━━━━━━━━━━━━━\n"
            f"<b>{pair}</b> · LONG\n"

@@ -747,7 +747,8 @@ def scan_universe(max_pairs: int = 300):
                                 _rl += ("🏅 <b>ДЕСЯТКА</b> — разгон "
                                         f"+{_bi['mom24']}%/24ч, кандидат "
                                         "+10%/сделку (WR 36%)\n")
-                            _tg16(f"🌋 <b>BLOWOFF · ВХОД СЕЙЧАС · "
+                            _tg16(f"{'🏅 ' if (_bi.get('mom24') or 0) > 15 else ''}"
+                                  f"🌋 <b>BLOWOFF · ВХОД СЕЙЧАС · "
                                   f"{pair.replace('/USDT', '')}</b>\n"
                                   f"🔴 SHORT по рынку @ {_bo['entry']:.6g}\n"
                                   f"кульминация была {_bi['climax_ago_h']}ч назад "
