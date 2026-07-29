@@ -274,11 +274,10 @@
             border-radius: 12px;
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
-            flex-wrap: nowrap;         /* одна строка */
-            white-space: nowrap;
+            flex-wrap: wrap;            /* 29.07: вкладок стало много —
+                                           переносим на новую строку, ряд
+                                           больше не вылезает за монитор */
             max-width: 100%;
-            overflow-x: auto;           /* горизонтальный скролл если реально не влезает */
-            scrollbar-width: thin;
         }
         .bot-switcher::-webkit-scrollbar { height: 4px; }
         .bot-switcher::-webkit-scrollbar-thumb { background: rgba(91,140,255,0.22); border-radius: 2px; }
