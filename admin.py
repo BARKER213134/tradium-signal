@@ -155,10 +155,13 @@ async def lifespan(app):
                     fr = frames.get(t.ident)
                     if fr is None:
                         continue
-                    st = _tb_bb.extract_stack(fr)[-4:]
+                    full = _tb_bb.extract_stack(fr)
+                    # низ стека = кто запустил таск в пуле (виновник),
+                    # верх = где завис; берём оба конца
+                    picks = full[:4] + full[-3:] if len(full) > 7 else full
                     out.append(" <- ".join(
-                        f"{x.filename.rsplit('/', 1)[-1]}:{x.lineno}:{x.name}"
-                        for x in reversed(st)))
+                        f"{x.filename.rsplit('/', 1)[-1].rsplit(chr(92), 1)[-1]}:{x.lineno}:{x.name}"
+                        for x in reversed(picks)))
                     if len(out) >= 3:
                         break
                 return out or None
