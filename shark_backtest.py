@@ -81,7 +81,7 @@ def _vision_klines(symbol: str, tf: str, days: int) -> list[dict]:
                      'l': float(row[3]), 'c': float(row[4]), 'v': float(row[5])}
                     for row in rows if row and row[0].isdigit()]
         except Exception: return []
-    with ThreadPoolExecutor(max_workers=10) as tp:
+    with ThreadPoolExecutor(max_workers=10, thread_name_prefix='shark-bt') as tp:
         for r in tp.map(_fetch_day, dates):
             out.extend(r)
     seen = set(); uniq = []
@@ -355,7 +355,7 @@ def run_shark_backtest(pair_limit: int = 600) -> dict:
             return {'results': local_results, 'skipped': local_skipped,
                     'flips': local_flips, 'pair': pair}
 
-        with ThreadPoolExecutor(max_workers=12) as tp:
+        with ThreadPoolExecutor(max_workers=12, thread_name_prefix='shark-bt') as tp:
             for pidx, res in enumerate(tp.map(_process_pair, pairs)):
                 _state['pairs_done'] = pidx + 1
                 _state['last_pair'] = res['pair']
@@ -399,7 +399,7 @@ def run_shark_backtest(pair_limit: int = 600) -> dict:
         def _fetch_one(pair):
             sym = _to_sym(pair)
             return (pair, _vision_klines(sym, '15m', KLINES_15M_DAYS))
-        with ThreadPoolExecutor(max_workers=20) as tp:
+        with ThreadPoolExecutor(max_workers=20, thread_name_prefix='shark-bt') as tp:
             for pair, k15 in tp.map(_fetch_one, cmp_pairs_list):
                 cmp_k15[pair] = k15
 

@@ -187,7 +187,7 @@ def scan() -> list[dict]:
 
     triggers = []
     n_workers = min(CONFIG['parallel_workers'], len(candidates))
-    with ThreadPoolExecutor(max_workers=n_workers) as tp:
+    with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix='rsi-cross-scan') as tp:
         futs = {tp.submit(_check_pair, p, v): p for p,v in candidates}
         for f in as_completed(futs, timeout=120):
             try:

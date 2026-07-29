@@ -88,7 +88,7 @@ def _vision_klines(symbol: str, tf: str, days: int) -> list[dict]:
         except Exception:
             return []
 
-    with ThreadPoolExecutor(max_workers=10) as tp:
+    with ThreadPoolExecutor(max_workers=10, thread_name_prefix='whale-bt') as tp:
         for r in tp.map(_fetch_day, dates):
             out.extend(r)
 
@@ -405,7 +405,7 @@ def run_whale_backtest(pair_limit: int = 150) -> dict:
 
         # 12 pairs in parallel × 10 inner workers = 120 concurrent fetches
         # (httpx limit raised to 100 connections — actual cap ~100)
-        with ThreadPoolExecutor(max_workers=12) as tp:
+        with ThreadPoolExecutor(max_workers=12, thread_name_prefix='whale-bt') as tp:
             for pidx, res in enumerate(tp.map(_process_pair, pairs)):
                 _state['pairs_done'] = pidx + 1
                 _state['last_pair'] = res['pair']
@@ -469,7 +469,7 @@ def run_whale_backtest(pair_limit: int = 150) -> dict:
             sym = _to_sym(pair)
             return (pair, _vision_klines(sym, '15m', KLINES_15M_DAYS))
 
-        with ThreadPoolExecutor(max_workers=20) as tp:
+        with ThreadPoolExecutor(max_workers=20, thread_name_prefix='whale-bt') as tp:
             for pair, k15 in tp.map(_fetch_one, cmp_pairs_list):
                 cmp_k15[pair] = k15
 

@@ -132,7 +132,7 @@ def main():
     print(f"Период: 90 дней (1H), 180 дней (1D)\n", flush=True)
 
     all_results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6, thread_name_prefix='fvg3m-bt') as ex:
         futures = {ex.submit(run_one, n, t, c): n for n, (t, c) in INSTRUMENTS.items()}
         done = 0
         for fut in concurrent.futures.as_completed(futures):

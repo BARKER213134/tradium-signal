@@ -69,7 +69,7 @@ def _vision_klines(symbol, tf, days):
                      'c': float(row[4])} for row in rows if row and row[0].isdigit()]
         except Exception:
             return []
-    with ThreadPoolExecutor(max_workers=10) as tp:
+    with ThreadPoolExecutor(max_workers=10, thread_name_prefix='precond') as tp:
         for r in tp.map(_fd, dates): out.extend(r)
     seen = set(); uniq = []
     for k in out:
@@ -214,7 +214,7 @@ def run_precondition_analysis() -> dict:
         klines_15m: dict = {}
         def _fp(pair):
             return (pair, _vision_klines(_to_sym(pair), '15m', KLINES_15M_DAYS))
-        with ThreadPoolExecutor(max_workers=20) as tp:
+        with ThreadPoolExecutor(max_workers=20, thread_name_prefix='precond') as tp:
             for pair, k15 in tp.map(_fp, unique_pairs):
                 klines_15m[pair] = k15
 

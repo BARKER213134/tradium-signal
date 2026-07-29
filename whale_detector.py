@@ -521,6 +521,11 @@ def scan_recent_flips_for_whale(pairs: list[str] | None = None,
                 }):
                     continue
                 db.new_strategy_signals.insert_one(doc)
+                try:
+                    from cache_utils import journal_cache
+                    journal_cache.invalidate("journal_all")
+                except Exception:
+                    pass
                 stats['fired'] += 1
                 stats['by_tier'][tier] += 1
                 stats['examples'].append({
@@ -634,6 +639,11 @@ def maybe_fire_whale(signal_data: dict) -> dict | None:
         doc.update(whale_seq_fields(db, pair, entry, doc['created_at']))
         try:
             db.new_strategy_signals.insert_one(doc)
+            try:
+                from cache_utils import journal_cache
+                journal_cache.invalidate("journal_all")
+            except Exception:
+                pass
             logger.info(f'[whale-live] 🐋 FIRED {pair} {tier} '
                          f'score={score_res["score"]} '
                          f'vol={ind.get("vol_ratio_max")}× '

@@ -208,7 +208,7 @@ def main():
     print("\nЗапуск...\n", flush=True)
 
     all_results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6, thread_name_prefix='fvg-bt') as ex:
         futures = {ex.submit(run_backtest_one, name, t, cls): name
                    for name, (t, cls) in INSTRUMENTS.items()}
         done = 0

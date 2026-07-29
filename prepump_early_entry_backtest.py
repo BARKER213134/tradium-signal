@@ -70,7 +70,7 @@ def _vision_klines(symbol: str, tf: str, days: int = 17) -> list:
                     for row in rows if row and row[0].isdigit()]
         except Exception:
             return []
-    with ThreadPoolExecutor(max_workers=10) as tp:
+    with ThreadPoolExecutor(max_workers=10, thread_name_prefix='prepump-bt') as tp:
         for r in tp.map(_fetch_day, dates):
             out.extend(r)
     seen = set(); uniq = []
@@ -220,7 +220,7 @@ def run_early_entry_backtest() -> dict:
         def _fetch_pair(pair):
             sym = _to_fapi_symbol(pair)
             return (pair, _vision_klines(sym, '15m', KLINES_15M_DAYS))
-        with ThreadPoolExecutor(max_workers=15) as tp:
+        with ThreadPoolExecutor(max_workers=15, thread_name_prefix='prepump-bt') as tp:
             i = 0
             for pair, k15 in tp.map(_fetch_pair, unique_pairs):
                 klines_15m[pair] = k15

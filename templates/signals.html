@@ -12298,6 +12298,17 @@ if (document.getElementById('jBody')) {
   // 20с polling: 15с убивал main thread при 5+ открытых графиках (×3 POST per poll
   // + 3400 строк tbody innerHTML). 30с был слишком медленно. 20с — компромисс.
   safeInterval(loadJournal, 20000);
+  // ⚡ синхронность с TG: лёгкий пинг раз в 7с — новый сигнал в базе →
+  // немедленный loadJournal() (сервер при этом уже сбросил свой кэш)
+  let _jNewestTs = null;
+  safeInterval(async () => {
+    try {
+      const r = await fetch('/api/journal/newest-ts', {cache: 'no-store'});
+      const j = await r.json();
+      if (j.ts && _jNewestTs && j.ts !== _jNewestTs) loadJournal();
+      if (j.ts) _jNewestTs = j.ts;
+    } catch (e) {}
+  }, 7000);
   loadDeltaMap();
   safeInterval(loadDeltaMap, 300000);
 }

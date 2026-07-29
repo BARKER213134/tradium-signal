@@ -304,6 +304,12 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
             pass
         doc = {**sig, "created_at": utcnow(), "state": "WAITING"}
         col.insert_one(doc)
+        # ⚡ мгновенный сброс кэша журнала — сигнал виден сразу, как TG
+        try:
+            from cache_utils import journal_cache
+            journal_cache.invalidate("journal_all")
+        except Exception:
+            pass
         logger.info(f"[{sig['strategy']}] fired {sig['pair']} {sig['direction']} "
                     f"@ {sig['entry']} ind={sig['indicators']}")
         return True

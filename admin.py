@@ -19,6 +19,8 @@ _EX_DELTA_INLINE = _TPE_shared(max_workers=16, thread_name_prefix="delta-inline"
 _EX_JOURNAL = _TPE_shared(max_workers=24, thread_name_prefix="journal-enrich")
 _EX_RSI_FILL = _TPE_shared(max_workers=10, thread_name_prefix="rsi-fill")
 _BG_FILL_BUSY = {"delta": False}
+# ⚡ свежайший сигнал — для мгновенного сброса кэша журнала (синхронность с TG)
+_JOURNAL_NEWEST_SIG = {"ts": None}
 from typing import Set
 
 from fastapi import FastAPI, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect, status
@@ -8914,6 +8916,23 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     if refresh:
         journal_cache.invalidate("journal_all")
 
+    # ⚡ 29.07: синхронность с TG — сигнал в журнале должен появляться сразу,
+    # а не через TTL кэша (60с). Дешёвая проверка свежайшего created_at по
+    # индексу: появился новый сигнал → кэш сбрасывается и пересчитывается.
+    try:
+        def _newest_sig_ts():
+            from database import _get_db as _gdbf
+            d = _gdbf().new_strategy_signals.find_one(
+                {}, {"created_at": 1}, sort=[("created_at", -1)])
+            return d and d.get("created_at")
+        _newest = await asyncio.to_thread(_newest_sig_ts)
+        if _newest is not None and _newest != _JOURNAL_NEWEST_SIG.get("ts"):
+            if _JOURNAL_NEWEST_SIG.get("ts") is not None:
+                journal_cache.invalidate("journal_all")
+            _JOURNAL_NEWEST_SIG["ts"] = _newest
+    except Exception:
+        pass
+
     async def _compute_in_thread():
         return await asyncio.to_thread(_compute_journal_sync)
 
@@ -9179,6 +9198,19 @@ async def api_shark_scan_now(lookback_hours: int = 6):
     stats = await asyncio.to_thread(
         sd.scan_recent_flips_for_shark, None, lookback_hours)
     return stats
+
+
+@app.get("/api/journal/newest-ts")
+async def api_journal_newest_ts():
+    """⚡ Дешёвый пинг для фронта (7с): время свежайшего сигнала. UI дёргает
+    loadJournal() сразу при изменении — журнал синхронен с TG-алертами."""
+    def _q():
+        from database import _get_db as _gdbn
+        d = _gdbn().new_strategy_signals.find_one(
+            {}, {"created_at": 1}, sort=[("created_at", -1)])
+        at = d and d.get("created_at")
+        return {"ts": at.isoformat() if at else None}
+    return await asyncio.to_thread(_q)
 
 
 @app.get("/api/setup-check")
@@ -12116,7 +12148,7 @@ async def api_cluster_delta_backfill_cdn(days: int = 14):
                     return (pair, 0, str(e))
 
             # 20 workers — CDN это статика, тянет хорошо
-            with ThreadPoolExecutor(max_workers=20) as ex:
+            with ThreadPoolExecutor(max_workers=20, thread_name_prefix='delta-cdn') as ex:
                 futs = {ex.submit(_one, p): p for p in pairs}
                 for f in as_completed(futs):
                     pair, written, err = f.result()
