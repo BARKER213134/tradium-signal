@@ -9925,6 +9925,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "indicators.entry_bar_t": 1,  # 🌋 точный бар входа для маркера
             "whale_seq": 1, "whale_rel": 1, "whale_rel_pct": 1,  # 🐳 повторный кит
             "rep_seq": 1,  # 🔁 повтор-усилитель (thin_pump/blowoff)
+            "indicators.mom24": 1,  # 🏅 десятка: blowoff-разгон
         }).sort("created_at", -1).limit(200):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -9963,6 +9964,13 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             if _rep_hot2:
                 em = "🔁" + em
                 extra_parts.append(f"повтор №{_rs2} за 14д — усилитель")
+            # 🏅 ДЕСЯТКА (кит seq1/ниже · blowoff mom24>15) — бэктест 180д
+            _wseq2 = n.get("whale_seq") or 1
+            _ten2 = ((strat == "whale" and (_wseq2 == 1 or n.get("whale_rel") == "below"))
+                     or (strat == "blowoff" and
+                         ((n.get("indicators") or {}).get("mom24") or 0) > 15))
+            if _ten2:
+                extra_parts.append("🏅 ДЕСЯТКА — кандидат +10% (WR 36-39%)")
             pattern_txt = f"{em} {label}"
             if extra_parts:
                 pattern_txt += " · " + " · ".join(extra_parts)
@@ -9999,6 +10007,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "whale_rel": n.get("whale_rel"),
                 "rep_seq": n.get("rep_seq"),
                 "rep_hot": _rep_hot2,
+                "ten_plus": _ten2,
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),
                 "svetofor": n.get("svetofor"), "svetofor_star": n.get("svetofor_star"),
@@ -10390,6 +10399,14 @@ def _compute_journal_sync(_fast_only: bool = False):
             _rs = n.get("rep_seq") or 1
             _rep_hot = ((strat == "thin_pump" and _rs >= 2) or
                         (strat == "blowoff" and _rs >= 3))
+            # 🏅 ДЕСЯТКА — кандидат на +10%/сделку (бэктест 48k симуляций
+            # 180д: кит WR(+10) 37-39%, blowoff-разгон>15 WR 36% против
+            # базовых 22.6%; реплей элиты: +102% депо/4мес, месяцы ≥+15%)
+            _wseq = n.get("whale_seq") or 1
+            _ten_plus = (
+                (strat == "whale" and (_wseq == 1 or n.get("whale_rel") == "below"))
+                or (strat == "blowoff" and
+                    ((n.get("indicators") or {}).get("mom24") or 0) > 15))
             if strat in ("st_break", "st_break4h"):
                 _ph = (n.get("indicators") or {}).get("phase")
                 _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
@@ -10537,6 +10554,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                           + ("(EV +1.44/+1.64 против +0.72 у первого)"
                              if strat == "thin_pump"
                              else "(EV +0.89 против +0.27 у первой)"))
+            if _ten_plus:
+                extra += " · 🏅 ДЕСЯТКА — кандидат +10%/сделку (WR 36-39%)"
             pattern_txt = f"{em} {label}{extra}"
             items.append({
                 "source": strat,  # 'volume_surge' / 'triple_confluence' / 'vol_accum'
@@ -10565,6 +10584,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                 # 🔁 повтор-усилитель (thin_pump 2-й+, blowoff 3-я+)
                 "rep_seq": n.get("rep_seq"),
                 "rep_hot": _rep_hot,
+                # 🏅 кандидат на +10%/сделку (кит / blowoff-разгон)
+                "ten_plus": _ten_plus,
                 # SHARK tier (тот же mechanism — для filtering и UI tooltip)
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),

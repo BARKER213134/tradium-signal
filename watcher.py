@@ -1850,13 +1850,18 @@ async def _whale_send_telegram(doc: dict):
             header = f"🐳 <b>ВТОРОЙ КИТ — выше 1-го</b> {tier_emoji}\n"
             seq_line = (f"🐳 повтор через {gap_txt}, выше 1-го{rel_ptxt} — "
                         f"тренд уже пошёл (EV +1.5)\n")
+    # 🏅 ДЕСЯТКА: кит seq1 / 🐳-ниже — кандидат +10%/сделку (бэктест 180д
+    # WR(+10) 37-39% против базовых 22.6%; реплей: месяцы ≥+15% депо)
+    seq_v = doc.get('whale_seq') or 1
+    ten_line = ("🏅 <b>ДЕСЯТКА</b> — кандидат +10%/сделку (WR 37-39%)\n"
+                if (seq_v == 1 or doc.get('whale_rel') == 'below') else "")
     txt = (header +
            f"━━━━━━━━━━━━━━━━━━\n"
            f"<b>{pair}</b> · LONG\n"
            f"<b>Entry:</b> {entry}\n"
            f"<b>Score:</b> {score}\n"
            f"<b>Amplifiers:</b> {', '.join(amps) if amps else '—'}\n"
-           f"━━━━━━━━━━━━━━━━━━\n" + seq_line +
+           f"━━━━━━━━━━━━━━━━━━\n" + ten_line + seq_line +
            f"📊 base {ind.get('base_days', 0)}d · vol {ind.get('vol_ratio_max', 0)}× · "
            f"DT {ind.get('prior_downtrend_pct', 0)}%\n"
            f"💡 Range Breakout setup (backtest WR 53.8% / MFE 5.56%)\n"

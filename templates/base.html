@@ -713,16 +713,18 @@
       window.sigIcon = function(src, score, meta) {
         const isTopPick = meta && meta.is_top_pick;
         const isStrong = meta && meta.strong;
+        // 🏅 ДЕСЯТКА — кандидат +10%/сделку (кит / blowoff-разгон>15)
+        const tenPfx = (meta && meta.ten_plus) ? '🏅' : '';
         // 🐳 ВТОРОЙ КИТ — повтор ≤14д (бэктест 28.07: ниже 1-го EV +2.2)
         if (src === 'whale' && meta && (meta.whale_seq || 1) >= 2)
-          return (meta.whale_tier === 'PREMIUM' ? '👑' : '') + '🐳';
+          return tenPfx + (meta.whale_tier === 'PREMIUM' ? '👑' : '') + '🐳';
         // 🔁 повтор-усилитель: thin_pump 2-й+ (EV +1.44/+1.64 против +0.72),
         // blowoff 3-я+ вершина (EV +0.89 против +0.27)
         if (meta && meta.rep_hot)
-          return '🔁' + ({thin_pump: '💨', blowoff: '🌋'}[src] || '•');
+          return tenPfx + '🔁' + ({thin_pump: '💨', blowoff: '🌋'}[src] || '•');
         // 🐋👑 WHALE PREMIUM / 🦈👑 SHARK PREMIUM — most premium tier
         // ~4 в день в среднем, score 80-95. Visually outstanding.
-        if (src === 'whale' && meta && meta.whale_tier === 'PREMIUM') return '👑🐋';
+        if (src === 'whale' && meta && meta.whale_tier === 'PREMIUM') return tenPfx + '👑🐋';
         if (src === 'shark' && meta && meta.shark_tier === 'PREMIUM') return '👑🦈';
         // 👑 перекрывает ⭐ (top pick выше strong)
         const prefix = isTopPick ? '👑' : (isStrong ? '⭐' : '');
@@ -758,7 +760,7 @@
           potok:'🌊',        // 🌊 авто-вход канала ПОТОК (paper)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
-        return prefix + base;
+        return tenPfx + prefix + base;
       };
       window.sigIcon._version = 'v16-purge-cv-tradium';
       console.log('[sigIcon] loaded', window.sigIcon._version);
