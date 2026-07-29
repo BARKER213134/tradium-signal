@@ -63,18 +63,17 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
     Возвращает НОВЫЙ список (сортировка by at_ts desc сохраняется снаружи).
     """
     # accum — инфо-событие, не голос; st_break/st_break4h — боевые триггеры
-    # со своими TP/SL (пробой ST по фазе), в 🧩 их глотало ST-эхо того же флипа
+    # со своими TP/SL (пробой ST по фазе), в 🧩 их глотало ST-эхо того же флипа.
+    # 29.07: whale/shark тоже — это ТОП-сигналы с TG-карточками (WR 53.8/60.4),
+    # они стреляют на ST-флипе и растворялись в 🧩-эхе того же флипа
+    # («в TG есть, в журнале нет» — SYRUP shark 14:44)
     NO_GROUP = {"paper", "stack", "accum", "st_break", "st_break4h", "blowoff",
                 "capitulation", "thin_pump", "floor_buy", "vol_anomaly", "vol_anomaly4h",
-                "potok"}
+                "potok", "whale", "shark"}
     from collections import defaultdict
 
     groupable = [it for it in items
                  if it.get("source") not in NO_GROUP
-                 # 🐳 повторный кит (29.07) — самостоятельный сигнал с бэктестом
-                 # (ниже 1-го EV +2.2), в стеке он растворялся и пропадал из ленты
-                 and not (it.get("source") == "whale"
-                          and (it.get("whale_seq") or 1) >= 2)
                  and it.get("pair") and it.get("at_ts")
                  and it.get("direction") in ("LONG", "SHORT")]
     g_ids = {id(it) for it in groupable}
