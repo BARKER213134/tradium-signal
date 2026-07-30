@@ -302,8 +302,21 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
             sig["rep_seq"] = rep + 1
         except Exception:
             pass
+        # 🔥 горячая монета — штамп (бэктест 30.07: LONG на горячих
+        # +0.18 против −0.21; комбо st4h/2flip/impulse EV в 2-8× выше)
+        try:
+            from hot_engine import is_hot
+            sig["hot"] = bool(is_hot(sig.get("symbol") or sig.get("pair")))
+        except Exception:
+            sig["hot"] = False
         doc = {**sig, "created_at": utcnow(), "state": "WAITING"}
         col.insert_one(doc)
+        try:
+            if sig.get("hot"):
+                from hot_engine import combo_alert
+                combo_alert(sig)
+        except Exception:
+            pass
         # ⚡ мгновенный сброс кэша журнала — сигнал виден сразу, как TG
         try:
             from cache_utils import journal_cache

@@ -184,6 +184,11 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
                    price, phase, clim):
     from database import utcnow
     want = 1 if d_ == "LONG" else -1
+    try:
+        from hot_engine import is_hot
+        _hot = bool(is_hot(sym))
+    except Exception:
+        _hot = False
     doc = {"symbol": sym, "pair": pair, "direction": d_, "src": src,
            "entry": price, "tp": price * (1 + want * TP_PCT / 100),
            "sl": price * (1 - want * SL_PCT / 100),
@@ -191,7 +196,7 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
            "size_mult": mult, "kit": bool(kit), "score": score,
            "star": bool(star), "funding": rate,
            "cvd24": ctx.get("cvd24"), "phase": phase, "climate": clim,
-           "anom_age_h": ctx.get("_anom_age_h")}
+           "anom_age_h": ctx.get("_anom_age_h"), "hot": _hot}
     # 🌊 запись входа в журнал (маркер на графиках); state='OPEN' —
     # generic-трекер её не трогает, исход проставит manage() при закрытии
     try:
@@ -199,7 +204,7 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
             "strategy": "potok", "direction": d_, "pair": pair,
             "symbol": sym, "entry": price, "tp": doc["tp"], "sl": doc["sl"],
             "horizon_h": HORIZON_H, "created_at": doc["opened_at"],
-            "state": "OPEN",
+            "state": "OPEN", "hot": _hot,
             "indicators": {"src": src, "score": score, "mult": mult,
                            "kit": bool(kit), "phase": phase,
                            "climate": clim, "funding": rate,

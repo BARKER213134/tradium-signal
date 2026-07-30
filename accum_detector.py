@@ -870,6 +870,12 @@ def scan_universe(max_pairs: int = 300):
             if pair == "BTC/USDT" and kd:
                 btc_kd = kd
             if kd and len(kd) >= 260:
+                # 🔥 горячий список: завершённые ралли +40%/<=7д (30.07)
+                try:
+                    from hot_engine import refresh_hot
+                    refresh_hot(pair, kd)
+                except Exception:
+                    pass
                 _rv = _rsi4h_value(kd)
                 _bull = None if _rv is None else _rv[0] > _rv[1]
                 if _bull is not None:

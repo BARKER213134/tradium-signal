@@ -425,6 +425,13 @@ def check_setup(pair_input: str) -> dict:
                           "plan": l_plan}
 
         # ── 6. Общий вердикт ─────────────────────────────────────────
+        # 🔥 горячая монета (бэктест 30.07: лонги на горячих лучше,
+        # кит — хуже; комбо st4h/2flip/impulse — концентрат)
+        try:
+            from hot_engine import is_hot
+            result["hot"] = bool(is_hot(pair))
+        except Exception:
+            result["hot"] = False
         rank = {"ДА": 3, "МОЖНО": 2, "ЖДАТЬ ОТСКОКА": 1.5,
                 "ЖДАТЬ ОТКАТА": 1.5, "НЕТ": 0}
         rs_, rl_ = rank.get(s_grade, 0), rank.get(l_grade, 0)

@@ -616,6 +616,11 @@ def maybe_fire_shark(signal_data: dict) -> dict | None:
             'tp_R': 2.0,
         }
         try:
+            try:
+                from hot_engine import is_hot
+                doc["hot"] = bool(is_hot(doc.get("symbol") or doc.get("pair")))
+            except Exception:
+                doc["hot"] = False
             db.new_strategy_signals.insert_one(doc)
             logger.info(f'[shark-live] 🦈 FIRED {pair} {tier} '
                          f'score={score_res["score"]} '
@@ -750,6 +755,11 @@ def scan_recent_flips_for_shark(pairs: list[str] | None = None,
                     'created_at': flip_dt,
                 }):
                     continue
+                try:
+                    from hot_engine import is_hot
+                    doc["hot"] = bool(is_hot(doc.get("symbol") or doc.get("pair")))
+                except Exception:
+                    doc["hot"] = False
                 db.new_strategy_signals.insert_one(doc)
                 stats['fired'] += 1
                 stats['by_tier'][tier] += 1

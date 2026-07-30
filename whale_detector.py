@@ -520,6 +520,11 @@ def scan_recent_flips_for_whale(pairs: list[str] | None = None,
                     'created_at': flip_dt,
                 }):
                     continue
+                try:
+                    from hot_engine import is_hot
+                    doc["hot"] = bool(is_hot(doc.get("symbol") or doc.get("pair")))
+                except Exception:
+                    doc["hot"] = False
                 db.new_strategy_signals.insert_one(doc)
                 try:
                     from cache_utils import journal_cache
@@ -638,6 +643,11 @@ def maybe_fire_whale(signal_data: dict) -> dict | None:
         }
         doc.update(whale_seq_fields(db, pair, entry, doc['created_at']))
         try:
+            try:
+                from hot_engine import is_hot
+                doc["hot"] = bool(is_hot(doc.get("symbol") or doc.get("pair")))
+            except Exception:
+                doc["hot"] = False
             db.new_strategy_signals.insert_one(doc)
             try:
                 from cache_utils import journal_cache

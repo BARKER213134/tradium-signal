@@ -715,6 +715,7 @@
         const isStrong = meta && meta.strong;
         // 🏅 ДЕСЯТКА — кандидат +10%/сделку (кит / blowoff-разгон>15)
         const tenPfx = (meta && meta.ten_plus) ? '🏅' : '';
+        const hotPfx = (meta && meta.hot) ? '🔥' : '';  // 🔥 горячая монета
         // 🐳 ВТОРОЙ КИТ — повтор ≤14д (бэктест 28.07: ниже 1-го EV +2.2)
         if (src === 'whale' && meta && (meta.whale_seq || 1) >= 2)
           return tenPfx + (meta.whale_tier === 'PREMIUM' ? '👑' : '') + '🐳';
@@ -762,7 +763,7 @@
           support_defense:'🧱', // 🧱 30m имбаланс-покупка в 10д-лоу → лонг (60д: EV+0.90 против −0.55)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
-        return tenPfx + prefix + base;
+        return hotPfx + tenPfx + prefix + base;
       };
       window.sigIcon._version = 'v16-purge-cv-tradium';
       console.log('[sigIcon] loaded', window.sigIcon._version);
@@ -4079,7 +4080,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           return bars[idx];
         };
         (d.items || []).filter(s => s.at_ts && s.at_ts * 1000 >= t0).slice(0, 300).forEach(s => {
-          const emoji0 = window.sigIconCompact ? window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot, s.ten_plus) : '•';
+          const emoji0 = window.sigIconCompact ? (s.hot ? '🔥' : '') + window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot, s.ten_plus) : '•';
           // ✅ галочка — светофор на момент сигнала говорил ДА; ⭐ — отборный
           // вход (профиль победителей, бэкфилл 60д + live-штамп)
           const sv = s.svetofor || s.pro_verdict;

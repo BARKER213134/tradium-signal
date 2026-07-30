@@ -9316,6 +9316,22 @@ async def api_journal_newest_ts():
     return await asyncio.to_thread(_q)
 
 
+@app.get("/api/hot-coins")
+async def api_hot_coins():
+    """🔥 Текущий горячий список (ралли +40% <=7д, живёт 30д)."""
+    def _q():
+        from database import _get_db as _g, utcnow as _n
+        out = []
+        for d in _g().hot_coins.find({"hot_until": {"$gt": _n()}}) \
+                .sort("hot_from", -1).limit(150):
+            out.append({
+                "symbol": d["_id"], "gain_pct": d.get("gain_pct"),
+                "hot_from": d["hot_from"].isoformat() if d.get("hot_from") else None,
+                "hot_until": d["hot_until"].isoformat() if d.get("hot_until") else None})
+        return {"items": out, "count": len(out)}
+    return await asyncio.to_thread(_q)
+
+
 @app.get("/api/setup-check")
 async def api_setup_check(pair: str):
     """🎰 Paste-and-evaluate setup checker.
@@ -9940,6 +9956,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "whale_seq": 1, "whale_rel": 1, "whale_rel_pct": 1,  # 🐳 повторный кит
             "rep_seq": 1,  # 🔁 повтор-усилитель (thin_pump/blowoff)
             "indicators.mom24": 1,  # 🏅 десятка: blowoff-разгон
+            "hot": 1,  # 🔥 горячая монета на момент сигнала
         }).sort("created_at", -1).limit(200):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -9992,6 +10009,9 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                     pass
             if _ten2:
                 extra_parts.append("🏅 ДЕСЯТКА — кандидат +10% (WR 36-39%)")
+            if n.get("hot"):
+                em = "🔥" + em
+                extra_parts.append("🔥 горячая монета (ралли +40% ≤30д)")
             pattern_txt = f"{em} {label}"
             if extra_parts:
                 pattern_txt += " · " + " · ".join(extra_parts)
@@ -10022,6 +10042,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "top_pick_confirmations_count": 0,
                 "ns_strategy": strat,
                 "ns_state": n.get("state", "WAITING"),
+                "hot": bool(n.get("hot")),
                 "whale_tier": n.get("whale_tier"),
                 "whale_score": n.get("whale_score"),
                 "whale_seq": n.get("whale_seq"),
@@ -10617,6 +10638,18 @@ def _compute_journal_sync(_fast_only: bool = False):
                              else "(EV +0.89 против +0.27 у первой)"))
             if _ten_plus:
                 extra += " · 🏅 ДЕСЯТКА — кандидат +10%/сделку (WR 36-39%)"
+            _hot2 = bool(n.get("hot"))
+            if _hot2:
+                em = "🔥" + em
+                if strat == "whale":
+                    extra += (" · ⚠️ кит на ГОРЯЧЕЙ — исторически хуже "
+                              "(60д: EV −1.1 против +0.05 у холодных)")
+                elif (strat in ("st_break4h", "second_flip", "impulse")
+                      and n.get("direction") == "LONG"):
+                    extra += (" · 🔥 КОМБО на горячей — концентрат (60д: "
+                              "st4h +2.73 · 2flip +0.85 · impulse +0.91)")
+                else:
+                    extra += " · 🔥 горячая (ралли +40% ≤30д)"
             pattern_txt = f"{em} {label}{extra}"
             items.append({
                 "source": strat,  # 'volume_surge' / 'triple_confluence' / 'vol_accum'
@@ -10634,6 +10667,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "top_pick_confirmations_count": 0,
                 "ns_strategy": strat,
                 "ns_state": n.get("state", "WAITING"),
+                "hot": bool(n.get("hot")),
                 "ns_vol_ratio": n.get("vol_ratio"),
                 "ns_sources": n.get("sources"),
                 # WHALE tier (используется в TOP-7 filter в журнале)

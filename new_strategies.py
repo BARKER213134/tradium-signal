@@ -630,6 +630,11 @@ async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,
                         f"— existing within 60min"
                     )
                     continue
+                try:
+                    from hot_engine import is_hot
+                    sig['hot'] = bool(is_hot(sig.get('symbol') or sig.get('pair')))
+                except Exception:
+                    sig['hot'] = False
                 doc = {
                     **sig,
                     'state': 'WAITING',
@@ -641,6 +646,12 @@ async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,
                 }
                 try:
                     col.insert_one(doc)
+                    try:
+                        if doc.get('hot'):
+                            from hot_engine import combo_alert
+                            combo_alert(doc)
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.debug(f'[new-strategies] insert fail {sig["strategy"]}/{sig["pair"]}: {e}')
         except Exception:
