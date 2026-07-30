@@ -9068,9 +9068,19 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
             ][:3],
         }
 
-    # Slice после cache (cache хранит full result, slice — почти free)
+    # Slice после cache (cache хранит full result, slice — почти free).
+    # 29.07: спец-стратегии (бэкфиллы за 60д — ракета/blowoff и др.) НЕ
+    # режутся лимитом: топ-limit свежих + ВСЕ спец-строки за окном лимита,
+    # иначе фильтр по источнику показывал пустоту («нет сигналов за всё
+    # время» — старые строки вылетали из среза 1500 свежайших)
     if limit and limit > 0 and total > limit:
-        items = items[:limit]
+        _DEEP_SRC = {"blowoff", "capitulation", "thin_pump", "floor_buy",
+                     "vol_anomaly", "vol_anomaly4h", "rocket_pullback",
+                     "whale", "shark"}
+        head = items[:limit]
+        tail_special = [x for x in items[limit:]
+                        if x.get("source") in _DEEP_SRC]
+        items = head + tail_special
     return {"items": items, "total": total, "returned": len(items)}
 
 
