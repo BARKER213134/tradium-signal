@@ -618,6 +618,14 @@ def _channel_top_sig(pair: str, kd: list[dict]):
         pos = (price - dn_val) / w
         if not (0.85 <= pos <= 1.15):
             return None
+        # 🔥-гейт (30.07): на горячих монетах крыша ПРОБИВАЕТСЯ — EV −2.14,
+        # стопов 81% (свежее полугодие −2.86/86%); на холодных +0.95..+1.39
+        try:
+            from hot_engine import is_hot
+            if is_hot(pair):
+                return None
+        except Exception:
+            pass
         phase = None
         try:
             from supertrend_tracker import _market_phase_now
@@ -1123,9 +1131,10 @@ def scan_universe(max_pairs: int = 300):
                                   f"{_ci2['width_pct']}% · касаний "
                                   f"{_ci2['touches']} · цена у верхней границы\n"
                                   f"SL +5% · TP −10% · до 96ч\n"
-                                  f"<i>год-бэктест: EV +1.29/сделку · WR 47% "
-                                  f"против +0.16 рандом-шорта · покупка низа "
-                                  f"канала опровергнута (−0.76)</i>")
+                                  f"<i>год-бэктест: EV +1.29 · WR 47% против "
+                                  f"+0.16 рандом-шорта · только ХОЛОДНЫЕ "
+                                  f"монеты (свежие полгода +1.39; на горячих "
+                                  f"крыша пробивается, −2.1 — гейт)</i>")
                     except Exception:
                         pass
                 # 🧱 защита поддержки: 30m имбаланс в 10д-лоу → LONG
