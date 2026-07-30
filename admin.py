@@ -10406,10 +10406,17 @@ def _compute_journal_sync(_fast_only: bool = False):
         _deep_since = _ns_utcnow() - _td(days=60)
         _nss_docs += [d for d in nss_col.find(
             {"created_at": {"$gte": _deep_since},
-             "strategy": {"$in": ["blowoff", "capitulation", "thin_pump",
-                                  "floor_buy", "vol_anomaly", "vol_anomaly4h",
-                                  "rocket_pullback"]}})
+             "strategy": {"$in": ["blowoff", "thin_pump",
+                                  "vol_anomaly", "vol_anomaly4h"]}})
             .sort("created_at", -1).limit(2500) if d["_id"] not in _seen_nss]
+        # редкие стратегии — отдельный запрос, иначе их выдавливали из
+        # limit(2500) объёмные blowoff/аномалии (29.07: 18 ракет из 70)
+        _seen_nss = {d["_id"] for d in _nss_docs}
+        _nss_docs += [d for d in nss_col.find(
+            {"created_at": {"$gte": _deep_since},
+             "strategy": {"$in": ["rocket_pullback", "capitulation",
+                                  "floor_buy"]}})
+            .sort("created_at", -1).limit(800) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
