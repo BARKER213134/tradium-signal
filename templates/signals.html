@@ -3195,7 +3195,7 @@ function _renderSetupResult(d) {
                     st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
                     second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', rider_short:'🏄', ten:'💰', accum:'🧊',
                     blowoff:'🌋', capitulation:'🛟', thin_pump:'💨', floor_buy:'💎', st_break:'🧨', st_break4h:'💣',
-                    vol_anomaly:'⚡', vol_anomaly4h:'🌩', delta_series:'🫧', potok:'🌊'};
+                    vol_anomaly:'⚡', vol_anomaly4h:'🌩', delta_series:'🫧', potok:'🌊', rocket_pullback:'🪃'};
   const recentHtml = (d.recent_signals || []).slice(0, 30).map(rs => {
     let em = srcEmoji[rs.source] || '•';
     if (rs.source === 'whale' && (rs.whale_seq||1) >= 2) em = '🐳';
@@ -7908,6 +7908,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="thin_pump">💨 Тонкий памп (шорт роста без объёма)</option>
     <option value="rep_hot">🔁 Повторные (🐳 кит / 💨 памп / 🌋 вершина)</option>
     <option value="ten_plus">🏅 ДЕСЯТКА — кандидаты +10%/сделку (кит · blowoff-разгон)</option>
+    <option value="rocket_pullback">🪃 Откат ракеты (имп≥100% · откат −25..−38% · WR34%)</option>
     <option value="floor_buy">💎 Дно+покупатель (имбаланс-покупка на 48ч-лоу)</option>
     <option value="vol_anomaly">⚡ Аномалия объёма 1h (&gt;8× нормы, где угодно, инфо)</option>
     <option value="vol_anomaly4h">🌩 Аномалия объёма 4h (&gt;6× нормы, инфо)</option>
@@ -9923,7 +9924,7 @@ function filterJournal() {
     if (minTs && !sourceExplicit && (s.at_ts || 0) < minTs) return false;
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
-      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','rider_short','ten','delta_series','st_break','st_break4h','blowoff','capitulation','thin_pump','floor_buy','vol_anomaly','vol_anomaly4h','potok'].includes(s.source)) return false;
+      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','rider_short','ten','delta_series','st_break','st_break4h','blowoff','capitulation','thin_pump','floor_buy','vol_anomaly','vol_anomaly4h','potok','rocket_pullback'].includes(s.source)) return false;
     } else if (src === 'whale2') {
       // 🐳 повторный кит ≤14д (бэктест 28.07: ниже 1-го EV +2.2)
       if (!(s.source === 'whale' && (s.whale_seq || 1) >= 2)) return false;
@@ -10560,6 +10561,7 @@ function renderJournal(items, startIdx) {
       volume_surge: 'Vol Surge', triple_confluence: 'Triple Conf',
       vol_accum: 'Vol Accum', volcano: 'Volcano',
       second_flip: '2nd Flip', rsi_cross_12h: 'RSI×12h',
+      rocket_pullback: 'ОТКАТ РАКЕТЫ',
     })[s.source] || (s.source || '—');
     const stFail = s.st_passed === false;
     const stPass = s.st_passed === true;

@@ -9900,7 +9900,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
-                        "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊"}
+                        "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
+                        "rocket_pullback": "🪃"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -9913,7 +9914,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП",
                        "floor_buy": "ДНО+ПОКУПАТЕЛЬ",
                        "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h",
-                       "potok": "ПОТОК·АВТО"}
+                       "potok": "ПОТОК·АВТО",
+                       "rocket_pullback": "ОТКАТ РАКЕТЫ"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -10365,7 +10367,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
-                        "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊"}
+                        "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
+                        "rocket_pullback": "🪃"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
@@ -10377,7 +10380,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП",
                        "floor_buy": "ДНО+ПОКУПАТЕЛЬ",
                        "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h",
-                       "potok": "ПОТОК·АВТО"}
+                       "potok": "ПОТОК·АВТО",
+                       "rocket_pullback": "ОТКАТ РАКЕТЫ"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
@@ -10391,7 +10395,8 @@ def _compute_journal_sync(_fast_only: bool = False):
         _nss_docs += [d for d in nss_col.find(
             {"created_at": {"$gte": nss_since},
              "strategy": {"$in": ["blowoff", "capitulation", "thin_pump",
-                                  "floor_buy", "vol_anomaly", "vol_anomaly4h"]}})
+                                  "floor_buy", "vol_anomaly", "vol_anomaly4h",
+                                  "rocket_pullback"]}})
             .sort("created_at", -1).limit(1500) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
             at_dt = n.get("created_at")
@@ -10462,6 +10467,14 @@ def _compute_journal_sync(_fast_only: bool = False):
                 _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
                 extra = (f" · дно+покупатель: {int((_fi.get('imb') or 0) * 100)}% объёма "
                          f"в покупку на новом 48ч-лоу · объём ×{_fi.get('vol_x', '?')} · "
+                         f"фаза {_phe}{_ph or '?'}")
+            elif strat == "rocket_pullback":
+                _rpi = n.get("indicators") or {}
+                _ph = _rpi.get("phase")
+                _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
+                extra = (f" · ракета +{_rpi.get('impulse_pct', '?')}% · откат "
+                         f"{_rpi.get('pullback_pct', '?')}% · RSI {_rpi.get('rsi1h', '?')} · "
+                         f"вход сразу, стоп под лоу (год: WR34% EV+0.70) · "
                          f"фаза {_phe}{_ph or '?'}")
             elif strat == "thin_pump":
                 _ti = n.get("indicators") or {}

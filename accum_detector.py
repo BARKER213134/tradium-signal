@@ -296,6 +296,73 @@ def _tg16(txt: str) -> None:
         logger.debug("[tg16] send fail", exc_info=True)
 
 
+def _rocket_pullback_sig(pair: str, kd: list[dict]):
+    """🪃 ОТКАТ РАКЕТЫ → LONG (кейс COTI 29.07: +105% за 5д, откат −31%,
+    RSI 44 → дальше +75%/24ч). Правила из год-бэктеста (310 пар):
+    импульс ≥100% за ≤120ч, пик 8-72ч назад, откат −25..−38% от пика,
+    удержание 0.2-0.65 диапазона, RSI1h<50. Вход СРАЗУ, SL структурный
+    (лоу 12ч × 0.99): WR(+10) 34.4% против 21.2% рандома, SL-rate 11%,
+    EV +0.70/сделку, Σ +113%/год (n=163, ~3/нед). С процентным стопом
+    −5% НЕ работает (выбивает 66%) — только структурный."""
+    try:
+        n = len(kd)
+        if n < 260:
+            return None
+        i = n - 2                      # последний закрытый бар
+        W = 120
+        j0 = i - W
+        hs = [kd[k]["h"] for k in range(j0, i + 1)]
+        pk_rel = max(range(len(hs)), key=lambda k: hs[k])
+        pk_i = j0 + pk_rel
+        age = i - pk_i
+        if not (8 <= age <= 72):
+            return None
+        peak = kd[pk_i]["h"]
+        base = min(kd[k]["l"] for k in range(j0, pk_i + 1))
+        if base <= 0 or peak / base - 1 < 1.00:
+            return None                # импульс < +100%
+        c_i = kd[i]["c"]
+        pb = (c_i / peak - 1) * 100
+        if not (-38 <= pb <= -25):
+            return None
+        rng = peak - base
+        ret = (c_i - base) / rng if rng > 0 else 0
+        if not (0.2 <= ret <= 0.65):
+            return None
+        # RSI14 1h
+        g = lo = 0.0
+        cs = [kd[k]["c"] for k in range(i - 15, i + 1)]
+        for k in range(len(cs) - 1):
+            d = cs[k + 1] - cs[k]
+            g += max(d, 0); lo += max(-d, 0)
+        rsi = 100 - 100 / (1 + (g / 14) / ((lo / 14) or 1e-9))
+        if rsi >= 50:
+            return None
+        sl = min(kd[k]["l"] for k in range(i - 12, i + 1)) * 0.99
+        if sl >= c_i:
+            return None
+        phase = None
+        try:
+            from supertrend_tracker import _market_phase_now
+            phase = _market_phase_now()
+        except Exception:
+            pass
+        return {"strategy": "rocket_pullback", "direction": "LONG",
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": c_i, "tp": c_i * 1.10, "sl": round(sl, 10),
+                "horizon_h": 96,
+                "indicators": {"impulse_pct": round((peak / base - 1) * 100, 1),
+                               "pullback_pct": round(pb, 1),
+                               "retention": round(ret, 2),
+                               "rsi1h": round(rsi, 1),
+                               "peak_age_h": int(age),
+                               "entry_bar_t": int(kd[i]["t"] // 1000),
+                               "entry_hint": "вход СЕЙЧАС, стоп под лоу отката",
+                               "phase": phase}}
+    except Exception:
+        return None
+
+
 def _thin_pump_sig(pair: str, kd: list[dict]):
     """💨 Тонкий памп → SHORT: зелёный 1h-бар с ходом >2.2× медианы-240ч
     на объёме НИЖЕ медианы-240ч — рост по пустому стакану без реального
@@ -780,6 +847,28 @@ def scan_universe(max_pairs: int = 300):
                                   f"<i>бэктест 1800/год: EV +2.02/сигнал, WR 50% · "
                                   f"⚠️ режимный: в затяжном красном слабее — "
                                   f"сверяйся со светофором</i>")
+                    except Exception:
+                        pass
+                # 🪃 откат ракеты → LONG (кулдаун 72ч, вход сразу,
+                # структурный стоп; TG — боевой сигнал)
+                _rp = _rocket_pullback_sig(pair, kd)
+                if _rp is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_rp, cooldown_h=72):
+                            ds_fired += 1
+                            _ri = _rp["indicators"]
+                            _slp = (1 - _rp["sl"] / _rp["entry"]) * 100
+                            _tg16(f"🪃 <b>ОТКАТ РАКЕТЫ · ВХОД СЕЙЧАС · "
+                                  f"{pair.replace('/USDT', '')}</b>\n"
+                                  f"🟢 LONG по рынку @ {_rp['entry']:.6g}\n"
+                                  f"ракета +{_ri['impulse_pct']}% за 5д · откат "
+                                  f"{_ri['pullback_pct']}% от пика · RSI "
+                                  f"{_ri['rsi1h']}\n"
+                                  f"SL {_rp['sl']:.6g} (под лоу отката, "
+                                  f"−{_slp:.1f}%) · TP +10% · до 96ч\n"
+                                  f"<i>год-бэктест 310 пар: WR(+10) 34% против "
+                                  f"21% рандома · EV +0.70 · выбивание 11%</i>")
                     except Exception:
                         pass
                 # 💨 тонкий памп → SHORT (кулдаун 24ч, TG — боевой сигнал)
