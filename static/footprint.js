@@ -298,22 +298,27 @@ function fpRender() {
     let vLoc = 0, pocLvl = -1;
     b.cells.forEach(c => { if (c[1] > vLoc) { vLoc = c[1]; pocLvl = c[0]; } });
     if (_fpMode === 'poc') {
-      // 💠 POC-режим (resonance «D»): один жирный блок доминирующего
-      // кластера, цвет по ДЕЛЬТЕ БАРА; сверху рамка если сам POC-уровень
-      // против бара (например бар зелёный, а POC-ячейка продажная)
-      if (pocLvl >= 0) {
-        const yy = y(gMin + (pocLvl + 1) * tick);
-        const bh2 = Math.max(3, cellH * 1.4);
-        const pocCell = b.cells.find(c => c[0] === pocLvl);
-        g.fillStyle = b.d >= 0 ? 'rgba(0,200,140,0.92)' : 'rgba(255,70,100,0.92)';
-        g.fillRect(x0, yy - bh2 / 2 + cellH / 2, cw, bh2);
-        if (pocCell && ((pocCell[2] >= 0) !== (b.d >= 0)) && bw > 8) {
-          g.strokeStyle = pocCell[2] >= 0 ? '#00e5a0' : '#ff4d6d';
-          g.lineWidth = 1.4;
-          g.strokeRect(x0 - 0.5, yy - bh2 / 2 + cellH / 2 - 0.5, cw + 1, bh2 + 1);
-          g.lineWidth = 1;
-        }
-      }
+      // 💠 резонанс-режим: видно что ВНУТРИ свечи — ячейки агрегируются
+      // в крупные блоки (~12px), каждый красится по знаку своей дельты,
+      // яркость по доле объёма блока внутри бара; POC-блок ярче всех
+      const k = Math.max(1, Math.round(12 / cellH));
+      const grp = new Map();
+      b.cells.forEach(c => {
+        const gi = Math.floor(c[0] / k);
+        const a = grp.get(gi) || [0, 0];
+        a[0] += c[1]; a[1] += c[2];
+        grp.set(gi, a);
+      });
+      let vMax = 0;
+      grp.forEach(a => { if (a[0] > vMax) vMax = a[0]; });
+      grp.forEach((a, gi) => {
+        const yTop = y(gMin + (gi * k + k) * tick);
+        const yBot = y(gMin + gi * k * tick);
+        if (yTop > chartH || yBot < 0) return;
+        const inten = 0.30 + 0.62 * Math.pow(vMax ? a[0] / vMax : 0, 0.55);
+        g.fillStyle = a[1] >= 0 ? `rgba(0,200,140,${inten})` : `rgba(255,70,100,${inten})`;
+        g.fillRect(x0, yTop + 0.5, cw, Math.max(2, yBot - yTop - 1));
+      });
     } else {
     b.cells.forEach(c => {
       const [lvl, vol, dd] = c;
