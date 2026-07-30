@@ -9914,10 +9914,18 @@ async function toggleHotPanel(btn) {
       p.style.display = 'flex';
       p.textContent = '⏳';
       fetch('/api/hot-coins').then(r => r.json()).then(j => {
-        p.innerHTML = (j.items || []).map(x =>
-          '<span style="padding:3px 8px;border-radius:6px;background:rgba(255,94,58,0.10);border:1px solid rgba(255,94,58,0.35);color:#ff9b73;font-size:11px;font-family:var(--font-mono);">'
-          + (x.symbol || '').replace('USDT', '') + ' +' + Math.round(x.gain_pct || 0) + '%</span>'
-        ).join('') || '<span style="color:var(--muted);font-size:11px;">сейчас горячих нет</span>';
+        // ярко = взведённый курок (свежий LONG-сигнал ≤24ч), тускло = ждём
+        const legend = '<span style="flex-basis:100%;color:var(--muted);font-size:10px;font-family:var(--font-mono);">⚡ярко = свежий LONG-сигнал ≤24ч — ЭТО покупается (комбо 💣♻️🚀 — EV в 2-8× выше) · тускло = курок не взведён, ждём сигнал · Nд = сколько монета ещё горячая</span>';
+        p.innerHTML = legend + ((j.items || []).map(x => {
+          const f = x.fresh;
+          const nm = (x.symbol || '').replace('USDT', '');
+          const days = (x.days_left != null) ? ' · ' + Math.max(1, Math.round(x.days_left)) + 'д' : '';
+          if (f) {
+            const cb = f.combo;
+            return '<span title="свежий LONG-сигнал ' + f.strategy + ' ' + Math.round(f.age_h) + 'ч назад на горячей монете" style="padding:3px 9px;border-radius:6px;background:rgba(255,94,58,' + (cb ? '0.30' : '0.16') + ');border:1.5px solid ' + (cb ? '#ff5e3a' : 'rgba(255,94,58,0.6)') + ';color:#ffd7c2;font-size:11px;font-weight:700;font-family:var(--font-mono);' + (cb ? 'box-shadow:0 0 8px rgba(255,94,58,0.45);' : '') + '">' + (cb ? '⚡' : '') + nm + ' ' + f.emoji + Math.round(f.age_h) + 'ч' + days + '</span>';
+          }
+          return '<span style="padding:3px 8px;border-radius:6px;background:rgba(255,94,58,0.05);border:1px solid rgba(255,94,58,0.2);color:rgba(255,155,115,0.55);font-size:11px;font-family:var(--font-mono);">' + nm + ' +' + Math.round(x.gain_pct || 0) + '%' + days + '</span>';
+        }).join('') || '<span style="color:var(--muted);font-size:11px;">сейчас горячих нет</span>');
       }).catch(() => { p.textContent = '⛔'; });
     }
   } else {

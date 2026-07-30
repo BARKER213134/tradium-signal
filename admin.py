@@ -9318,16 +9318,53 @@ async def api_journal_newest_ts():
 
 @app.get("/api/hot-coins")
 async def api_hot_coins():
-    """🔥 Текущий горячий список (ралли +40% <=7д, живёт 30д)."""
+    """🔥 Горячий список (ралли +40% <=7д, окно 30д) + свежий LONG-сигнал
+    по каждой (<=24ч): панель показывает «взведённые курки», а не список
+    прошлых заслуг — покупается сигнал на горячей, не сама горячесть."""
     def _q():
         from database import _get_db as _g, utcnow as _n
+        from datetime import timedelta as _td
+        db = _g()
+        now = _n()
+        EM = {"st_break4h": "💣", "second_flip": "♻️", "impulse": "🚀",
+              "whale": "🐋", "st_break": "🧨", "vol_anomaly": "⚡",
+              "vol_anomaly4h": "🌩", "capitulation": "🛟", "floor_buy": "💎",
+              "support_defense": "🧱", "rocket_pullback": "🪃", "ten": "💰",
+              "ignition": "💥", "delta_series": "🫧", "volume_surge": "🌊",
+              "triple_confluence": "🐉", "vol_accum": "🔋", "potok": "🌊"}
+        COMBO = {"st_break4h", "second_flip", "impulse"}
+        fresh = {}
+        for s in db.new_strategy_signals.find(
+                {"created_at": {"$gte": now - _td(hours=24)},
+                 "direction": "LONG"},
+                {"strategy": 1, "symbol": 1, "pair": 1, "created_at": 1}) \
+                .sort("created_at", -1).limit(3000):
+            sym = (s.get("symbol") or (s.get("pair") or "")
+                   .replace("/", "")).upper()
+            cur = fresh.get(sym)
+            # комбо-сигнал приоритетнее обычного, свежий — старого
+            if cur is None or (s["strategy"] in COMBO
+                               and cur["strategy"] not in COMBO):
+                fresh[sym] = s
         out = []
-        for d in _g().hot_coins.find({"hot_until": {"$gt": _n()}}) \
-                .sort("hot_from", -1).limit(150):
+        for d in db.hot_coins.find({"hot_until": {"$gt": now}}).limit(200):
+            f = fresh.get(d["_id"])
+            fs = None
+            if f:
+                fs = {"strategy": f["strategy"],
+                      "emoji": EM.get(f["strategy"], "✨"),
+                      "age_h": round((now - f["created_at"])
+                                     .total_seconds() / 3600, 1),
+                      "combo": f["strategy"] in COMBO}
             out.append({
                 "symbol": d["_id"], "gain_pct": d.get("gain_pct"),
-                "hot_from": d["hot_from"].isoformat() if d.get("hot_from") else None,
-                "hot_until": d["hot_until"].isoformat() if d.get("hot_until") else None})
+                "days_left": round((d["hot_until"] - now)
+                                   .total_seconds() / 86400, 1),
+                "fresh": fs})
+        out.sort(key=lambda x: (
+            0 if (x["fresh"] and x["fresh"]["combo"]) else
+            1 if x["fresh"] else 2,
+            x["fresh"]["age_h"] if x["fresh"] else 99))
         return {"items": out, "count": len(out)}
     return await asyncio.to_thread(_q)
 
