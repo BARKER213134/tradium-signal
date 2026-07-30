@@ -499,6 +499,10 @@ def _support_defense_sig(pair: str, kd: list[dict]):
         lvl = min(lows10)
         if lvl <= 0:
             return None
+        # мёртвый диапазон/стейбл (USDE и т.п.): TP +10% недостижим
+        hi10 = max(x["h"] for x in kd[-244:-13])
+        if hi10 / lvl - 1 < 0.06:
+            return None
         # префильтр: последние 2 бара (закрытый+формирующийся) у уровня
         # и всплеск объёма на закрытом
         recent_lo = min(x["l"] for x in kd[-3:])
