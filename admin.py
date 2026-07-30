@@ -4469,6 +4469,7 @@ button,input,select{outline:none}
     <option value="90">90</option><option value="120">120</option><option value="240">240</option>
   </select>
   <button onclick="loadFootprint()" style="background:rgba(0,229,160,0.12);border:1px solid rgba(0,229,160,0.45);border-radius:6px;color:#00e5a0;font-size:11px;font-weight:800;cursor:pointer;padding:6px 12px;font-family:var(--font-mono);">Построить</button>
+  <button id="fpModeBtn" onclick="fpToggleMode(this)" title="Ячейки ↔ POC-блоки" style="background:var(--dark);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;padding:6px 10px;font-family:var(--font-mono);">💠</button>
   <button onclick="fpToggleAnom(this)" title="Аномалии ордерфлоу" style="background:rgba(255,210,62,0.15);border:1px solid rgba(255,210,62,0.5);border-radius:6px;color:#ffd23e;font-size:11px;font-weight:700;cursor:pointer;padding:6px 10px;font-family:var(--font-mono);">⚠</button>
   <span id="fpStatus" style="font-size:10.5px;color:var(--muted);"></span>
 </div>
@@ -4477,7 +4478,7 @@ button,input,select{outline:none}
   <canvas id="fpCanvas" style="width:100%;display:block;border-radius:5px;"></canvas>
   <div id="fpTip" style="display:none;position:absolute;pointer-events:none;background:rgba(10,14,22,0.95);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:10.5px;line-height:1.55;z-index:5;white-space:nowrap;"></div>
 </div>
-<script src="/static/footprint.js?v=7"></script>
+<script src="/static/footprint.js?v=8"></script>
 </body></html>""")
 
 

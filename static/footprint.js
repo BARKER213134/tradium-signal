@@ -2,6 +2,19 @@ let _fpTf = '1h', _fpData = null;
 let _fpView = { cnt: 0, off: 0 };   // off = баров скрыто справа
 let _fpDrag = null, _fpMouse = null;
 let _fpAnom = true, _fpAnomCache = null;
+let _fpMode = localStorage.getItem('fp_mode') || 'cells';   // cells | poc
+function fpToggleMode(btn) {
+  // 💠 режим отображения: полные ячейки ↔ POC-блоки (как resonance «D»)
+  _fpMode = _fpMode === 'cells' ? 'poc' : 'cells';
+  try { localStorage.setItem('fp_mode', _fpMode); } catch (e) {}
+  if (btn) {
+    const on = _fpMode === 'poc';
+    btn.style.background = on ? 'rgba(123,92,255,0.20)' : 'var(--dark)';
+    btn.style.borderColor = on ? 'rgba(123,92,255,0.6)' : 'var(--border)';
+    btn.style.color = on ? '#b28bff' : 'var(--muted)';
+  }
+  fpRender();
+}
 let _fpSigs = null, _fpSigPair = null, _fpSigNotes = {};
 async function fpLoadSigs(pair) {
   // 🪧 эмодзи сигналов журнала на кластерном графике (поверх, в канавке)
@@ -104,7 +117,15 @@ function fpSetTf(btn) {
     b.style.borderColor = on ? 'rgba(76,201,240,0.5)' : 'var(--border)';
     b.style.color = on ? '#4cc9f0' : 'var(--muted)';
   });
-  loadFootprint();
+  (function () {
+  const b = document.getElementById('fpModeBtn');
+  if (b && _fpMode === 'poc') {
+    b.style.background = 'rgba(123,92,255,0.20)';
+    b.style.borderColor = 'rgba(123,92,255,0.6)';
+    b.style.color = '#b28bff';
+  }
+})();
+loadFootprint();
 }
 async function loadFootprint() {
   const st = document.getElementById('fpStatus');
@@ -276,6 +297,24 @@ function fpRender() {
     g.beginPath(); g.moveTo(xc, y(b.h)); g.lineTo(xc, y(b.l)); g.stroke();
     let vLoc = 0, pocLvl = -1;
     b.cells.forEach(c => { if (c[1] > vLoc) { vLoc = c[1]; pocLvl = c[0]; } });
+    if (_fpMode === 'poc') {
+      // 💠 POC-режим (resonance «D»): один жирный блок доминирующего
+      // кластера, цвет по ДЕЛЬТЕ БАРА; сверху рамка если сам POC-уровень
+      // против бара (например бар зелёный, а POC-ячейка продажная)
+      if (pocLvl >= 0) {
+        const yy = y(gMin + (pocLvl + 1) * tick);
+        const bh2 = Math.max(3, cellH * 1.4);
+        const pocCell = b.cells.find(c => c[0] === pocLvl);
+        g.fillStyle = b.d >= 0 ? 'rgba(0,200,140,0.92)' : 'rgba(255,70,100,0.92)';
+        g.fillRect(x0, yy - bh2 / 2 + cellH / 2, cw, bh2);
+        if (pocCell && ((pocCell[2] >= 0) !== (b.d >= 0)) && bw > 8) {
+          g.strokeStyle = pocCell[2] >= 0 ? '#00e5a0' : '#ff4d6d';
+          g.lineWidth = 1.4;
+          g.strokeRect(x0 - 0.5, yy - bh2 / 2 + cellH / 2 - 0.5, cw + 1, bh2 + 1);
+          g.lineWidth = 1;
+        }
+      }
+    } else {
     b.cells.forEach(c => {
       const [lvl, vol, dd] = c;
       const yy = y(gMin + (lvl + 1) * tick);
@@ -290,13 +329,14 @@ function fpRender() {
       g.lineWidth = 1;
       g.strokeRect(x0 + 0.5, yy + 1, cw - 1, Math.max(1.5, cellH - 2));
     }
+    }
     const yB1 = y(Math.max(b.o, b.c)), yB2 = y(Math.min(b.o, b.c));
     g.strokeStyle = up ? '#00e5a0' : '#ff4d6d';
     g.lineWidth = 1.6;
     g.strokeRect(x0 + 0.8, yB1, Math.max(1, cw - 1.6), Math.max(2, yB2 - yB1));
     g.lineWidth = 1;
     // числа в ячейках при сильном приближении: объём × дельта
-    if (bw >= 90 && cellH >= 12) {
+    if (_fpMode === 'cells' && bw >= 90 && cellH >= 12) {
       g.font = '9px monospace';
       g.textAlign = 'center';
       b.cells.forEach(c => {
@@ -308,7 +348,7 @@ function fpRender() {
       });
       g.textAlign = 'left';
       g.font = '10px monospace';
-    } else if (bw >= 54 && cellH >= 11) {
+    } else if (_fpMode === 'cells' && bw >= 54 && cellH >= 11) {
       g.font = '9px monospace';
       g.textAlign = 'center';
       g.fillStyle = 'rgba(230,238,248,0.8)';
@@ -346,7 +386,7 @@ function fpRender() {
   }
   if (_fpAnomCache) {
     const AC = { vol: '#4cc9f0', bi: '#00e5a0', si: '#ff4d6d' };
-    _fpAnomCache.cells.forEach(m => {
+    if (_fpMode === 'cells') _fpAnomCache.cells.forEach(m => {
       const x0 = m.i * bw + 1.5;
       const cw = Math.max(2, bw - 3);
       const yy = y(gMin + (m.lvl + 1) * tick);
@@ -614,5 +654,13 @@ window.addEventListener('resize', () => { if (_fpData) fpRender(); });
       btn.style.color = on ? '#4cc9f0' : 'var(--muted)';
     });
   } catch (e) {}
+})();
+(function () {
+  const b = document.getElementById('fpModeBtn');
+  if (b && _fpMode === 'poc') {
+    b.style.background = 'rgba(123,92,255,0.20)';
+    b.style.borderColor = 'rgba(123,92,255,0.6)';
+    b.style.color = '#b28bff';
+  }
 })();
 loadFootprint();
