@@ -9077,7 +9077,7 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     if limit and limit > 0 and total > limit:
         _DEEP_SRC = {"blowoff", "capitulation", "thin_pump", "floor_buy",
                      "vol_anomaly", "vol_anomaly4h", "rocket_pullback",
-                     "support_defense", "whale", "shark"}
+                     "support_defense", "channel_top", "whale", "shark"}
         head = items[:limit]
         tail_special = [x for x in items[limit:]
                         if x.get("source") in _DEEP_SRC]
@@ -9965,7 +9965,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
                         "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
-                        "rocket_pullback": "🪃", "support_defense": "🧱"}
+                        "rocket_pullback": "🪃", "support_defense": "🧱",
+                        "channel_top": "📐"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -9980,7 +9981,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h",
                        "potok": "ПОТОК·АВТО",
                        "rocket_pullback": "ОТКАТ РАКЕТЫ",
-                       "support_defense": "ЗАЩИТА ПОДДЕРЖКИ"}
+                       "support_defense": "ЗАЩИТА ПОДДЕРЖКИ",
+                       "channel_top": "КРЫША КАНАЛА"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -10438,7 +10440,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
                         "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
-                        "rocket_pullback": "🪃", "support_defense": "🧱"}
+                        "rocket_pullback": "🪃", "support_defense": "🧱",
+                        "channel_top": "📐"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
@@ -10452,7 +10455,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h",
                        "potok": "ПОТОК·АВТО",
                        "rocket_pullback": "ОТКАТ РАКЕТЫ",
-                       "support_defense": "ЗАЩИТА ПОДДЕРЖКИ"}
+                       "support_defense": "ЗАЩИТА ПОДДЕРЖКИ",
+                       "channel_top": "КРЫША КАНАЛА"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
@@ -10476,7 +10480,8 @@ def _compute_journal_sync(_fast_only: bool = False):
         _nss_docs += [d for d in nss_col.find(
             {"created_at": {"$gte": _deep_since},
              "strategy": {"$in": ["rocket_pullback", "capitulation",
-                                  "floor_buy", "support_defense"]}})
+                                  "floor_buy", "support_defense",
+                                  "channel_top"]}})
             .sort("created_at", -1).limit(800) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
             at_dt = n.get("created_at")
@@ -10555,6 +10560,14 @@ def _compute_journal_sync(_fast_only: bool = False):
                 extra = (f" · ракета +{_rpi.get('impulse_pct', '?')}% · откат "
                          f"{_rpi.get('pullback_pct', '?')}% · RSI {_rpi.get('rsi1h', '?')} · "
                          f"вход сразу, стоп под лоу (год: WR34% EV+0.70) · "
+                         f"фаза {_phe}{_ph or '?'}")
+            elif strat == "channel_top":
+                _cti = n.get("indicators") or {}
+                _ph = _cti.get("phase")
+                _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
+                extra = (f" · крыша канала: восх. +{_cti.get('slope_day', '?')}%/день · "
+                         f"ширина {_cti.get('width_pct', '?')}% · касаний "
+                         f"{_cti.get('touches', '?')} · (год: EV+1.29 WR47) · "
                          f"фаза {_phe}{_ph or '?'}")
             elif strat == "support_defense":
                 _sdi = n.get("indicators") or {}

@@ -551,6 +551,95 @@ def _support_defense_sig(pair: str, kd: list[dict]):
         return None
 
 
+def _channel_top_sig(pair: str, kd: list[dict]):
+    """📐 КРЫША КАНАЛА → SHORT: восходящий регрессионный канал 14д
+    (окно 336×1h, конверт по остаткам h/l, >=3 раздельных касания каждой
+    границы с gap>=24ч, ширина 5-60%, наклон >+0.02%/бар), цена у верхней
+    границы (pos>=0.85). Год-бэктест 30.07 (24.9k канал-состояний):
+    EV +1.29/сделку, WR 47%, стопов 50% против +0.16 у рандом-шорта.
+    ЕДИНСТВЕННАЯ рабочая ячейка из 6: покупка низа восходящего канала
+    УБЫТОЧНА (−0.76, стопов 59%) — лонг-сторону не внедрять."""
+    try:
+        W, FR = 336, 6
+        closed = kd[:-1]
+        if len(closed) < W + 2:
+            return None
+        seg = closed[-W:]
+        cs = [x["c"] for x in seg]
+        hs = [x["h"] for x in seg]
+        ls = [x["l"] for x in seg]
+        price = cs[-1]
+        if price <= 0:
+            return None
+        # OLS по закрытиям
+        n = W
+        sx = n * (n - 1) / 2
+        sxx = (n - 1) * n * (2 * n - 1) / 6
+        sy = sum(cs)
+        sxy = sum(i * y for i, y in enumerate(cs))
+        den = n * sxx - sx * sx
+        if den == 0:
+            return None
+        b = (n * sxy - sx * sy) / den
+        a = (sy - b * sx) / n
+        slope_pct = b / price * 100
+        if slope_pct <= 0.02:
+            return None                      # только восходящий
+        res_h = [hs[i] - (a + b * i) for i in range(n)]
+        res_l = [ls[i] - (a + b * i) for i in range(n)]
+        up_off = max(res_h); dn_off = min(res_l)
+        w = up_off - dn_off
+        if w <= 0 or not (0.05 <= w / price <= 0.60):
+            return None
+        # касания: свинги (±6) в 15% ширины от огибающих, gap>=24ч
+        def _touches(res, off, top):
+            pts = []
+            for j in range(FR, n - FR):
+                arr = hs if top else ls
+                m = max(arr[j - FR:j + FR + 1]) if top else \
+                    min(arr[j - FR:j + FR + 1])
+                if arr[j] != m:
+                    continue
+                if top and res[j] >= off - 0.15 * w:
+                    pts.append(j)
+                if not top and res[j] <= off + 0.15 * w:
+                    pts.append(j)
+            cnt, last = 0, -10**9
+            for j in pts:
+                if j - last >= 24:
+                    cnt += 1
+                    last = j
+            return cnt
+        t_up = _touches(res_h, up_off, True)
+        t_dn = _touches(res_l, dn_off, False)
+        if t_up < 3 or t_dn < 3:
+            return None
+        dn_val = a + b * (n - 1) + dn_off
+        pos = (price - dn_val) / w
+        if not (0.85 <= pos <= 1.15):
+            return None
+        phase = None
+        try:
+            from supertrend_tracker import _market_phase_now
+            phase = _market_phase_now()
+        except Exception:
+            pass
+        return {"strategy": "channel_top", "direction": "SHORT",
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": price, "tp": price * 0.90, "sl": price * 1.05,
+                "horizon_h": 96,
+                "indicators": {"slope_day": round(slope_pct * 24, 2),
+                               "width_pct": round(w / price * 100, 1),
+                               "touches": f"{t_up}+{t_dn}",
+                               "pos": round(pos, 2),
+                               "entry_bar_t": int(seg[-1]["t"] // 1000),
+                               "entry_hint": "вход СЕЙЧАС: цена у крыши "
+                                             "восходящего канала 14д",
+                               "phase": phase}}
+    except Exception:
+        return None
+
+
 def _vol_anomaly_sig(pair: str, kd: list[dict]):
     """⚡ Аномалия объёма ГДЕ УГОДНО (1h) → инфо-сигнал в журнал: закрытый
     бар с объёмом >8×SMA24 и дельтой >q90-240ч. Направление = знак дельты
@@ -1016,6 +1105,27 @@ def scan_universe(max_pairs: int = 300):
                         from impulse_detector import store_signal
                         if store_signal(_fb, cooldown_h=24):
                             ds_fired += 1
+                    except Exception:
+                        pass
+                # 📐 крыша восходящего канала → SHORT (кулдаун 24ч, TG)
+                _ct = _channel_top_sig(pair, kd)
+                if _ct is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_ct, cooldown_h=24):
+                            ds_fired += 1
+                            _ci2 = _ct["indicators"]
+                            _tg16(f"📐 <b>КРЫША КАНАЛА · ВХОД СЕЙЧАС · "
+                                  f"{pair.replace('/USDT', '')}</b>\n"
+                                  f"🔴 SHORT по рынку @ {_ct['entry']:.6g}\n"
+                                  f"восходящий канал 14д: наклон "
+                                  f"+{_ci2['slope_day']}%/день · ширина "
+                                  f"{_ci2['width_pct']}% · касаний "
+                                  f"{_ci2['touches']} · цена у верхней границы\n"
+                                  f"SL +5% · TP −10% · до 96ч\n"
+                                  f"<i>год-бэктест: EV +1.29/сделку · WR 47% "
+                                  f"против +0.16 рандом-шорта · покупка низа "
+                                  f"канала опровергнута (−0.76)</i>")
                     except Exception:
                         pass
                 # 🧱 защита поддержки: 30m имбаланс в 10д-лоу → LONG
