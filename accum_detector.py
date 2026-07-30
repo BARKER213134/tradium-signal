@@ -30,8 +30,9 @@ MAX_BACK = 240    # глубина поиска начала базы
 _fapi_down_until = 0.0   # circuit breaker: fapi в бане — не жжём таймауты
 
 
-def _fetch_klines_delta(symbol: str, limit: int = 320) -> Optional[list]:
-    """1h свечи С тайкер-дельтой (поле 9 = taker buy volume). get_klines_any
+def _fetch_klines_delta(symbol: str, limit: int = 320,
+                        interval: str = "1h") -> Optional[list]:
+    """Свечи С тайкер-дельтой (поле 9 = taker buy volume). get_klines_any
     его отбрасывает, поэтому прямой REST: fapi (prod) -> Vision (локально).
     При отказе fapi (418-бан) — предохранитель на 10 мин, иначе скан 300 пар
     жёг по 10с таймаута на каждую и растягивался до ~50 мин (2026-07-13)."""
@@ -52,7 +53,7 @@ def _fetch_klines_delta(symbol: str, limit: int = 320) -> Optional[list]:
     for url in urls:
         is_fapi = "fapi" in url
         try:
-            r = requests.get(url, params=dict(symbol=sym, interval="1h",
+            r = requests.get(url, params=dict(symbol=sym, interval=interval,
                                               limit=limit), timeout=10)
             if r.status_code != 200:
                 if is_fapi:
@@ -473,6 +474,74 @@ def _floor_buy_sig(pair: str, kd: list[dict]):
                 "horizon_h": 96,
                 "indicators": {"imb": round(d_bar / b["v"], 2),
                                "vol_x": round(b["v"] / v_med, 1),
+                               "phase": phase}}
+    except Exception:
+        return None
+
+
+def _support_defense_sig(pair: str, kd: list[dict]):
+    """🧱 ЗАЩИТА ПОДДЕРЖКИ → LONG: 30m имбаланс-бар (объём >=3× медианы-48ч,
+    дельта покупок >=60% объёма) касается 10-дневного лоу — крупный
+    покупатель маркетом выкупает пролив в уровень. Бэктест 60д (268 пар,
+    сетка +10/−5/96ч): WR(+10) 27.6% против 18.5% рандома, стопов 36.8%
+    против 52.4%, EV +0.90 против −0.55. Единственная рабочая ячейка из
+    4 комбинаций имбаланс×уровень; пробойные обе убыточны (30.07).
+    Дешёвый префильтр на 1h (касание лоу + всплеск объёма) — 30m тянем
+    только для прошедших, чтобы не удваивать запросы скана."""
+    try:
+        n = len(kd)
+        if n < 280:
+            return None
+        # уровень: 10д-лоу по 1h, исключая последние 12ч
+        lows10 = [x["l"] for x in kd[-244:-13]]
+        if len(lows10) < 200:
+            return None
+        lvl = min(lows10)
+        if lvl <= 0:
+            return None
+        # префильтр: последние 2 бара (закрытый+формирующийся) у уровня
+        # и всплеск объёма на закрытом
+        recent_lo = min(x["l"] for x in kd[-3:])
+        if not (lvl * 0.994 <= recent_lo <= lvl * 1.0015):
+            return None
+        v96 = sorted(x["v"] for x in kd[-98:-2])
+        v_med1h = v96[len(v96) // 2] if v96 else 0
+        if not v_med1h or max(x["v"] for x in kd[-3:]) < 1.3 * v_med1h:
+            return None
+        # точная проверка на 30m
+        k30 = _fetch_klines_delta(pair, 130, "30m")
+        if not k30 or len(k30) < 110:
+            return None
+        b = k30[-2]                      # последний закрытый 30m-бар
+        if not b.get("v") or b["v"] <= 0:
+            return None
+        vols = sorted(x["v"] for x in k30[-98:-2])
+        med = vols[len(vols) // 2]
+        if not med or b["v"] < 3 * med:
+            return None
+        d_bar = 2 * b["tb"] - b["v"]
+        if d_bar / b["v"] < 0.6:
+            return None
+        if not (lvl * 0.996 <= b["l"] <= lvl * 1.0015):
+            return None
+        phase = None
+        try:
+            from supertrend_tracker import _market_phase_now
+            phase = _market_phase_now()
+        except Exception:
+            pass
+        price = b["c"]
+        return {"strategy": "support_defense", "direction": "LONG",
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": price, "tp": price * 1.10, "sl": price * 0.95,
+                "horizon_h": 96,
+                "indicators": {"vol_x": round(b["v"] / med, 1),
+                               "delta_pct": round(d_bar / b["v"] * 100),
+                               "level": round(lvl, 10),
+                               "dist_pct": round((price / lvl - 1) * 100, 2),
+                               "entry_bar_t": int(b["t"] // 1000),
+                               "entry_hint": "вход СЕЙЧАС: покупатель "
+                                             "маркетом защищает 10д-лоу",
                                "phase": phase}}
     except Exception:
         return None
@@ -937,6 +1006,28 @@ def scan_universe(max_pairs: int = 300):
                         from impulse_detector import store_signal
                         if store_signal(_fb, cooldown_h=24):
                             ds_fired += 1
+                    except Exception:
+                        pass
+                # 🧱 защита поддержки: 30m имбаланс в 10д-лоу → LONG
+                # (кулдаун 12ч, TG — боевой сигнал)
+                _sd = _support_defense_sig(pair, kd)
+                if _sd is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_sd, cooldown_h=12):
+                            ds_fired += 1
+                            _si = _sd["indicators"]
+                            _tg16(f"🧱 <b>ЗАЩИТА ПОДДЕРЖКИ · ВХОД СЕЙЧАС · "
+                                  f"{pair.replace('/USDT', '')}</b>\n"
+                                  f"🟢 LONG по рынку @ {_sd['entry']:.6g}\n"
+                                  f"покупатель маркетом ×{_si['vol_x']} объёма "
+                                  f"(дельта +{_si['delta_pct']}%) выкупает "
+                                  f"пролив в 10-дневный лоу {_si['level']:.6g} "
+                                  f"(30m-бар)\n"
+                                  f"SL −5% · TP +10% · до 96ч\n"
+                                  f"<i>бэктест 60д: EV +0.90/сделку против "
+                                  f"−0.55 у рандома · WR(+10) 28% против 18.5% "
+                                  f"· стопов 37% против 52%</i>")
                     except Exception:
                         pass
                 # ⚡ инфо-событие «аномальный объём у экстремума» (скринер)

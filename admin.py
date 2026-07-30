@@ -9077,7 +9077,7 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     if limit and limit > 0 and total > limit:
         _DEEP_SRC = {"blowoff", "capitulation", "thin_pump", "floor_buy",
                      "vol_anomaly", "vol_anomaly4h", "rocket_pullback",
-                     "whale", "shark"}
+                     "support_defense", "whale", "shark"}
         head = items[:limit]
         tail_special = [x for x in items[limit:]
                         if x.get("source") in _DEEP_SRC]
@@ -9912,7 +9912,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
                         "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
-                        "rocket_pullback": "🪃"}
+                        "rocket_pullback": "🪃", "support_defense": "🧱"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -9926,7 +9926,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "floor_buy": "ДНО+ПОКУПАТЕЛЬ",
                        "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h",
                        "potok": "ПОТОК·АВТО",
-                       "rocket_pullback": "ОТКАТ РАКЕТЫ"}
+                       "rocket_pullback": "ОТКАТ РАКЕТЫ",
+                       "support_defense": "ЗАЩИТА ПОДДЕРЖКИ"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -10379,7 +10380,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
                         "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
-                        "rocket_pullback": "🪃"}
+                        "rocket_pullback": "🪃", "support_defense": "🧱"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
@@ -10392,7 +10393,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "floor_buy": "ДНО+ПОКУПАТЕЛЬ",
                        "vol_anomaly": "АНОМАЛИЯ ОБЪЁМА", "vol_anomaly4h": "АНОМАЛИЯ 4h",
                        "potok": "ПОТОК·АВТО",
-                       "rocket_pullback": "ОТКАТ РАКЕТЫ"}
+                       "rocket_pullback": "ОТКАТ РАКЕТЫ",
+                       "support_defense": "ЗАЩИТА ПОДДЕРЖКИ"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
@@ -10416,7 +10418,7 @@ def _compute_journal_sync(_fast_only: bool = False):
         _nss_docs += [d for d in nss_col.find(
             {"created_at": {"$gte": _deep_since},
              "strategy": {"$in": ["rocket_pullback", "capitulation",
-                                  "floor_buy"]}})
+                                  "floor_buy", "support_defense"]}})
             .sort("created_at", -1).limit(800) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
             at_dt = n.get("created_at")
@@ -10495,6 +10497,15 @@ def _compute_journal_sync(_fast_only: bool = False):
                 extra = (f" · ракета +{_rpi.get('impulse_pct', '?')}% · откат "
                          f"{_rpi.get('pullback_pct', '?')}% · RSI {_rpi.get('rsi1h', '?')} · "
                          f"вход сразу, стоп под лоу (год: WR34% EV+0.70) · "
+                         f"фаза {_phe}{_ph or '?'}")
+            elif strat == "support_defense":
+                _sdi = n.get("indicators") or {}
+                _ph = _sdi.get("phase")
+                _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
+                extra = (f" · защита поддержки: покупатель ×{_sdi.get('vol_x', '?')} "
+                         f"объёма (Δ +{_sdi.get('delta_pct', '?')}%) в 10д-лоу "
+                         f"{_sdi.get('level', '?')} · 30m-бар · "
+                         f"(60д: EV+0.90 против −0.55 рандома) · "
                          f"фаза {_phe}{_ph or '?'}")
             elif strat == "thin_pump":
                 _ti = n.get("indicators") or {}

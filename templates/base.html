@@ -759,6 +759,7 @@
           vol_anomaly4h:'🌩', // 🌩 объём 4h-бара >6× среднего + крупная дельта (инфо)
           potok:'🌊',        // 🌊 авто-вход канала ПОТОК (paper)
           rocket_pullback:'🪃', // 🪃 откат ракеты: имп≥100%, откат −25..−38, RSI<50 (год: WR34% EV+0.70)
+          support_defense:'🧱', // 🧱 30m имбаланс-покупка в 10д-лоу → лонг (60д: EV+0.90 против −0.55)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
         return tenPfx + prefix + base;
@@ -801,6 +802,7 @@
         if (src === 'delta_series') return '🫧';
         if (src === 'st_break') return '🧨';
         if (src === 'rocket_pullback') return '🪃';
+        if (src === 'support_defense') return '🧱';
         if (src === 'st_break4h') return '💣';
         if (src === 'blowoff') return '🌋';
         if (src === 'capitulation') return '🛟';
