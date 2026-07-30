@@ -10388,16 +10388,18 @@ def _compute_journal_sync(_fast_only: bool = False):
         _nss_docs = list(nss_col.find(
             {"created_at": {"$gte": nss_since},
              "indicators.backfill": {"$ne": True}}).sort("created_at", -1).limit(2000))
-        # 🌋 blowoff: вся история пока бэкфилл (кэш до 20.07) — в общий
-        # limit(2000) не пролезает за свежими доками других стратегий
-        # (25.07 в ленте была 1 строка из ~100) → отдельная выборка
+        # 🌋 спец-стратегии: история глубже общего окна — своя выборка на
+        # 60 ДНЕЙ (29.07 «фильтр ракеты пустой»: бэкфиллы размазаны по
+        # 60-90д, в 14д окно попадали единицы; фильтр по источнику
+        # отключает тайм-фильтр клиента, так что юзер видит всё)
         _seen_nss = {d["_id"] for d in _nss_docs}
+        _deep_since = _ns_utcnow() - _td(days=60)
         _nss_docs += [d for d in nss_col.find(
-            {"created_at": {"$gte": nss_since},
+            {"created_at": {"$gte": _deep_since},
              "strategy": {"$in": ["blowoff", "capitulation", "thin_pump",
                                   "floor_buy", "vol_anomaly", "vol_anomaly4h",
                                   "rocket_pullback"]}})
-            .sort("created_at", -1).limit(1500) if d["_id"] not in _seen_nss]
+            .sort("created_at", -1).limit(2500) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
