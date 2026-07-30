@@ -218,22 +218,39 @@ def _delta_series_sig(pair: str, kd: list[dict]) -> Optional[dict]:
 
 
 def _blowoff_sig(pair: str, kd: list[dict]):
-    """🌋 Blowoff-вершина → SHORT: последний ЗАКРЫТЫЙ 1h-бар ставит новый
-    24ч-хай, но закрывается в нижней половине своего диапазона, при разгоне
-    >+10%/24ч — покупателя вынесли на пике (фитиль сверху).
-    Год-бэктест (3748 соб., сетка −10/+5/96ч): EV +0.59%, hit10 31.8%
-    (🟢 +1.27/38.1%, 🔴 +0.80/36.6%) против случайного шорта +0.33/21.6%.
-    RSI-перегрев как триггер проверен и ОТВЕРГНУТ (−0.21, хуже случайного)."""
+    """🌋 Blowoff-вершина → SHORT (v2 29.07, идея юзера). Кульминация:
+    новый 24ч-хай + закрытие в нижней половине + разгон >10%/24ч.
+    ТРИГГЕР: первый КРАСНЫЙ бар с RSI14(1h) НИЖЕ SMA14(RSI) — сломанный
+    моментум, а не передышка. Год-бэктест (3860 соб., структурный стоп):
+    EV +0.90 против +0.79 у «просто первого красного», WR(−10) 39.0%,
+    выбивание 50.6% против 55.1%. Медиана ожидания 4ч, окно 48ч."""
     try:
         n = len(kd)
-        if n < 60:
+        if n < 90:
             return None
         last = kd[-2]                    # последний закрытый бар
         if not last.get("o") or last["c"] >= last["o"]:
-            return None                  # сигнал = ПЕРВЫЙ красный бар
-        # ищем кульминацию в последних 24 закрытых барах до него
+            return None                  # нужен красный бар
+        # RSI14 + SMA14(RSI) по закрытиям (Уайлдер, хвост 60 баров)
+        closes = [x["c"] for x in kd[:n - 1]]
+        tail = closes[-60:]
+        d_ = [tail[k + 1] - tail[k] for k in range(len(tail) - 1)]
+        ag = sum(max(x, 0) for x in d_[:14]) / 14
+        al = sum(max(-x, 0) for x in d_[:14]) / 14
+        rsi_series = []
+        for k in range(14, len(d_)):
+            ag = (ag * 13 + max(d_[k], 0)) / 14
+            al = (al * 13 + max(-d_[k], 0)) / 14
+            rsi_series.append(100 - 100 / (1 + ag / (al or 1e-12)))
+        if len(rsi_series) < 15:
+            return None
+        rsi_now = rsi_series[-1]
+        sma_now = sum(rsi_series[-14:]) / 14
+        if rsi_now >= sma_now:
+            return None                  # моментум ещё жив — ждём
+        # ищем кульминацию в последних 48 закрытых барах до него
         climax_j = None
-        for j in range(max(26, n - 26), n - 2):
+        for j in range(max(26, n - 50), n - 2):
             b = kd[j]
             if b["h"] < max(x["h"] for x in kd[j - 23:j]):
                 continue                 # не новый 24ч-хай
@@ -245,11 +262,18 @@ def _blowoff_sig(pair: str, kd: list[dict]):
             climax_j = j
         if climax_j is None:
             return None
-        # last — именно ПЕРВЫЙ красный после кульминации (между ними
-        # красных не было; повторные красные отсекает и кулдаун 24ч)
+        # last — ПЕРВЫЙ квалифицированный бар после кульминации: между
+        # ними не было КРАСНОГО бара с RSI<SMA (просто красные допустимы —
+        # это передышки, по бэктесту вход на них хуже)
+        base_i = len(closes) - len(rsi_series)  # индекс closes у rsi_series[0]
         for j in range(climax_j + 1, n - 2):
-            if kd[j].get("o") and kd[j]["c"] < kd[j]["o"]:
-                return None
+            if not (kd[j].get("o") and kd[j]["c"] < kd[j]["o"]):
+                continue
+            ri = j - base_i
+            if 13 <= ri < len(rsi_series):
+                sma_j = sum(rsi_series[ri - 13:ri + 1]) / 14
+                if rsi_series[ri] < sma_j:
+                    return None          # квалифицированный бар уже был
         cb = kd[climax_j]
         c24 = kd[climax_j - 24]["c"]
         mom24 = (cb["c"] / c24 - 1) * 100 if c24 else 0
@@ -271,6 +295,9 @@ def _blowoff_sig(pair: str, kd: list[dict]):
                 "horizon_h": 96,
                 "indicators": {"mom24": round(mom24, 1),
                                "wick_pct": round((cb["h"] - cb["c"]) / cb["c"] * 100, 2),
+                               "rsi1h": round(rsi_now, 1),
+                               "rsi_sma": round(sma_now, 1),
+                               "trigger": "red+rsi<sma",
                                "climax_ago_h": n - 2 - climax_j,
                                # open красного бара входа (сек) — маркер на
                                # графике ставится на ЭТОТ бар, а не на время
@@ -819,12 +846,14 @@ def scan_universe(max_pairs: int = 300):
                                   f"{pair.replace('/USDT', '')}</b>\n"
                                   f"🔴 SHORT по рынку @ {_bo['entry']:.6g}\n"
                                   f"кульминация была {_bi['climax_ago_h']}ч назад "
-                                  f"(разгон +{_bi['mom24']}%), это первый красный бар\n"
+                                  f"(разгон +{_bi['mom24']}%), красный бар с RSI "
+                                  f"{_bi.get('rsi1h', '?')} < SMA {_bi.get('rsi_sma', '?')} "
+                                  f"— моментум сломан\n"
                                   + _rl +
                                   f"SL {_bo['sl']:.6g} (над кульминацией, "
                                   f"+{_sl_pct:.1f}%) · TP −10% · до 96ч\n"
-                                  f"<i>бэктест 4023/год: EV +0.75/сигнал, WR 44%, "
-                                  f"выбивание 31%</i>")
+                                  f"<i>год-бэктест v2: EV +0.90/сигнал, "
+                                  f"WR(−10) 39%, выбивание 50.6%</i>")
                     except Exception:
                         pass
                 # 🛟 капитуляция-дно → LONG (кулдаун 24ч; вход сразу,
