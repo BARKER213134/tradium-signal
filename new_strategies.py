@@ -680,10 +680,15 @@ async def update_waiting_outcomes() -> dict:
         col = _get_db().new_strategy_signals
         # 120ч: TEN живёт до 96ч горизонта — 72ч-окно его теряло
         cutoff = utcnow() - timedelta(hours=120)
+        # 31.07: head-of-line блокировка — пары без свечей (делистинг)
+        # вечно занимали oldest-first очередь, всё за ними голодало и
+        # выпадало из окна (12k вечных WAITING). miss_n: после 5 неудач
+        # док исключается из выборки (стар добит one-off скриптом)
         return list(col.find({
             'state': 'WAITING',
             'created_at': {'$gte': cutoff},
-        }).sort('created_at', 1).limit(200))
+            '$or': [{'miss_n': {'$exists': False}}, {'miss_n': {'$lt': 5}}],
+        }).sort('created_at', 1).limit(400))
 
     waiting = await asyncio.to_thread(_load_waiting)
     if not waiting:
@@ -697,11 +702,20 @@ async def update_waiting_outcomes() -> dict:
     updated = 0
     timeouts = 0
     for pair, sigs in by_pair.items():
+        candles = None
         try:
             candles = await asyncio.to_thread(get_klines_any, pair, '1h', 150)
         except Exception:
-            continue
+            candles = None
         if not candles or len(candles) < 5:
+            # счётчик промахов — иначе пара без свечей блокирует очередь
+            try:
+                def _miss(ids=[s['_id'] for s in sigs]):
+                    _get_db().new_strategy_signals.update_many(
+                        {'_id': {'$in': ids}}, {'$inc': {'miss_n': 1}})
+                await asyncio.to_thread(_miss)
+            except Exception:
+                pass
             continue
         for sig in sigs:
             entry = sig.get('entry')

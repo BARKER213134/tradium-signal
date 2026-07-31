@@ -1119,18 +1119,31 @@ def scan_universe(max_pairs: int = 300):
                         from impulse_detector import store_signal
                         if store_signal(_cp, cooldown_h=24):
                             ds_fired += 1
+                            # 🚦 режимный гейт (31.07): за 60д капитуляция
+                            # EV −1.92 (WR 22) — TG только в её лучшей
+                            # ячейке «расхождение этажей» 🔴12h+🟢4h
+                            # (год: +2.03, WR 58); журнал — всегда
+                            _clim = None
+                            try:
+                                from database import _get_db as _gdb
+                                _clim = ((_gdb().market_state.find_one(
+                                    {"_id": "climate12"}) or {}).get("state"))
+                            except Exception:
+                                pass
                             _ci = _cp["indicators"]
-                            _slp = (1 - _cp["sl"] / _cp["entry"]) * 100
-                            _tg16(f"🛟 <b>КАПИТУЛЯЦИЯ · ВХОД СЕЙЧАС · "
-                                  f"{pair.replace('/USDT', '')}</b>\n"
-                                  f"🟢 LONG по рынку @ {_cp['entry']:.6g}\n"
-                                  f"RSI4h {_ci['rsi4h_prev']}→{_ci['rsi4h']} "
-                                  f"(разворот из ямы) · слив был >10%/24ч\n"
-                                  f"SL {_cp['sl']:.6g} (под лоу капитуляции, "
-                                  f"−{_slp:.1f}%) · TP +10% · до 96ч\n"
-                                  f"<i>бэктест 1800/год: EV +2.02/сигнал, WR 50% · "
-                                  f"⚠️ режимный: в затяжном красном слабее — "
-                                  f"сверяйся со светофором</i>")
+                            if _clim == "SHORT" and _ci.get("phase") == "LONG":
+                                _slp = (1 - _cp["sl"] / _cp["entry"]) * 100
+                                _tg16(f"🛟 <b>КАПИТУЛЯЦИЯ · ВХОД СЕЙЧАС · "
+                                      f"{pair.replace('/USDT', '')}</b>\n"
+                                      f"🟢 LONG по рынку @ {_cp['entry']:.6g}\n"
+                                      f"RSI4h {_ci['rsi4h_prev']}→{_ci['rsi4h']} "
+                                      f"(разворот из ямы) · слив был >10%/24ч\n"
+                                      f"🚦 этажи 🔴12h+🟢4h — лучшая ячейка "
+                                      f"лонга года (EV +2.03, WR 58)\n"
+                                      f"SL {_cp['sl']:.6g} (под лоу капитуляции, "
+                                      f"−{_slp:.1f}%) · TP +10% · до 96ч\n"
+                                      f"<i>вне этой ячейки капитуляция в TG не "
+                                      f"идёт (60д: −1.92) — только журнал</i>")
                     except Exception:
                         pass
                 # 🪃 откат ракеты → LONG (кулдаун 72ч, вход сразу,
