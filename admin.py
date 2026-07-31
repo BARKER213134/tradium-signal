@@ -10705,12 +10705,41 @@ def _compute_journal_sync(_fast_only: bool = False):
                 if strat == "whale":
                     extra += (" · ⚠️ кит на ГОРЯЧЕЙ — исторически хуже "
                               "(60д: EV −1.1 против +0.05 у холодных)")
+                elif strat == "shark":
+                    extra += (" · ⚠️ акула на ГОРЯЧЕЙ — ловушка "
+                              "(60д: EV −2.13, шорт бегущей монеты)")
                 elif (strat in ("st_break4h", "second_flip", "impulse")
                       and n.get("direction") == "LONG"):
                     extra += (" · 🔥 КОМБО на горячей — концентрат (60д: "
                               "st4h +2.73 · 2flip +0.85 · impulse +0.91)")
                 else:
                     extra += " · 🔥 горячая (ралли +40% ≤30д)"
+            # 🎯 приоритет-скор: честный EV источника за 60д (после добивки
+            # исходов 31.07), с 🔥-поправкой там, где она измерена.
+            # Классы: S >=1.2, A >=0.6, B >=0.2, C >=−0.2, D ниже.
+            _PRIO = {
+                "thin_pump": (1.41, 0.84), "blowoff": (1.21, 1.50),
+                "floor_buy": (1.05, None), "potok": (3.86, None),
+                "st_break4h": (0.44, 0.82), "fade": (0.38, 1.68),
+                "volcano": (0.35, 0.74), "corridor": (0.22, 1.85),
+                "volume_surge": (0.19, 0.43), "combo": (0.15, -0.98),
+                "support_defense": (0.11, None), "vol_anomaly4h": (0.06, 0.51),
+                "delta_series": (0.04, -0.09), "second_flip": (0.01, 0.26),
+                "triple_confluence": (0.0, -0.02), "vol_accum": (-0.04, -0.05),
+                "st_break": (-0.14, -0.10), "vol_anomaly": (-0.18, -0.17),
+                "shark": (-0.18, -2.13), "ignition": (-0.30, -0.30),
+                "rocket_pullback": (-0.33, None), "impulse": (-0.41, 0.39),
+                "whale": (-0.65, -1.10), "ten": (-0.71, 0.75),
+                "capitulation": (-1.85, -0.63),
+            }
+            _pb = _PRIO.get(strat)
+            _prio = None
+            if _pb is not None:
+                _prio = (_pb[1] if (_hot2 and _pb[1] is not None) else _pb[0])
+                _cls = ("S" if _prio >= 1.2 else "A" if _prio >= 0.6 else
+                        "B" if _prio >= 0.2 else "C" if _prio >= -0.2 else "D")
+                if _cls in ("S", "A"):
+                    extra += f" · 🎯{_cls}"
             pattern_txt = f"{em} {label}{extra}"
             items.append({
                 "source": strat,  # 'volume_surge' / 'triple_confluence' / 'vol_accum'
@@ -10729,6 +10758,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "ns_strategy": strat,
                 "ns_state": n.get("state", "WAITING"),
                 "hot": bool(n.get("hot")),
+                "prio": round(_prio, 2) if _prio is not None else None,
                 "ns_vol_ratio": n.get("vol_ratio"),
                 "ns_sources": n.get("sources"),
                 # WHALE tier (используется в TOP-7 filter в журнале)
