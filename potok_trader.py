@@ -189,6 +189,18 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
         _hot = bool(is_hot(sym))
     except Exception:
         _hot = False
+    # 🛡 DISQ-референс для LONG (бэктест 31.07: выход по закрытию 1h ниже
+    # 24ч-лоу входа — EV +0.68 против +0.64, стопов 34% против 45%,
+    # ср. минус −3.65 против −4.31; для SHORT НЕ внедрён: платит EV)
+    _disq_ref = None
+    if d_ == "LONG":
+        try:
+            from exchange import get_klines_any
+            _kl = get_klines_any(pair, "1h", 26)
+            if _kl and len(_kl) >= 25:
+                _disq_ref = min(x["l"] for x in _kl[:-1][-24:])
+        except Exception:
+            pass
     doc = {"symbol": sym, "pair": pair, "direction": d_, "src": src,
            "entry": price, "tp": price * (1 + want * TP_PCT / 100),
            "sl": price * (1 - want * SL_PCT / 100),
@@ -196,7 +208,8 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
            "size_mult": mult, "kit": bool(kit), "score": score,
            "star": bool(star), "funding": rate,
            "cvd24": ctx.get("cvd24"), "phase": phase, "climate": clim,
-           "anom_age_h": ctx.get("_anom_age_h"), "hot": _hot}
+           "anom_age_h": ctx.get("_anom_age_h"), "hot": _hot,
+           "disq_ref": _disq_ref}
     # 🌊 запись входа в журнал (маркер на графиках); state='OPEN' —
     # generic-трекер её не трогает, исход проставит manage() при закрытии
     try:
@@ -369,6 +382,17 @@ def manage() -> int:
             an = (ctx_all.get(sym) or {}).get("anom_sell_ts")
             if an and (now.timestamp() - an / 1000) / 3600 < 1.5:
                 reason = "SMART(sell-климакс)"
+        # 🛡 DISQ: закрытие 1h ниже 24ч-лоу входа — тезис сломан, выйти
+        # (только LONG; бэктест 31.07: EV +0.68 против +0.64, стопов 34%
+        # против 45%, ср. минус −3.65 против −4.31; SHORT не внедрён)
+        if reason is None and d_ == "LONG" and p.get("disq_ref"):
+            try:
+                from exchange import get_klines_any
+                _kl = get_klines_any(p["pair"], "1h", 3)
+                if _kl and len(_kl) >= 2 and _kl[-2]["c"] < p["disq_ref"]:
+                    reason = "DISQ(слом 24ч-лоу)"
+            except Exception:
+                pass
         if reason is None and age_h >= TIME_STOP_H and pnl < TIME_STOP_MIN:
             reason = "TIME48"
         if reason is None and age_h >= HORIZON_H:
