@@ -648,6 +648,85 @@ def _channel_top_sig(pair: str, kd: list[dict]):
         return None
 
 
+def _corridor_sig(pair: str, kd: list[dict]):
+    """🎈 КОРИДОР → LONG: цена стоит на верхнем краю объёмной полки
+    (сильный узел 30д-профиля в [цена·0.95, цена·1.005]), путь к +10%
+    ПУСТОЙ (средний объём бинов коридора <20% от POC), и пришёл
+    покупатель: зелёный бар с объёмом >=2× медианы-96 и дельтой >=50%,
+    закрытие выше 12ч-хая. Год-бэктест 31.07 (лестница компонентов):
+    триггер сам по себе −0.19, полка+ТОЛСТЫЙ путь −1.05 (контроль),
+    полный КОРИДОР +0.49 (WR 44, стопов 30%), посл. 60д +0.33 (стопов
+    24%) — живёт и в красном рынке; на 🔥 горячей +1.69 (WR 51).
+    Дешёвый префильтр триггера на 400 барах скана; профиль (750×1h)
+    тянем только для кандидатов."""
+    try:
+        n = len(kd)
+        if n < 120:
+            return None
+        b = kd[-2]                            # последний закрытый бар
+        if not b.get("v") or b["v"] <= 0 or b["c"] <= b["o"]:
+            return None
+        vols = sorted(x["v"] for x in kd[-98:-2])
+        med = vols[len(vols) // 2] if vols else 0
+        if not med or b["v"] < 2 * med:
+            return None
+        d_bar = 2 * b["tb"] - b["v"]
+        if d_bar / b["v"] < 0.5:
+            return None
+        if b["c"] <= max(x["h"] for x in kd[-14:-2]):
+            return None
+        price = b["c"]
+        # профиль 30д — только для кандидатов
+        k7 = _fetch_klines_delta(pair, 750)
+        if not k7 or len(k7) < 700:
+            return None
+        seg = k7[-722:-2]
+        tps = [(x["h"] + x["l"] + x["c"]) / 3 for x in seg]
+        vws = [x["v"] for x in seg]
+        pmin, pmax = min(tps), max(tps)
+        if pmax <= pmin:
+            return None
+        NB = 80
+        hist = [0.0] * NB
+        w = (pmax - pmin) / NB
+        for tp_, vv in zip(tps, vws):
+            j = min(NB - 1, int((tp_ - pmin) / w))
+            hist[j] += vv
+        mx = max(hist)
+        if mx <= 0:
+            return None
+        centers = [pmin + (j + 0.5) * w for j in range(NB)]
+        shelf = any(hist[j] >= 0.6 * mx
+                    and price * 0.95 <= centers[j] <= price * 1.005
+                    for j in range(NB))
+        if not shelf:
+            return None
+        cor = [hist[j] for j in range(NB)
+               if price <= centers[j] <= price * 1.10]
+        cor_share = (sum(cor) / len(cor) / mx) if cor else 0.0
+        if cor_share >= 0.20:
+            return None
+        phase = None
+        try:
+            from supertrend_tracker import _market_phase_now
+            phase = _market_phase_now()
+        except Exception:
+            pass
+        return {"strategy": "corridor", "direction": "LONG",
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": price, "tp": price * 1.10, "sl": price * 0.95,
+                "horizon_h": 96,
+                "indicators": {"vol_x": round(b["v"] / med, 1),
+                               "delta_pct": round(d_bar / b["v"] * 100),
+                               "cor_share": round(cor_share * 100),
+                               "entry_bar_t": int(b["t"] // 1000),
+                               "entry_hint": "вход СЕЙЧАС: полка под ногами, "
+                                             "путь к +10% пустой, покупатель в баре",
+                               "phase": phase}}
+    except Exception:
+        return None
+
+
 def _vol_anomaly_sig(pair: str, kd: list[dict]):
     """⚡ Аномалия объёма ГДЕ УГОДНО (1h) → инфо-сигнал в журнал: закрытый
     бар с объёмом >8×SMA24 и дельтой >q90-240ч. Направление = знак дельты
@@ -1113,6 +1192,31 @@ def scan_universe(max_pairs: int = 300):
                         from impulse_detector import store_signal
                         if store_signal(_fb, cooldown_h=24):
                             ds_fired += 1
+                    except Exception:
+                        pass
+                # 🎈 коридор: полка+воздух+покупатель → LONG (кулдаун 24ч, TG)
+                _co = _corridor_sig(pair, kd)
+                if _co is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_co, cooldown_h=24):
+                            ds_fired += 1
+                            _coi = _co["indicators"]
+                            _hl = ""
+                            if _co.get("hot"):
+                                _hl = ("🔥 монета ГОРЯЧАЯ — коридор на горячей: "
+                                       "EV +1.69, WR 51% (концентрат)\n")
+                            _tg16(f"🎈 <b>КОРИДОР · ВХОД СЕЙЧАС · "
+                                  f"{pair.replace('/USDT', '')}</b>\n"
+                                  f"🟢 LONG по рынку @ {_co['entry']:.6g}\n"
+                                  f"полка под ногами · путь к +10% пустой "
+                                  f"(объём коридора {_coi['cor_share']}% от узла) · "
+                                  f"покупатель ×{_coi['vol_x']} с дельтой "
+                                  f"+{_coi['delta_pct']}%\n" + _hl +
+                                  f"SL −5% (за полку) · TP +10% · до 96ч\n"
+                                  f"<i>год-бэктест: EV +0.49, стопов 30% · "
+                                  f"посл. 60д +0.33 (стопов 24%) · пробой в "
+                                  f"толпу −1.05 — потому и ждём пустой путь</i>")
                     except Exception:
                         pass
                 # 📐 крыша восходящего канала → SHORT (кулдаун 24ч, TG)

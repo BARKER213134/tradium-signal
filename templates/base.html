@@ -762,6 +762,7 @@
           rocket_pullback:'🪃', // 🪃 откат ракеты: имп≥100%, откат −25..−38, RSI<50 (год: WR34% EV+0.70)
           support_defense:'🧱', // 🧱 30m имбаланс-покупка в 10д-лоу → лонг (60д: EV+0.90 против −0.55)
           channel_top:'📐',    // 📐 шорт крыши восходящего канала (год: EV+1.29 WR47)
+          corridor:'🎈',       // 🎈 лонг: полка+пустой путь+покупатель (год: EV+0.49, 60д +0.33)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
         return hotPfx + tenPfx + prefix + base;
@@ -805,6 +806,7 @@
         if (src === 'rocket_pullback') return '🪃';
         if (src === 'support_defense') return '🧱';
         if (src === 'channel_top') return '📐';
+        if (src === 'corridor') return '🎈';
         if (src === 'st_break4h') return '💣';
         if (src === 'blowoff') return '🌋';
         if (src === 'capitulation') return '🛟';
