@@ -3656,6 +3656,46 @@ window._kcRegisterIndicators = function() {
       return out;
     }
   });
+  // RSIS — чистая панель: RSI14 (Уайлдер) + SMA14(RSI), как в детекторах
+  // (blowoff v2 и сетап-чек). Вместо дефолтного RSI(6,12,24) из трёх
+  // линий — «сильно много всего» (2026-07-31).
+  klinecharts.registerIndicator({
+    name: 'RSIS', shortName: 'RSI',
+    precision: 1,
+    calcParams: [14, 14],
+    figures: [
+      { key: 'rsi', title: 'RSI14: ', type: 'line', styles: () => ({ color: '#b28bff' }) },
+      { key: 'sma', title: 'SMA14: ', type: 'line', styles: () => ({ color: '#ffd23e' }) },
+    ],
+    calc: (list, indicator) => {
+      const p = (indicator.calcParams && indicator.calcParams[0]) || 14;
+      const m = (indicator.calcParams && indicator.calcParams[1]) || 14;
+      const out = list.map(() => ({}));
+      if (list.length < p + m + 3) return out;
+      const rsiArr = new Array(list.length).fill(null);
+      let ag = 0, al = 0;
+      for (let i = 1; i <= p; i++) {
+        const d = list[i].close - list[i - 1].close;
+        ag += Math.max(d, 0); al += Math.max(-d, 0);
+      }
+      ag /= p; al /= p;
+      rsiArr[p] = 100 - 100 / (1 + ag / (al || 1e-12));
+      for (let i = p + 1; i < list.length; i++) {
+        const d = list[i].close - list[i - 1].close;
+        ag = (ag * (p - 1) + Math.max(d, 0)) / p;
+        al = (al * (p - 1) + Math.max(-d, 0)) / p;
+        rsiArr[i] = 100 - 100 / (1 + ag / (al || 1e-12));
+      }
+      let run = 0;
+      for (let i = p; i < list.length; i++) {
+        run += rsiArr[i];
+        if (i - p >= m) run -= rsiArr[i - m];
+        out[i] = { rsi: rsiArr[i] };
+        if (i - p >= m - 1) out[i].sma = run / m;
+      }
+      return out;
+    }
+  });
 };
 
 window._kcStyles = {
@@ -4003,7 +4043,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   // Delta-панель только если данные фьючерсные (BingX-фолбэк дельту не отдаёт)
   const hasDelta = bars.some(b => b.d != null);
   if (hasDelta) chart.createIndicator('DELTA', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
-  if (opts.rsi !== false) chart.createIndicator('RSI', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
+  if (opts.rsi !== false) chart.createIndicator('RSIS', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
 
   // тултип для сигналов (показывается overlay-событиями sigMarker)
   const tip = document.createElement('div');
