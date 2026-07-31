@@ -3375,7 +3375,7 @@ async def api_momentum_signals(hours: int = 336, strat: str = ""):
         since = utcnow() - timedelta(hours=max(1, min(hours, 2160)))
         col = _get_db().new_strategy_signals
         strats = ([strat] if strat else
-                  ["impulse", "fade", "ignition", "rider_short", "ten"])
+                  ["impulse", "fade", "ignition", "ten"])
         items = []
         for n in col.find(
             {"strategy": {"$in": strats},
@@ -3872,7 +3872,7 @@ async def api_entry_picks():
         sig_strats = (("ignition", "ten", "impulse", "st_break", "st_break4h",
                        "capitulation", "floor_buy")
                       if side == "LONG"
-                      else ("impulse", "shark", "delta_series", "rider_short",
+                      else ("impulse", "shark", "delta_series",
                             "st_break", "st_break4h", "blowoff", "thin_pump"))
         sigs_raw = await asyncio.to_thread(lambda: list(
             db.new_strategy_signals.find(
@@ -3917,7 +3917,7 @@ async def api_entry_picks():
                          "shark": "🦈", "delta_series": "🫧", "st_break": "🧨",
                          "st_break4h": "💣", "blowoff": "🌋", "capitulation": "🛟",
                          "thin_pump": "💨", "floor_buy": "💎",
-                         "rider_short": "🏇"}.get(sig["strategy"], "•")
+                         }.get(sig["strategy"], "•")
                 score += 3
                 reasons.append(f"{emoji} {sig['strategy']} {ago:.1f}ч назад")
             if rsi is not None:
@@ -9961,7 +9961,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "second_flip": "♻️", "combo": "🧠",
                         "whale": "🐋", "shark": "🦈",
                         "impulse": "🚀", "fade": "🎣", "ignition": "💥",
-                        "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
+                        "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
                         "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
@@ -9973,7 +9973,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "second_flip": "Second Flip", "combo": "COMBO",
                        "whale": "WHALE", "shark": "SHARK",
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
-                       "rider_short": "RIDER SHORT", "ten": "TEN",
+                       "ten": "TEN",
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
                        "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
                        "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП",
@@ -10436,7 +10436,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "vol_accum": "🔋", "volcano": "🌋",
                         "second_flip": "♻️", "combo": "🧠", "whale": "🐋",
                         "shark": "🦈", "impulse": "🚀", "fade": "🎣", "ignition": "💥",
-                        "rider_short": "🏄", "ten": "💰", "delta_series": "🫧",
+                        "ten": "💰", "delta_series": "🫧",
                         "st_break": "🧨", "st_break4h": "💣", "blowoff": "🌋",
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
                         "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
@@ -10447,7 +10447,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "second_flip": "Second Flip", "combo": "COMBO",
                        "whale": "WHALE", "shark": "SHARK",
                        "impulse": "IMPULSE", "fade": "FADE", "ignition": "IGNITION",
-                       "rider_short": "RIDER SHORT", "ten": "TEN",
+                       "ten": "TEN",
                        "delta_series": "Серия дельт", "st_break": "ST-пробой",
                        "st_break4h": "ST-пробой 4h", "blowoff": "BLOWOFF",
                        "capitulation": "КАПИТУЛЯЦИЯ", "thin_pump": "ТОНКИЙ ПАМП",
@@ -12179,7 +12179,6 @@ async def api_auto_strategy_info():
                     "supertrend / st_mtf / st_daily (ST4h-флип: WR 34.8% LONG, 27.7% SHORT — ниже BE 38)",
                     "confluence (WR 41.6% лучший срез — на грани, нестабилен)",
                     "cluster / whale / shark / accum (нет направленного edge)",
-                    "rider_short (PF 1.29, но lumpy — алерты остаются, автовход нет)",
                     "impulse / fade (родители ignition/ten — поздний вход)",
                 ],
             },
