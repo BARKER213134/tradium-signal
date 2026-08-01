@@ -4125,6 +4125,16 @@ async def start_watcher():
     except Exception:
         logger.exception("[delta-ws] failed to schedule")
 
+    # 📡 Коллектор деривативов (31.07): ликвидации (WS) + OI (часовой) —
+    # только сбор датасета в Mongo, сигналов нет (история для бэктестов)
+    try:
+        import deriv_collector as _dc
+        asyncio.create_task(_dc.run_liq_stream())
+        asyncio.create_task(_dc.oi_poll_loop())
+        logger.info("[deriv] liq stream + oi poll scheduled")
+    except Exception:
+        logger.exception("[deriv] failed to schedule")
+
     # ALPHA-CV Exit Monitor — каждые 3 мин проверяет открытые ALPHA-CV
     # позиции на 1h RSI < SMA(RSI) crossover. Закрывает momentum-loss signals.
     try:
