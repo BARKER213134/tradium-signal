@@ -49,8 +49,6 @@ POTOK_DEPO_USD = float(os.getenv("POTOK_DEPO_USD", "1000"))
 
 # BOT7 (Cluster Alerts) удалён вместе с источником (2026-07-02)
 
-# Восьмой бот — Forex FVG Alerts
-BOT8_BOT_TOKEN = os.getenv("BOT8_BOT_TOKEN", "")
 
 # BOT9 — Top Picks alerts (сигналы подтверждённые STRONG Confluence)
 BOT9_BOT_TOKEN = os.getenv("BOT9_BOT_TOKEN", "")
@@ -134,7 +132,7 @@ TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET", "tv_f9c3a8b2d4e7f6a1b8c5d9e2f3a7b4c6")
 
 # Список ботов для UI
-# category: 'crypto' | 'stocks' (forex/metals/indices/energy через FVG)
+# category: 'crypto' | 'stocks'
 # tradium / cryptovizor / cv_flip вкладки удалены — ingestion отключён (2026-07-01)
 BOTS = [
     {"id": "confluence", "label": "Confluence", "category": "crypto"},
@@ -172,8 +170,6 @@ BOTS = [
     # — кнопка скрыта 26.07: заменена каналом 🌊 ПОТОК. Старая вкладка жива
     # по прямому URL /signals?bot=autotrading (momentum-paper продолжает
     # работать в фоне). Вернуть: раскомментировать строку.
-    {"id": "forex_fvg", "label": "Forex FVG 1H", "category": "stocks"},
-    {"id": "forex_journal", "label": "Forex Журнал", "category": "stocks"},
 ]
 
 # Админка

@@ -95,16 +95,6 @@ def _cluster_config() -> Collection:
     return _get_db().system
 
 
-def _fvg_signals() -> Collection:
-    """Forex FVG сигналы (все статусы: FORMED/WAITING/ENTERED/TP/SL/EXPIRED)."""
-    return _get_db().fvg_signals
-
-
-def _fvg_config() -> Collection:
-    """Настройки Hybrid v2 Forex FVG (хранится в system._id='fvg_config')."""
-    return _get_db().system
-
-
 def _conflicts() -> Collection:
     """Conflicts collection — противоречия между сигналами (Anti-cluster)."""
     return _get_db().conflicts
@@ -667,13 +657,6 @@ def init_db():
     cl.create_index([("is_top_pick", ASCENDING), ("trigger_at", DESCENDING)])
     cl.create_index([("symbol", ASCENDING), ("direction", ASCENDING), ("trigger_at", DESCENDING)])
 
-    fv = _fvg_signals()
-    fv.create_index("instrument")
-    fv.create_index("status")
-    fv.create_index("formed_at")
-    fv.create_index("entered_at")
-    fv.create_index([("status", ASCENDING), ("formed_at", DESCENDING)])
-
     # Новые коллекции и indexes (добавлены при аудите платформы)
     cf = _confluence()
     cf.create_index("detected_at")
@@ -696,9 +679,6 @@ def init_db():
     tdq = _get_db().td_quota
     tdq.create_index("at")
 
-    fcc = _get_db().fvg_candle_cache
-    fcc.create_index([("instrument", ASCENDING), ("tf", ASCENDING)])
-
     # Signals — composite для top_pick queries
     col.create_index([("source", ASCENDING), ("pattern_triggered", ASCENDING), ("pattern_triggered_at", DESCENDING)])
     col.create_index([("is_top_pick", ASCENDING), ("source", ASCENDING)])
@@ -717,8 +697,6 @@ def init_db():
         an.create_index("detected_at", expireAfterSeconds=90*86400, name="ttl_90d")
         # Confluence: 90 дней
         cf.create_index("detected_at", expireAfterSeconds=90*86400, name="ttl_90d")
-        # FVG candle cache: 7 дней (refresh'ится сканером)
-        fcc.create_index("cached_at", expireAfterSeconds=7*86400, name="ttl_7d")
         # TD quota: 14 дней
         tdq.create_index("at", expireAfterSeconds=14*86400, name="ttl_14d")
         # Market events (KC/Reversal changes): 30 дней

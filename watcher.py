@@ -1185,8 +1185,6 @@ async def _check_once():
             # не грузились. Теперь tick проходит быстро, cryptovizor
             # работает фоном с собственной DB session.
             ("paper_positions", lambda: _check_paper_positions()),
-            ("fvg_scan", lambda: _check_forex_fvg_scan()),
-            ("fvg_monitor", lambda: _check_forex_fvg_monitor()),
         ]:
             try:
                 print(f"[WATCHER] step: {step_name}", flush=True)
@@ -1194,7 +1192,7 @@ async def _check_once():
                 # Раньше только tick_start/tick_done в heartbeat — невозможно
                 # понять застрял ли в dca4/patterns/tp_sl/cryptovizor/etc.
                 await _write_heartbeat(f"step_{step_name}")
-                step_timeout = 90 if step_name == "fvg_scan" else 120
+                step_timeout = 120
                 await asyncio.wait_for(step_fn(), timeout=step_timeout)
             except asyncio.TimeoutError:
                 print(f"[WATCHER] step '{step_name}' TIMEOUT", flush=True)
@@ -1382,7 +1380,6 @@ async def _check_confluence():
 
 
 _bot5 = None
-_bot8 = None
 _bot9 = None  # Top Picks alerts
 
 
@@ -1401,21 +1398,6 @@ def _setup_bot5():
         logger.error(f"BOT5 init fail: {e}")
 
 
-
-
-def _setup_bot8():
-    global _bot8
-    from config import BOT8_BOT_TOKEN
-    if not BOT8_BOT_TOKEN:
-        return
-    try:
-        from aiogram import Bot
-        from aiogram.client.default import DefaultBotProperties
-        from aiogram.enums import ParseMode
-        _bot8 = Bot(token=BOT8_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        logger.info("BOT8 (Forex FVG) initialized")
-    except Exception as e:
-        logger.error(f"BOT8 init fail: {e}")
 
 
 def _setup_bot9():
@@ -1502,7 +1484,7 @@ async def _market_side_broadcast(txt: str):
         except Exception: pass
     targets = [(_bot, _admin_chat_id), (_bot2, _admin_chat_id),
                (_bot4, _admin_chat_id), (_bot5, _admin_chat_id),
-               (_bot8, _admin_chat_id), (_bot9, _admin_chat_id),
+               (_bot9, _admin_chat_id),
                (_bot10, _admin_chat_id), (_bot16, WHALE_CHAT_ID)]
     sent = 0
     seen = set()
@@ -1907,222 +1889,6 @@ def _fmt_price(v):
     return f"{v:.{decimals}f}".rstrip("0").rstrip(".")
 
 
-
-
-# ── BOT8: Forex FVG alerts ──────────────────────────────────
-def _fvg_direction_emoji(d):
-    return "🟢" if d == "bullish" else "🔴"
-
-
-def _fvg_top_pick_block(sig) -> str:
-    """Блок '⭐ TOP PICK' для FVG alerts. Возвращает '' если не top pick."""
-    if not sig.get("is_top_pick"):
-        return ""
-    score = sig.get("confluence_score", 0)
-    breakdown = sig.get("score_breakdown") or []
-    # Форматируем bullets
-    lines = []
-    for b in breakdown:
-        src = b.get("source", "")
-        pts = b.get("points", 0)
-        if src == "base_fvg":
-            lines.append(f"  • Base FVG +{pts}")
-        elif src == "multi_tf":
-            lines.append(f"  • Multi-TF (1H↔4H) +{pts} 🔥")
-        elif src == "smart_level":
-            kind = b.get("kind", "")
-            lines.append(f"  • Smart Level ({kind}) +{pts}")
-        elif src == "multi_pair_correlation":
-            n = b.get("correlated_pairs", 0)
-            theme = b.get("theme", "")
-            lines.append(f"  • Multi-Pair ({n} pairs, {theme}) +{pts}")
-        elif src == "atr_strong":
-            lines.append(f"  • ATR strong (≥1.5×) +{pts}")
-    return (
-        f"\n⭐⭐⭐ <b>TOP PICK · score {score}/7</b> ⭐⭐⭐\n"
-        + "\n".join(lines) + "\n"
-    )
-
-
-async def _send_fvg_formed_alert(sig):
-    """FVG DETECTED — формирование."""
-    if not _bot8:
-        _setup_bot8()
-    if not _bot8 or not _admin_chat_id:
-        return
-    try:
-        dir_e = _fvg_direction_emoji(sig["direction"])
-        from datetime import datetime, timezone as _tz
-        ts = sig.get("formed_ts") or 0
-        hour = datetime.fromtimestamp(ts, tz=_tz.utc).hour if ts else 0
-        session = "🇺🇸 NY" if 13 <= hour < 21 else "🇬🇧 London" if 8 <= hour < 16 else "—"
-        size_pct = sig.get("fvg_size_rel", 0) * 100
-        body_pct_val = sig.get("impulse_body_ratio")
-        body_line = f"  • Impulse body: {body_pct_val*100:.0f}% ✅\n" if body_pct_val else ""
-        source = sig.get("source", "scan")
-        src_tag = "📡 TV" if source == "tv_webhook" else "🔎 Scan"
-        top_pick_block = _fvg_top_pick_block(sig)
-        text = (
-            f"⚡⚡⚡ <b>FVG DETECTED</b> ⚡⚡⚡ {src_tag}\n"
-            f"\n"
-            f"<b>{sig['instrument']}</b> · {sig.get('timeframe','1H')} · {dir_e} <b>{sig['direction'].upper()}</b>\n"
-            f"{top_pick_block}"
-            f"\n"
-            f"📍 Formed price: <code>{sig.get('formed_price','?')}</code>\n"
-            f"🎯 Zone: <code>{sig['fvg_bottom']:.5f}</code> — <code>{sig['fvg_top']:.5f}</code>\n"
-            f"\n"
-            f"📊 Quality:\n"
-            f"  • Size: {size_pct:.3f}%\n"
-            f"{body_line}"
-            f"  • Session: {session}\n"
-            f"\n"
-            f"⏳ <b>Entry limit:</b> <code>{sig['entry_price']:.5f}</code>\n"
-            f"🛑 SL: <code>{sig['sl_price']:.5f}</code>\n"
-        )
-        await _bot8.send_message(_admin_chat_id, text, parse_mode="HTML")
-        await asyncio.sleep(0.5)
-    except Exception as e:
-        logger.debug(f"fvg formed alert: {e}")
-
-
-async def _send_fvg_entry_alert(sig):
-    """RETEST ENTRY — ретест случился, сделка открыта."""
-    if not _bot8:
-        _setup_bot8()
-    if not _bot8 or not _admin_chat_id:
-        return
-    try:
-        dir_e = _fvg_direction_emoji(sig["direction"])
-        top_pick_block = _fvg_top_pick_block(sig)
-        text = (
-            f"🎯🎯🎯 <b>RETEST ENTRY</b> 🎯🎯🎯\n"
-            f"{top_pick_block}"
-            f"\n"
-            f"<b>{sig['instrument']}</b> · {dir_e} <b>{'LONG' if sig['direction']=='bullish' else 'SHORT'}</b>\n"
-            f"\n"
-            f"📍 Entry: <code>{sig.get('entered_price', sig['entry_price']):.5f}</code>\n"
-            f"🛑 SL:    <code>{sig['sl_price']:.5f}</code>\n"
-            f"📈 Trail: активируется после +1R\n"
-            f"\n"
-            f"🎯 Hybrid v2 · следим за trailing"
-        )
-        await _bot8.send_message(_admin_chat_id, text, parse_mode="HTML")
-        await asyncio.sleep(0.5)
-    except Exception as e:
-        logger.debug(f"fvg entry alert: {e}")
-
-
-async def _send_fvg_close_alert(sig, status):
-    """TP or SL — сделка закрыта."""
-    if not _bot8:
-        _setup_bot8()
-    if not _bot8 or not _admin_chat_id:
-        return
-    try:
-        R = sig.get("outcome_R") or 0
-        peak = sig.get("peak_R") or 0
-        dir_e = _fvg_direction_emoji(sig["direction"])
-        is_tp = status == "TP"
-        header = "✅✅✅" if is_tp else "❌❌❌"
-        emoji = "✅ TP" if is_tp else "❌ SL"
-        outcome = "🚀 ПРИБЫЛЬ" if is_tp else "📉 УБЫТОК"
-        tp_tag = "⭐ " if sig.get("is_top_pick") else ""
-        text = (
-            f"{header} <b>{tp_tag}{emoji} · {R:+.2f}R</b> {header}\n"
-            f"\n"
-            f"<b>{sig['instrument']}</b> · {dir_e} {'LONG' if sig['direction']=='bullish' else 'SHORT'} closed\n"
-            f"\n"
-            f"Entry: <code>{sig.get('entered_price', sig['entry_price']):.5f}</code>\n"
-            f"Exit:  <code>{sig.get('exit_price', 0):.5f}</code>\n"
-            f"PnL:   <b>{R:+.2f}R</b>\n"
-            f"Peak:  +{peak:.2f}R\n"
-            f"\n"
-            f"{outcome}"
-        )
-        await _bot8.send_message(_admin_chat_id, text, parse_mode="HTML")
-        await asyncio.sleep(0.5)
-    except Exception as e:
-        logger.debug(f"fvg close alert: {e}")
-
-
-# ── Scan/monitor для watcher loop ──────────────────────────
-_fvg_last_scan_ts = 0
-
-async def _check_forex_fvg_scan():
-    """Периодический скан (раз в scan_interval_min минут).
-
-    По-умолчанию ОТКЛЮЧЁН — сигналы FVG теперь приходят через TradingView Webhook
-    (см. /api/tv-webhook + tv_webhook.py). Чтобы включить legacy scan_all
-    детекцию (через yfinance/TD), установи FVG_SCAN_ENABLED=1.
-    """
-    global _fvg_last_scan_ts
-    if os.getenv("FVG_SCAN_ENABLED", "0").strip() not in ("1", "true", "yes", "on"):
-        # webhook-only mode — scan_all отключён чтобы не плодить дубли
-        return
-    try:
-        from fvg_scanner import scan_all, get_config
-        cfg = get_config()
-        interval = cfg.get("scan_interval_min", 10) * 60
-        import time as _t
-        now = _t.time()
-        if now - _fvg_last_scan_ts < interval:
-            return
-        # Получаем snapshot waiting до скана, потом — после
-        from database import _fvg_signals
-        before = {(s["instrument"], s.get("formed_ts")) for s in _fvg_signals().find(
-            {"status": "WAITING_RETEST"}, {"instrument": 1, "formed_ts": 1}
-        )}
-        print("[FVG-SCAN] starting scan_all...", flush=True)
-        stats = await asyncio.to_thread(scan_all)
-        # Ставим timestamp ПОСЛЕ успешного скана — защита от timeout-loop
-        _fvg_last_scan_ts = _t.time()
-        # FORMED alerts отключены — формирование FVG не значит торговать,
-        # реальные сигналы = ENTRY / TP / SL (в _check_forex_fvg_monitor).
-        # Состояние FORMED видно в UI вкладки Forex FVG (таблица WAITING).
-        print(f"[FVG-SCAN] done: {stats['total_instruments']} instruments, {stats['new_fvgs']} new in DB", flush=True)
-    except Exception as e:
-        import traceback
-        print(f"[FVG-SCAN] ERROR: {e}\n{traceback.format_exc()[-500:]}", flush=True)
-
-
-async def _check_forex_fvg_monitor():
-    """Monitor retest + TP/SL (каждый тик).
-    КРИТИЧНО: alerts в отдельных try/except — если один alert падает
-    (плохой chart_path, сетевая ошибка, и т.д.), остальные события всё
-    равно обрабатываются. Сам monitor_signals отделён от alerts.
-    """
-    # 1. Запускаем monitor_signals (БД работа) — отдельный try/except
-    try:
-        from fvg_scanner import monitor_signals
-        events = await asyncio.to_thread(monitor_signals)
-    except Exception:
-        logger.exception("[FVG-MON] monitor_signals crashed")
-        return
-
-    # 2. Алерты — каждый в своём try/except (ошибка одного не блокирует остальных)
-    entered_count = 0
-    tp_count = 0
-    sl_count = 0
-    for sig in events.get("entered", []):
-        try:
-            await _send_fvg_entry_alert(sig)
-            entered_count += 1
-        except Exception as e:
-            logger.error(f"[FVG-MON] entry alert fail {sig.get('instrument','?')}: {e}")
-    for sig in events.get("closed_tp", []):
-        try:
-            await _send_fvg_close_alert(sig, "TP")
-            tp_count += 1
-        except Exception as e:
-            logger.error(f"[FVG-MON] TP alert fail {sig.get('instrument','?')}: {e}")
-    for sig in events.get("closed_sl", []):
-        try:
-            await _send_fvg_close_alert(sig, "SL")
-            sl_count += 1
-        except Exception as e:
-            logger.error(f"[FVG-MON] SL alert fail {sig.get('instrument','?')}: {e}")
-    if entered_count or tp_count or sl_count:
-        logger.info(f"[FVG-MON] entered={entered_count} tp={tp_count} sl={sl_count}")
 
 
 async def _pending_cluster_block(pair: str, direction: str, triggered: bool = False) -> str:
@@ -2791,13 +2557,6 @@ async def _ui_prewarm_loop():
             try:
                 from admin import api_top_picks
                 tasks.append(_warm_one("top-picks", lambda: api_top_picks(96, 200)))
-            except Exception:
-                pass
-
-            # fvg-signals
-            try:
-                from admin import api_fvg_signals
-                tasks.append(_warm_one("fvg-signals", lambda: api_fvg_signals("all", 200, "")))
             except Exception:
                 pass
 
@@ -3989,7 +3748,7 @@ async def start_watcher():
     # Прогрев ВСЕХ ботов сразу на старте (раньше была ленивая init только при первом алерте —
     # если init падал молча, алерты терялись тихо до рестарта)
     for name, fn in [("bot5", _setup_bot5),
-                     ("bot8", _setup_bot8), ("bot9", _setup_bot9),
+                     ("bot9", _setup_bot9),
                      ("bot10", _setup_bot10)]:
         try:
             fn()
