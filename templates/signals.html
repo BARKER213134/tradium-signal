@@ -7915,6 +7915,19 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   </select>
   <button id="hotBtn" onclick="toggleHotPanel(this)" title="🔥 Горячий список: монеты с ралли +40% за ≤7д (окно 30 дней). Клик — фильтр журнала + список монет. Бэктест 30.07: LONG на горячих +0.18 против −0.21; комбо st_break4h/second_flip/impulse — EV в 2-8× выше" style="background:rgba(255,94,58,0.12);border:1px solid rgba(255,94,58,0.45);border-radius:6px;color:#ff7a45;font-size:11px;font-weight:700;cursor:pointer;padding:5px 10px;font-family:var(--font-mono);">🔥 Горячие</button>
   <div id="hotPanel" style="display:none;flex-basis:100%;flex-wrap:wrap;gap:5px;padding:6px 2px;"></div>
+  <button id="alarmBtn" onclick="toggleAlarmPanel()" title="⏰ Будильник: цена / цена+сигнал / только сигнал — алерт в телеграм" style="background:rgba(76,201,240,0.10);border:1px solid rgba(76,201,240,0.4);border-radius:6px;color:#4cc9f0;font-size:11px;font-weight:700;cursor:pointer;padding:5px 10px;font-family:var(--font-mono);">⏰ Будильник</button>
+  <div id="alarmPanel" style="display:none;flex-basis:100%;flex-wrap:wrap;gap:6px;padding:6px 2px;align-items:center;">
+    <input id="almSym" placeholder="монета (BTC)" style="width:110px;background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+    <input id="almPrice" placeholder="цена (пусто = только сигнал)" style="width:190px;background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+    <select id="almKind" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;font-family:var(--font-mono);">
+      <option value="price">⏰ просто цена</option>
+      <option value="price+signal">⏰🚨 цена + сигнал</option>
+      <option value="signal">🚨 только сигнал</option>
+    </select>
+    <button onclick="addAlarm()" style="background:rgba(0,229,160,0.12);border:1px solid rgba(0,229,160,0.45);border-radius:6px;color:#00e5a0;font-size:11px;font-weight:700;cursor:pointer;padding:5px 12px;font-family:var(--font-mono);">поставить</button>
+    <span id="almStatus" style="color:var(--muted);font-size:11px;"></span>
+    <div id="alarmList" style="flex-basis:100%;display:flex;flex-wrap:wrap;gap:5px;"></div>
+  </div>
   <select id="jFilterDir" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все</option>
     <option value="LONG">🟢 LONG</option>
@@ -9895,6 +9908,47 @@ async function loadJournal() {
   }
 }
 
+async function loadAlarms() {
+  const box = document.getElementById('alarmList');
+  if (!box) return;
+  try {
+    const j = await (await fetch('/api/alarms')).json();
+    box.innerHTML = (j.items || []).map(a => {
+      const k = a.kind === 'signal' ? '🚨' : (a.kind === 'price+signal' ? '⏰🚨' : '⏰');
+      const pr = a.price ? (' ' + (a.side === 'above' ? '≥' : '≤') + a.price) : '';
+      const hit = a.price_hit ? ' · уровень ✓, жду сигнал' : '';
+      return '<span style="padding:3px 8px;border-radius:6px;background:rgba(76,201,240,0.08);border:1px solid rgba(76,201,240,0.35);color:#9fdcf2;font-size:11px;font-family:var(--font-mono);">' + k + ' ' + a.symbol.replace('USDT','') + pr + hit +
+        ' <a href="#" onclick="delAlarm('' + a.id + '');return false;" style="color:#ff5e9c;text-decoration:none;font-weight:700;">✖</a></span>';
+    }).join('') || '<span style="color:var(--muted);font-size:11px;">будильников нет</span>';
+  } catch (e) { box.textContent = '⛔'; }
+}
+async function addAlarm() {
+  const sym = (document.getElementById('almSym').value || '').trim();
+  const pr = (document.getElementById('almPrice').value || '').trim();
+  const kind = document.getElementById('almKind').value;
+  const st = document.getElementById('almStatus');
+  if (!sym) { st.textContent = 'монета?'; return; }
+  if (kind !== 'signal' && !pr) { st.textContent = 'цена?'; return; }
+  st.textContent = '⏳';
+  try {
+    let url = '/api/alarms?symbol=' + encodeURIComponent(sym) + '&kind=' + encodeURIComponent(kind);
+    if (pr) url += '&price=' + encodeURIComponent(pr);
+    const j = await (await fetch(url, {method: 'POST'})).json();
+    st.textContent = j.ok ? ('✅ взведён' + (j.side ? ' (' + (j.side === 'above' ? 'сверху' : 'снизу') + ')' : '')) : ('⛔ ' + (j.error || ''));
+    if (j.ok) { document.getElementById('almPrice').value = ''; loadAlarms(); }
+  } catch (e) { st.textContent = '⛔'; }
+}
+async function delAlarm(id) {
+  try { await fetch('/api/alarms/' + id, {method: 'DELETE'}); } catch (e) {}
+  loadAlarms();
+}
+function toggleAlarmPanel() {
+  const p = document.getElementById('alarmPanel');
+  if (!p) return;
+  const on = p.style.display === 'none';
+  p.style.display = on ? 'flex' : 'none';
+  if (on) loadAlarms();
+}
 let _hotOn = false;
 async function toggleHotPanel(btn) {
   // 🔥 фильтр журнала + список горячих монет (бэктест 30.07)

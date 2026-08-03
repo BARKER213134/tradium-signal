@@ -33,6 +33,11 @@ SHORT_SRC = {"shark", "triple_confluence", "second_flip", "thin_pump",
              "st_mtf", "st_vip", "confluence_5plus", "confluence_lo"}
 SLOTS = 8
 COOLDOWN_H = 24
+# стейблы в канал не берём (аудит 03.08: шорт USDC от thin_pump —
+# болтание у пега, TP недостижим)
+STABLE_SYMS = {"USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "EURUSDT",
+               "EURIUSDT", "AEURUSDT", "PAXGUSDT", "XUSDUSDT", "USD1USDT",
+               "USDEUSDT", "BUSDUSDT"}
 TP_PCT, SL_PCT = 20.0, 5.0
 TIME_STOP_H, TIME_STOP_MIN = 48, 2.0
 HORIZON_H = 96
@@ -302,7 +307,7 @@ def try_open() -> int:
     for src, d_, sym, pair, at, score, star in cands:
         if n_open + opened >= SLOTS:
             break
-        if sym in open_syms:
+        if sym in open_syms or sym in STABLE_SYMS:
             continue
         st = st_long if d_ == "LONG" else st_short
         if st["mult"] <= 0:

@@ -3451,6 +3451,7 @@ async def api_health():
         add("liq_ws", "🩸 Ликвидации (WebSocket)", age_min(lq.get("at")), 30, 120)
         oi_ = db.oi_hourly.find_one(sort=[("at", -1)]) or {}
         add("oi_poll", "📈 OI-снапшоты (fapi)", age_min(oi_.get("at")), 90, 240)
+        add("alarms", "⏰ Будильники", age_min(hb.get("alarms")), 10, 30)
         ws = db.cluster_delta.find_one(sort=[("cached_at", -1)]) or {}
         add("delta_ws", "⚡ Realtime-дельта (WebSocket)", age_min(ws.get("cached_at")), 10, 30)
         # диагноз стрима: жив ли цикл и что за ошибка коннекта
@@ -9372,6 +9373,74 @@ async def api_hot_coins():
             1 if x["fresh"] else 2,
             x["fresh"]["age_h"] if x["fresh"] else 99))
         return {"items": out, "count": len(out)}
+    return await asyncio.to_thread(_q)
+
+
+@app.get("/api/alarms")
+async def api_alarms_list():
+    """⏰ Взведённые будильники."""
+    def _q():
+        from database import _get_db
+        out = []
+        for d in _get_db().alarms.find({"state": "ARMED"}) \
+                .sort("created_at", -1).limit(100):
+            out.append({"id": str(d["_id"]), "symbol": d["symbol"],
+                        "kind": d["kind"], "price": d.get("price"),
+                        "side": d.get("side"),
+                        "price_hit": bool(d.get("price_hit"))})
+        return {"items": out}
+    return await asyncio.to_thread(_q)
+
+
+@app.post("/api/alarms")
+async def api_alarms_add(symbol: str, kind: str = "price",
+                         price: float | None = None):
+    """⏰ Поставить будильник: kind = price | price+signal | signal.
+    Сторона пересечения фиксируется по текущей цене."""
+    def _q():
+        from database import _get_db, utcnow
+        sym = symbol.upper().replace("/", "").strip()
+        if not sym.endswith("USDT"):
+            sym += "USDT"
+        if kind not in ("price", "price+signal", "signal"):
+            return {"ok": False, "error": "kind?"}
+        side = None
+        if kind in ("price", "price+signal"):
+            if not price or price <= 0:
+                return {"ok": False, "error": "нужна цена"}
+            cur = None
+            import requests as _rq
+            for url in ("https://data-api.binance.vision/api/v3/ticker/price",
+                        "https://fapi.binance.com/fapi/v1/ticker/price"):
+                try:
+                    r = _rq.get(url, params={"symbol": sym}, timeout=8)
+                    if r.status_code == 200:
+                        cur = float((r.json() or {}).get("price") or 0)
+                        if cur:
+                            break
+                except Exception:
+                    pass
+            if not cur:
+                return {"ok": False, "error": f"не нашёл цену {sym}"}
+            side = "above" if price >= cur else "below"
+        r = _get_db().alarms.insert_one({
+            "symbol": sym, "kind": kind, "price": price, "side": side,
+            "state": "ARMED", "price_hit": False, "created_at": utcnow()})
+        return {"ok": True, "id": str(r.inserted_id), "side": side}
+    return await asyncio.to_thread(_q)
+
+
+@app.delete("/api/alarms/{alarm_id}")
+async def api_alarms_del(alarm_id: str):
+    """⏰ Снять будильник."""
+    def _q():
+        from database import _get_db
+        from bson import ObjectId
+        try:
+            _get_db().alarms.delete_one({"_id": ObjectId(alarm_id)})
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
     return await asyncio.to_thread(_q)
 
 

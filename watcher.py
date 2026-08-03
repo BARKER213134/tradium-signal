@@ -4125,6 +4125,14 @@ async def start_watcher():
     except Exception:
         logger.exception("[delta-ws] failed to schedule")
 
+    # ⏰ Будильники юзера: цена/цена+сигнал/сигнал → TG (03.08)
+    try:
+        import alarm_engine as _al
+        asyncio.create_task(_al.alarm_loop())
+        logger.info("[alarm] loop scheduled")
+    except Exception:
+        logger.exception("[alarm] failed to schedule")
+
     # 📡 Коллектор деривативов (31.07): ликвидации (WS) + OI (часовой) —
     # только сбор датасета в Mongo, сигналов нет (история для бэктестов)
     try:
