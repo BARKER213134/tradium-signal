@@ -39,6 +39,10 @@ STABLE_SYMS = {"USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "EURUSDT",
                "EURIUSDT", "AEURUSDT", "PAXGUSDT", "XUSDUSDT", "USD1USDT",
                "USDEUSDT", "BUSDUSDT"}
 TP_PCT, SL_PCT = 20.0, 5.0
+# 03.08 стенд выходов (6 схем, год): лонги ходят 10-13% и умирают по
+# потолку — цель +12 даёт +0.92 против +0.64 у +20; шорты падают дальше,
+# им +20 лучший (+0.85). BE/частичные фиксации РЕЖУТ EV — отвергнуты.
+TP_PCT_LONG = 12.0
 TIME_STOP_H, TIME_STOP_MIN = 48, 2.0
 HORIZON_H = 96
 SHORT_BASE_MULT = 0.5      # год-реплика: шорт режимный
@@ -207,7 +211,9 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
         except Exception:
             pass
     doc = {"symbol": sym, "pair": pair, "direction": d_, "src": src,
-           "entry": price, "tp": price * (1 + want * TP_PCT / 100),
+           "entry": price,
+           "tp": price * (1 + want * (TP_PCT_LONG if d_ == "LONG"
+                                      else TP_PCT) / 100),
            "sl": price * (1 - want * SL_PCT / 100),
            "opened_at": utcnow(), "peak_pnl": 0.0,
            "size_mult": mult, "kit": bool(kit), "score": score,
@@ -243,7 +249,8 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
         f"{_fmt(doc['cvd24'])} · funding {rate * 100:+.3f}%\n"
         f"рынок: фаза {PE.get(phase, '?')}{phase or '?'} · "
         f"климат {PE.get(clim, '?')}{clim or '?'}\n"
-        f"вход {_fmt(price)} · TP {_fmt(doc['tp'])} (+20%) · "
+        f"вход {_fmt(price)} · TP {_fmt(doc['tp'])} "
+        f"(+{(TP_PCT_LONG if d_ == 'LONG' else TP_PCT):.0f}%) · "
         f"SL {_fmt(doc['sl'])} (−5%) · размер {mult:.2f}R\n"
         f"<i>выходы: тайм-стоп 48ч&lt;+2% · "
         f"{'sell-климакс в плюсе ≥4% · ' if d_ == 'LONG' else ''}"
@@ -382,7 +389,8 @@ def manage() -> int:
         if (want == 1 and price <= p["sl"]) or (want == -1 and price >= p["sl"]):
             reason, pnl = "SL", -SL_PCT
         elif (want == 1 and price >= p["tp"]) or (want == -1 and price <= p["tp"]):
-            reason, pnl = "TP", TP_PCT
+            reason = "TP"
+            pnl = (p["tp"] / p["entry"] - 1) * 100 * want
         elif d_ == "LONG" and peak >= 4:
             an = (ctx_all.get(sym) or {}).get("anom_sell_ts")
             if an and (now.timestamp() - an / 1000) / 3600 < 1.5:
