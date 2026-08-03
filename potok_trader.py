@@ -31,7 +31,10 @@ logger = logging.getLogger(__name__)
 LONG_SRC = {"whale", "triple_confluence", "st_mtf", "st_vip", "floor_buy"}
 SHORT_SRC = {"shark", "triple_confluence", "second_flip", "thin_pump",
              "st_mtf", "st_vip", "confluence_5plus", "confluence_lo"}
-SLOTS = 8
+SLOTS = 10
+# 💵 макс-загрузка (03.08, запрос юзера): позиция = депо/СЛОТЫ × mult —
+# 10 сделок по 10% депо = 100% без плеча (риск 0.5% депо/сделку при SL −5)
+POS_FRAC = 1.0 / SLOTS
 COOLDOWN_H = 24
 # стейблы в канал не берём (аудит 03.08: шорт USDC от thin_pump —
 # болтание у пега, TP недостижим)
@@ -45,7 +48,7 @@ TP_PCT, SL_PCT = 20.0, 5.0
 TP_PCT_LONG = 12.0
 TIME_STOP_H, TIME_STOP_MIN = 48, 2.0
 HORIZON_H = 96
-SHORT_BASE_MULT = 0.5      # год-реплика: шорт режимный
+SHORT_BASE_MULT = 1.0      # 03.08: шорт доказал себя вживую (30д +36пп) — базовая полурезка снята, CB-защита остаётся
 DAY_STOP_PP = -15.0        # ~-3% депо при 1R=1%
 CB_HALF_PP = 0.0           # 30д Σ < 0 → полразмера
 CB_PAUSE_PP = -50.0        # 30д Σ < -50пп → пауза канала
@@ -127,9 +130,11 @@ def _equity_usd() -> tuple[float, float]:
         start = 1000.0
     eq = start
     try:
-        for t in _db().potok_trades.find({}, {"pnl_pct": 1, "size_mult": 1}) \
+        for t in _db().potok_trades.find(
+                {}, {"pnl_pct": 1, "size_mult": 1, "pos_frac": 1}) \
                 .sort("closed_at", 1):
-            c = (t.get("pnl_pct") or 0) / 5.0 * (t.get("size_mult") or 1)
+            fr = t.get("pos_frac") or (0.2 * (t.get("size_mult") or 1))
+            c = (t.get("pnl_pct") or 0) * fr
             eq *= (1 + c / 100)
     except Exception:
         pass
@@ -238,7 +243,7 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
            "star": bool(star), "funding": rate,
            "cvd24": ctx.get("cvd24"), "phase": phase, "climate": clim,
            "anom_age_h": ctx.get("_anom_age_h"), "hot": _hot,
-           "disq_ref": _disq_ref}
+           "disq_ref": _disq_ref, "pos_frac": round(POS_FRAC * mult, 4)}
     # 🌊 запись входа в журнал (маркер на графиках); state='OPEN' —
     # generic-трекер её не трогает, исход проставит manage() при закрытии
     try:
@@ -274,8 +279,9 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
         f"вход {_fmt(price)} · TP {_fmt(doc['tp'])} "
         f"(+{(TP_PCT_LONG if d_ == 'LONG' else TP_PCT):.0f}%) · "
         f"SL {_fmt(doc['sl'])} (−5%) · размер {mult:.2f}R\n"
-        f"💵 депо ${_eq:.0f} · позиция ≈ ${_eq * 0.2 * mult:.0f} · "
-        f"риск ${_eq * 0.01 * mult:.2f}\n"
+        f"💵 депо ${_eq:.0f} · позиция ≈ ${_eq * POS_FRAC * mult:.0f} "
+        f"({POS_FRAC * mult * 100:.0f}% депо) · "
+        f"риск ${_eq * POS_FRAC * mult * 0.05:.2f}\n"
         f"<i>выходы: тайм-стоп 48ч&lt;+2% · "
         f"{'sell-климакс в плюсе ≥4% · ' if d_ == 'LONG' else ''}"
         f"потолок 96ч · разворот фазы</i>")
@@ -459,7 +465,8 @@ def manage() -> int:
                 pass
         closed += 1
         st = _channel_state(d_)
-        depo = round(pnl / 5 * (p.get("size_mult") or 1), 2)
+        _frac = p.get("pos_frac") or (0.2 * (p.get("size_mult") or 1))
+        depo = round(pnl * _frac, 2)
         try:
             _st_usd, _eq_usd = _equity_usd()
             _usd = round(_eq_usd / (1 + depo / 100) * depo / 100, 2)
