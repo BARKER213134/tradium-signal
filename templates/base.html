@@ -3720,6 +3720,7 @@ window._kcToolbarHtml = `
     <button data-kc="rayLine" title="Луч">➚</button>
     <button data-kc="fibonacciLine" title="Фибоначчи">🔢</button>
     <button data-kc="priceLine" title="Ценовая метка">💲</button>
+    <button data-kc="__alarm" title="Будильник: включи и кликни по уровню на графике">⏰</button>
     <button data-kc="__clear" title="Удалить построения" style="color:#ff6b6b;">🗑</button>
   </div>
   <style>.kc-toolbar button{background:none;border:none;color:#aab3c2;font-size:14px;cursor:pointer;padding:2px 5px;border-radius:5px;}
@@ -4104,7 +4105,84 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     ev.stopPropagation();
     const name = b.dataset.kc;
     if (name === '__clear') chart.removeOverlay({ groupId: 'draw' });
+    else if (name === '__alarm') {
+      container._kcAlarmMode = !container._kcAlarmMode;
+      b.style.background = container._kcAlarmMode ? 'rgba(255,210,62,0.35)' : 'none';
+      container.style.cursor = container._kcAlarmMode ? 'crosshair' : '';
+    }
     else chart.createOverlay({ name, groupId: 'draw' });
+  });
+
+  // ⏰ будильник кликом по уровню (03.08): кнопка ⏰ в тулбаре включает
+  // режим, клик по графику берёт цену через convertFromPixel, попап
+  // ставит через POST /api/alarms (сторона фиксируется на сервере).
+  // Существующие ARMED-будильники монеты рисуются жёлтым пунктиром.
+  const almPop = document.createElement('div');
+  almPop.className = 'kc-almpop';
+  almPop.style.cssText = 'position:absolute;display:none;z-index:40;background:rgba(10,14,20,0.97);' +
+    'border:1px solid rgba(255,210,62,0.5);border-radius:8px;padding:8px 10px;' +
+    'font-family:var(--font-mono,monospace);font-size:11.5px;color:#dfe6f0;white-space:nowrap;';
+  container.appendChild(almPop);
+  const _almLine = (price) => {
+    try {
+      chart.createOverlay({ name: 'priceLine', points: [{ value: price }], groupId: 'alarms', lock: true,
+        styles: { line: { color: '#ffd23e', style: 'dashed' },
+                  text: { color: '#0a0e14', backgroundColor: '#ffd23e' } } });
+    } catch (e) {}
+  };
+  (async () => {
+    try {
+      const d = await (await fetch('/api/alarms')).json();
+      (d.items || []).filter(a => a.symbol === sym && a.price > 0).forEach(a => _almLine(a.price));
+    } catch (e) {}
+  })();
+  container.addEventListener('click', (ev) => {
+    if (!container._kcAlarmMode) return;
+    if (ev.target.closest('.kc-toolbar') || ev.target.closest('.kc-almpop')) return;
+    const rc = container.getBoundingClientRect();
+    const mx = ev.clientX - rc.left, my = ev.clientY - rc.top;
+    let p = null;
+    try { p = chart.convertFromPixel({ x: mx, y: my }, { paneId: 'candle_pane' }); }
+    catch (e) { try { p = chart.convertFromPixel([{ x: mx, y: my }], { paneId: 'candle_pane' }); } catch (e2) {} }
+    const val = ((Array.isArray(p) ? p[0] : p) || {}).value;
+    if (!val || val <= 0) return;
+    const price = +(+val).toFixed(_prec);
+    almPop.innerHTML = '<b style="color:#ffd23e;">⏰ ' + price + '</b>' +
+      '<button data-alm="price" style="margin-left:8px;background:rgba(255,210,62,0.15);border:1px solid rgba(255,210,62,0.5);border-radius:6px;color:#ffd23e;cursor:pointer;padding:2px 8px;font-size:11px;">цена</button>' +
+      '<button data-alm="price+signal" style="margin-left:4px;background:rgba(76,201,240,0.12);border:1px solid rgba(76,201,240,0.45);border-radius:6px;color:#4cc9f0;cursor:pointer;padding:2px 8px;font-size:11px;">цена+🚨</button>' +
+      '<button data-alm="__x" style="margin-left:4px;background:none;border:none;color:#8892a4;cursor:pointer;">✕</button>';
+    almPop.style.left = Math.max(4, Math.min(mx + 10, container.clientWidth - 280)) + 'px';
+    almPop.style.top = Math.max(4, my - 16) + 'px';
+    almPop.style.display = 'block';
+    almPop._price = price;
+  });
+  almPop.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('button[data-alm]');
+    if (!b) return;
+    ev.stopPropagation();
+    const kind = b.dataset.alm;
+    if (kind === '__x') { almPop.style.display = 'none'; return; }
+    b.textContent = '…';
+    try {
+      const r = await fetch('/api/alarms?symbol=' + encodeURIComponent(sym) +
+        '&kind=' + encodeURIComponent(kind) + '&price=' + almPop._price, { method: 'POST' });
+      const d = await r.json();
+      if (d.ok) {
+        _almLine(almPop._price);
+        almPop.innerHTML = '<b style="color:#00e5a0;">✓ будильник поставлен (' +
+          (d.side === 'above' ? '≥' : '≤') + ' ' + almPop._price + ')</b>';
+        container._kcAlarmMode = false;
+        container.style.cursor = '';
+        const btn = tb.querySelector('button[data-kc="__alarm"]');
+        if (btn) btn.style.background = 'none';
+        if (typeof loadAlarms === 'function') try { loadAlarms(); } catch (e) {}
+      } else {
+        almPop.innerHTML = '<b style="color:#ff5e9c;">⛔ ' + (d.error || 'ошибка') + '</b>';
+      }
+    } catch (e) {
+      almPop.innerHTML = '<b style="color:#ff5e9c;">⛔ сеть недоступна</b>';
+    }
+    setTimeout(() => { almPop.style.display = 'none'; }, 2000);
   });
 
   // сигналы платформы на свечах: LONG — под свечой (у low), SHORT — над (у high)
