@@ -9267,7 +9267,7 @@ async function loadAlarms() {
       const pr = a.price ? (' ' + (a.side === 'above' ? '≥' : '≤') + a.price) : '';
       const hit = a.price_hit ? ' · уровень ✓, жду сигнал' : '';
       return '<span style="padding:3px 8px;border-radius:6px;background:rgba(76,201,240,0.08);border:1px solid rgba(76,201,240,0.35);color:#9fdcf2;font-size:11px;font-family:var(--font-mono);">' + k + ' ' + a.symbol.replace('USDT','') + pr + hit +
-        ' <a href="#" onclick="delAlarm('' + a.id + '');return false;" style="color:#ff5e9c;text-decoration:none;font-weight:700;">✖</a></span>';
+        ' <a href="#" onclick="delAlarm(\'' + a.id + '\');return false;" style="color:#ff5e9c;text-decoration:none;font-weight:700;">✖</a></span>';
     }).join('') || '<span style="color:var(--muted);font-size:11px;">будильников нет</span>';
   } catch (e) { box.textContent = '⛔'; }
 }
