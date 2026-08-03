@@ -9191,9 +9191,19 @@ safeInterval(_refreshBias, 5 * 60 * 1000);
 // без лишних запросов к серверу. Использует flip_ts из последнего ответа.
 safeInterval(_updateBiasDurations, 30 * 1000);
 
+function _jFailRow(msg) {
+  // показать причину ТОЛЬКО если таблица пуста — не затирать данные
+  if (_journalData && _journalData.length) return;
+  const tb = document.getElementById('jBody');
+  if (tb) tb.innerHTML = `<tr><td colspan="20" style="text-align:center;padding:36px;color:#ff5e9c;font-family:var(--font-mono);font-size:12px;">${msg}</td></tr>`;
+}
 async function loadJournal() {
   try {
     const r = await fetch('/api/journal');
+    // 03.08 «сигналы не загружаются»: протухшая сессия давала 401 JSON →
+    // фронт молча рисовал пустую таблицу. Теперь: 401 → на логин.
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     const items = d.items || [];
 
@@ -9241,6 +9251,8 @@ async function loadJournal() {
     // 29.07 «при перезагрузке сигналы не отображаются»: неудачная первая
     // загрузка (обрыв/рестарт сервера) — ретрай через 3с, не ждём 20с-полла
     console.warn('[journal] load fail, retry 3s:', e);
+    _jFailRow('⚠ Не удалось загрузить журнал (' + (e && e.message ? e.message : 'сеть') + ') — повтор через 3с…<br>' +
+      '<span style="color:var(--muted);">Если не проходит: рестарт деплоя (подождать минуту) или блокировка сети (NordVPN Threat Protection).</span>');
     if (!_journalData || !_journalData.length) setTimeout(loadJournal, 3000);
   }
 }
