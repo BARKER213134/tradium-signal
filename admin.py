@@ -3064,6 +3064,8 @@ async def api_health():
         oi_ = db.oi_hourly.find_one(sort=[("at", -1)]) or {}
         add("oi_poll", "📈 OI-снапшоты (fapi)", age_min(oi_.get("at")), 90, 240)
         add("alarms", "⏰ Будильники", age_min(hb.get("alarms")), 10, 30)
+        # 🌉 гэп-сканер: событие раз в неделю, но пульс каждые <=30 мин
+        add("gap_scan", "🌉 Гэп-сканер FOREX (вс)", age_min(hb.get("gap_scan")), 60, 180)
         ws = db.cluster_delta.find_one(sort=[("cached_at", -1)]) or {}
         add("delta_ws", "⚡ Realtime-дельта (WebSocket)", age_min(ws.get("cached_at")), 10, 30)
         # диагноз стрима: жив ли цикл и что за ошибка коннекта

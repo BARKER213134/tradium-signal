@@ -3900,6 +3900,10 @@ async def start_watcher():
         asyncio.create_task(_dc.oi_poll_loop())
         asyncio.create_task(_dc.ws_probe_once())
         logger.info("[deriv] liq stream + oi poll scheduled")
+        # 🌉 воскресный гэп-сканер FOREX (вс 21:26 скан, пн 21:15 итоги)
+        import gap_scanner as _gs
+        asyncio.create_task(_gs.gap_loop())
+        logger.info("[gap] weekly scanner scheduled")
     except Exception:
         logger.exception("[deriv] failed to schedule")
 
