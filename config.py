@@ -44,6 +44,8 @@ BOT5_BOT_TOKEN = os.getenv("BOT5_BOT_TOKEN", "")
 
 # Шестой бот — Paper Trading
 BOT6_BOT_TOKEN = os.getenv("BOT6_BOT_TOKEN", "")
+# 🌊 условное депо paper-канала ПОТОК для $-учёта (03.08)
+POTOK_DEPO_USD = float(os.getenv("POTOK_DEPO_USD", "1000"))
 
 # BOT7 (Cluster Alerts) удалён вместе с источником (2026-07-02)
 
