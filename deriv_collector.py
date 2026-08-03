@@ -80,6 +80,54 @@ def _wr_status(**kw):
         pass
 
 
+async def ws_probe_once():
+    """Одноразовая проба WS-потоков (2026-08-03): фьючерсный WS с Railway
+    молчит на ВСЕХ стримах (markPrice, kline, forceOrder) при живом
+    SUBSCRIBE-ack. Три варианта по 60с — итог в system.ws_probe:
+    A combined fstream markPrice · B raw fstream markPrice ·
+    C spot btcusdt@trade. Если C льётся, а A/B нет — политика Binance
+    именно по fstream для этого IP."""
+    try:
+        import websockets
+    except ImportError:
+        return
+    await asyncio.sleep(90)
+    probes = [
+        ("A_fstream_combined",
+         "wss://fstream.binance.com/stream?streams=btcusdt@markPrice"),
+        ("B_fstream_raw",
+         "wss://fstream.binance.com/ws/btcusdt@markPrice"),
+        ("C_spot_raw",
+         "wss://stream.binance.com:9443/ws/btcusdt@trade"),
+    ]
+    out = {}
+    for name, url in probes:
+        n = 0
+        err = None
+        try:
+            async with websockets.connect(
+                    url, ping_interval=20, max_size=2 ** 22,
+                    close_timeout=5) as ws:
+                t0 = time.time()
+                while time.time() - t0 < 60:
+                    try:
+                        await asyncio.wait_for(ws.recv(), timeout=10)
+                        n += 1
+                    except asyncio.TimeoutError:
+                        pass
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"[:120]
+        out[name] = {"frames": n, "err": err}
+        logger.info(f"[ws-probe] {name}: {n} кадров, err={err}")
+    try:
+        from database import _get_db
+        _get_db().system.update_one(
+            {"_id": "ws_probe"},
+            {"$set": {"at": _utcnow(), "res": out}}, upsert=True)
+    except Exception:
+        pass
+
+
 async def run_liq_stream():
     """WS-луп ликвидаций (паттерн delta_websocket: combined /stream URL,
     recv с таймаутом — флаш и ПУЛЬС каждые ~20с ДАЖЕ В ТИШИНЕ; ликвидации
