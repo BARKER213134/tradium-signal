@@ -70,25 +70,64 @@ def _flush_liq(buckets: dict, bigs: list):
         logger.debug("[liq] flush fail", exc_info=True)
 
 
+def _wr_status(**kw):
+    try:
+        from database import _get_db
+        _get_db().system.update_one(
+            {"_id": "liq_ws_status"},
+            {"$set": {"at": _utcnow(), **kw}}, upsert=True)
+    except Exception:
+        pass
+
+
 async def run_liq_stream():
-    """WS-луп ликвидаций с реконнектом. Аггрегация в память, флаш 15с."""
+    """WS-луп ликвидаций (паттерн delta_websocket: combined /stream URL,
+    recv с таймаутом — флаш и ПУЛЬС каждые ~20с ДАЖЕ В ТИШИНЕ; ликвидации
+    редкие поштучно — молчание не значит сбой; реконнект при 15 мин без
+    единого сообщения; диагностика в system.liq_ws_status)."""
     try:
         import websockets
     except ImportError:
         logger.error("[liq] websockets package not installed")
+        _wr_status(state="no_websockets_pkg")
         return
+    url = "wss://fstream.binance.com/stream?streams=!forceOrder@arr"
     buckets: dict = {}
     bigs: list = []
-    last_flush = time.time()
+    msgs_total = 0
     while True:
         try:
             async with websockets.connect(
-                    LIQ_WS_URL, ping_interval=180, ping_timeout=60,
-                    max_queue=512) as ws:
-                logger.info("[liq] stream connected")
-                async for raw in ws:
+                    url, ping_interval=180, ping_timeout=600,
+                    max_size=2 ** 22, close_timeout=10) as ws:
+                logger.info("[liq] connected")
+                _wr_status(state="connected", last_error=None)
+                silent_s = 0.0
+                while True:
+                    raw = None
                     try:
-                        o = (json.loads(raw) or {}).get("o") or {}
+                        raw = await asyncio.wait_for(ws.recv(),
+                                                     timeout=FLUSH_SEC)
+                        silent_s = 0.0
+                    except asyncio.TimeoutError:
+                        silent_s += FLUSH_SEC
+                    # флаш + пульс — по таймеру, независимо от сообщений
+                    if buckets or bigs:
+                        fb, fbi = buckets, bigs
+                        buckets, bigs = {}, []
+                        await asyncio.to_thread(_flush_liq, fb, fbi)
+                    else:
+                        await asyncio.to_thread(_hb, "liq_ws")
+                    if raw is None:
+                        if silent_s >= 900:
+                            logger.warning("[liq] 15 мин тишины — реконнект")
+                            _wr_status(state="silent_reconnect",
+                                       msgs_total=msgs_total)
+                            break
+                        continue
+                    try:
+                        msg = json.loads(raw)
+                        o = (msg.get("data") or {}).get("o") or {}
                         sym = o.get("s") or ""
                         if not sym.endswith("USDT"):
                             continue
@@ -97,6 +136,11 @@ async def run_liq_stream():
                         usd = qty * px
                         if usd <= 0:
                             continue
+                        msgs_total += 1
+                        if msgs_total == 1 or msgs_total % 500 == 0:
+                            _wr_status(state="flowing",
+                                       msgs_total=msgs_total,
+                                       last_sym=sym)
                         # SELL = принудительная продажа = ликвидирован ЛОНГ
                         is_long_liq = (o.get("S") == "SELL")
                         ts5 = int(o.get("T", time.time() * 1000)
@@ -116,21 +160,10 @@ async def run_liq_stream():
                                 "at": _utcnow()})
                     except Exception:
                         continue
-                    if time.time() - last_flush >= FLUSH_SEC:
-                        fb, fbi = buckets, bigs
-                        buckets, bigs = {}, []
-                        last_flush = time.time()
-                        await asyncio.to_thread(_flush_liq, fb, fbi)
         except Exception as e:
             logger.warning(f"[liq] stream error: {type(e).__name__} — reconnect 15s")
-            try:
-                from database import _get_db
-                _get_db().system.update_one(
-                    {"_id": "liq_ws_status"},
-                    {"$set": {"last_error": f"{type(e).__name__}: {e}"[:200],
-                              "at": _utcnow()}}, upsert=True)
-            except Exception:
-                pass
+            _wr_status(state="error",
+                       last_error=f"{type(e).__name__}: {e}"[:200])
             await asyncio.sleep(15)
 
 

@@ -3057,9 +3057,10 @@ async def api_health():
         add("breadth", "🎯 Ширина рынка (бейдж стороны)", age_min(ms.get("updated_at")), 45, 120)
         ds = db.delta_state.find_one(sort=[("updated_at", -1)]) or {}
         add("delta24", "Δ24ч скринера", age_min(ds.get("updated_at")), 45, 120)
-        # 📡 коллектор деривативов (31.07): датасет ликвидаций и OI
-        lq = db.liq_5m.find_one(sort=[("at", -1)]) or {}
-        add("liq_ws", "🩸 Ликвидации (WebSocket)", age_min(lq.get("at")), 30, 120)
+        # 📡 коллектор деривативов (31.07): датасет ликвидаций и OI.
+        # Пульс = жизнь лупа (ликвидации редкие поштучно — тишина в
+        # данных не значит сбой; 03.08 «нет данных» был ложный красный)
+        add("liq_ws", "🩸 Ликвидации (WebSocket)", age_min(hb.get("liq_ws")), 10, 30)
         oi_ = db.oi_hourly.find_one(sort=[("at", -1)]) or {}
         add("oi_poll", "📈 OI-снапшоты (fapi)", age_min(oi_.get("at")), 90, 240)
         add("alarms", "⏰ Будильники", age_min(hb.get("alarms")), 10, 30)
