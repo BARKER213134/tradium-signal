@@ -91,11 +91,19 @@ async def run_liq_stream():
         logger.error("[liq] websockets package not installed")
         _wr_status(state="no_websockets_pkg")
         return
-    url = "wss://fstream.binance.com/stream?streams=!forceOrder@arr"
+    # !forceOrder@arr молчит (проверено 2026-08-03: канал жив — SUBSCRIBE
+    # отвечает, markPrice льётся, а событий нет) → добавлены пер-символьные
+    # @forceOrder топ-пар + markPrice-проба как индикатор живости канала
+    probe_syms = ["btcusdt", "ethusdt", "solusdt", "dogeusdt", "xrpusdt"]
+    streams = ["!forceOrder@arr"] + [f"{s}@forceOrder" for s in probe_syms] \
+        + ["btcusdt@markPrice"]
+    url = "wss://fstream.binance.com/stream?streams=" + "/".join(streams)
     buckets: dict = {}
     bigs: list = []
     msgs_total = 0
     raw_total = 0        # ВСЕ кадры (в т.ч. ответ на SUBSCRIBE) — диагностика
+    marks_total = 0      # кадры markPrice-пробы (доказательство потока)
+    seen_keys: set = set()   # дедуп: @arr и пер-символ могут дать один ивент
     while True:
         try:
             async with websockets.connect(
@@ -108,7 +116,7 @@ async def run_liq_stream():
                 try:
                     await ws.send(json.dumps({
                         "method": "SUBSCRIBE",
-                        "params": ["!forceOrder@arr"], "id": 1}))
+                        "params": streams, "id": 1}))
                 except Exception:
                     pass
                 _wr_status(state="connected", last_error=None,
@@ -127,7 +135,8 @@ async def run_liq_stream():
                     if time.time() - last_st >= 60:   # счётчики раз в минуту
                         last_st = time.time()
                         _wr_status(state="connected", raw_total=raw_total,
-                                   msgs_total=msgs_total)
+                                   msgs_total=msgs_total,
+                                   marks_total=marks_total)
                     # флаш + пульс — по таймеру, независимо от сообщений
                     if buckets or bigs:
                         fb, fbi = buckets, bigs
@@ -144,7 +153,11 @@ async def run_liq_stream():
                         continue
                     try:
                         msg = json.loads(raw)
-                        o = (msg.get("data") or {}).get("o") or {}
+                        data = msg.get("data") or {}
+                        if data.get("e") == "markPriceUpdate":
+                            marks_total += 1
+                            continue
+                        o = data.get("o") or {}
                         sym = o.get("s") or ""
                         if not sym.endswith("USDT"):
                             continue
@@ -153,6 +166,12 @@ async def run_liq_stream():
                         usd = qty * px
                         if usd <= 0:
                             continue
+                        dk = f"{sym}:{o.get('T')}:{qty}"
+                        if dk in seen_keys:
+                            continue
+                        seen_keys.add(dk)
+                        if len(seen_keys) > 4000:
+                            seen_keys.clear()
                         msgs_total += 1
                         if msgs_total == 1 or msgs_total % 500 == 0:
                             _wr_status(state="flowing",
