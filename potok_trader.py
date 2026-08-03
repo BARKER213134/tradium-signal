@@ -118,6 +118,24 @@ def _climate_now():
     return d.get("state")
 
 
+def _equity_usd() -> tuple[float, float]:
+    """(старт, эквити) канала в $: компаунд вкладов закрытых сделок
+    (вклад = pnl%/5 × mult от депо). Старт = POTOK_DEPO_USD (env)."""
+    try:
+        from config import POTOK_DEPO_USD as start
+    except Exception:
+        start = 1000.0
+    eq = start
+    try:
+        for t in _db().potok_trades.find({}, {"pnl_pct": 1, "size_mult": 1}) \
+                .sort("closed_at", 1):
+            c = (t.get("pnl_pct") or 0) / 5.0 * (t.get("size_mult") or 1)
+            eq *= (1 + c / 100)
+    except Exception:
+        pass
+    return start, eq
+
+
 def _channel_state(direction: str) -> dict:
     """Circuit-breaker: скользящие 30д и сегодня по закрытым сделкам."""
     from database import utcnow
@@ -238,6 +256,10 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
     except Exception:
         logger.debug("[potok] journal insert fail", exc_info=True)
     db.potok_positions.insert_one(doc)
+    try:
+        _, _eq = _equity_usd()
+    except Exception:
+        _eq = 1000.0
     E = {"LONG": "🟢 LONG", "SHORT": "🔴 SHORT"}
     PE = {"LONG": "🟢", "SHORT": "🔴", "NEUTRAL": "⚪", None: "?"}
     anom_txt = (f"BUY-аномалия {doc['anom_age_h']:.0f}ч назад · "
@@ -252,6 +274,8 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
         f"вход {_fmt(price)} · TP {_fmt(doc['tp'])} "
         f"(+{(TP_PCT_LONG if d_ == 'LONG' else TP_PCT):.0f}%) · "
         f"SL {_fmt(doc['sl'])} (−5%) · размер {mult:.2f}R\n"
+        f"💵 депо ${_eq:.0f} · позиция ≈ ${_eq * 0.2 * mult:.0f} · "
+        f"риск ${_eq * 0.01 * mult:.2f}\n"
         f"<i>выходы: тайм-стоп 48ч&lt;+2% · "
         f"{'sell-климакс в плюсе ≥4% · ' if d_ == 'LONG' else ''}"
         f"потолок 96ч · разворот фазы</i>")
@@ -436,11 +460,17 @@ def manage() -> int:
         closed += 1
         st = _channel_state(d_)
         depo = round(pnl / 5 * (p.get("size_mult") or 1), 2)
+        try:
+            _st_usd, _eq_usd = _equity_usd()
+            _usd = round(_eq_usd / (1 + depo / 100) * depo / 100, 2)
+        except Exception:
+            _st_usd, _eq_usd, _usd = 1000.0, 1000.0, 0.0
         emo = "✅" if pnl > 0 else "❌"
         _tg(f"{emo} <b>ПОТОК · ЗАКРЫТ {d_} · {p['pair'].replace('/USDT', '')}"
             f"</b> · {reason}\n"
-            f"PnL <b>{pnl:+.2f}%</b> (≈{depo:+.2f}% депо) · "
+            f"PnL <b>{pnl:+.2f}%</b> (≈{depo:+.2f}% депо / {_usd:+.2f}$) · "
             f"в позиции {age_h:.0f}ч · пик {peak:+.1f}%\n"
+            f"💵 эквити ${_eq_usd:.2f} (старт ${_st_usd:.0f})\n"
             f"канал {d_} 30д: {st['sum30']:+.1f}пп · сегодня {st['sum_day']:+.1f}пп "
             f"· статус: {st['status']}")
     return closed
