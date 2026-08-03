@@ -95,22 +95,39 @@ async def run_liq_stream():
     buckets: dict = {}
     bigs: list = []
     msgs_total = 0
+    raw_total = 0        # ВСЕ кадры (в т.ч. ответ на SUBSCRIBE) — диагностика
     while True:
         try:
             async with websockets.connect(
                     url, ping_interval=180, ping_timeout=600,
                     max_size=2 ** 22, close_timeout=10) as ws:
                 logger.info("[liq] connected")
-                _wr_status(state="connected", last_error=None)
+                # SUBSCRIBE-проба: Binance обязан ответить кадром
+                # {"result":null,"id":1} — если raw_total останется 0,
+                # значит канал молчит и на служебные ответы = сбой канала
+                try:
+                    await ws.send(json.dumps({
+                        "method": "SUBSCRIBE",
+                        "params": ["!forceOrder@arr"], "id": 1}))
+                except Exception:
+                    pass
+                _wr_status(state="connected", last_error=None,
+                           raw_total=raw_total)
                 silent_s = 0.0
+                last_st = time.time()
                 while True:
                     raw = None
                     try:
                         raw = await asyncio.wait_for(ws.recv(),
                                                      timeout=FLUSH_SEC)
                         silent_s = 0.0
+                        raw_total += 1
                     except asyncio.TimeoutError:
                         silent_s += FLUSH_SEC
+                    if time.time() - last_st >= 60:   # счётчики раз в минуту
+                        last_st = time.time()
+                        _wr_status(state="connected", raw_total=raw_total,
+                                   msgs_total=msgs_total)
                     # флаш + пульс — по таймеру, независимо от сообщений
                     if buckets or bigs:
                         fb, fbi = buckets, bigs
