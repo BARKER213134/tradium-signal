@@ -161,6 +161,9 @@ BOTS = [
     # {"id": "bigchart", "label": "📈 График", "category": "crypto"},
     {"id": "setup_check", "label": "🎰 Setup Check", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
+    # 💱 FOREX: проп FundingPips — уикенд-гэп на кроссах (единственная
+    # модель, пережившая стенды M1 Dukascopy 03.08.26). Сканер gap_scanner.
+    {"id": "fundingpips", "label": "💱 FundingPips", "category": "stocks"},
     # Pre-Pump удалён — backtest показал что edge только в triple_confluence
     # и st_vip которые уже есть в журнале. Заменён на 🧠 COMBO signal.
     # {"id": "prepump", "label": "🔥 Pre-Pump", "category": "crypto"},

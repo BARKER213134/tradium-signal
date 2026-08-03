@@ -6454,6 +6454,89 @@ setTimeout(() => {
 }, 1500);
 </script>
 
+{% elif bot == 'fundingpips' %}
+<!-- ════════════ 💱 FundingPips — уикенд-гэп на кроссах (M1-стенд Dukascopy 03.08.26) ════════════ -->
+<div class="strategy-box" style="border-color:rgba(0,212,255,0.4);">
+  <div class="strat-icon">💱</div>
+  <div class="strat-body">
+    <div class="strat-title">Уикенд-гэп FOREX — единственная модель, пережившая все стенды (9 семейств, год M1)</div>
+    <b>Пары</b>: только кроссы + NZDUSD/USDCAD (EURGBP · EURJPY · GBPJPY · AUDJPY · EURAUD · EURCHF · GBPCHF · NZDUSD · USDCAD).
+    Металлы и EURUSD/USDJPY — в минусе, исключены.<br>
+    <b>ФЕЙД</b>: вс, 30-я минута после открытия, гэп ≥0.15×дневной волы не закрыт → вход против гэпа,
+    TP = закрытие пятницы, SL = 0.5×гэпа → <i>EV_R +0.41 · WR 67% · ~3 сделки/уикенд</i>.<br>
+    <b>ТЕСТ КРАЯ</b>: откат ≥30% к цели и возврат к краю гэпа → лимитка на краю, та же цель →
+    <i>EV_R +0.61…+0.80 (сильнее фейда)</i>.<br>
+    Всё закрывается до конца сессии понедельника. Математика: риск 0.5%/сделку ≈ +30-35%/год.
+    Скан: <b>вс 21:26 UTC</b> (зимой 22:26) · итоги: <b>пн 21:15 UTC</b> · карточки в TG (бот будильников).
+  </div>
+</div>
+
+<div id="gpChips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;font-family:var(--font-mono);font-size:11.5px;"></div>
+
+<div style="font-family:var(--font-mono);font-size:12px;color:#00d4ff;font-weight:800;margin:6px 0;">ЖУРНАЛ ГЭПОВ</div>
+<div class="table-wrap"><table>
+  <thead><tr>
+    <th style="padding:10px 12px;">Уикенд</th><th>Пара</th><th>Напр</th>
+    <th style="text-align:right;">Гэп</th><th style="text-align:right;">×волы</th>
+    <th style="text-align:right;">Вход</th><th style="text-align:right;">TP (закр. пт)</th>
+    <th style="text-align:right;">SL</th><th style="text-align:center;">Статус</th>
+    <th style="text-align:right;">PnL</th><th style="text-align:right;">R</th>
+  </tr></thead>
+  <tbody id="gpBody"><tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Загрузка…</td></tr></tbody>
+</table></div>
+
+<script>
+function _gpPx(v) {
+  if (v == null) return '—';
+  const n = +v;
+  return n >= 100 ? n.toFixed(2) : n >= 3 ? n.toFixed(3) : n.toFixed(5);
+}
+async function loadGaps() {
+  try {
+    const r = await fetch('/api/gap-signals');
+    const d = await r.json();
+    if (!d.ok) return;
+    const s = d.stats;
+    const hbOk = d.hb_age_min != null && d.hb_age_min < 60;
+    const nextScan = d.next_scan ? new Date(d.next_scan) : null;
+    const leftH = nextScan ? Math.max(0, (nextScan - Date.now()) / 3.6e6) : null;
+    const leftTxt = leftH == null ? '—' : leftH > 48 ? Math.round(leftH / 24) + ' дн' : Math.round(leftH) + ' ч';
+    const chip = (txt, col) => `<span style="padding:5px 10px;border:1px solid ${col ? col + '55' : 'var(--border)'};border-radius:8px;${col ? 'color:' + col + ';' : ''}">${txt}</span>`;
+    document.getElementById('gpChips').innerHTML = [
+      chip(hbOk ? '● сканер жив' : '● сканер молчит ' + (d.hb_age_min == null ? '' : Math.round(d.hb_age_min) + ' мин'), hbOk ? '#00e5a0' : '#ff5e9c'),
+      chip('след. скан: вс 21:26 UTC · через ' + leftTxt),
+      chip('сигналов: ' + s.total + (s.open ? ' (открытых ' + s.open + ')' : '')),
+      s.closed ? chip('закрыто: ' + s.closed + ' · WR ' + s.wr + '%', s.wr >= 50 ? '#00e5a0' : '#ffd23e') : '',
+      s.closed ? chip('Σ ' + (s.sum_r >= 0 ? '+' : '') + s.sum_r + 'R', s.sum_r >= 0 ? '#00e5a0' : '#ff5e9c') : '',
+    ].filter(Boolean).join('');
+    const tb = document.getElementById('gpBody');
+    if (!d.items.length) {
+      tb.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;" class="text-muted">Сигналов пока нет — первая карточка придёт в ближайшее воскресенье 21:26 UTC.<br>Гэпы выше порога появляются в ~60% уикендов.</td></tr>';
+      return;
+    }
+    const SEMO = { OPEN: '🔵 OPEN', TP: '✅ TP', SL: '❌ SL', CLOSE: '⏱ CLOSE' };
+    tb.innerHTML = d.items.map(it => {
+      const pc = (it.pnl_pct || 0) > 0 ? 'var(--buy)' : (it.pnl_pct || 0) < 0 ? 'var(--sell)' : 'var(--muted)';
+      return `<tr>
+        <td class="mono" style="font-size:11px;">${it.at ? new Date(it.at).toLocaleDateString('ru', {day:'2-digit',month:'2-digit'}) : '—'}</td>
+        <td class="mono fw-700">${it.symbol || '—'}</td>
+        <td>${it.side === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>'}</td>
+        <td class="mono" style="text-align:right;">${it.gap_pct == null ? '—' : (it.gap_pct >= 0 ? '+' : '') + it.gap_pct.toFixed(2) + '%'}</td>
+        <td class="mono" style="text-align:right;color:var(--muted);">${it.v_pct ? (Math.abs(it.gap_pct) / it.v_pct).toFixed(2) : '—'}</td>
+        <td class="mono" style="text-align:right;">${_gpPx(it.entry)}</td>
+        <td class="mono" style="text-align:right;color:var(--buy);">${_gpPx(it.tp)}</td>
+        <td class="mono" style="text-align:right;color:var(--sell);">${_gpPx(it.sl)}</td>
+        <td class="mono" style="text-align:center;font-size:11px;">${SEMO[it.status] || it.status || '—'}</td>
+        <td class="mono" style="text-align:right;color:${pc};font-weight:800;">${it.pnl_pct == null ? '—' : (it.pnl_pct >= 0 ? '+' : '') + it.pnl_pct.toFixed(2) + '%'}</td>
+        <td class="mono" style="text-align:right;color:${pc};">${it.r_mult == null ? '—' : (it.r_mult >= 0 ? '+' : '') + it.r_mult.toFixed(1)}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) { /* тихо */ }
+}
+loadGaps();
+safeInterval(loadGaps, 60000);
+</script>
+
 {% elif bot == 'journal' or bot == 'hot_now' %}
 {% if bot == 'journal' %}
 <style>

@@ -4727,7 +4727,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
     query = db.query(Signal).filter(Signal.source == bot)
 
     # Cryptovizor имеет свои вкладки
-    if bot in ("confluence", "journal", "autotrading"):
+    if bot in ("confluence", "journal", "autotrading", "fundingpips"):
         return templates.TemplateResponse(request, "signals.html", {
             "signals": [],
             "total": 0,
@@ -9055,6 +9055,44 @@ async def api_alarms_del(alarm_id: str):
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+    return await asyncio.to_thread(_q)
+
+
+@app.get("/api/gap-signals")
+async def api_gap_signals():
+    """💱 Вкладка FundingPips: журнал уикенд-гэпов + статистика +
+    расписание сканера (данные пишет gap_scanner)."""
+    def _q():
+        from database import _get_db
+        from datetime import datetime as _dt
+        import gap_scanner as _gs
+        db = _get_db()
+        now = _dt.utcnow()
+        items = []
+        for d in db.gap_signals.find().sort("at", -1).limit(200):
+            items.append({
+                "symbol": d.get("symbol"), "side": d.get("side"),
+                "at": d["at"].isoformat() if d.get("at") else None,
+                "gap_pct": d.get("gap_pct"), "v_pct": d.get("v_pct"),
+                "entry": d.get("entry"), "tp": d.get("tp"),
+                "sl": d.get("sl"), "status": d.get("status"),
+                "pnl_pct": d.get("pnl_pct"), "r_mult": d.get("r_mult"),
+            })
+        closed = [i for i in items if i["status"] in ("TP", "SL", "CLOSE")]
+        wins = [i for i in closed if (i.get("r_mult") or 0) > 0]
+        sum_r = sum(i.get("r_mult") or 0 for i in closed)
+        hb = db.heartbeats.find_one({"_id": "gap_scan"}) or {}
+        hb_age = ((now - hb["at"]).total_seconds() / 60
+                  if hb.get("at") else None)
+        return {"ok": True, "items": items,
+                "stats": {"total": len(items), "open": len(items) - len(closed),
+                          "closed": len(closed), "wins": len(wins),
+                          "wr": round(len(wins) / len(closed) * 100)
+                          if closed else None,
+                          "sum_r": round(sum_r, 1)},
+                "hb_age_min": round(hb_age, 1) if hb_age is not None else None,
+                "next_scan": _gs._next_at(6, 21, 26).isoformat() + "Z",
+                "next_outcomes": _gs._next_at(0, 21, 15).isoformat() + "Z"}
     return await asyncio.to_thread(_q)
 
 
