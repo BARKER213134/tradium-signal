@@ -3084,7 +3084,14 @@ function bcToggleLevels() {
   <button onclick="_scCheck()" style="background:linear-gradient(135deg,rgba(255,210,62,0.30),rgba(255,140,80,0.20));color:#ffd23e;border:1.5px solid rgba(255,210,62,0.6);border-radius:8px;padding:12px 28px;font-size:14px;font-family:var(--font-mono);font-weight:800;cursor:pointer;letter-spacing:0.08em;">
     🎰 ПРОВЕРИТЬ
   </button>
+  <button id="sc-batch-btn" onclick="_scBatch()" title="Собрать монеты с сигналами за последние 24ч и прогнать каждую через Setup Checker — на выходе готовые сетапы"
+          style="background:linear-gradient(135deg,rgba(0,229,160,0.22),rgba(0,212,255,0.12));color:#00e5a0;border:1.5px solid rgba(0,229,160,0.55);border-radius:8px;padding:12px 22px;font-size:14px;font-family:var(--font-mono);font-weight:800;cursor:pointer;letter-spacing:0.05em;white-space:nowrap;">
+    ⚡ СИГНАЛЫ ЗА СУТКИ → СЕТАПЫ
+  </button>
 </div>
+
+<!-- Batch result -->
+<div id="sc-batch" style="display:none;"></div>
 
 <!-- Result container -->
 <div id="sc-result" style="display:none;"></div>
@@ -3104,6 +3111,61 @@ async function _scCheck() {
   } catch (e) {
     result.innerHTML = `<div style="padding:20px;color:#ff4d6d;">Ошибка: ${e.message}</div>`;
   }
+}
+
+// ⚡ батч: монеты с сигналами за сутки → сетапы (готовые LONG/SHORT первыми)
+let _scBatchBusy = false;
+async function _scBatch() {
+  if (_scBatchBusy) return;
+  _scBatchBusy = true;
+  const btn = document.getElementById('sc-batch-btn');
+  const box = document.getElementById('sc-batch');
+  btn.textContent = '⏳ ПРОВЕРЯЮ…';
+  box.style.display = 'block';
+  box.innerHTML = '<div style="padding:26px;text-align:center;color:var(--muted);font-family:var(--font-mono);">⏳ Собираю монеты с сигналами за 24ч и гоню каждую через Setup Checker (до минуты)…</div>';
+  try {
+    const r = await fetch('/api/setup-check-batch?hours=24&max_pairs=60');
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '?');
+    const setups = d.items.filter(it => it.verdict === 'ENTER_LONG' || it.verdict === 'ENTER_SHORT');
+    const waits = d.items.filter(it => !(it.verdict === 'ENTER_LONG' || it.verdict === 'ENTER_SHORT'));
+    const row = (it, dim) => {
+      const base = (it.pair || '').replace('/USDT', '');
+      const vE = it.verdict === 'ENTER_LONG' ? '<span class="badge badge-buy">🟢 ЛОНГ</span>'
+               : it.verdict === 'ENTER_SHORT' ? '<span class="badge badge-sell">🔴 ШОРТ</span>'
+               : '<span style="color:var(--muted);">⏳ WAIT</span>';
+      return `<tr style="${dim ? 'opacity:0.55;' : ''}">
+        <td class="mono fw-700" style="cursor:pointer;border-bottom:1px dashed rgba(76,201,240,0.35);" onclick="openPairChart('${it.symbol}')">${it.hot ? '🔥' : ''}${base} <span style="opacity:0.6;">📈</span></td>
+        <td style="text-align:center;">${vE}</td>
+        <td class="mono" style="text-align:center;">${it.confidence != null ? it.confidence : '—'}</td>
+        <td class="mono" style="text-align:center;font-size:11px;">${it.long_grade || '—'} / ${it.short_grade || '—'}</td>
+        <td class="mono" style="text-align:right;">${it.n24}</td>
+        <td class="mono" style="font-size:10.5px;color:var(--muted);">${(it.sources || []).slice(0, 5).join(', ')}</td>
+        <td class="mono" style="font-size:10.5px;color:var(--muted);max-width:260px;">${(it.note || '').slice(0, 90)}</td>
+        <td style="text-align:center;"><span style="cursor:pointer;" title="Полный разбор" onclick="document.getElementById('sc-pair').value='${base}';_scCheck()">🎰</span></td>
+      </tr>`;
+    };
+    const head = `<thead><tr>
+      <th style="padding:8px 12px;">Монета</th><th>Сетап</th><th>Conf</th>
+      <th>L/S grade</th><th style="text-align:right;">Сигн. 24ч</th>
+      <th>Источники</th><th>Заметка</th><th></th></tr></thead>`;
+    box.innerHTML =
+      `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 10px;font-family:var(--font-mono);font-size:11.5px;">
+        <span style="padding:5px 10px;border:1px solid rgba(0,229,160,0.5);border-radius:8px;color:#00e5a0;">сетапов сейчас: <b>${setups.length}</b></span>
+        <span style="padding:5px 10px;border:1px solid var(--border);border-radius:8px;">проверено монет: ${d.checked} (сигналы за ${d.hours}ч)</span>
+      </div>` +
+      (setups.length
+        ? `<div class="table-wrap"><table>${head}<tbody>${setups.map(it => row(it, false)).join('')}</tbody></table></div>`
+        : '<div style="padding:18px;color:var(--muted);font-family:var(--font-mono);">Готовых сетапов сейчас нет — все монеты в ⏳ WAIT.</div>') +
+      (waits.length
+        ? `<details style="margin-top:10px;"><summary style="cursor:pointer;color:var(--muted);font-family:var(--font-mono);font-size:12px;">⏳ WAIT — ${waits.length} монет</summary>
+           <div class="table-wrap" style="margin-top:8px;"><table>${head}<tbody>${waits.map(it => row(it, true)).join('')}</tbody></table></div></details>`
+        : '');
+  } catch (e) {
+    box.innerHTML = `<div style="padding:20px;color:#ff4d6d;">Ошибка батча: ${e.message}</div>`;
+  }
+  btn.textContent = '⚡ СИГНАЛЫ ЗА СУТКИ → СЕТАПЫ';
+  _scBatchBusy = false;
 }
 
 function _renderSetupResult(d) {

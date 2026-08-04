@@ -9067,6 +9067,69 @@ async def api_alarms_del(alarm_id: str):
     return await asyncio.to_thread(_q)
 
 
+@app.get("/api/setup-check-batch")
+async def api_setup_check_batch(hours: int = 24, max_pairs: int = 60):
+    """🎰 Кнопка «проверить сигналы за сутки»: собирает монеты с
+    сигналами за `hours` часов и гонит по каждой setup_checker —
+    возвращает готовые сетапы (LONG/SHORT) первыми. Параллельно
+    8 потоков, у setup_checker кэш вердикта 5 мин на пару."""
+    return await asyncio.to_thread(_setup_check_batch_sync, hours, max_pairs)
+
+
+def _setup_check_batch_sync(hours: int, max_pairs: int):
+    from database import _get_db, utcnow
+    from datetime import timedelta
+    from collections import Counter, defaultdict
+    from concurrent.futures import ThreadPoolExecutor
+    from setup_checker import get_compact_verdict
+    db = _get_db()
+    since = utcnow() - timedelta(hours=max(1, min(hours, 72)))
+    cnt = Counter()
+    srcs = defaultdict(set)
+    hot_map = {}
+    for d in db.new_strategy_signals.find(
+            {"created_at": {"$gte": since},
+             "indicators.backfill": {"$ne": True}},
+            {"pair": 1, "strategy": 1, "hot": 1}).limit(4000):
+        p = d.get("pair")
+        if not p:
+            continue
+        cnt[p] += 1
+        srcs[p].add(d.get("strategy") or "?")
+        hot_map[p] = bool(hot_map.get(p) or d.get("hot"))
+    for d in db.supertrend_signals.find(
+            {"flip_at": {"$gte": since}, "tier": {"$in": ["vip", "mtf"]}},
+            {"pair": 1, "tier": 1}).limit(1500):
+        p = d.get("pair")
+        if not p:
+            continue
+        cnt[p] += 1
+        srcs[p].add("st_" + (d.get("tier") or "?"))
+    pairs = [p for p, _ in cnt.most_common(max(5, min(max_pairs, 100)))]
+
+    def work(p):
+        try:
+            return p, get_compact_verdict(p)
+        except Exception:
+            return p, None
+
+    items = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for p, v in ex.map(work, pairs):
+            if not v:
+                continue
+            items.append({"pair": p, "symbol": p.replace("/", "").upper(),
+                          "n24": cnt[p], "sources": sorted(srcs[p]),
+                          "hot": hot_map.get(p, False), **v})
+    _ord = {"ENTER_LONG": 0, "ENTER_SHORT": 0, "WAIT": 1}
+    items.sort(key=lambda x: (_ord.get(x.get("verdict"), 2),
+                              -(x.get("confidence") or 0), -x["n24"]))
+    n_setup = sum(1 for x in items
+                  if x.get("verdict") in ("ENTER_LONG", "ENTER_SHORT"))
+    return {"ok": True, "hours": hours, "checked": len(items),
+            "setups": n_setup, "items": items}
+
+
 @app.get("/api/gap-signals")
 async def api_gap_signals():
     """💱 Вкладка FundingPips: журнал уикенд-гэпов + статистика +
