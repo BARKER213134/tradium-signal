@@ -3603,7 +3603,8 @@ window._kcRegisterIndicators = function() {
         ignoreEvent: false,   // события нужны для тултипа при наведении
         attrs: { x: c.x, y: c.y + (below ? 6 : -6), text: d.emoji || '•',
                  align: 'center', baseline: below ? 'top' : 'bottom' },
-        styles: { color: d.color || '#fff', size: 15,
+        // size 15 → 22 (04.08, «сделай эмодзи на графиках больше»)
+        styles: { color: d.color || '#fff', size: 22,
                   backgroundColor: 'transparent' },
       }];
     }
@@ -4078,9 +4079,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           { paneId: 'candle_pane' });
         (coords || []).forEach((c, i) => {
           if (!c || c.x == null) return;
-          // якорь — low/high свечи, а видимая иконка смещена на ~14px
-          // (6px отступ + полвысоты эмодзи); меряем до центра иконки
-          const iy = c.y + (sigs[i].below ? 14 : -14);
+          // якорь — low/high свечи, а видимая иконка смещена на ~17px
+          // (6px отступ + полвысоты эмодзи 22px); меряем до центра иконки
+          const iy = c.y + (sigs[i].below ? 17 : -17);
           const dist = Math.sqrt((c.x - mx) ** 2 + (iy - my) ** 2);
           if (dist < bestD) { bestD = dist; best = sigs[i]; }
         });
