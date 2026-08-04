@@ -10597,20 +10597,24 @@ def _compute_journal_sync(_fast_only: bool = False):
             # 🎯 приоритет-скор: честный EV источника за 60д (после добивки
             # исходов 31.07), с 🔥-поправкой там, где она измерена.
             # Классы: S >=1.2, A >=0.6, B >=0.2, C >=−0.2, D ниже.
+            # Обновлено 04.08 по годовой ревизии (27.5k честных исходов,
+            # срез 60д): thin_pump сломался (+1.41 → −0.26), shark тоже
+            # (−0.67, на hot −1.81); floor_buy вырос до +1.54, blowoff
+            # стабилен +1.04 (с TG-гейтом ~+2.1)
             _PRIO = {
-                "thin_pump": (1.41, 0.84), "blowoff": (1.21, 1.50),
-                "floor_buy": (1.05, None), "potok": (3.86, None),
-                "st_break4h": (0.44, 0.82), "fade": (0.38, 1.68),
-                "volcano": (0.35, 0.74), "corridor": (0.22, 1.85),
-                "volume_surge": (0.19, 0.43), "combo": (0.15, -0.98),
-                "support_defense": (0.11, None), "vol_anomaly4h": (0.06, 0.51),
-                "delta_series": (0.04, -0.09), "second_flip": (0.01, 0.26),
-                "triple_confluence": (0.0, -0.02), "vol_accum": (-0.04, -0.05),
-                "st_break": (-0.14, -0.10), "vol_anomaly": (-0.18, -0.17),
-                "shark": (-0.18, -2.13), "ignition": (-0.30, -0.30),
-                "rocket_pullback": (-0.33, None), "impulse": (-0.41, 0.39),
-                "whale": (-0.65, -1.10), "ten": (-0.71, 0.75),
-                "capitulation": (-1.85, -0.63),
+                "floor_buy": (1.54, None), "blowoff": (1.04, 1.57),
+                "potok": (3.86, None),
+                "volcano": (0.48, 0.74), "st_break4h": (0.44, 0.82),
+                "fade": (0.38, 1.68), "corridor": (0.22, 1.85),
+                "volume_surge": (0.13, 0.43), "support_defense": (0.11, None),
+                "rocket_pullback": (0.01, None), "vol_anomaly4h": (0.00, 0.51),
+                "delta_series": (0.00, -0.09), "triple_confluence": (-0.01, 0.0),
+                "second_flip": (-0.04, 0.22), "vol_accum": (-0.08, -0.05),
+                "combo": (-0.11, -0.70), "st_break": (-0.13, -0.10),
+                "thin_pump": (-0.26, 0.94), "vol_anomaly": (-0.27, -0.17),
+                "impulse": (-0.41, 0.39), "whale": (-0.61, -1.12),
+                "shark": (-0.67, -1.81), "ten": (-0.71, 0.75),
+                "capitulation": (-1.46, -0.63),
             }
             _pb = _PRIO.get(strat)
             _prio = None
