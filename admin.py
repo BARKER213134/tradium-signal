@@ -4715,7 +4715,10 @@ async def signals_list(
     direction: str = "",
     has_chart: str = "",
     tab: str = "tradium",
-    bot: str = "tradium",
+    # дефолт 'journal': bot=tradium — мёртвый legacy-источник (CV удалён
+    # 07.2026); заход по голому /signals давал пустую страницу без
+    # сигналов («сигналы не грузятся», 04.08)
+    bot: str = "journal",
 ):
     return await asyncio.to_thread(
         _signals_list_sync, request, db, page, pair, direction, has_chart, tab, bot,
