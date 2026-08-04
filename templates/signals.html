@@ -7241,6 +7241,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="ten_plus">🏅 ДЕСЯТКА — кандидаты +10%/сделку (кит · blowoff-разгон)</option>
     <option value="hot">🔥 Горячие монеты (ралли +40% ≤30д · комбо st4h/2flip/impulse)</option>
     <option value="prio">🎯 Только S/A — лучшее сейчас (честный EV источника ≥ +0.6)</option>
+    <option value="alarm">⏰ Будильники — сигналы монет со взведёнными будильниками</option>
     <option value="rocket_pullback">🪃 Откат ракеты (имп≥100% · откат −25..−38% · WR34%)</option>
     <option value="floor_buy">💎 Дно+покупатель (имбаланс-покупка на 48ч-лоу)</option>
     <option value="support_defense">🧱 Защита поддержки (30m имбаланс-покупка в 10д-лоу · EV+0.90)</option>
@@ -9262,6 +9263,10 @@ async function loadAlarms() {
   if (!box) return;
   try {
     const j = await (await fetch('/api/alarms')).json();
+    // ⏰ набор символов для фильтра журнала «Будильники»
+    window._alarmSyms = new Set((j.items || []).map(a => (a.symbol || '').toUpperCase()));
+    const selSrc = document.getElementById('jFilterSrc');
+    if (selSrc && selSrc.value === 'alarm') { try { filterJournal(); } catch (e) {} }
     box.innerHTML = (j.items || []).map(a => {
       const k = a.kind === 'signal' ? '🚨' : (a.kind === 'price+signal' ? '⏰🚨' : '⏰');
       const pr = a.price ? (' ' + (a.side === 'above' ? '≥' : '≤') + a.price) : '';
@@ -9337,6 +9342,12 @@ async function toggleHotPanel(btn) {
 }
 function filterJournal() {
   const src = document.getElementById('jFilterSrc').value;
+  // ⏰ фильтр будильников выбран раньше, чем панель открывалась —
+  // подтянуть список лениво (loadAlarms сам перезапустит фильтр)
+  if (src === 'alarm' && !window._alarmSyms) {
+    window._alarmSyms = new Set();
+    try { loadAlarms(); } catch (e) {}
+  }
   const dir = document.getElementById('jFilterDir').value;
   const kc = document.getElementById('jFilterKC').value;
   const minScore = parseFloat(document.getElementById('jFilterScore').value) || 0;
@@ -9381,6 +9392,10 @@ function filterJournal() {
     } else if (src === 'prio') {
       // 🎯 приоритет: честный EV источника 60д (с 🔥-поправкой) >= +0.6
       if (!((s.prio || -9) >= 0.6)) return false;
+    } else if (src === 'alarm') {
+      // ⏰ только монеты со взведёнными будильниками (набор из loadAlarms)
+      const asym = (s.symbol || (s.pair || '').replace('/', '')).toUpperCase();
+      if (!(window._alarmSyms && window._alarmSyms.has(asym))) return false;
     } else if (src && s.source !== src) return false;
     // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
     if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;
