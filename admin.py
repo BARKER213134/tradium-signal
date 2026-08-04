@@ -459,6 +459,12 @@ class StaticCacheMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         if request.url.path.startswith("/static"):
             response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        # HTML — всегда свежий: браузеры эвристически кэшировали страницы
+        # без заголовков, и после деплоев юзер видел старые инлайн-скрипты
+        # («эмодзи пропали», «нет доп значка» 04.08). no-cache = браузер
+        # обязан ревалидировать при каждом заходе.
+        elif (response.headers.get("content-type") or "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
 
