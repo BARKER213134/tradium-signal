@@ -9598,6 +9598,36 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
 
     # Clusters удалены (2026-07-02)
 
+    # ⏰ Сработавшие будильники этой монеты (значки на график)
+    try:
+        from database import _get_db as _gdb_al
+        for ae in _gdb_al().alarm_events.find(
+                {"symbol": sym_clean, "at": {"$gte": since}}).sort("at", -1):
+            ae_at = ae.get("at")
+            k = ae.get("kind")
+            em = "⏰🚨" if k == "price+signal" else ("🚨" if k == "signal" else "⏰")
+            parts = []
+            if ae.get("level"):
+                parts.append(f"уровень {ae['level']:g}")
+            if ae.get("sig_strategy"):
+                parts.append(f"сигнал: {ae['sig_strategy']} "
+                             f"{ae.get('sig_direction') or ''}".strip())
+            items.append({
+                "source": "alarm",
+                "symbol": ae.get("symbol", ""),
+                "pair": pair_slash,
+                "direction": "",
+                "entry": ae.get("entry"),
+                "tp1": None, "sl": None,
+                "pattern": f"{em} БУДИЛЬНИК СРАБОТАЛ"
+                           + (" · " + " · ".join(parts) if parts else ""),
+                "score": 0, "st_passed": None, "pump_score": 0,
+                "at": ae_at.isoformat() if hasattr(ae_at, "isoformat") else None,
+                "at_ts": int(ae_at.timestamp()) if hasattr(ae_at, "timestamp") else 0,
+            })
+    except Exception:
+        pass
+
     # SuperTrend signals для этой монеты (исключаем daily)
     import calendar as _cal
     try:
@@ -9998,6 +10028,35 @@ def _compute_journal_sync(_fast_only: bool = False):
         })
 
     # Clusters удалены (2026-07-02)
+
+    # ⏰ Сработавшие будильники — отдельный источник 'alarm' (04.08)
+    try:
+        for ae in _get_db().alarm_events.find(
+                {"at": {"$gte": since_14d}}).sort("at", -1).limit(300):
+            ae_at = ae.get("at")
+            k = ae.get("kind")
+            em = "⏰🚨" if k == "price+signal" else ("🚨" if k == "signal" else "⏰")
+            parts = []
+            if ae.get("level"):
+                parts.append(f"уровень {ae['level']:g}")
+            if ae.get("sig_strategy"):
+                parts.append(f"сигнал: {ae['sig_strategy']} "
+                             f"{ae.get('sig_direction') or ''}".strip())
+            items.append({
+                "source": "alarm",
+                "symbol": ae.get("symbol", ""),
+                "pair": (ae.get("symbol", "") or "").replace("USDT", "/USDT"),
+                "direction": "",
+                "entry": ae.get("entry"),
+                "tp1": None, "sl": None,
+                "pattern": f"{em} БУДИЛЬНИК СРАБОТАЛ"
+                           + (" · " + " · ".join(parts) if parts else ""),
+                "score": 0, "st_passed": None, "pump_score": 0,
+                "at": ae_at.isoformat() if hasattr(ae_at, "isoformat") else None,
+                "at_ts": int(ae_at.timestamp()) if hasattr(ae_at, "timestamp") else 0,
+            })
+    except Exception:
+        pass
 
     # SuperTrend signals (14 дней) — источник 'supertrend' с tier в pattern
     # Включаем все 3 tier (vip, mtf, daily) — юзер хочет видеть Daily 🧭 в журнале.

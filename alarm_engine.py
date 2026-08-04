@@ -73,6 +73,22 @@ def _fmt(v):
         return str(v)
 
 
+def _log_event(db, a, cur, sig=None):
+    """Сработавший будильник = отдельное событие-сигнал: пишем в
+    alarm_events (журнал подмешивает их источником 'alarm' ⏰,
+    значки попадают на графики через by-symbol фид)."""
+    try:
+        db.alarm_events.insert_one({
+            "symbol": a.get("symbol"), "kind": a.get("kind"),
+            "level": a.get("price"), "side": a.get("side"),
+            "entry": cur,
+            "sig_strategy": (sig or {}).get("strategy"),
+            "sig_direction": (sig or {}).get("direction"),
+            "at": _utcnow()})
+    except Exception:
+        logger.debug("[alarm] event log fail", exc_info=True)
+
+
 def _tick_sync(last_sig_ts: dict) -> None:
     from database import _get_db
     db = _get_db()
@@ -119,6 +135,7 @@ def _tick_sync(last_sig_ts: dict) -> None:
                 _tg(f"⏰ <b>БУДИЛЬНИК · {base}</b>\n"
                     f"цена дошла до {_fmt(a['price'])} "
                     f"(сейчас {_fmt(cur)})")
+                _log_event(db, a, cur)
                 db.alarms.update_one({"_id": a["_id"]},
                                      {"$set": {"state": "FIRED",
                                                "fired_at": _utcnow()}})
@@ -142,6 +159,7 @@ def _tick_sync(last_sig_ts: dict) -> None:
                 f"пришёл сигнал: {s.get('strategy')} "
                 f"{s.get('direction') or ''} @ {_fmt(s.get('entry'))}\n"
                 f"(сейчас {_fmt(cur) if cur else '?'})")
+            _log_event(db, a, cur, s)
             db.alarms.update_one({"_id": a["_id"]},
                                  {"$set": {"state": "FIRED",
                                            "fired_at": _utcnow()}})

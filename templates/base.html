@@ -763,6 +763,7 @@
           support_defense:'🧱', // 🧱 30m имбаланс-покупка в 10д-лоу → лонг (60д: EV+0.90 против −0.55)
           channel_top:'📐',    // 📐 шорт крыши восходящего канала (год: EV+1.29 WR47)
           corridor:'🎈',       // 🎈 лонг: полка+пустой путь+покупатель (год: EV+0.49, 60д +0.33)
+          alarm:'⏰',          // ⏰ сработавший будильник (alarm_events)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
         return hotPfx + tenPfx + prefix + base;
@@ -4128,6 +4129,16 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       chart.createOverlay({ name: 'priceLine', points: [{ value: price }], groupId: 'alarms', lock: true,
         styles: { line: { color: '#ffd23e', style: 'dashed' },
                   text: { color: '#0a0e14', backgroundColor: '#ffd23e' } } });
+    } catch (e) {}
+    // ⏰ значок у линии ждущего будильника (аннотация на последнем баре)
+    try {
+      const dl = chart.getDataList ? chart.getDataList() : [];
+      if (dl.length) {
+        chart.createOverlay({ name: 'simpleAnnotation', lock: true, groupId: 'alarms',
+          points: [{ timestamp: dl[dl.length - 1].timestamp, value: price }],
+          extendData: '⏰ ждёт',
+          styles: { text: { color: '#ffd23e', size: 13 } } });
+      }
     } catch (e) {}
   };
   (async () => {
