@@ -218,6 +218,38 @@ def _delta_series_sig(pair: str, kd: list[dict]) -> Optional[dict]:
         return None
 
 
+def _rsi_sma_state_tf(pair: str, tf: str, bars: int):
+    """RSI14 (Уайлдер) против SMA14(RSI) на нативных свечах ТФ:
+    'bear' (RSI < SMA) / 'bull' / None (мало данных). Для 🧿-тира
+    blowoff (бэктест 04.08: гейт+1d bear → WR 69, EV +3.78)."""
+    try:
+        from exchange import get_klines_any
+        kd = get_klines_any(pair, tf, bars)
+        if not kd or len(kd) < 34:
+            return None
+        closes = [x["c"] for x in kd]
+        au = ad = 0.0
+        rsis = []
+        for i in range(1, len(closes)):
+            ch = closes[i] - closes[i - 1]
+            up, dn = max(ch, 0.0), max(-ch, 0.0)
+            if i <= 14:
+                au += up / 14
+                ad += dn / 14
+                if i < 14:
+                    continue
+            else:
+                au = (au * 13 + up) / 14
+                ad = (ad * 13 + dn) / 14
+            rsis.append(100 - 100 / (1 + au / max(ad, 1e-12)))
+        if len(rsis) < 15:
+            return None
+        sma = sum(rsis[-14:]) / 14
+        return "bear" if rsis[-1] < sma else "bull"
+    except Exception:
+        return None
+
+
 def _blowoff_sig(pair: str, kd: list[dict]):
     """🌋 Blowoff-вершина → SHORT (v2 29.07, идея юзера). Кульминация:
     новый 24ч-хай + закрытие в нижней половине + разгон >10%/24ч.
@@ -1078,6 +1110,15 @@ def scan_universe(max_pairs: int = 300):
                 _bo = _blowoff_sig(pair, kd)
                 if _bo is not None:
                     try:
+                        # 🧿 RSI/SMA-режим старших ТФ — в док ДО вставки
+                        # (в журнале elite_1d вычисляется из этих полей)
+                        _bo["indicators"]["rsi12h_state"] = \
+                            _rsi_sma_state_tf(pair, "12h", 80)
+                        _bo["indicators"]["rsi1d_state"] = \
+                            _rsi_sma_state_tf(pair, "1d", 60)
+                    except Exception:
+                        pass
+                    try:
                         from impulse_detector import store_signal
                         if store_signal(_bo, cooldown_h=24):
                             ds_fired += 1
@@ -1098,6 +1139,18 @@ def scan_universe(max_pairs: int = 300):
                             if not _gate:
                                 raise StopIteration   # журнал есть, TG нет
                             _rl = ""
+                            # 🧿 ЭЛИТА-1d: гейт + дневной RSI-медведь —
+                            # сильнейший разрез blowoff (WR 69, EV +3.78)
+                            _e1d = _bi.get("rsi1d_state") == "bear"
+                            if _e1d:
+                                _rl += ("🧿 <b>ЭЛИТА-1d</b> — дневной "
+                                        "RSI-медведь: шорт отскока в падающем "
+                                        "рынке (WR 69, EV +3.78)\n")
+                            _r12 = _bi.get("rsi12h_state")
+                            _r1d = _bi.get("rsi1d_state")
+                            if _r12 or _r1d:
+                                _rl += (f"RSI-режим: 12h {_r12 or '?'} · "
+                                        f"1d {_r1d or '?'}\n")
                             if _elite:
                                 _rl += ("💎 <b>УСИЛЕННЫЙ</b> — фаза "
                                         f"{_ph or '?'} + "
@@ -1113,7 +1166,8 @@ def scan_universe(max_pairs: int = 300):
                                 _rl += ("🏅 <b>ДЕСЯТКА</b> — разгон "
                                         f"+{_bi['mom24']}%/24ч, кандидат "
                                         "+10%/сделку (WR 36%)\n")
-                            _tg16(f"{'💎 ' if _elite else ''}"
+                            _tg16(f"{'🧿 ' if _e1d else ''}"
+                                  f"{'💎 ' if _elite else ''}"
                                   f"🌋 <b>BLOWOFF · ВХОД СЕЙЧАС · "
                                   f"{pair.replace('/USDT', '')}</b>\n"
                                   f"🔴 SHORT по рынку @ {_bo['entry']:.6g}\n"

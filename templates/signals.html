@@ -5000,7 +5000,7 @@ async function _drawPaperHistChart(idx) {
       if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: isL, icons: new Set(), items: [] });
       const g = byTime.get(key);
       const _strong = window.isStrongSignal ? window.isStrongSignal(s) : false;
-      const icon = window.sigIcon(s.source, s.score, { is_top_pick: !!s.is_top_pick, strong: _strong, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, hot: s.hot });
+      const icon = window.sigIcon(s.source, s.score, { is_top_pick: !!s.is_top_pick, strong: _strong, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot });
       g.icons.add(icon);
       if (s.source === 'whale' && (s.whale_seq || 1) >= 2) g.hasW2 = true;
       if (s.rep_hot) g.hasRep = true;
@@ -7242,6 +7242,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="hot">🔥 Горячие монеты (ралли +40% ≤30д · комбо st4h/2flip/impulse)</option>
     <option value="prio">🎯 Только S/A — лучшее сейчас (честный EV источника ≥ +0.6)</option>
     <option value="alarm">⏰ Будильники — сработавшие (отдельные события)</option>
+    <option value="blowoff_elite">🧿 Blowoff ЭЛИТА-1d — дневной RSI-медведь (WR 69 · EV +3.78)</option>
     <option value="rocket_pullback">🪃 Откат ракеты (имп≥100% · откат −25..−38% · WR34%)</option>
     <option value="floor_buy">💎 Дно+покупатель (имбаланс-покупка на 48ч-лоу)</option>
     <option value="support_defense">🧱 Защита поддержки (30m имбаланс-покупка в 10д-лоу · EV+0.90)</option>
@@ -8936,7 +8937,7 @@ async function loadCoinChart(coin) {
       }
       const isLong = s.direction === 'LONG';
       const _strongM = window.isStrongSignal ? window.isStrongSignal(s) : false;
-      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _strongM, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, hot: s.hot});
+      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _strongM, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot});
       markers.push({
         time: mc.time,
         direction: s.direction,
@@ -9054,7 +9055,7 @@ function _showJournalToast(newSignals) {
 
   const count = newSignals.length;
   const previews = newSignals.slice(0, 3).map(s => {
-    const src = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, hot: s.hot});
+    const src = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot});
     const pair = (s.symbol || s.pair || '').replace('USDT','').replace('/','');
     const dir = s.direction === 'LONG' ? '🟢' : '🔴';
     const score = s.score ? ` · ${s.score}` : '';
@@ -9389,6 +9390,9 @@ function filterJournal() {
     } else if (src === 'alarm') {
       // ⏰ только события сработавших будильников (source из alarm_events)
       if (s.source !== 'alarm') return false;
+    } else if (src === 'blowoff_elite') {
+      // 🧿 blowoff ЭЛИТА-1d: гейт + дневной RSI-медведь (WR 69, EV +3.78)
+      if (!(s.source === 'blowoff' && s.elite_1d)) return false;
     } else if (src && s.source !== src) return false;
     // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
     if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;
@@ -9999,7 +10003,7 @@ function renderJournal(items, startIdx) {
     const time = s.at ? new Date(s.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
     const isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
     const srcBadge = window.sigIcon
-      ? window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, hot: s.hot})
+      ? window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot})
       : ((s.is_top_pick ? '👑 ' : (isStrong ? '⭐ ' : '')) +
          ({anomaly:'⚠', paper:'🤖', confluence:'🎯', supertrend:'🌀', verified:'✨'}[s.source] || '•'));
     const srcName = ({
@@ -11428,7 +11432,7 @@ async function openJournalChart(idx, forceTF) {
   const dirE = s.direction === 'LONG' ? '🟢' : s.direction === 'SHORT' ? '🔴' : '';
 
   const _isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
-  const srcBadge = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, hot: s.hot});
+  const srcBadge = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot});
   const srcName = (s.source === 'whale' && (s.whale_seq || 1) >= 2) ? 'ВТОРОЙ КИТ'
     : ({anomaly:'Аномалия', cluster:'Cluster', paper:'Paper', supertrend:'SuperTrend',
     whale:'WHALE', shark:'SHARK', combo:'COMBO', volume_surge:'Volume Surge',

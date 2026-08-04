@@ -9756,6 +9756,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "whale_seq": 1, "whale_rel": 1, "whale_rel_pct": 1,  # 🐳 повторный кит
             "rep_seq": 1,  # 🔁 повтор-усилитель (thin_pump/blowoff)
             "indicators.mom24": 1,  # 🏅 десятка: blowoff-разгон
+            "indicators.phase": 1, "indicators.rsi1d_state": 1,  # 🧿 элита-1d
             "hot": 1,  # 🔥 горячая монета на момент сигнала
         }).sort("created_at", -1).limit(200):
             at_dt = n.get("created_at")
@@ -9809,6 +9810,17 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                     pass
             if _ten2:
                 extra_parts.append("🏅 ДЕСЯТКА — кандидат +10% (WR 36-39%)")
+            # 🧿 blowoff ЭЛИТА-1d: гейт (фаза+rep) + дневной RSI-медведь
+            # (бэктест 04.08: WR 69, EV +3.78) — формула из полей дока
+            _ind3 = n.get("indicators") or {}
+            _elite1d = (strat == "blowoff"
+                        and _ind3.get("rsi1d_state") == "bear"
+                        and (_ind3.get("phase") or "?") != "NEUTRAL"
+                        and (n.get("rep_seq") or 1) <= 4)
+            if _elite1d:
+                em = "🧿" + em
+                extra_parts.append("🧿 ЭЛИТА-1d: дневной RSI-медведь "
+                                   "(WR 69, EV +3.78)")
             if n.get("hot"):
                 em = "🔥" + em
                 extra_parts.append("🔥 горячая монета (ралли +40% ≤30д)")
@@ -9850,6 +9862,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "rep_seq": n.get("rep_seq"),
                 "rep_hot": _rep_hot2,
                 "ten_plus": _ten2,
+                "elite_1d": _elite1d,
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),
                 "svetofor": n.get("svetofor"), "svetofor_star": n.get("svetofor_star"),
@@ -10487,6 +10500,16 @@ def _compute_journal_sync(_fast_only: bool = False):
                              else "(EV +0.89 против +0.27 у первой)"))
             if _ten_plus:
                 extra += " · 🏅 ДЕСЯТКА — кандидат +10%/сделку (WR 36-39%)"
+            # 🧿 blowoff ЭЛИТА-1d: гейт (фаза+rep) + дневной RSI-медведь
+            # (бэктест 04.08, 961 закрытый: WR 69, EV +3.78)
+            _ind_e = n.get("indicators") or {}
+            _elite1d = (strat == "blowoff"
+                        and _ind_e.get("rsi1d_state") == "bear"
+                        and (_ind_e.get("phase") or "?") != "NEUTRAL"
+                        and _rs <= 4)
+            if _elite1d:
+                em = "🧿" + em
+                extra += " · 🧿 ЭЛИТА-1d: дневной RSI-медведь (WR 69, EV +3.78)"
             _hot2 = bool(n.get("hot"))
             if _hot2:
                 em = "🔥" + em
@@ -10560,6 +10583,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "rep_hot": _rep_hot,
                 # 🏅 кандидат на +10%/сделку (кит / blowoff-разгон)
                 "ten_plus": _ten_plus,
+                # 🧿 blowoff элита-1d (гейт + дневной RSI-медведь)
+                "elite_1d": _elite1d,
                 # SHARK tier (тот же mechanism — для filtering и UI tooltip)
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),
