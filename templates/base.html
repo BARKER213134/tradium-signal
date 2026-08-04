@@ -11,8 +11,8 @@
     <!-- Preload LightweightCharts с того же сервера (HTTP/2, без TLS handshake к stranger).
          Раньше CDN unpkg.com давал 0.9с задержки при первом chart open.
          Локально — ~50-100мс. -->
-    <link rel="preload" as="script" href="/static/lightweight-charts.js?v=mk3">
-    <script defer src="/static/lightweight-charts.js?v=mk3"
+    <link rel="preload" as="script" href="/static/lightweight-charts.js?v=mk4">
+    <script defer src="/static/lightweight-charts.js?v=mk4"
             onload="window._lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat();"></script>
     <style>
         :root {
@@ -4420,7 +4420,7 @@ async function _ensureLwc() {
   if (window._lwcLoaded) return;
   await new Promise(resolve => {
     const s = document.createElement('script');
-    s.src = '/static/lightweight-charts.js?v=mk3';
+    s.src = '/static/lightweight-charts.js?v=mk4';
     s.onload = () => { window._lwcLoaded = true; window._installLwcCompat(); resolve(); };
     s.onerror = () => resolve();
     document.head.appendChild(s);
