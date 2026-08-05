@@ -1629,9 +1629,15 @@ async def _momentum_send_telegram(sig: dict):
     st = sig.get('strategy')
     ind = sig.get('indicators') or {}
     pair = sig.get('pair', '?')
+    # 📐 TG-гейт импульса (бэктест 04.08): при ΔRSI(3ч) <= +3 EV
+    # −0.7..−1.1 — молча в журнал; растущий RSI (+0.4..0.6) — шлём
+    _ang = ind.get('rsi_ang3')
+    if st == 'impulse' and _ang is not None and _ang <= 3:
+        return
     if st == 'impulse':
         header = "\U0001F680 <b>IMPULSE - LONG momentum</b>\n"
-        stats = "backtest 62d: WR 82%, EV +5.9%/trade, median MFE24 +17.7%"
+        stats = ("backtest 62d: WR 82%, EV +5.9%/trade" +
+                 (f" · 📐 RSI-угол {_ang:+.1f}/3ч" if _ang is not None else ""))
         exit_line = "TP +8% / SL -4% / time-stop 12h"
     elif st == 'ignition':
         header = "\U0001F4A5 <b>IGNITION - ранний LONG (начало роста)</b>\n"

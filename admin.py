@@ -10392,6 +10392,10 @@ def _compute_journal_sync(_fast_only: bool = False):
                 _phe = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}.get(_ph, "")
                 _tf = "4h" if strat == "st_break4h" else "1h"
                 extra = f" · {_tf} флип · фаза {_phe}{_ph or '?'}"
+                # 📐 угол RSI(3ч) — бэктест 04.08: разворачивает EV сигнала
+                _ra = (n.get("indicators") or {}).get("rsi_ang3")
+                if _ra is not None:
+                    extra += f" · 📐RSI {_ra:+.1f}/3ч"
             elif strat == "blowoff":
                 _bi = n.get("indicators") or {}
                 _ph = _bi.get("phase")

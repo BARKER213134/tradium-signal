@@ -461,6 +461,17 @@ async def _maybe_st_break(pair_norm: str, flip_bars: list) -> None:
             continue
         entry = fb["close"]
         k = 1 if direction == "LONG" else -1
+        # 📐 угол RSI(1h, 3 бара) — бэктест 04.08: шорт при ΔRSI<−3
+        # ≈ ноль (n=1600), при росте +1.5..+3.0
+        _ang = None
+        try:
+            from exchange import get_klines_any
+            from impulse_detector import rsi_angle3
+            _kd1 = await asyncio.to_thread(get_klines_any, pair_slash, "1h", 80)
+            if _kd1:
+                _ang = rsi_angle3([x["c"] for x in _kd1])
+        except Exception:
+            pass
         sig = {
             "strategy": "st_break", "direction": direction,
             "pair": pair_slash, "symbol": pair_norm,
@@ -469,7 +480,9 @@ async def _maybe_st_break(pair_norm: str, flip_bars: list) -> None:
             "sl": entry * (1 - k * sl_pct / 100),
             "horizon_h": 72,
             "indicators": {"phase": phase, "tf": "1h",
-                           "st": round(fb.get("st") or 0, 8)},
+                           "st": round(fb.get("st") or 0, 8),
+                           **({"rsi_ang3": round(_ang, 1)}
+                              if _ang is not None else {})},
         }
         stored = await asyncio.to_thread(store_signal, sig, 12)
         if not stored:
@@ -477,6 +490,9 @@ async def _maybe_st_break(pair_norm: str, flip_bars: list) -> None:
         # TG: 🟢-фаза (редкая, самый жирный эдж) или пара из 🏆 кандидатов
         try:
             notable = phase == "LONG"
+            # 📐 гейт: шорт перепроданности (ΔRSI<−3) — молча в журнал
+            if direction == "SHORT" and _ang is not None and _ang < -3:
+                notable = False
             if not notable:
                 from database import _get_db
                 cdoc = await asyncio.to_thread(
@@ -491,9 +507,13 @@ async def _maybe_st_break(pair_norm: str, flip_bars: list) -> None:
                 if _bot16 and WHALE_CHAT_ID:
                     E = {"NEUTRAL": "⚪", "LONG": "🟢", "SHORT": "🔴"}
                     d_e = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
+                    _al = (f"📐 угол RSI(3ч): {_ang:+.1f}"
+                           + (" — свежий перегрев, лучший разрез (EV +3.0)"
+                              if direction == "SHORT" and _ang > 10 else "")
+                           + "\n") if _ang is not None else ""
                     txt = (f"🧨 <b>ST-ПРОБОЙ 1h · {pair_slash.replace('/USDT', '')}</b>\n"
                            f"{d_e} @ {entry}\n"
-                           f"фаза рынка: {E[phase]} {phase}\n"
+                           f"фаза рынка: {E[phase]} {phase}\n" + _al +
                            f"TP {sig['tp']:.6g} ({'+' if k > 0 else '−'}{tp_pct:.0f}%) · "
                            f"SL {sig['sl']:.6g} · горизонт 72ч\n"
                            f"<i>бэктест год: WR {'46%' if phase == 'LONG' else '37%' if direction == 'LONG' else '42%'} "
@@ -545,7 +565,16 @@ async def _st_break4h_pair(pair_norm: str, phase: str) -> bool:
     entry = cur["close"]
     k = 1 if direction == "LONG" else -1
     tp_pct, sl_pct = (10.0, 5.0) if k == 1 else (5.0, 3.0)
-    from impulse_detector import store_signal
+    from impulse_detector import store_signal, rsi_angle3
+    # 📐 угол RSI(1h, 3 бара) — бэктест 04.08: LONG при ΔRSI>+10
+    # EV +2.07, при <−10 −2.41 (пробой с падающим RSI = фейк)
+    _ang = None
+    try:
+        _kd1 = await asyncio.to_thread(get_klines_any, pair_slash, "1h", 80)
+        if _kd1:
+            _ang = rsi_angle3([x["c"] for x in _kd1])
+    except Exception:
+        pass
     sig = {
         "strategy": "st_break4h", "direction": direction,
         "pair": pair_slash, "symbol": pair_norm,
@@ -554,7 +583,9 @@ async def _st_break4h_pair(pair_norm: str, phase: str) -> bool:
         "sl": entry * (1 - k * sl_pct / 100),
         "horizon_h": 72,
         "indicators": {"phase": phase, "tf": "4h",
-                       "st": round(cur.get("st") or 0, 8)},
+                       "st": round(cur.get("st") or 0, 8),
+                       **({"rsi_ang3": round(_ang, 1)}
+                          if _ang is not None else {})},
     }
     stored = await asyncio.to_thread(store_signal, sig, 12)
     if not stored:
@@ -563,6 +594,10 @@ async def _st_break4h_pair(pair_norm: str, phase: str) -> bool:
     # остальное — только 🏆 кандидаты
     try:
         notable = direction == "LONG" and phase in ("LONG", "SHORT")
+        # 📐 гейт: лонг-пробой с НЕрастущим RSI (ΔRSI<=+3) — молча в
+        # журнал (EV −2.4..−0.5 против +1.2..+2.1 у растущего)
+        if direction == "LONG" and _ang is not None and _ang <= 3:
+            notable = False
         if not notable:
             from database import _get_db
             cdoc = await asyncio.to_thread(
@@ -581,9 +616,15 @@ async def _st_break4h_pair(pair_norm: str, phase: str) -> bool:
                        if direction == "LONG" and phase == "SHORT" else "")
                 ev = {"LONG": "+2.4", "SHORT": "+1.5", "NEUTRAL": "+0.5"}[phase] \
                     if k == 1 else "+0.6"
+                _al4 = ""
+                if _ang is not None:
+                    _al4 = f"📐 угол RSI(3ч): {_ang:+.1f}"
+                    if direction == "LONG" and _ang > 10:
+                        _al4 += " — RSI-разгон, лучший разрез (EV +2.07)"
+                    _al4 += "\n"
                 txt = (f"💣 <b>ST-ПРОБОЙ 4h · {pair_slash.replace('/USDT', '')}</b>\n"
                        f"{d_e} @ {entry}\n"
-                       f"фаза рынка: {E[phase]} {phase}{rev}\n"
+                       f"фаза рынка: {E[phase]} {phase}{rev}\n" + _al4 +
                        f"TP {sig['tp']:.6g} · SL {sig['sl']:.6g} · горизонт 72ч\n"
                        f"<i>бэктест год: EV {ev}%/сделку</i>")
                 await _bot16.send_message(WHALE_CHAT_ID, txt, parse_mode="HTML")

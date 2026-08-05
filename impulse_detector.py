@@ -218,6 +218,11 @@ def check_pair(pair: str, candles_1h: Optional[list[dict]] = None,
         price = candles_1h[-1]["c"]
         ind = {"rsi_4h": round(rsi_4h, 1), "rsi_1d": round(rsi_1d, 1),
                "st4": st4, "atr_pct": round(atr_pct, 2)}
+        # 📐 угол RSI(1h) за 3 бара (бэктест 04.08: impulse при ΔRSI>+3
+        # EV +0.4..0.6 против −0.7..−1.1 при падающем)
+        _ang = rsi_angle3([c["c"] for c in candles_1h])
+        if _ang is not None:
+            ind["rsi_ang3"] = round(_ang, 1)
 
         # ── 🚀 IMPULSE (LONG) ──
         if rsi_4h > 70 and rsi_1d > 65 and st4 == "UP":
@@ -275,6 +280,35 @@ def check_pair(pair: str, candles_1h: Optional[list[dict]] = None,
         return None
     except Exception:
         logger.debug(f"[impulse] check fail {pair}", exc_info=True)
+        return None
+
+
+def rsi_angle3(closes: list) -> Optional[float]:
+    """📐 ΔRSI14(1h) за 3 бара — угол RSI в момент сигнала (Уайлдер).
+    Бэктест 04.08 (17.5k исходов): st_break4h LONG при ΔRSI>+10 EV
+    +2.07 против −2.41 при <−10; st_break SHORT зеркально."""
+    try:
+        n = len(closes)
+        if n < 34:
+            return None
+        au = ad = 0.0
+        rsis = []
+        for i in range(1, n):
+            ch = closes[i] - closes[i - 1]
+            up, dn = max(ch, 0.0), max(-ch, 0.0)
+            if i <= 14:
+                au += up / 14
+                ad += dn / 14
+                if i < 14:
+                    continue
+            else:
+                au = (au * 13 + up) / 14
+                ad = (ad * 13 + dn) / 14
+            rsis.append(100 - 100 / (1 + au / max(ad, 1e-12)))
+        if len(rsis) < 4:
+            return None
+        return rsis[-1] - rsis[-4]
+    except Exception:
         return None
 
 
