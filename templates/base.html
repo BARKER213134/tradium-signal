@@ -4305,9 +4305,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         // соседние кластеры, полосы ложились внахлёст лесенкой) → топ-2
         const _pxNow = bars[bars.length - 1].c;
         const _minW = _avgRng * 0.8;
-        // потолок: 2.2 свечи, но не больше 3.5% цены (волатильные монеты
-        // раздували полосу на пол-графика — RIF 05.08)
-        const _maxW = Math.min(_avgRng * 2.2, _pxNow * 0.035);
+        // потолок: 1.6 свечи и не больше 1.5% цены — зона это ПОЛОСА у
+        // экстремума, а не простыня боковика (SIREN 05.08)
+        const _maxW = Math.min(_avgRng * 1.6, _pxNow * 0.015);
         const _cands = { support: [], resistance: [] };
         sups.concat(ress).forEach(z => {
           let lo = z.low, hi = z.high || z.low;
@@ -4329,7 +4329,10 @@ window.renderKChart = async function(container, symbol, tf, opts) {
               last.t0 = Math.min(last.t0, c.t0);
             } else merged.push({ ...c });
           });
-          merged.sort((a, b) => b.str - a.str).slice(0, 2).forEach(c => {
+          // отбор по БЛИЗОСТИ к цене (торговые уровни), не по силе —
+          // сила тащила дальние жирные кластеры-простыни
+          const _distTo = c => Math.min(Math.abs(c.lo - _pxNow), Math.abs(c.hi - _pxNow));
+          merged.sort((a, b) => _distTo(a) - _distTo(b)).slice(0, 2).forEach(c => {
             // зона не должна накрывать текущую цену: сопротивление
             // обрезается сверху от цены, поддержка — снизу
             if (kind === 'resistance') c.lo = Math.max(c.lo, _pxNow * 1.002);
