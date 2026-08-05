@@ -4348,7 +4348,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         hi = c.hiP;
         lo = Math.max(Math.min(c.loP, hi - minW), hi - maxW);
       }
-      if (hi - lo < avg * 0.15) return null;
+      // порог схлопнутости не выше половины капа ширины: на 1d вола
+      // монеты бывает >13% и avg*0.15 превышал maxW — все зоны в null
+      if (hi - lo < Math.min(avg * 0.15, maxW * 0.5)) return null;
       return { lo, hi, t: c.firstT, res: isRes, touches: c.touches };
     };
     const build = (arr, isRes) => {
