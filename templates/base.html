@@ -4303,8 +4303,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         // кандидаты → толщина 0.8-2.2 свечи → СЛИЯНИЕ пересекающихся
         // одного типа (05.08 «что-то с уровнями не так»: движок дробил
         // соседние кластеры, полосы ложились внахлёст лесенкой) → топ-2
+        const _pxNow = bars[bars.length - 1].c;
         const _minW = _avgRng * 0.8;
-        const _maxW = _avgRng * 2.2;
+        // потолок: 2.2 свечи, но не больше 3.5% цены (волатильные монеты
+        // раздували полосу на пол-графика — RIF 05.08)
+        const _maxW = Math.min(_avgRng * 2.2, _pxNow * 0.035);
         const _cands = { support: [], resistance: [] };
         sups.concat(ress).forEach(z => {
           let lo = z.low, hi = z.high || z.low;
@@ -4327,6 +4330,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
             } else merged.push({ ...c });
           });
           merged.sort((a, b) => b.str - a.str).slice(0, 2).forEach(c => {
+            // зона не должна накрывать текущую цену: сопротивление
+            // обрезается сверху от цены, поддержка — снизу
+            if (kind === 'resistance') c.lo = Math.max(c.lo, _pxNow * 1.002);
+            else c.hi = Math.min(c.hi, _pxNow * 0.998);
+            if (c.hi - c.lo < _avgRng * 0.15) return;  // схлопнулась
             const alpha = 0.05 + 0.10 * Math.min(1, c.str / 100);
             const fill = kind === 'support'
               ? `rgba(0,229,160,${alpha.toFixed(2)})`
