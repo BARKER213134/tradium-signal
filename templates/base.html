@@ -3635,8 +3635,8 @@ window._kcRegisterIndicators = function() {
         ignoreEvent: false,   // события нужны для тултипа при наведении
         attrs: { x: c.x, y: c.y + (below ? 6 : -6), text: d.emoji || '•',
                  align: 'center', baseline: below ? 'top' : 'bottom' },
-        // size 15→22→28→32→24 (05.08 «эмодзи меньше» на широком модале)
-        styles: { color: d.color || '#fff', size: 24,
+        // size 15→22→28→32→24→20 (05.08 финальная калибровка)
+        styles: { color: d.color || '#fff', size: 20,
                   backgroundColor: 'transparent' },
       }];
     }
@@ -4111,9 +4111,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           { paneId: 'candle_pane' });
         (coords || []).forEach((c, i) => {
           if (!c || c.x == null) return;
-          // якорь — low/high свечи, а видимая иконка смещена на ~18px
-          // (6px отступ + полвысоты эмодзи 24px); меряем до центра иконки
-          const iy = c.y + (sigs[i].below ? 18 : -18);
+          // якорь — low/high свечи, а видимая иконка смещена на ~16px
+          // (6px отступ + полвысоты эмодзи 20px); меряем до центра иконки
+          const iy = c.y + (sigs[i].below ? 16 : -16);
           const dist = Math.sqrt((c.x - mx) ** 2 + (iy - my) ** 2);
           if (dist < bestD) { bestD = dist; best = sigs[i]; }
         });
@@ -4300,44 +4300,56 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         // (05.08 «чуть шире чем просто линиями»)
         const _tail = bars.slice(-120);
         const _avgRng = _tail.reduce((s, b) => s + (b.h - b.l), 0) / Math.max(1, _tail.length);
+        // кандидаты → толщина 0.8-2.2 свечи → СЛИЯНИЕ пересекающихся
+        // одного типа (05.08 «что-то с уровнями не так»: движок дробил
+        // соседние кластеры, полосы ложились внахлёст лесенкой) → топ-2
+        const _minW = _avgRng * 0.8;
+        const _maxW = _avgRng * 2.2;
+        const _cands = { support: [], resistance: [] };
         sups.concat(ress).forEach(z => {
           let lo = z.low, hi = z.high || z.low;
-          if (!lo || !hi) return;
-          // адекватная толщина: не тоньше 0.8 и не толще 2.2 средней свечи
-          const _minW = _avgRng * 0.8;
-          const _maxW = _avgRng * 2.2;
+          if (!lo || !hi || !_cands[z.kind]) return;
           const _mid = (hi + lo) / 2;
-          if (hi - lo < _minW) {
-            lo = _mid - _minW / 2;
-            hi = _mid + _minW / 2;
-          } else if (hi - lo > _maxW) {
-            lo = _mid - _maxW / 2;
-            hi = _mid + _maxW / 2;
-          }
-          const t0z = Math.max(z.first_touch_ts || bars[0].t, bars[0].t);
-          const alpha = 0.05 + 0.10 * Math.min(1, (z.strength || 40) / 100);
-          const fill = z.kind === 'support'
-            ? `rgba(0,229,160,${alpha.toFixed(2)})`
-            : `rgba(255,80,80,${alpha.toFixed(2)})`;
-          const border = z.kind === 'support'
-            ? 'rgba(0,229,160,0.35)' : 'rgba(255,107,107,0.35)';
-          let _zid = null;
-          try {
-            _zid = chart.createOverlay({
-              name: 'lvlZone', groupId: 'lvl', lock: true,
-              points: [{ timestamp: t0z, value: lo },
-                       { timestamp: _lastT + _iv * 30, value: hi }],
-              extendData: { fill, border },
-            });
-          } catch (e) {}
-          if (!_zid) {
-            // фолбэк: тонкая линия по середине зоны
-            chart.createOverlay({
-              name: 'priceLine', groupId: 'lvl', lock: true,
-              points: [{ value: z.mid || lo }],
-              styles: { line: { color: border } },
-            });
-          }
+          if (hi - lo < _minW) { lo = _mid - _minW / 2; hi = _mid + _minW / 2; }
+          else if (hi - lo > _maxW) { lo = _mid - _maxW / 2; hi = _mid + _maxW / 2; }
+          _cands[z.kind].push({ lo, hi, str: z.strength || 40,
+                                t0: z.first_touch_ts || bars[0].t });
+        });
+        Object.keys(_cands).forEach(kind => {
+          const arr = _cands[kind].sort((a, b) => a.lo - b.lo);
+          const merged = [];
+          arr.forEach(c => {
+            const last = merged[merged.length - 1];
+            if (last && c.lo <= last.hi + _avgRng * 0.4) {
+              last.hi = Math.max(last.hi, c.hi);
+              last.str = Math.max(last.str, c.str);
+              last.t0 = Math.min(last.t0, c.t0);
+            } else merged.push({ ...c });
+          });
+          merged.sort((a, b) => b.str - a.str).slice(0, 2).forEach(c => {
+            const alpha = 0.05 + 0.10 * Math.min(1, c.str / 100);
+            const fill = kind === 'support'
+              ? `rgba(0,229,160,${alpha.toFixed(2)})`
+              : `rgba(255,80,80,${alpha.toFixed(2)})`;
+            const border = kind === 'support'
+              ? 'rgba(0,229,160,0.35)' : 'rgba(255,107,107,0.35)';
+            let _zid = null;
+            try {
+              _zid = chart.createOverlay({
+                name: 'lvlZone', groupId: 'lvl', lock: true,
+                points: [{ timestamp: Math.max(c.t0, bars[0].t), value: c.lo },
+                         { timestamp: _lastT + _iv * 30, value: c.hi }],
+                extendData: { fill, border },
+              });
+            } catch (e) {}
+            if (!_zid) {
+              chart.createOverlay({
+                name: 'priceLine', groupId: 'lvl', lock: true,
+                points: [{ value: (c.lo + c.hi) / 2 }],
+                styles: { line: { color: border } },
+              });
+            }
+          });
         });
       } catch (e) {}
     })();
