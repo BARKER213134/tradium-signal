@@ -4334,6 +4334,10 @@ window.renderKChart = async function(container, symbol, tf, opts) {
             // обрезается сверху от цены, поддержка — снизу
             if (kind === 'resistance') c.lo = Math.max(c.lo, _pxNow * 1.002);
             else c.hi = Math.min(c.hi, _pxNow * 0.998);
+            // потолок толщины ПОСЛЕ мерджа: держим ближнюю к цене
+            // границу (торгово важную), режем дальнюю
+            if (kind === 'resistance') c.hi = Math.min(c.hi, c.lo + _maxW);
+            else c.lo = Math.max(c.lo, c.hi - _maxW);
             if (c.hi - c.lo < _avgRng * 0.15) return;  // схлопнулась
             const alpha = 0.05 + 0.10 * Math.min(1, c.str / 100);
             const fill = kind === 'support'
