@@ -4366,10 +4366,13 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         acc.push(z);
       };
       cls.filter(c => dist(c) <= 0.08 && alive(c, isRes)).forEach(tryAdd);
-      // фолбэк: живых в 8% нет — одна ближайшая до 25% (живая, иначе
-      // любая); перебираем, пока кандидат не построится
+      // фолбэк: живых в 8% нет — одна ближайшая до 25% (на 12h/1d — до
+      // 45%, дневные свинги дальше); живая, иначе любая; перебираем,
+      // пока кандидат не построится
       if (!acc.length) {
-        const far = cls.filter(c => dist(c) <= 0.25);
+        const barIv = bars.length > 1 ? bars[1].t - bars[0].t : 0;
+        const farLim = barIv >= 43200000 ? 0.45 : 0.25;
+        const far = cls.filter(c => dist(c) <= farLim);
         const fa = far.filter(c => alive(c, isRes));
         for (const c of (fa.length ? fa : far)) {
           tryAdd(c);
