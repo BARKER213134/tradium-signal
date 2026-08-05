@@ -4304,17 +4304,6 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       if (isHi) sw.up.push({ px: b.h, edge: Math.max(b.o, b.c), t: b.t });
       if (isLo) sw.dn.push({ px: b.l, edge: Math.min(b.o, b.c), t: b.t });
     }
-    const pick = (arr, above) => {
-      const side = arr
-        .filter(s => (above ? s.px > px * 1.002 : s.px < px * 0.998)
-                     && Math.abs(s.px / px - 1) <= 0.08)
-        .sort((a, b) => above ? a.px - b.px : b.px - a.px);
-      const res = [];
-      side.forEach(s => {
-        if (res.every(o => Math.abs(o.px - s.px) > avg)) res.push(s);
-      });
-      return res.slice(0, 2);
-    };
     const mk = (s, isRes) => {
       let lo = isRes ? Math.min(s.edge, s.px) : s.px;
       let hi = isRes ? s.px : Math.max(s.edge, s.px);
@@ -4328,8 +4317,38 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       if (hi - lo < avg * 0.15) return null;
       return { lo, hi, t: s.t, res: isRes };
     };
-    pick(sw.up, true).forEach(s => { const z = mk(s, true); if (z) out.push(z); });
-    pick(sw.dn, false).forEach(s => { const z = mk(s, false); if (z) out.push(z); });
+    // отбор на уровне готовых полос: следующий кандидат берётся, только
+    // если его полоса не пересекает уже принятые на этой стороне
+    const build = (arr, isRes) => {
+      const side = arr
+        .filter(s => (isRes ? s.px > px * 1.002 : s.px < px * 0.998)
+                     && Math.abs(s.px / px - 1) <= 0.08)
+        .sort((a, b) => isRes ? a.px - b.px : b.px - a.px);
+      const acc = [];
+      for (const s of side) {
+        if (acc.length >= 2) break;
+        const z = mk(s, isRes);
+        if (!z) continue;
+        const gap = avg * 0.25;
+        if (acc.some(o => z.lo < o.hi + gap && o.lo < z.hi + gap)) continue;
+        acc.push(z);
+      }
+      // фолбэк: в 8% пусто (цена в середине широкого диапазона) —
+      // рисуем одну ближайшую зону до 25%, чтобы график не был голым
+      if (!acc.length) {
+        const all = arr
+          .filter(s => (isRes ? s.px > px * 1.002 : s.px < px * 0.998)
+                       && Math.abs(s.px / px - 1) <= 0.25)
+          .sort((a, b) => isRes ? a.px - b.px : b.px - a.px);
+        for (const s of all) {
+          const z = mk(s, isRes);
+          if (z) { acc.push(z); break; }
+        }
+      }
+      return acc;
+    };
+    build(sw.up, true).forEach(z => out.push(z));
+    build(sw.dn, false).forEach(z => out.push(z));
     return out;
   };
   window._kcDrawZones = function(chart, bars) {
