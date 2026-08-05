@@ -4367,15 +4367,22 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       // порог схлопнутости не выше половины капа ширины: на 1d вола
       // монеты бывает >13% и avg*0.15 превышал maxW — все зоны в null
       if (hi - lo < Math.min(avg * 0.15, maxW * 0.5)) return null;
-      // сила = калиброванная P(отскок), бэктест 05.08.26: год, 308 пар,
-      // 117k подходов к зоне. База сопр 66.5 / подд 61.5; касания 3-4 +3,
-      // 5+ +9; ширина >=0.7avg +7, >=1.1avg +13; старый (>72б) +3.
-      let p = isRes ? 66.5 : 61.5;
+      // сила = калиброванная P(отскок); бэктест 05.08.26: год, 308 пар,
+      // 117k событий 1h + ресемпл 4h/12h/1d. Базы зависят от ТФ (на
+      // старших поддержки держат хуже: 1d подд 32%, 1d сопр 53%).
+      // Касания 3-4 +3, 5+ +9; ширина >=0.7avg +7, >=1.1avg +13;
+      // старый (>72б) +3.
+      const barIv = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
+      let p;
+      if (barIv >= 86400000)      p = isRes ? 53 : 32;
+      else if (barIv >= 43200000) p = isRes ? 60 : 41;
+      else if (barIv >= 14400000) p = isRes ? 65 : 55.5;
+      else                        p = isRes ? 66.5 : 61.5;
       if (c.touches >= 5) p += 9; else if (c.touches >= 3) p += 3;
       const wrr = (hi - lo) / avg;
       if (wrr >= 1.1) p += 13; else if (wrr >= 0.7) p += 7;
       if (bars.length - 1 - c.lastI > 72) p += 3;
-      const strength = Math.max(50, Math.min(92, Math.round(p)));
+      const strength = Math.max(20, Math.min(92, Math.round(p)));
       return { lo, hi, t: c.firstT, res: isRes, touches: c.touches,
                strength: strength };
     };
@@ -4413,7 +4420,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     build(dns, false).forEach(z => out.push(z));
     return out;
   };
-  window._kcDrawZones = function(chart, bars) {
+  window._kcDrawZones = function(chart, bars, sym, tf) {
     const lastT = bars[bars.length - 1].t;
     const iv = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
     const zs = window._kcBuildZones(bars) || [];
@@ -4444,7 +4451,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         setTimeout(applyGap, 900);
       }
     } catch (e) {}
-    zs.forEach(z => {
+    const drawAll = () => zs.forEach(z => {
       try {
         chart.createOverlay({
           name: 'lvlZone', groupId: 'lvl', lock: true,
@@ -4456,15 +4463,56 @@ window.renderKChart = async function(container, symbol, tf, opts) {
             border: (z.res ? 'rgba(255,107,107,' : 'rgba(0,229,160,')
               + (0.40 + 0.07 * Math.min(3, (z.touches || 1) - 1)).toFixed(2) + ')',
             label: z.strength
-              ? '⚡' + z.strength + '% · ' + z.touches + 'кас' : '',
+              ? '⚡' + z.strength + '% · ' + z.touches + 'кас'
+                + (z.mtf ? ' · 🔗' + z.mtf : '')
+              : '',
             labelColor: z.res ? 'rgba(255,150,150,0.9)' : 'rgba(120,240,200,0.9)',
           },
         });
       } catch (e) {}
     });
+    drawAll();
+    // 🔗 MTF-конфлюэнс: зона, совпадающая с зоной старшего ТФ, — сильнее
+    // (бэктест 05.08.26: +4h → +2пп, +1d → +9пп к P(отскока)). Старшие
+    // зоны тянем асинхронно и перерисовываем группу с бейджем и бустом.
+    const HIGHER = { '5m': ['4h', '1d'], '15m': ['4h', '1d'],
+                     '30m': ['4h', '1d'], '1h': ['4h', '1d'],
+                     '2h': ['4h', '1d'], '4h': ['1d'], '12h': ['1d'] };
+    const hiTfs = (sym && tf && zs.length) ? (HIGHER[tf] || []) : [];
+    if (hiTfs.length) {
+      Promise.all(hiTfs.map(htf =>
+        fetch('/api/journal-candles?symbol=' + sym + '&tf=' + htf + '&limit=400')
+          .then(r => r.json())
+          .then(d => ({ htf, hb: (d.candles || []).map(b => ({
+            t: (b.time || 0) * 1000, o: +b.open, h: +b.high,
+            l: +b.low, c: +b.close })) }))
+          .catch(() => ({ htf, hb: [] }))
+      )).then(res => {
+        let changed = false;
+        res.forEach(({ htf, hb }) => {
+          if (hb.length < 60) return;
+          const hz = window._kcBuildZones(hb) || [];
+          zs.forEach(z => {
+            if (z.mtf === '1d') return;
+            if (hz.some(b2 => b2.res === z.res && b2.lo <= z.hi && z.lo <= b2.hi)) {
+              z.mtf = htf; changed = true;
+            }
+          });
+        });
+        if (changed) {
+          zs.forEach(z => {
+            if (z.mtf && z.strength) {
+              z.strength = Math.min(95, z.strength + (z.mtf === '1d' ? 9 : 2));
+            }
+          });
+          try { chart.removeOverlay({ groupId: 'lvl' }); } catch (e) {}
+          drawAll();
+        }
+      }).catch(() => {});
+    }
   };
   if (opts.levels !== false) {
-    try { window._kcDrawZones(chart, bars); } catch (e) {}
+    try { window._kcDrawZones(chart, bars, sym, tf); } catch (e) {}
   }
   // 💠 инфо-маркеры «серия дельт»: 3 подряд бара с дельтой одного знака,
   // |Σ| >= 2σ√3, объём серии >= 1.8×MA20, цена в сторону серии.
