@@ -4280,62 +4280,77 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       } catch (e) {}
     })();
   }
-  // 📏 уровни-зоны: фитильные полосы свинг-экстремумов ВИДИМЫХ баров
-  // (05.08 полный редизайн: серверные кластеры сливались в «простыни»
-  // боковика — теперь как в референс-индикаторе юзера: зона = тело↔фитиль
-  // конкретного свинга, 2 ближайшие сверху + 2 снизу, клиентский расчёт)
-  if (opts.levels !== false) {
-    try {
-      const _ltail = bars.slice(-120);
-      const _lavg = _ltail.reduce((s, b) => s + (b.h - b.l), 0) / Math.max(1, _ltail.length);
-      const _lpx = bars[bars.length - 1].c;
-      const _llastT = bars[bars.length - 1].t;
-      const _liv = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
-      const LW = 10;                      // крыло фрактала
-      const _sw = { up: [], dn: [] };
-      for (let i = LW; i < bars.length - LW; i++) {
-        const b = bars[i];
-        let isHi = true, isLo = true;
-        for (let j = i - LW; j <= i + LW; j++) {
-          if (bars[j].h > b.h) isHi = false;
-          if (bars[j].l < b.l) isLo = false;
-          if (!isHi && !isLo) break;
-        }
-        if (isHi) _sw.up.push({ px: b.h, edge: Math.max(b.o, b.c), t: b.t });
-        if (isLo) _sw.dn.push({ px: b.l, edge: Math.min(b.o, b.c), t: b.t });
+  // 📏 уровни-зоны: чистая функция построения (05.08) — используется
+  // рендером И автовалидатором (один источник истины). Зона = фитильная
+  // полоса свинг-экстремума (фрактал крыло 10), 2 ближайшие к цене на
+  // сторону в пределах 8%, толщина 0.5-1.5 свечи (кап 2% цены), дедуп.
+  window._kcBuildZones = function(bars) {
+    const out = [];
+    if (!bars || bars.length < 30) return out;
+    const tail = bars.slice(-120);
+    const avg = tail.reduce((s, b) => s + (b.h - b.l), 0) / Math.max(1, tail.length);
+    const px = bars[bars.length - 1].c;
+    if (!(avg > 0) || !(px > 0)) return out;
+    const LW = 10;
+    const sw = { up: [], dn: [] };
+    for (let i = LW; i < bars.length - LW; i++) {
+      const b = bars[i];
+      let isHi = true, isLo = true;
+      for (let j = i - LW; j <= i + LW; j++) {
+        if (bars[j].h > b.h) isHi = false;
+        if (bars[j].l < b.l) isLo = false;
+        if (!isHi && !isLo) break;
       }
-      const _pick = (arr, above) => {
-        const side = arr
-          .filter(s => above ? s.px > _lpx * 1.002 : s.px < _lpx * 0.998)
-          .sort((a, b) => above ? a.px - b.px : b.px - a.px);
-        const out = [];
-        side.forEach(s => {
-          if (out.every(o => Math.abs(o.px - s.px) > _lavg)) out.push(s);
+      if (isHi) sw.up.push({ px: b.h, edge: Math.max(b.o, b.c), t: b.t });
+      if (isLo) sw.dn.push({ px: b.l, edge: Math.min(b.o, b.c), t: b.t });
+    }
+    const pick = (arr, above) => {
+      const side = arr
+        .filter(s => (above ? s.px > px * 1.002 : s.px < px * 0.998)
+                     && Math.abs(s.px / px - 1) <= 0.08)
+        .sort((a, b) => above ? a.px - b.px : b.px - a.px);
+      const res = [];
+      side.forEach(s => {
+        if (res.every(o => Math.abs(o.px - s.px) > avg)) res.push(s);
+      });
+      return res.slice(0, 2);
+    };
+    const mk = (s, isRes) => {
+      let lo = isRes ? Math.min(s.edge, s.px) : s.px;
+      let hi = isRes ? s.px : Math.max(s.edge, s.px);
+      const minW = avg * 0.5;
+      const maxW = Math.min(avg * 1.5, px * 0.02);
+      if (hi - lo < minW) { if (isRes) lo = hi - minW; else hi = lo + minW; }
+      if (hi - lo > maxW) { if (isRes) lo = hi - maxW; else hi = lo + maxW; }
+      // зона не должна пересекать цену даже после расширения
+      if (isRes && lo <= px) lo = px * 1.001;
+      if (!isRes && hi >= px) hi = px * 0.999;
+      if (hi - lo < avg * 0.15) return null;
+      return { lo, hi, t: s.t, res: isRes };
+    };
+    pick(sw.up, true).forEach(s => { const z = mk(s, true); if (z) out.push(z); });
+    pick(sw.dn, false).forEach(s => { const z = mk(s, false); if (z) out.push(z); });
+    return out;
+  };
+  window._kcDrawZones = function(chart, bars) {
+    const lastT = bars[bars.length - 1].t;
+    const iv = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
+    (window._kcBuildZones(bars) || []).forEach(z => {
+      try {
+        chart.createOverlay({
+          name: 'lvlZone', groupId: 'lvl', lock: true,
+          points: [{ timestamp: Math.max(z.t, bars[0].t), value: z.lo },
+                   { timestamp: lastT + iv * 30, value: z.hi }],
+          extendData: {
+            fill: z.res ? 'rgba(255,80,80,0.10)' : 'rgba(0,229,160,0.10)',
+            border: z.res ? 'rgba(255,107,107,0.35)' : 'rgba(0,229,160,0.35)',
+          },
         });
-        return out.slice(0, 2);
-      };
-      const _drawZone = (s, isRes) => {
-        let lo = isRes ? Math.min(s.edge, s.px) : s.px;
-        let hi = isRes ? s.px : Math.max(s.edge, s.px);
-        const minW = _lavg * 0.5;
-        const maxW = Math.min(_lavg * 1.5, _lpx * 0.02);
-        if (hi - lo < minW) { if (isRes) lo = hi - minW; else hi = lo + minW; }
-        if (hi - lo > maxW) { if (isRes) lo = hi - maxW; else hi = lo + maxW; }
-        try {
-          chart.createOverlay({
-            name: 'lvlZone', groupId: 'lvl', lock: true,
-            points: [{ timestamp: Math.max(s.t, bars[0].t), value: lo },
-                     { timestamp: _llastT + _liv * 30, value: hi }],
-            extendData: {
-              fill: isRes ? 'rgba(255,80,80,0.10)' : 'rgba(0,229,160,0.10)',
-              border: isRes ? 'rgba(255,107,107,0.35)' : 'rgba(0,229,160,0.35)',
-            },
-          });
-        } catch (e) {}
-      };
-      _pick(_sw.up, true).forEach(s => _drawZone(s, true));
-      _pick(_sw.dn, false).forEach(s => _drawZone(s, false));
-    } catch (e) {}
+      } catch (e) {}
+    });
+  };
+  if (opts.levels !== false) {
+    try { window._kcDrawZones(chart, bars); } catch (e) {}
   }
   // 💠 инфо-маркеры «серия дельт»: 3 подряд бара с дельтой одного знака,
   // |Σ| >= 2σ√3, объём серии >= 1.8×MA20, цена в сторону серии.
