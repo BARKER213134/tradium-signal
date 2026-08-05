@@ -4421,9 +4421,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
                    { timestamp: lastT + iv * 30, value: z.hi }],
           extendData: {
             fill: (z.res ? 'rgba(255,80,80,' : 'rgba(0,229,160,')
-              + (0.08 + 0.025 * Math.min(3, (z.touches || 1) - 1)).toFixed(3) + ')',
+              + (0.12 + 0.025 * Math.min(3, (z.touches || 1) - 1)).toFixed(3) + ')',
             border: (z.res ? 'rgba(255,107,107,' : 'rgba(0,229,160,')
-              + (0.30 + 0.08 * Math.min(3, (z.touches || 1) - 1)).toFixed(2) + ')',
+              + (0.40 + 0.07 * Math.min(3, (z.touches || 1) - 1)).toFixed(2) + ')',
           },
         });
       } catch (e) {}
