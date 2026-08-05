@@ -4385,7 +4385,35 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   window._kcDrawZones = function(chart, bars) {
     const lastT = bars[bars.length - 1].t;
     const iv = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
-    (window._kcBuildZones(bars) || []).forEach(z => {
+    const zs = window._kcBuildZones(bars) || [];
+    // зона выше/ниже диапазона свечей обрезалась краем оси Y — раздвигаем
+    // отступы пейна, чтобы полки попадали в кадр
+    try {
+      const vis = bars.slice(-170);
+      let dMax = -Infinity, dMin = Infinity;
+      vis.forEach(b => { if (b.h > dMax) dMax = b.h; if (b.l < dMin) dMin = b.l; });
+      let eTop = 0, eBot = 0;
+      zs.forEach(z => {
+        eTop = Math.max(eTop, z.hi - dMax);
+        eBot = Math.max(eBot, dMin - z.lo);
+      });
+      if (eTop > 0 || eBot > 0) {
+        const D = Math.max(dMax - dMin, 1e-9);
+        const k = D + 1.2 * (eTop + eBot);
+        const gap = {
+          top: Math.max(0.08, Math.min(0.35, 1.2 * eTop / k + 0.06)),
+          bottom: Math.max(0.05, Math.min(0.30, 1.2 * eBot / k + 0.04)),
+        };
+        // поздний relayout модалки сбрасывает gap — повторяем с задержкой
+        const applyGap = () => {
+          try { chart.setPaneOptions({ id: 'candle_pane', gap: gap }); } catch (e) {}
+        };
+        applyGap();
+        setTimeout(applyGap, 250);
+        setTimeout(applyGap, 900);
+      }
+    } catch (e) {}
+    zs.forEach(z => {
       try {
         chart.createOverlay({
           name: 'lvlZone', groupId: 'lvl', lock: true,
