@@ -3635,8 +3635,8 @@ window._kcRegisterIndicators = function() {
         ignoreEvent: false,   // события нужны для тултипа при наведении
         attrs: { x: c.x, y: c.y + (below ? 6 : -6), text: d.emoji || '•',
                  align: 'center', baseline: below ? 'top' : 'bottom' },
-        // size 15 → 22 → 28 → 32 (04.08, «эмодзи на графике чуть больше»)
-        styles: { color: d.color || '#fff', size: 32,
+        // size 15→22→28→32→24 (05.08 «эмодзи меньше» на широком модале)
+        styles: { color: d.color || '#fff', size: 24,
                   backgroundColor: 'transparent' },
       }];
     }
@@ -4111,9 +4111,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           { paneId: 'candle_pane' });
         (coords || []).forEach((c, i) => {
           if (!c || c.x == null) return;
-          // якорь — low/high свечи, а видимая иконка смещена на ~22px
-          // (6px отступ + полвысоты эмодзи 32px); меряем до центра иконки
-          const iy = c.y + (sigs[i].below ? 22 : -22);
+          // якорь — low/high свечи, а видимая иконка смещена на ~18px
+          // (6px отступ + полвысоты эмодзи 24px); меряем до центра иконки
+          const iy = c.y + (sigs[i].below ? 18 : -18);
           const dist = Math.sqrt((c.x - mx) ** 2 + (iy - my) ** 2);
           if (dist < bestD) { bestD = dist; best = sigs[i]; }
         });
@@ -4303,11 +4303,16 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         sups.concat(ress).forEach(z => {
           let lo = z.low, hi = z.high || z.low;
           if (!lo || !hi) return;
-          const _minW = _avgRng * 1.2;
+          // адекватная толщина: не тоньше 0.8 и не толще 2.2 средней свечи
+          const _minW = _avgRng * 0.8;
+          const _maxW = _avgRng * 2.2;
+          const _mid = (hi + lo) / 2;
           if (hi - lo < _minW) {
-            const _mid = (hi + lo) / 2;
             lo = _mid - _minW / 2;
             hi = _mid + _minW / 2;
+          } else if (hi - lo > _maxW) {
+            lo = _mid - _maxW / 2;
+            hi = _mid + _maxW / 2;
           }
           const t0z = Math.max(z.first_touch_ts || bars[0].t, bars[0].t);
           const alpha = 0.05 + 0.10 * Math.min(1, (z.strength || 40) / 100);
