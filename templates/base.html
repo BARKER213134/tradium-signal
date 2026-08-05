@@ -4265,12 +4265,38 @@ window.renderKChart = async function(container, symbol, tf, opts) {
                                                Math.abs(z.dist_pct || 0) <= 25);
         const sups = zs.filter(z => z.kind === 'support').sort((a, b) => (b.strength || 0) - (a.strength || 0)).slice(0, 3);
         const ress = zs.filter(z => z.kind === 'resistance').sort((a, b) => (b.strength || 0) - (a.strength || 0)).slice(0, 3);
+        // 🟥🟩 зоны-полосы (04.08 «хочу такие же уровни»): прямоугольник
+        // от рождения зоны до правого края, заливка по силе
+        const _lastT = bars[bars.length - 1].t;
+        const _iv = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
         sups.concat(ress).forEach(z => {
-          chart.createOverlay({
-            name: 'priceLine', groupId: 'lvl', lock: true,
-            points: [{ value: z.mid || z.low }],
-            styles: { line: { color: z.kind === 'support' ? 'rgba(0,229,160,0.55)' : 'rgba(255,107,107,0.55)', size: (z.strength || 0) >= 60 ? 2 : 1 } },
-          });
+          const lo = z.low, hi = z.high || z.low;
+          if (!lo || !hi) return;
+          const t0z = Math.max(z.first_touch_ts || bars[0].t, bars[0].t);
+          const alpha = 0.05 + 0.10 * Math.min(1, (z.strength || 40) / 100);
+          const fill = z.kind === 'support'
+            ? `rgba(0,229,160,${alpha.toFixed(2)})`
+            : `rgba(255,80,80,${alpha.toFixed(2)})`;
+          const border = z.kind === 'support'
+            ? 'rgba(0,229,160,0.35)' : 'rgba(255,107,107,0.35)';
+          try {
+            chart.createOverlay({
+              name: 'rect', groupId: 'lvl', lock: true,
+              points: [{ timestamp: t0z, value: lo },
+                       { timestamp: _lastT + _iv * 30, value: hi }],
+              styles: { rect: { style: 'stroke_fill', color: fill,
+                                borderColor: border, borderSize: 1 },
+                        polygon: { style: 'stroke_fill', color: fill,
+                                   borderColor: border, borderSize: 1 } },
+            });
+          } catch (e) {
+            // фолбэк: тонкая линия по середине зоны
+            chart.createOverlay({
+              name: 'priceLine', groupId: 'lvl', lock: true,
+              points: [{ value: z.mid || lo }],
+              styles: { line: { color: border } },
+            });
+          }
         });
       } catch (e) {}
     })();
