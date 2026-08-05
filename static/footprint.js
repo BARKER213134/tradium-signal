@@ -249,7 +249,9 @@ function fpSlice() {
 const FP_AXIS = 80, FP_DELTA = 64, FP_PHASE = 14, FP_TIME = 18;
 function fpGeom(cv) {
   const W = cv.clientWidth || cv.parentElement.clientWidth - 16;
-  const H = Math.max(500, Math.min(720, window.innerHeight - 290));
+  // 05.08 «растяни график на свободную зону»: потолок 720 оставлял
+  // пустоту под кластерами в высоком модале — теперь во всю высоту окна
+  const H = Math.max(500, window.innerHeight - 235);
   return { W, H, chartW: W - FP_AXIS, chartH: H - FP_DELTA - FP_PHASE - FP_TIME - 8 };
 }
 function fpRender() {
