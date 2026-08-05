@@ -4296,9 +4296,19 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         // от рождения зоны до правого края, заливка по силе
         const _lastT = bars[bars.length - 1].t;
         const _iv = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
+        // минимальная визуальная толщина полосы ~1.2 средней свечи
+        // (05.08 «чуть шире чем просто линиями»)
+        const _tail = bars.slice(-120);
+        const _avgRng = _tail.reduce((s, b) => s + (b.h - b.l), 0) / Math.max(1, _tail.length);
         sups.concat(ress).forEach(z => {
-          const lo = z.low, hi = z.high || z.low;
+          let lo = z.low, hi = z.high || z.low;
           if (!lo || !hi) return;
+          const _minW = _avgRng * 1.2;
+          if (hi - lo < _minW) {
+            const _mid = (hi + lo) / 2;
+            lo = _mid - _minW / 2;
+            hi = _mid + _minW / 2;
+          }
           const t0z = Math.max(z.first_touch_ts || bars[0].t, bars[0].t);
           const alpha = 0.05 + 0.10 * Math.min(1, (z.strength || 40) / 100);
           const fill = z.kind === 'support'
