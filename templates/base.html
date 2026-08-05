@@ -3593,6 +3593,33 @@ window._kcRegisterIndicators = function() {
     }],
     calc: (list) => list.map(b => ({ delta: b.delta }))
   });
+  // 📏 Зона уровня: закрашенная полоса low..high (support/resistance)
+  klinecharts.registerOverlay({
+    name: 'lvlZone',
+    totalStep: 1,
+    lock: true,
+    needDefaultPointFigure: false,
+    createPointFigures: ({ overlay, coordinates, bounding }) => {
+      const d = overlay.extendData || {};
+      const c0 = coordinates[0], c1 = coordinates[1];
+      if (!c0) return [];
+      const x1 = (c1 && c1.x != null) ? c1.x : bounding.width;
+      const y1 = (c1 && c1.y != null) ? c1.y : c0.y;
+      const x0 = Math.min(c0.x, x1);
+      const w = Math.max(4, Math.abs(x1 - c0.x));
+      const y0 = Math.min(c0.y, y1);
+      const hgt = Math.max(2, Math.abs(y1 - c0.y));
+      return [{
+        type: 'rect',
+        ignoreEvent: true,
+        attrs: { x: x0, y: y0, width: w, height: hgt },
+        styles: { style: 'stroke_fill',
+                  color: d.fill || 'rgba(255,80,80,0.10)',
+                  borderColor: d.border || 'rgba(255,80,80,0.35)',
+                  borderSize: 1 },
+      }];
+    }
+  });
   // Сигнальный маркер: LONG — эмодзи ПОД свечой, SHORT — НАД свечой
   klinecharts.registerOverlay({
     name: 'sigMarker',
@@ -4279,17 +4306,16 @@ window.renderKChart = async function(container, symbol, tf, opts) {
             : `rgba(255,80,80,${alpha.toFixed(2)})`;
           const border = z.kind === 'support'
             ? 'rgba(0,229,160,0.35)' : 'rgba(255,107,107,0.35)';
+          let _zid = null;
           try {
-            chart.createOverlay({
-              name: 'rect', groupId: 'lvl', lock: true,
+            _zid = chart.createOverlay({
+              name: 'lvlZone', groupId: 'lvl', lock: true,
               points: [{ timestamp: t0z, value: lo },
                        { timestamp: _lastT + _iv * 30, value: hi }],
-              styles: { rect: { style: 'stroke_fill', color: fill,
-                                borderColor: border, borderSize: 1 },
-                        polygon: { style: 'stroke_fill', color: fill,
-                                   borderColor: border, borderSize: 1 } },
+              extendData: { fill, border },
             });
-          } catch (e) {
+          } catch (e) {}
+          if (!_zid) {
             // фолбэк: тонкая линия по середине зоны
             chart.createOverlay({
               name: 'priceLine', groupId: 'lvl', lock: true,
