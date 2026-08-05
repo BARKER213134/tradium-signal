@@ -3609,7 +3609,7 @@ window._kcRegisterIndicators = function() {
       const w = Math.max(4, Math.abs(x1 - c0.x));
       const y0 = Math.min(c0.y, y1);
       const hgt = Math.max(2, Math.abs(y1 - c0.y));
-      return [{
+      const figs = [{
         type: 'rect',
         ignoreEvent: true,
         attrs: { x: x0, y: y0, width: w, height: hgt },
@@ -3618,6 +3618,22 @@ window._kcRegisterIndicators = function() {
                   borderColor: d.border || 'rgba(255,80,80,0.35)',
                   borderSize: 1 },
       }];
+      // подпись силы уровня внутри полосы, у правого края
+      if (d.label) {
+        figs.push({
+          type: 'text',
+          ignoreEvent: true,
+          attrs: { x: Math.min(x0 + w, bounding.width) - 6,
+                   y: y0 + hgt / 2, text: d.label,
+                   align: 'right', baseline: 'middle' },
+          styles: { color: d.labelColor || 'rgba(255,255,255,0.75)',
+                    size: 10, family: 'monospace',
+                    backgroundColor: 'rgba(10,14,20,0.55)',
+                    paddingLeft: 3, paddingRight: 3,
+                    paddingTop: 1, paddingBottom: 1, borderRadius: 2 },
+        });
+      }
+      return figs;
     }
   });
   // Сигнальный маркер: LONG — эмодзи ПОД свечой, SHORT — НАД свечой
@@ -4351,7 +4367,17 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       // порог схлопнутости не выше половины капа ширины: на 1d вола
       // монеты бывает >13% и avg*0.15 превышал maxW — все зоны в null
       if (hi - lo < Math.min(avg * 0.15, maxW * 0.5)) return null;
-      return { lo, hi, t: c.firstT, res: isRes, touches: c.touches };
+      // сила = калиброванная P(отскок), бэктест 05.08.26: год, 308 пар,
+      // 117k подходов к зоне. База сопр 66.5 / подд 61.5; касания 3-4 +3,
+      // 5+ +9; ширина >=0.7avg +7, >=1.1avg +13; старый (>72б) +3.
+      let p = isRes ? 66.5 : 61.5;
+      if (c.touches >= 5) p += 9; else if (c.touches >= 3) p += 3;
+      const wrr = (hi - lo) / avg;
+      if (wrr >= 1.1) p += 13; else if (wrr >= 0.7) p += 7;
+      if (bars.length - 1 - c.lastI > 72) p += 3;
+      const strength = Math.max(50, Math.min(92, Math.round(p)));
+      return { lo, hi, t: c.firstT, res: isRes, touches: c.touches,
+               strength: strength };
     };
     const build = (arr, isRes) => {
       const dist = c => isRes ? (c.loP / px - 1) : (1 - c.hiP / px);
@@ -4429,6 +4455,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
               + (0.12 + 0.025 * Math.min(3, (z.touches || 1) - 1)).toFixed(3) + ')',
             border: (z.res ? 'rgba(255,107,107,' : 'rgba(0,229,160,')
               + (0.40 + 0.07 * Math.min(3, (z.touches || 1) - 1)).toFixed(2) + ')',
+            label: z.strength
+              ? '⚡' + z.strength + '% · ' + z.touches + 'кас' : '',
+            labelColor: z.res ? 'rgba(255,150,150,0.9)' : 'rgba(120,240,200,0.9)',
           },
         });
       } catch (e) {}
