@@ -4306,12 +4306,17 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       if (isLo) dns.push({ p: b.l, i: i });
     }
     const tol = Math.min(avg * 0.7, px * 0.008);
+    const minW = avg * 0.5;
+    const maxW = Math.min(avg * 1.5, px * 0.02);
     const cluster = (arr) => {
       const sorted = arr.slice().sort((a, b) => a.p - b.p);
       const cls = [];
       let cur = null;
       sorted.forEach(s => {
-        if (cur && s.p - cur.hiP <= tol) { cur.hiP = s.p; cur.members.push(s); }
+        // размах кластера не шире полосы — два разных уровня не клеим
+        if (cur && s.p - cur.hiP <= tol && s.p - cur.loP <= maxW) {
+          cur.hiP = s.p; cur.members.push(s);
+        }
         else { cur = { loP: s.p, hiP: s.p, members: [s] }; cls.push(cur); }
       });
       cls.forEach(c => {
@@ -4330,8 +4335,6 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       }
       return true;
     };
-    const minW = avg * 0.5;
-    const maxW = Math.min(avg * 1.5, px * 0.02);
     const mkBand = (c, isRes) => {
       // полоса лежит НАД фитилями (сопротивление) / ПОД фитилями
       // (поддержка): край касается свингов, тянется в пустоту от цены —
