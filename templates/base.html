@@ -4280,10 +4280,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       } catch (e) {}
     })();
   }
-  // 📏 уровни-зоны: чистая функция построения (05.08) — используется
-  // рендером И автовалидатором (один источник истины). Зона = фитильная
-  // полоса свинг-экстремума (фрактал крыло 10), 2 ближайшие к цене на
-  // сторону в пределах 8%, толщина 0.5-1.5 свечи (кап 2% цены), дедуп.
+  // 📏 уровни-зоны v3 (05.08): кластеры свингов + уважение уровня.
+  // Пивоты (фрактал крыло 6) кластеризуются по цене; полоса = диапазон
+  // кластера от экстремума к телам. Мёртвые уровни (>2 закрытий сквозь
+  // полосу ПОСЛЕ последнего касания) отбраковываются. 2 живых на сторону
+  // в 8% (фолбэк — ближайший до 25%). touches → насыщенность заливки.
   window._kcBuildZones = function(bars) {
     const out = [];
     if (!bars || bars.length < 30) return out;
@@ -4291,8 +4292,8 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     const avg = tail.reduce((s, b) => s + (b.h - b.l), 0) / Math.max(1, tail.length);
     const px = bars[bars.length - 1].c;
     if (!(avg > 0) || !(px > 0)) return out;
-    const LW = 10;
-    const sw = { up: [], dn: [] };
+    const LW = 6;
+    const ups = [], dns = [];
     for (let i = LW; i < bars.length - LW; i++) {
       const b = bars[i];
       let isHi = true, isLo = true;
@@ -4301,54 +4302,81 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         if (bars[j].l < b.l) isLo = false;
         if (!isHi && !isLo) break;
       }
-      if (isHi) sw.up.push({ px: b.h, edge: Math.max(b.o, b.c), t: b.t });
-      if (isLo) sw.dn.push({ px: b.l, edge: Math.min(b.o, b.c), t: b.t });
+      if (isHi) ups.push({ p: b.h, i: i });
+      if (isLo) dns.push({ p: b.l, i: i });
     }
-    const mk = (s, isRes) => {
-      let lo = isRes ? Math.min(s.edge, s.px) : s.px;
-      let hi = isRes ? s.px : Math.max(s.edge, s.px);
-      const minW = avg * 0.5;
-      const maxW = Math.min(avg * 1.5, px * 0.02);
-      if (hi - lo < minW) { if (isRes) lo = hi - minW; else hi = lo + minW; }
-      if (hi - lo > maxW) { if (isRes) lo = hi - maxW; else hi = lo + maxW; }
-      // зона не должна пересекать цену даже после расширения
-      if (isRes && lo <= px) lo = px * 1.001;
-      if (!isRes && hi >= px) hi = px * 0.999;
-      if (hi - lo < avg * 0.15) return null;
-      return { lo, hi, t: s.t, res: isRes };
+    const tol = Math.min(avg * 0.7, px * 0.008);
+    const cluster = (arr) => {
+      const sorted = arr.slice().sort((a, b) => a.p - b.p);
+      const cls = [];
+      let cur = null;
+      sorted.forEach(s => {
+        if (cur && s.p - cur.hiP <= tol) { cur.hiP = s.p; cur.members.push(s); }
+        else { cur = { loP: s.p, hiP: s.p, members: [s] }; cls.push(cur); }
+      });
+      cls.forEach(c => {
+        c.touches = c.members.length;
+        c.lastI = c.members.reduce((m, s) => Math.max(m, s.i), 0);
+        c.firstT = bars[c.members.reduce((m, s) => Math.min(m, s.i), 1e9)].t;
+      });
+      return cls;
     };
-    // отбор на уровне готовых полос: следующий кандидат берётся, только
-    // если его полоса не пересекает уже принятые на этой стороне
-    const build = (arr, isRes) => {
-      const side = arr
-        .filter(s => (isRes ? s.px > px * 1.002 : s.px < px * 0.998)
-                     && Math.abs(s.px / px - 1) <= 0.08)
-        .sort((a, b) => isRes ? a.px - b.px : b.px - a.px);
-      const acc = [];
-      for (const s of side) {
-        if (acc.length >= 2) break;
-        const z = mk(s, isRes);
-        if (!z) continue;
-        const gap = avg * 0.25;
-        if (acc.some(o => z.lo < o.hi + gap && o.lo < z.hi + gap)) continue;
-        acc.push(z);
+    // уровень мёртв, если после последнего касания цена >2 раз ЗАКРЫЛАСЬ
+    // за полосой (фитильные проколы не считаются)
+    const alive = (c, isRes) => {
+      let n = 0;
+      for (let j = c.lastI + LW; j < bars.length; j++) {
+        if (isRes ? bars[j].c > c.hiP : bars[j].c < c.loP) { if (++n > 2) return false; }
       }
-      // фолбэк: в 8% пусто (цена в середине широкого диапазона) —
-      // рисуем одну ближайшую зону до 25%, чтобы график не был голым
+      return true;
+    };
+    const minW = avg * 0.5;
+    const maxW = Math.min(avg * 1.5, px * 0.02);
+    const mkBand = (c, isRes) => {
+      // полоса лежит НАД фитилями (сопротивление) / ПОД фитилями
+      // (поддержка): край касается свингов, тянется в пустоту от цены —
+      // свечи зона не накрывает
+      if (isRes ? c.loP <= px * 1.002 : c.hiP >= px * 0.998) return null;
+      let lo, hi;
+      if (isRes) {
+        lo = c.loP;
+        hi = Math.min(Math.max(c.hiP, lo + minW), lo + maxW);
+      } else {
+        hi = c.hiP;
+        lo = Math.max(Math.min(c.loP, hi - minW), hi - maxW);
+      }
+      if (hi - lo < avg * 0.15) return null;
+      return { lo, hi, t: c.firstT, res: isRes, touches: c.touches };
+    };
+    const build = (arr, isRes) => {
+      const dist = c => isRes ? (c.loP / px - 1) : (1 - c.hiP / px);
+      const cls = cluster(arr)
+        .filter(c => isRes ? c.loP > px : c.hiP < px)
+        .sort((a, b) => dist(a) - dist(b));
+      const acc = [];
+      const tryAdd = (c) => {
+        if (acc.length >= 2) return;
+        const z = mkBand(c, isRes);
+        if (!z) return;
+        const gap = avg * 0.25;
+        if (acc.some(o => z.lo < o.hi + gap && o.lo < z.hi + gap)) return;
+        acc.push(z);
+      };
+      cls.filter(c => dist(c) <= 0.08 && alive(c, isRes)).forEach(tryAdd);
+      // фолбэк: живых в 8% нет — одна ближайшая до 25% (живая, иначе
+      // любая); перебираем, пока кандидат не построится
       if (!acc.length) {
-        const all = arr
-          .filter(s => (isRes ? s.px > px * 1.002 : s.px < px * 0.998)
-                       && Math.abs(s.px / px - 1) <= 0.25)
-          .sort((a, b) => isRes ? a.px - b.px : b.px - a.px);
-        for (const s of all) {
-          const z = mk(s, isRes);
-          if (z) { acc.push(z); break; }
+        const far = cls.filter(c => dist(c) <= 0.25);
+        const fa = far.filter(c => alive(c, isRes));
+        for (const c of (fa.length ? fa : far)) {
+          tryAdd(c);
+          if (acc.length) break;
         }
       }
       return acc;
     };
-    build(sw.up, true).forEach(z => out.push(z));
-    build(sw.dn, false).forEach(z => out.push(z));
+    build(ups, true).forEach(z => out.push(z));
+    build(dns, false).forEach(z => out.push(z));
     return out;
   };
   window._kcDrawZones = function(chart, bars) {
@@ -4361,8 +4389,10 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           points: [{ timestamp: Math.max(z.t, bars[0].t), value: z.lo },
                    { timestamp: lastT + iv * 30, value: z.hi }],
           extendData: {
-            fill: z.res ? 'rgba(255,80,80,0.10)' : 'rgba(0,229,160,0.10)',
-            border: z.res ? 'rgba(255,107,107,0.35)' : 'rgba(0,229,160,0.35)',
+            fill: (z.res ? 'rgba(255,80,80,' : 'rgba(0,229,160,')
+              + (0.08 + 0.025 * Math.min(3, (z.touches || 1) - 1)).toFixed(3) + ')',
+            border: (z.res ? 'rgba(255,107,107,' : 'rgba(0,229,160,')
+              + (0.30 + 0.08 * Math.min(3, (z.touches || 1) - 1)).toFixed(2) + ')',
           },
         });
       } catch (e) {}
