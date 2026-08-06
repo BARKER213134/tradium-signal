@@ -4391,7 +4391,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       return { lo, hi, t: bars[Math.max(0, c.lastI - LW)].t, res: isRes,
                touches: c.touches, strength: strength };
     };
-    const build = (arr, isRes) => {
+    const build = (arr, isRes, soft) => {
       const dist = c => isRes ? (c.loP / px - 1) : (1 - c.hiP / px);
       const cls = cluster(arr)
         .filter(c => isRes ? c.loP > px : c.hiP < px)
@@ -4405,7 +4405,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         if (acc.some(o => z.lo < o.hi + gap && o.lo < z.hi + gap)) return;
         acc.push(z);
       };
-      cls.filter(c => dist(c) <= 0.08 && alive(c, isRes)).forEach(tryAdd);
+      // soft-режим (достройка): alive не требуем — у флип-уровня
+      // (пробитая вершина) закрытия «сквозь» были ДО пробоя, это норма
+      cls.filter(c => dist(c) <= 0.08 && (soft || alive(c, isRes))).forEach(tryAdd);
       // фолбэк: живых в 8% нет — одна ближайшая до 25% (на 12h/1d — до
       // 45%, дневные свинги дальше); живая, иначе любая; перебираем,
       // пока кандидат не построится
@@ -4423,12 +4425,17 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     };
     build(ups, true).forEach(z => out.push(z));
     build(dns, false).forEach(z => out.push(z));
-    // 🚀 параболика (кейс TAKE 06.08): при вертикальном росте в 25% нет
-    // подтверждённых свингов LW=6 — достраиваем пустую сторону
-    // микро-свингами (крыло 3), они видят молодые полки внутри
-    // вертикали; сила −8 (уровень юный, не бэктест-класс)
-    const needRes = !out.some(z => z.res);
-    const needSup = !out.some(z => !z.res);
+    // 🚀 параболика (кейсы TAKE/PORTAL 06.08): сторона бедна, если зон
+    // нет ВООБЩЕ или меньше двух и ближайшая дальше 4% — достраиваем
+    // микро-свингами (крыло 3) и флипами; сила −8 (не бэктест-класс)
+    const distZ = z => z.res ? (z.lo / px - 1) : (1 - z.hi / px);
+    const needSide = r => {
+      const zs = out.filter(z => z.res === r);
+      return !zs.length
+        || (zs.length < 2 && Math.min.apply(null, zs.map(distZ)) > 0.04);
+    };
+    const needRes = needSide(true);
+    const needSup = needSide(false);
     if (needRes || needSup) {
       const LW3 = 3;
       const ups3 = [], dns3 = [];
@@ -4443,7 +4450,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         if (isHi) ups3.push({ p: b.h, i: i });
         if (isLo) dns3.push({ p: b.l, i: i });
       }
-      const soften = z => {
+      const soften = r => z => {
+        // кап 2 на сторону суммарно + не дублируем существующие
+        if (out.filter(o => o.res === r).length >= 2) return;
+        const g2 = avg * 0.25;
+        if (out.some(o => o.res === r && z.lo < o.hi + g2 && o.lo < z.hi + g2)) return;
         z.strength = Math.max(20, (z.strength || 60) - 8);
         out.push(z);
       };
@@ -4452,11 +4463,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       // пробитой вершины), сопротивлений — пробитые лои выше
       if (needRes) {
         build(ups3.concat(dns.concat(dns3).filter(s => s.p > px * 1.002)),
-              true).forEach(soften);
+              true, true).forEach(soften(true));
       }
       if (needSup) {
         build(dns3.concat(ups.concat(ups3).filter(s => s.p < px * 0.998)),
-              false).forEach(soften);
+              false, true).forEach(soften(false));
       }
     }
     return out;
