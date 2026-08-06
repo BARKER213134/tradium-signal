@@ -304,10 +304,19 @@ function fpRender() {
   const n = bars.length;
   const bw = chartW / n;
   const gMin = d.p_min, tick = d.tick;
-  // автомасштаб цены по видимому окну
+  // автомасштаб цены по видимому окну + ВОЗДУХ: зоны уровней входят в
+  // диапазон (кап 50% свечного размаха), паддинг 6% — видно, куда
+  // может дойти цена (запрос юзера 06.08 «кластера сильно крупно»)
   let pLo = Infinity, pHi = -Infinity;
   bars.forEach(b => { if (b.l < pLo) pLo = b.l; if (b.h > pHi) pHi = b.h; });
-  const pad = (pHi - pLo) * 0.03 || pLo * 0.01;
+  const spanB = (pHi - pLo) || pLo * 0.02;
+  if (d.zones && d.zones.length) {
+    d.zones.forEach(z => {
+      pHi = Math.max(pHi, Math.min(z.hi, pHi + spanB * 0.5));
+      pLo = Math.min(pLo, Math.max(z.lo, pLo - spanB * 0.5));
+    });
+  }
+  const pad = (pHi - pLo) * 0.06 || pLo * 0.01;
   pLo -= pad; pHi += pad;
   const y = p => chartH - (p - pLo) / (pHi - pLo) * chartH;
   const p_at = yy => pLo + (chartH - yy) / chartH * (pHi - pLo);
