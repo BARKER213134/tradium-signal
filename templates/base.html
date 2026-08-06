@@ -4413,7 +4413,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       // пока кандидат не построится
       if (!acc.length) {
         const barIv = bars.length > 1 ? bars[1].t - bars[0].t : 0;
-        const farLim = barIv >= 43200000 ? 0.45 : 0.25;
+        // soft-достройка на экстремальной параболе (HFT ×5/нед): даже
+        // флипы дальше 25% — берём ближайшее до 60%
+        const farLim = barIv >= 43200000 ? 0.45 : (soft ? 0.60 : 0.25);
         const far = cls.filter(c => dist(c) <= farLim);
         const fa = far.filter(c => alive(c, isRes));
         for (const c of (fa.length ? fa : far)) {
