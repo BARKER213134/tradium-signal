@@ -766,6 +766,7 @@
           support_defense:'🧱', // 🧱 30m имбаланс-покупка в 10д-лоу → лонг (60д: EV+0.90 против −0.55)
           channel_top:'📐',    // 📐 шорт крыши восходящего канала (год: EV+1.29 WR47)
           corridor:'🎈',       // 🎈 лонг: полка+пустой путь+покупатель (год: EV+0.49, 60д +0.33)
+          level_touch:'📏',    // 📏 касание уровня + RSI-гейт (год: LONG WR68 +0.69R, SHORT WR63 +0.58R)
           alarm:'⏰',          // ⏰ сработавший будильник (alarm_events)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
         })[src] || '•';
@@ -813,6 +814,7 @@
         if (src === 'support_defense') return '🧱';
         if (src === 'channel_top') return '📐';
         if (src === 'corridor') return '🎈';
+        if (src === 'level_touch') return '📏';
         if (src === 'alarm') return '⏰';
         if (src === 'st_break4h') return '💣';
         if (src === 'blowoff') return '🌋';
@@ -4383,8 +4385,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       if (wrr >= 1.1) p += 13; else if (wrr >= 0.7) p += 7;
       if (bars.length - 1 - c.lastI > 72) p += 3;
       const strength = Math.max(20, Math.min(92, Math.round(p)));
-      return { lo, hi, t: c.firstT, res: isRes, touches: c.touches,
-               strength: strength };
+      // полоса рисуется от НАЧАЛА ПОСЛЕДНЕГО свинга (не от первого
+      // касания): длинный хвост через весь график «ездил» по свечам
+      // истории и сбивал (кейс ZEC 06.08)
+      return { lo, hi, t: bars[Math.max(0, c.lastI - LW)].t, res: isRes,
+               touches: c.touches, strength: strength };
     };
     const build = (arr, isRes) => {
       const dist = c => isRes ? (c.loP / px - 1) : (1 - c.hiP / px);
@@ -4451,17 +4456,21 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         setTimeout(applyGap, 900);
       }
     } catch (e) {}
+    const pxNow = bars[bars.length - 1].c;
     const drawAll = () => zs.forEach(z => {
       try {
+        // зона, от которой цена ушла >4% — приглушаем, чтобы не сбивала
+        const zd = z.res ? (z.lo / pxNow - 1) : (1 - z.hi / pxNow);
+        const dim = zd > 0.04 ? 0.55 : 1;
         chart.createOverlay({
           name: 'lvlZone', groupId: 'lvl', lock: true,
           points: [{ timestamp: Math.max(z.t, bars[0].t), value: z.lo },
                    { timestamp: lastT + iv * 30, value: z.hi }],
           extendData: {
             fill: (z.res ? 'rgba(255,80,80,' : 'rgba(0,229,160,')
-              + (0.12 + 0.025 * Math.min(3, (z.touches || 1) - 1)).toFixed(3) + ')',
+              + ((0.12 + 0.025 * Math.min(3, (z.touches || 1) - 1)) * dim).toFixed(3) + ')',
             border: (z.res ? 'rgba(255,107,107,' : 'rgba(0,229,160,')
-              + (0.40 + 0.07 * Math.min(3, (z.touches || 1) - 1)).toFixed(2) + ')',
+              + ((0.40 + 0.07 * Math.min(3, (z.touches || 1) - 1)) * dim).toFixed(2) + ')',
             label: z.strength
               ? '⚡' + z.strength + '% · ' + z.touches + 'кас'
                 + (z.mtf ? ' · 🔗' + z.mtf : '')

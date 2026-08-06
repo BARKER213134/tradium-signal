@@ -1184,6 +1184,49 @@ def scan_universe(max_pairs: int = 300):
                         pass
                     except Exception:
                         pass
+                # 📏 УРОВЕНЬ: касание зоны + RSI-гейт (бэктест 06.08:
+                # LONG подд RSI50-70 WR68 EV+0.69R, SHORT сопр RSI30-50
+                # WR63 +0.58R; RSI<30/>70 у уровня = нож, молчим)
+                try:
+                    from level_signal import check_level_touch, mtf_confluence
+                    _lt = check_level_touch(pair, kd)
+                    if _lt is not None:
+                        _li = _lt["indicators"]
+                        # 🔗 конфлюэнс со старшим ТФ — только для
+                        # сработавших (2 нативных фетча)
+                        _mtf = mtf_confluence(
+                            pair, _li["zone_lo"], _li["zone_hi"],
+                            _lt["direction"] == "SHORT")
+                        if _mtf:
+                            _li["mtf"] = _mtf
+                            _li["strength"] = min(
+                                95, _li["strength"] + (9 if _mtf == "1d" else 2))
+                        from impulse_detector import store_signal
+                        if store_signal(_lt, cooldown_h=12):
+                            ds_fired += 1
+                            # TG только конфлюэнс или сила>=65 — иначе
+                            # ~12 карточек/день на 300 пар
+                            if _mtf or _li["strength"] >= 65:
+                                _dirw = ("🟢 LONG — отскок от поддержки"
+                                         if _lt["direction"] == "LONG"
+                                         else "🔴 SHORT — отбой от сопротивления")
+                                _bt = ("WR 68, EV +0.69R"
+                                       if _lt["direction"] == "LONG"
+                                       else "WR 63, EV +0.58R")
+                                _tg16(
+                                    f"📏 <b>УРОВЕНЬ · "
+                                    f"{pair.replace('/USDT', '')}</b>\n"
+                                    f"{_dirw} @ {_lt['entry']:.6g}\n"
+                                    f"зона {_li['zone_lo']:.6g}–"
+                                    f"{_li['zone_hi']:.6g} · "
+                                    f"⚡{_li['strength']}% · "
+                                    f"{_li['touches']}кас"
+                                    + (f" · 🔗{_mtf} (WR 81 при 1d)" if _mtf else "")
+                                    + f"\nRSI14 {_li['rsi1h']} — подход без ножа"
+                                    f"\nTP ±3% · SL ∓3% · до 96ч\n"
+                                    f"<i>год-бэктест 200k касаний: {_bt}</i>")
+                except Exception:
+                    pass
                 # 🛟 капитуляция-дно → LONG (кулдаун 24ч; вход сразу,
                 # структурный стоп; TG с пометкой режимности)
                 _cp = _capitulation_sig(pair, kd)

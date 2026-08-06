@@ -8707,7 +8707,7 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
         _DEEP_SRC = {"blowoff", "capitulation", "thin_pump", "floor_buy",
                      "vol_anomaly", "vol_anomaly4h", "rocket_pullback",
                      "support_defense", "channel_top", "corridor",
-                     "whale", "shark"}
+                     "whale", "shark", "level_touch"}
         head = items[:limit]
         tail_special = [x for x in items[limit:]
                         if x.get("source") in _DEEP_SRC]
@@ -9795,7 +9795,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
                         "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
                         "rocket_pullback": "🪃", "support_defense": "🧱",
-                        "channel_top": "📐", "corridor": "🎈"}
+                        "channel_top": "📐", "corridor": "🎈",
+                        "level_touch": "📏"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -9812,7 +9813,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "rocket_pullback": "ОТКАТ РАКЕТЫ",
                        "support_defense": "ЗАЩИТА ПОДДЕРЖКИ",
                        "channel_top": "КРЫША КАНАЛА",
-                       "corridor": "КОРИДОР"}
+                       "corridor": "КОРИДОР",
+                       "level_touch": "УРОВЕНЬ"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -9826,6 +9828,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "rep_seq": 1,  # 🔁 повтор-усилитель (thin_pump/blowoff)
             "indicators.mom24": 1,  # 🏅 десятка: blowoff-разгон
             "indicators.phase": 1, "indicators.rsi1d_state": 1,  # 🧿 элита-1d
+            "indicators.strength": 1, "indicators.touches": 1,  # 📏 уровень
+            "indicators.mtf": 1, "indicators.rsi1h": 1,
             "hot": 1,  # 🔥 горячая монета на момент сигнала
         }).sort("created_at", -1).limit(200):
             at_dt = n.get("created_at")
@@ -9857,6 +9861,14 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 extra_parts.append(f"score {n['combo_score']}")
             elif strat == "volume_surge" and n.get('vol_ratio'):
                 extra_parts.append(f"vol {n['vol_ratio']}×")
+            elif strat == "level_touch":
+                _lti = n.get("indicators") or {}
+                _ltx = (f"⚡{_lti.get('strength', '?')}% · "
+                        f"{_lti.get('touches', '?')}кас · "
+                        f"RSI {_lti.get('rsi1h', '?')}")
+                if _lti.get("mtf"):
+                    _ltx += f" · 🔗{_lti['mtf']}"
+                extra_parts.append(_ltx)
             # 🔁 повтор-усилитель (бэктест 28.07): thin_pump 2-й+ /
             # blowoff 3-я+ вершина — повтор отрабатывает сильнее первого
             _rs2 = n.get("rep_seq") or 1
@@ -10313,7 +10325,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "capitulation": "🛟", "thin_pump": "💨", "floor_buy": "💎",
                         "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
                         "rocket_pullback": "🪃", "support_defense": "🧱",
-                        "channel_top": "📐", "corridor": "🎈"}
+                        "channel_top": "📐", "corridor": "🎈",
+                        "level_touch": "📏"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
@@ -10329,7 +10342,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "rocket_pullback": "ОТКАТ РАКЕТЫ",
                        "support_defense": "ЗАЩИТА ПОДДЕРЖКИ",
                        "channel_top": "КРЫША КАНАЛА",
-                       "corridor": "КОРИДОР"}
+                       "corridor": "КОРИДОР",
+                       "level_touch": "УРОВЕНЬ"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
@@ -10354,7 +10368,8 @@ def _compute_journal_sync(_fast_only: bool = False):
             {"created_at": {"$gte": _deep_since},
              "strategy": {"$in": ["rocket_pullback", "capitulation",
                                   "floor_buy", "support_defense",
-                                  "channel_top", "corridor"]}})
+                                  "channel_top", "corridor",
+                                  "level_touch"]}})
             .sort("created_at", -1).limit(800) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
             at_dt = n.get("created_at")
@@ -10446,6 +10461,15 @@ def _compute_journal_sync(_fast_only: bool = False):
                          f"{_cri.get('cor_share', '?')}% узла) · покупатель "
                          f"×{_cri.get('vol_x', '?')} Δ+{_cri.get('delta_pct', '?')}% · "
                          f"(год: EV+0.49, стопов 30%) · фаза {_phe}{_ph or '?'}")
+            elif strat == "level_touch":
+                _lvi = n.get("indicators") or {}
+                extra = (f" · касание уровня: ⚡{_lvi.get('strength', '?')}% · "
+                         f"{_lvi.get('touches', '?')}кас · "
+                         f"RSI {_lvi.get('rsi1h', '?')} (подход без ножа)"
+                         + (f" · 🔗{_lvi['mtf']}" if _lvi.get("mtf") else "")
+                         + (" · год: WR68 EV+0.69R"
+                            if n.get("direction") == "LONG"
+                            else " · год: WR63 EV+0.58R"))
             elif strat == "channel_top":
                 _cti = n.get("indicators") or {}
                 _ph = _cti.get("phase")
@@ -10606,6 +10630,9 @@ def _compute_journal_sync(_fast_only: bool = False):
             # (−0.67, на hot −1.81); floor_buy вырос до +1.54, blowoff
             # стабилен +1.04 (с TG-гейтом ~+2.1)
             _PRIO = {
+                # 📏 level_touch — из год-бэктеста 3%/3% (WR 69/69):
+                # LONG +1.17, SHORT +1.14 на сделку
+                "level_touch": (1.17, 1.14),
                 "floor_buy": (1.54, None), "blowoff": (1.04, 1.57),
                 "potok": (3.86, None),
                 "volcano": (0.48, 0.74), "st_break4h": (0.44, 0.82),
