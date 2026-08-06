@@ -140,9 +140,44 @@ async function loadFootprint() {
     _fpData = d;
     _fpView = { cnt: Math.min(60, d.bars.length), off: 0 };
     fpLoadSigs(pair);
+    fpLoadZones(pair, _fpTf);
     fpRender();
     fpStatus();
   } catch (e) { st.textContent = '⛔ ' + e.message; }
+}
+async function fpLoadZones(pair, tf) {
+  // 📏 уровни-зоны — тот же билдер, что на KChart (base.html), плюс
+  // MTF-сверка со старшими ТФ (🔗 = золотая рамка)
+  try {
+    if (!window._kcBuildZones || !_fpData) return;
+    const grab = async (t) => {
+      const r = await fetch(`/api/journal-candles?symbol=${pair}&tf=${t}&limit=400`);
+      const d = await r.json();
+      return (d.candles || []).map(b => ({
+        t: (b.time || 0) * 1000, o: +b.open, h: +b.high,
+        l: +b.low, c: +b.close }));
+    };
+    const kb = await grab(tf);
+    if (kb.length < 60 || !_fpData) return;
+    const zs = window._kcBuildZones(kb) || [];
+    const hiTfs = ({ '15m': ['4h', '1d'], '1h': ['4h', '1d'],
+                     '4h': ['1d'] })[tf] || [];
+    for (const htf of hiTfs) {
+      try {
+        const hb = await grab(htf);
+        if (hb.length < 60) continue;
+        const hz = window._kcBuildZones(hb) || [];
+        zs.forEach(z => {
+          if (z.mtf === '1d') return;
+          if (hz.some(b2 => b2.res === z.res && b2.lo <= z.hi && z.lo <= b2.hi)) {
+            z.mtf = htf;
+            z.strength = Math.min(95, (z.strength || 60) + (htf === '1d' ? 9 : 2));
+          }
+        });
+      } catch (e) {}
+    }
+    if (_fpData) { _fpData.zones = zs; fpRender(); }
+  } catch (e) {}
 }
 function fpStatus() {
   const d = _fpData;
@@ -287,6 +322,39 @@ function fpRender() {
     const yy = y(p);
     g.beginPath(); g.moveTo(0, yy); g.lineTo(chartW, yy); g.stroke();
     g.fillText(fpPrice(p), chartW + 6, yy + 3);
+  }
+  // вертикальная сетка каждые 10 баров — легче считывать время
+  g.strokeStyle = 'rgba(154,164,181,0.05)';
+  for (let i = 0; i < n; i += 10) {
+    const xx = i * bw;
+    g.beginPath(); g.moveTo(xx, 0); g.lineTo(xx, chartH); g.stroke();
+  }
+  // 📏 уровни-зоны (общие с KChart): полоса + сила; 🔗 MTF — золотая рамка
+  if (d.zones && d.zones.length) {
+    d.zones.forEach(z => {
+      const yT = Math.max(0, Math.min(chartH, y(z.hi)));
+      const yB = Math.max(0, Math.min(chartH, y(z.lo)));
+      const hgt = yB - yT;
+      if (hgt < 2 || yT >= chartH || yB <= 0) return;
+      g.fillStyle = z.res ? 'rgba(255,80,80,0.10)' : 'rgba(0,229,160,0.10)';
+      g.fillRect(0, yT, chartW, hgt);
+      g.strokeStyle = z.mtf ? 'rgba(255,210,62,0.85)'
+        : (z.res ? 'rgba(255,107,107,0.45)' : 'rgba(0,229,160,0.45)');
+      g.strokeRect(0.5, yT + 0.5, chartW - 1, Math.max(1, hgt - 1));
+      if (z.strength) {
+        const label = `⚡${z.strength}% · ${z.touches}кас`
+          + (z.mtf ? ` · 🔗${z.mtf}` : '');
+        g.font = '10px monospace';
+        const tw = g.measureText(label).width;
+        g.fillStyle = 'rgba(10,14,20,0.72)';
+        g.fillRect(chartW - tw - 16, yT + hgt / 2 - 8, tw + 12, 16);
+        g.fillStyle = z.mtf ? 'rgba(255,220,120,0.95)'
+          : (z.res ? 'rgba(255,150,150,0.95)' : 'rgba(120,240,200,0.95)');
+        g.textAlign = 'right';
+        g.fillText(label, chartW - 10, yT + hgt / 2 + 3);
+        g.textAlign = 'left';
+      }
+    });
   }
   // ячейки: яркость нормируется внутри бара; поверх — контур тела
   bars.forEach((b, i) => {
