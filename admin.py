@@ -10630,9 +10630,9 @@ def _compute_journal_sync(_fast_only: bool = False):
             # (−0.67, на hot −1.81); floor_buy вырос до +1.54, blowoff
             # стабилен +1.04 (с TG-гейтом ~+2.1)
             _PRIO = {
-                # 📏 level_touch — из год-бэктеста 3%/3% (WR 69/69):
-                # LONG +1.17, SHORT +1.14 на сделку
-                "level_touch": (1.17, 1.14),
+                # 📏 level_touch — бэкфилл 62д, вход от края зоны, 3%/3%:
+                # LONG WR 63.6 → +0.82, SHORT WR 70.5 → +1.23 на сделку
+                "level_touch": (0.82, 1.23),
                 "floor_buy": (1.54, None), "blowoff": (1.04, 1.57),
                 "potok": (3.86, None),
                 "volcano": (0.48, 0.74), "st_break4h": (0.44, 0.82),
