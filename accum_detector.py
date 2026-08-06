@@ -1216,7 +1216,9 @@ def scan_universe(max_pairs: int = 300):
                                 _tg16(
                                     f"📏 <b>УРОВЕНЬ · "
                                     f"{pair.replace('/USDT', '')}</b>\n"
-                                    f"{_dirw} @ {_lt['entry']:.6g}\n"
+                                    f"{_dirw} @ {_lt['entry']:.6g} "
+                                    f"(вход ОТ УРОВНЯ, лимитка; цена "
+                                    f"{_li.get('touch_px', 0):.6g})\n"
                                     f"зона {_li['zone_lo']:.6g}–"
                                     f"{_li['zone_hi']:.6g} · "
                                     f"⚡{_li['strength']}% · "

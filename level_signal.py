@@ -210,13 +210,18 @@ def check_level_touch(pair: str, kd: list[dict]) -> Optional[dict]:
                 if not (50 <= rsi < 70):
                     return None
                 direction, edge = "LONG", z["hi"]
-            price = last["c"]
+            # вход = КРАЙ ЗОНЫ (лимитка, исполнена касанием) — критично:
+            # проверка 06.08 на году: вход по close бара касания даёт WR
+            # 45/48%, вход от края — 63/66% (цели смещаются на ~1% от
+            # уровня и съедают весь эдж)
+            price = edge
             tp = price * (1.03 if direction == "LONG" else 0.97)
             sl = price * (0.97 if direction == "LONG" else 1.03)
             return {"strategy": "level_touch", "direction": direction,
                     "pair": pair, "symbol": pair.replace("/", "").upper(),
                     "entry": price, "tp": tp, "sl": sl, "horizon_h": 96,
                     "indicators": {
+                        "touch_px": last["c"],
                         "rsi1h": round(rsi, 1),
                         "strength": z["strength"],
                         "touches": z["touches"],

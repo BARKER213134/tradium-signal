@@ -9831,7 +9831,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "indicators.strength": 1, "indicators.touches": 1,  # 📏 уровень
             "indicators.mtf": 1, "indicators.rsi1h": 1,
             "hot": 1,  # 🔥 горячая монета на момент сигнала
-        }).sort("created_at", -1).limit(200):
+        }).sort("created_at", -1).limit(400):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
             em = STRAT_EMOJI.get(strat, "✨")

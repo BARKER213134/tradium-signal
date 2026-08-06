@@ -4253,7 +4253,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     (async () => {
       try {
         const [r] = await Promise.all([
-          fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=30`),
+          fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=62`),
           window._loadPhaseFlips(),
         ]);
         const d = await r.json();
