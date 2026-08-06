@@ -4423,6 +4423,33 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     };
     build(ups, true).forEach(z => out.push(z));
     build(dns, false).forEach(z => out.push(z));
+    // 🚀 параболика (кейс TAKE 06.08): при вертикальном росте в 25% нет
+    // подтверждённых свингов LW=6 — достраиваем пустую сторону
+    // микро-свингами (крыло 3), они видят молодые полки внутри
+    // вертикали; сила −8 (уровень юный, не бэктест-класс)
+    const needRes = !out.some(z => z.res);
+    const needSup = !out.some(z => !z.res);
+    if (needRes || needSup) {
+      const LW3 = 3;
+      const ups3 = [], dns3 = [];
+      for (let i = LW3; i < bars.length - LW3; i++) {
+        const b = bars[i];
+        let isHi = true, isLo = true;
+        for (let j = i - LW3; j <= i + LW3; j++) {
+          if (bars[j].h > b.h) isHi = false;
+          if (bars[j].l < b.l) isLo = false;
+          if (!isHi && !isLo) break;
+        }
+        if (isHi) ups3.push({ p: b.h, i: i });
+        if (isLo) dns3.push({ p: b.l, i: i });
+      }
+      const soften = z => {
+        z.strength = Math.max(20, (z.strength || 60) - 8);
+        out.push(z);
+      };
+      if (needRes) build(ups3, true).forEach(soften);
+      if (needSup) build(dns3, false).forEach(soften);
+    }
     return out;
   };
   window._kcDrawZones = function(chart, bars, sym, tf) {
