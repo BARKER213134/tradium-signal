@@ -4447,8 +4447,17 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         z.strength = Math.max(20, (z.strength || 60) - 8);
         out.push(z);
       };
-      if (needRes) build(ups3, true).forEach(soften);
-      if (needSup) build(dns3, false).forEach(soften);
+      // + role reversal: у HFT/TAKE даже микро-лои на −26% — пустую
+      // сторону поддержек заполняют ПРОБИТЫЕ ХАИ ниже цены (ретест
+      // пробитой вершины), сопротивлений — пробитые лои выше
+      if (needRes) {
+        build(ups3.concat(dns.concat(dns3).filter(s => s.p > px * 1.002)),
+              true).forEach(soften);
+      }
+      if (needSup) {
+        build(dns3.concat(ups.concat(ups3).filter(s => s.p < px * 0.998)),
+              false).forEach(soften);
+      }
     }
     return out;
   };
