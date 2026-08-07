@@ -6524,6 +6524,7 @@ setTimeout(() => {
     <div style="font-size:11px;color:var(--muted);line-height:1.5;">широта рынка<br>(−100 все вниз · +100 все вверх)</div>
   </div>
   <div id="trPcts" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+  <div id="trDirF" style="display:flex;gap:6px;align-items:center;background:var(--dark);border:1px solid var(--border);border-radius:8px;padding:7px 10px;"></div>
   <input id="trSearch" placeholder="поиск монеты…" oninput="trRender()"
     style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:9px 13px;font-size:12px;font-family:var(--font-mono);width:170px;text-transform:uppercase;">
   <span id="trUpd" style="font-size:10.5px;color:var(--muted);"></span>
@@ -6544,6 +6545,26 @@ setTimeout(() => {
 </div>
 <script>
 let _trData = null;
+// 🎛 фильтр направлений: на каждый ТФ цикл «любое → ▲ → ▼»
+let _trF = {'1h': 0, '2h': 0, '4h': 0, '12h': 0};
+function trCycle(tf) {
+  _trF[tf] = _trF[tf] === 0 ? 1 : _trF[tf] === 1 ? -1 : 0;
+  trDirBtns();
+  trRender();
+}
+function trDirBtns() {
+  const tfs = (_trData && _trData.tfs) || ['1h', '2h', '4h', '12h'];
+  document.getElementById('trDirF').innerHTML =
+    '<span style="font-size:10px;color:var(--muted);">фильтр:</span>' +
+    tfs.map(tf => {
+      const v = _trF[tf];
+      const sym = v === 1 ? '▲' : v === -1 ? '▼' : '·';
+      const col = v === 1 ? '#00e5a0' : v === -1 ? '#ff5e9c' : 'var(--muted)';
+      const bg = v === 0 ? 'none' : v === 1 ? 'rgba(0,229,160,0.12)' : 'rgba(255,77,109,0.12)';
+      return `<button onclick="trCycle('${tf}')" style="background:${bg};border:1px solid var(--border);border-radius:6px;color:${col};font-size:11px;font-weight:800;cursor:pointer;padding:4px 8px;font-family:var(--font-mono);">${tf} ${sym}</button>`;
+    }).join('') +
+    `<button onclick="_trF={'1h':0,'2h':0,'4h':0,'12h':0};trDirBtns();trRender();" style="background:none;border:none;color:var(--muted);font-size:10px;cursor:pointer;">сброс</button>`;
+}
 async function trLoad() {
   try {
     const r = await fetch('/api/trends');
@@ -6570,10 +6591,19 @@ function trRender() {
       'скан: ' + dt.toLocaleTimeString('ru', {hour: '2-digit', minute: '2-digit'}) + ' · обновляется раз в ~30 мин';
   }
   const q = (document.getElementById('trSearch').value || '').toUpperCase().trim();
-  const rows = (d.rows || []).filter(r => !q || r.s.indexOf(q) >= 0);
+  const rows = (d.rows || []).filter(r => !q || r.s.indexOf(q) >= 0)
+    .filter(r => d.tfs.every(tf => !_trF[tf] || ((r.d || {})[tf] || 0) === _trF[tf]));
+  const lastFlip = r => {
+    // какой ТФ флипнул ПОСЛЕДНИМ: [tf, iso] | null
+    let best = null;
+    Object.entries(r.chg || {}).forEach(([tf, iso]) => {
+      if (!best || iso > best[1]) best = [tf, iso];
+    });
+    return best;
+  };
   const lastChg = r => {
-    const cs = Object.values(r.chg || {}).sort();
-    return cs.length ? cs[cs.length - 1] : '';
+    const b = lastFlip(r);
+    return b ? b[1] : '';
   };
   const fmtChg = iso => {
     if (!iso) return '';
@@ -6583,12 +6613,18 @@ function trRender() {
   const arrow = v => v > 0
     ? '<span style="color:#00e5a0;">▲</span>'
     : v < 0 ? '<span style="color:#ff5e9c;">▼</span>' : '<span style="color:var(--muted);">·</span>';
-  const rowHtml = r =>
-    `<div onclick="try{openPairChart('${r.s}','1h')}catch(e){}" style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
-      <b>${r.s.replace('USDT','')}</b>
-      <span style="display:flex;gap:7px;">${d.tfs.map(tf => arrow((r.d || {})[tf])).join('')}</span>
-      <span style="color:var(--muted);font-size:10.5px;">${fmtChg(lastChg(r))}</span>
+  const rowHtml = r => {
+    const lf = lastFlip(r);
+    // «какой тренд пришёл последним»: ТФ + куда + когда
+    const lfTxt = lf
+      ? `<span style="color:${((r.d || {})[lf[0]] || 0) > 0 ? '#00e5a0' : '#ff5e9c'};font-weight:800;">${lf[0]}${((r.d || {})[lf[0]] || 0) > 0 ? '▲' : '▼'}</span> <span style="color:var(--muted);">${fmtChg(lf[1])}</span>`
+      : '';
+    return `<div onclick="try{openPairChart('${r.s}','1h')}catch(e){}" style="display:grid;grid-template-columns:86px repeat(${d.tfs.length},20px) 1fr;align-items:center;gap:2px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
+      <b style="overflow:hidden;text-overflow:ellipsis;">${r.s.replace('USDT','')}</b>
+      ${d.tfs.map(tf => `<span style="text-align:center;">${arrow((r.d || {})[tf])}</span>`).join('')}
+      <span style="font-size:10.5px;text-align:right;">${lfTxt}</span>
     </div>`;
+  };
   const buckets = {down: [], mix: [], up: []};
   rows.forEach(r => {
     const vals = d.tfs.map(tf => (r.d || {})[tf]).filter(v => v);
@@ -6601,6 +6637,7 @@ function trRender() {
   document.getElementById('trMix').innerHTML = buckets.mix.sort(bySort).map(rowHtml).join('') || '<div style="padding:14px;color:var(--muted);font-size:12px;">пусто</div>';
   document.getElementById('trUp').innerHTML = buckets.up.sort(bySort).map(rowHtml).join('') || '<div style="padding:14px;color:var(--muted);font-size:12px;">пусто</div>';
 }
+trDirBtns();
 trLoad();
 setInterval(trLoad, 60000);
 </script>
