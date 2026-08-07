@@ -160,6 +160,9 @@ BOTS = [
     # (клик по паре → KChart). Вкладка жива по прямому URL /signals/bigchart.
     # {"id": "bigchart", "label": "📈 График", "category": "crypto"},
     {"id": "setup_check", "label": "🎰 Setup Check", "category": "crypto"},
+    # 📈 Тренды — своя замена вкладки CryptoVizor (07.08.26): матрица
+    # SuperTrend-направлений по ТФ из скана, спидометр широты рынка
+    {"id": "trends", "label": "📈 Тренды", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     # 💱 FOREX: проп FundingPips — уикенд-гэп на кроссах (единственная
     # модель, пережившая стенды M1 Dukascopy 03.08.26). Сканер gap_scanner.

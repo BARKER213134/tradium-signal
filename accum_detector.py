@@ -1030,6 +1030,34 @@ def _rsi4h_bull(candles: list[dict]) -> Optional[bool]:
     return None if v is None else v[0] > v[1]
 
 
+def _trend_dirs(kd: list[dict]):
+    """📈 Направления SuperTrend(10,3) по ТФ 1h/2h/4h/12h из 400×1h
+    (ресемпл, только закрытые бары). Для вкладки «Тренды» (своя замена
+    CryptoVizor). Возвращает {'1h': ±1|0, ...}."""
+    out = {}
+    try:
+        from backtest_supertrend import compute_st_series
+        for tf, kh in (("1h", 1), ("2h", 2), ("4h", 4), ("12h", 12)):
+            if kh == 1:
+                bars = kd[:-1]
+            else:
+                grp = {}
+                for x in kd:
+                    k = x["t"] // (kh * 3600_000)
+                    if k not in grp:
+                        grp[k] = dict(x)
+                    else:
+                        grp[k]["h"] = max(grp[k]["h"], x["h"])
+                        grp[k]["l"] = min(grp[k]["l"], x["l"])
+                        grp[k]["c"] = x["c"]
+                bars = [grp[k] for k in sorted(grp)][:-1]
+            s = compute_st_series(bars, 10, 3.0) if len(bars) >= 14 else []
+            out[tf] = int(s[-1]["trend"]) if s and s[-1].get("trend") else 0
+    except Exception:
+        pass
+    return out
+
+
 def scan_universe(max_pairs: int = 300):
     """Скан ликвидных пар. Вызывается из watcher-лупа (thread).
     Возвращает list[dict] с базами или None если скан прерван (пустой
@@ -1068,6 +1096,7 @@ def scan_universe(max_pairs: int = 300):
     ds_fired = 0
     cand_rows = []
     vol_anoms = []
+    trend_rows = []          # 📈 матрица трендов для вкладки «Тренды»
     for sym in pairs:
         pair = sym.replace("USDT", "/USDT") if "/" not in sym else sym
         try:
@@ -1096,6 +1125,14 @@ def scan_universe(max_pairs: int = 300):
                     breadth12_tot += 1
                     if _rv12[0] > _rv12[1]:
                         breadth12_bull += 1
+                # 📈 матрица трендов (вкладка «Тренды»)
+                try:
+                    _td = _trend_dirs(kd)
+                    if _td:
+                        trend_rows.append(
+                            {"s": pair.replace("/", "").upper(), "d": _td})
+                except Exception:
+                    pass
                 # 💠 серия дельт — инфо-сигнал в журнал (кулдаун 24ч на пару)
                 _ds = _delta_series_sig(pair, kd)
                 if _ds is not None:
@@ -1714,6 +1751,30 @@ def scan_universe(max_pairs: int = 300):
             _last_scan["vol_anoms"] = len(new_ev)
     except Exception:
         logger.exception("[accum] vol_anoms store fail")
+    # 📈 запись матрицы трендов: направления + время последнего флипа
+    # per ТФ (сравнение с прошлым доком)
+    try:
+        if trend_rows:
+            from database import _get_db as _gdbt
+            _dbt = _gdbt()
+            _prev = (_dbt.market_state.find_one({"_id": "trend_matrix"})
+                     or {}).get("rows") or []
+            _pmap = {r["s"]: r for r in _prev}
+            _now_iso = utcnow().isoformat()
+            for r in trend_rows:
+                p = _pmap.get(r["s"])
+                chg = dict((p or {}).get("chg") or {})
+                for tf, d in r["d"].items():
+                    if not p or (p.get("d") or {}).get(tf) != d:
+                        chg[tf] = _now_iso
+                r["chg"] = chg
+            _dbt.market_state.update_one(
+                {"_id": "trend_matrix"},
+                {"$set": {"rows": trend_rows, "updated": _now_iso}},
+                upsert=True)
+            _last_scan["trend_rows"] = len(trend_rows)
+    except Exception:
+        logger.exception("[accum] trend matrix store fail")
     # sample: сколько пар вообще дали свечи (диагностика get_klines_any)
     try:
         if pairs:

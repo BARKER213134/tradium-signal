@@ -6516,6 +6516,95 @@ setTimeout(() => {
 }, 1500);
 </script>
 
+{% elif bot == 'trends' %}
+<!-- ════════════ 📈 Тренды — своя замена CryptoVizor (07.08.26) ════════════ -->
+<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:14px;">
+    <div id="trGauge" style="font-size:30px;font-weight:900;font-family:var(--font-mono);">—</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.5;">широта рынка<br>(−100 все вниз · +100 все вверх)</div>
+  </div>
+  <div id="trPcts" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+  <input id="trSearch" placeholder="поиск монеты…" oninput="trRender()"
+    style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:9px 13px;font-size:12px;font-family:var(--font-mono);width:170px;text-transform:uppercase;">
+  <span id="trUpd" style="font-size:10.5px;color:var(--muted);"></span>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+  <div>
+    <div style="background:rgba(255,77,109,0.14);border:1px solid rgba(255,77,109,0.4);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#ff5e9c;">🔻 Только вниз (все ТФ)</div>
+    <div id="trDown" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:70vh;overflow-y:auto;"></div>
+  </div>
+  <div>
+    <div style="background:rgba(154,164,181,0.10);border:1px solid var(--border);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:var(--muted);">⚖ Смешанные</div>
+    <div id="trMix" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:70vh;overflow-y:auto;"></div>
+  </div>
+  <div>
+    <div style="background:rgba(0,229,160,0.12);border:1px solid rgba(0,229,160,0.4);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#00e5a0;">🔺 Только вверх (все ТФ)</div>
+    <div id="trUp" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:70vh;overflow-y:auto;"></div>
+  </div>
+</div>
+<script>
+let _trData = null;
+async function trLoad() {
+  try {
+    const r = await fetch('/api/trends');
+    _trData = await r.json();
+    trRender();
+  } catch (e) {}
+}
+function trRender() {
+  const d = _trData;
+  if (!d || !d.ok) return;
+  const g = document.getElementById('trGauge');
+  g.textContent = (d.gauge > 0 ? '+' : '') + d.gauge + '%';
+  g.style.color = d.gauge > 15 ? '#00e5a0' : d.gauge < -15 ? '#ff5e9c' : '#ffd23e';
+  document.getElementById('trPcts').innerHTML = d.tfs.map(tf => {
+    const p = d.pct[tf];
+    const col = p == null ? 'var(--muted)' : p >= 55 ? '#00e5a0' : p <= 45 ? '#ff5e9c' : '#ffd23e';
+    return `<div style="background:var(--dark);border:1px solid var(--border);border-radius:8px;padding:8px 12px;text-align:center;">
+      <div style="font-size:15px;font-weight:800;font-family:var(--font-mono);color:${col};">${p == null ? '—' : p + '%'}</div>
+      <div style="font-size:10px;color:var(--muted);">${tf} вверх</div></div>`;
+  }).join('');
+  if (d.updated) {
+    const dt = new Date(d.updated);
+    document.getElementById('trUpd').textContent =
+      'скан: ' + dt.toLocaleTimeString('ru', {hour: '2-digit', minute: '2-digit'}) + ' · обновляется раз в ~30 мин';
+  }
+  const q = (document.getElementById('trSearch').value || '').toUpperCase().trim();
+  const rows = (d.rows || []).filter(r => !q || r.s.indexOf(q) >= 0);
+  const lastChg = r => {
+    const cs = Object.values(r.chg || {}).sort();
+    return cs.length ? cs[cs.length - 1] : '';
+  };
+  const fmtChg = iso => {
+    if (!iso) return '';
+    const dt = new Date(iso);
+    return dt.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+  };
+  const arrow = v => v > 0
+    ? '<span style="color:#00e5a0;">▲</span>'
+    : v < 0 ? '<span style="color:#ff5e9c;">▼</span>' : '<span style="color:var(--muted);">·</span>';
+  const rowHtml = r =>
+    `<div onclick="try{openPairChart('${r.s}','1h')}catch(e){}" style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
+      <b>${r.s.replace('USDT','')}</b>
+      <span style="display:flex;gap:7px;">${d.tfs.map(tf => arrow((r.d || {})[tf])).join('')}</span>
+      <span style="color:var(--muted);font-size:10.5px;">${fmtChg(lastChg(r))}</span>
+    </div>`;
+  const buckets = {down: [], mix: [], up: []};
+  rows.forEach(r => {
+    const vals = d.tfs.map(tf => (r.d || {})[tf]).filter(v => v);
+    if (vals.length && vals.every(v => v > 0)) buckets.up.push(r);
+    else if (vals.length && vals.every(v => v < 0)) buckets.down.push(r);
+    else buckets.mix.push(r);
+  });
+  const bySort = (a, b) => (lastChg(b) || '').localeCompare(lastChg(a) || '');
+  document.getElementById('trDown').innerHTML = buckets.down.sort(bySort).map(rowHtml).join('') || '<div style="padding:14px;color:var(--muted);font-size:12px;">пусто</div>';
+  document.getElementById('trMix').innerHTML = buckets.mix.sort(bySort).map(rowHtml).join('') || '<div style="padding:14px;color:var(--muted);font-size:12px;">пусто</div>';
+  document.getElementById('trUp').innerHTML = buckets.up.sort(bySort).map(rowHtml).join('') || '<div style="padding:14px;color:var(--muted);font-size:12px;">пусто</div>';
+}
+trLoad();
+setInterval(trLoad, 60000);
+</script>
+
 {% elif bot == 'fundingpips' %}
 <!-- ════════════ 💱 FundingPips — уикенд-гэп на кроссах (M1-стенд Dukascopy 03.08.26) ════════════ -->
 <div class="strategy-box" style="border-color:rgba(0,212,255,0.4);">

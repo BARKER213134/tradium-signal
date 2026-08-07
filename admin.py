@@ -9131,6 +9131,29 @@ def _setup_check_batch_sync(hours: int, max_pairs: int):
             "setups": n_setup, "items": items}
 
 
+@app.get("/api/trends")
+async def api_trends():
+    """📈 Вкладка «Тренды» (своя замена CryptoVizor): матрица
+    SuperTrend-направлений 1h/2h/4h/12h по всем парам скана + агрегаты.
+    Данные пишет scan_universe (раз в ~30 мин)."""
+    def _q():
+        from database import _get_db
+        db = _get_db()
+        doc = db.market_state.find_one({"_id": "trend_matrix"}) or {}
+        rows = doc.get("rows") or []
+        tfs = ["1h", "2h", "4h", "12h"]
+        pct = {}
+        for tf in tfs:
+            vals = [r["d"].get(tf) for r in rows if r.get("d", {}).get(tf)]
+            pct[tf] = round(sum(1 for v in vals if v > 0) / len(vals) * 100) \
+                if vals else None
+        known = [v for v in pct.values() if v is not None]
+        gauge = round(2 * (sum(known) / len(known)) - 100) if known else 0
+        return {"ok": True, "rows": rows, "pct": pct, "gauge": gauge,
+                "tfs": tfs, "updated": doc.get("updated")}
+    return await asyncio.to_thread(_q)
+
+
 @app.get("/api/gap-signals")
 async def api_gap_signals():
     """💱 Вкладка FundingPips: журнал уикенд-гэпов + статистика +
