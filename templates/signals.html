@@ -6648,6 +6648,8 @@ function trRender() {
   document.getElementById('trDown').innerHTML = buckets.down.sort(bySort).map(rowHtml).join('') || '<div style="padding:14px;color:var(--muted);font-size:12px;">пусто</div>';
   document.getElementById('trMix').innerHTML = buckets.mix.sort(bySort).map(rowHtml).join('') || '<div style="padding:14px;color:var(--muted);font-size:12px;">пусто</div>';
   document.getElementById('trUp').innerHTML = buckets.up.sort(bySort).map(rowHtml).join('') || '<div style="padding:14px;color:var(--muted);font-size:12px;">пусто</div>';
+  // ◀▶ листание в модале графика — по текущему видимому порядку колонок
+  window._kcQmList = buckets.down.concat(buckets.mix, buckets.up).map(r => r.s);
 }
 trDirBtns();
 trLoad();

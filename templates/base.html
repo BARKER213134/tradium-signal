@@ -3914,18 +3914,37 @@ window.openPairChart = function(symbol, tf) {
       'color:#4cc9f0;font-size:11px;cursor:pointer;padding:3px 10px;' +
       'font-family:var(--font-mono,monospace);">🗞 Журнал</button>' +
       '<span style="flex:1;"></span>' +
+      '<span id="kcQmNavBox" style="display:none;align-items:center;gap:6px;">' +
+      '<button onclick="window._kcQmNav(-1)" style="background:none;border:1px solid var(--border,#334);' +
+      'border-radius:6px;color:var(--text,#e6eef8);font-size:13px;cursor:pointer;padding:2px 12px;">◀</button>' +
+      '<span id="kcQmNavCnt" style="font-size:11px;color:var(--muted,#8892a4);font-family:var(--font-mono,monospace);"></span>' +
+      '<button onclick="window._kcQmNav(1)" style="background:none;border:1px solid var(--border,#334);' +
+      'border-radius:6px;color:var(--text,#e6eef8);font-size:13px;cursor:pointer;padding:2px 12px;">▶</button>' +
+      '</span>' +
       '<button onclick="window._kcQmClose()" style="background:none;border:1px solid var(--border,#334);' +
       'border-radius:6px;color:var(--muted,#8892a4);font-size:14px;cursor:pointer;padding:2px 10px;">✕</button>' +
       '</div><div id="kcQmBody" style="flex:1;position:relative;"></div></div>';
     m.addEventListener('click', ev => { if (ev.target === m) window._kcQmClose(); });
     document.body.appendChild(m);
     document.addEventListener('keydown', ev => {
-      if (ev.key === 'Escape' && m.style.display === 'flex') window._kcQmClose();
+      if (m.style.display !== 'flex') return;
+      if (ev.key === 'Escape') window._kcQmClose();
+      if (ev.key === 'ArrowLeft') window._kcQmNav(-1);
+      if (ev.key === 'ArrowRight') window._kcQmNav(1);
     });
   }
   const tfCur = tf || localStorage.getItem('kc_qm_tf') || '1h';
   localStorage.setItem('kc_qm_tf', tfCur);
   window._kcQmSym = sym;
+  // ◀▶ листание по списку вкладки (Тренды кладут порядок в _kcQmList)
+  const navList = window._kcQmList || [];
+  const navIx = navList.indexOf(sym);
+  const navBox = document.getElementById('kcQmNavBox');
+  if (navBox) {
+    navBox.style.display = navIx >= 0 ? 'flex' : 'none';
+    const cnt = document.getElementById('kcQmNavCnt');
+    if (cnt && navIx >= 0) cnt.textContent = (navIx + 1) + '/' + navList.length;
+  }
   document.getElementById('kcQmTitle').textContent = sym.replace('USDT', '') + ' · USDT';
   document.getElementById('kcQmTFs').innerHTML = ['5m', '15m', '30m', '1h', '4h', '12h', '1d'].map(t =>
     `<button onclick="openPairChart(window._kcQmSym,'${t}')" style="background:${t === tfCur ? 'rgba(76,201,240,0.18)' : 'none'};` +
@@ -3958,6 +3977,13 @@ window._kcQmClusters = function() {
   if (window._kcQmSym) {
     openPairChart(window._kcQmSym, localStorage.getItem('kc_qm_tf') || '1h');
   }
+};
+window._kcQmNav = function(step) {
+  const list = window._kcQmList || [];
+  const ix = list.indexOf(window._kcQmSym);
+  if (ix < 0 || !list.length) return;
+  const nx = (ix + step + list.length) % list.length;
+  openPairChart(list[nx], localStorage.getItem('kc_qm_tf') || '1h');
 };
 window._kcQmClose = function() {
   const m = document.getElementById('kcQuickModal');
