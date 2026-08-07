@@ -3922,7 +3922,7 @@ window.openPairChart = function(symbol, tf) {
   localStorage.setItem('kc_qm_tf', tfCur);
   window._kcQmSym = sym;
   document.getElementById('kcQmTitle').textContent = sym.replace('USDT', '') + ' · USDT';
-  document.getElementById('kcQmTFs').innerHTML = ['5m', '15m', '30m', '1h', '4h', '1d'].map(t =>
+  document.getElementById('kcQmTFs').innerHTML = ['5m', '15m', '30m', '1h', '4h', '12h', '1d'].map(t =>
     `<button onclick="openPairChart(window._kcQmSym,'${t}')" style="background:${t === tfCur ? 'rgba(76,201,240,0.18)' : 'none'};` +
     `border:1px solid ${t === tfCur ? 'rgba(76,201,240,0.5)' : 'var(--border,#334)'};border-radius:6px;` +
     `color:${t === tfCur ? '#4cc9f0' : 'var(--muted,#8892a4)'};font-size:11px;cursor:pointer;padding:3px 9px;` +

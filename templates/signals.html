@@ -6631,7 +6631,7 @@ function trRender() {
     const lfTxt = lf
       ? `<span style="color:${((r.d || {})[lf[0]] || 0) > 0 ? '#00e5a0' : '#ff5e9c'};font-weight:800;">${lf[0]}${((r.d || {})[lf[0]] || 0) > 0 ? '▲' : '▼'}</span> <span style="color:var(--muted);">${fmtChg(lf[1])}</span>`
       : '';
-    return `<div onclick="location.href='/signals?bot=journal&chart=${r.s}'" style="display:grid;grid-template-columns:86px repeat(${d.tfs.length},20px) 1fr;align-items:center;gap:2px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);${bs ? 'background:rgba(255,77,109,0.07);' : ''}">
+    return `<div onclick="try{openPairChart('${r.s}','1h')}catch(e){}" style="display:grid;grid-template-columns:86px repeat(${d.tfs.length},20px) 1fr;align-items:center;gap:2px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);${bs ? 'background:rgba(255,77,109,0.07);' : ''}">
       <b style="overflow:hidden;text-overflow:ellipsis;">${bs ? '🎯' : ''}${r.s.replace('USDT','')}</b>
       ${d.tfs.map(tf => `<span style="text-align:center;">${arrow((r.d || {})[tf])}</span>`).join('')}
       <span style="font-size:10.5px;text-align:right;">${lfTxt}</span>
