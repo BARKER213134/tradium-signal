@@ -8708,7 +8708,7 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
         _DEEP_SRC = {"blowoff", "capitulation", "thin_pump", "floor_buy",
                      "vol_anomaly", "vol_anomaly4h", "rocket_pullback",
                      "support_defense", "channel_top", "corridor",
-                     "whale", "shark", "level_touch"}
+                     "whale", "shark", "level_touch", "flip_retest"}
         head = items[:limit]
         tail_special = [x for x in items[limit:]
                         if x.get("source") in _DEEP_SRC]
@@ -9797,7 +9797,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
                         "rocket_pullback": "🪃", "support_defense": "🧱",
                         "channel_top": "📐", "corridor": "🎈",
-                        "level_touch": "📏"}
+                        "level_touch": "📏", "flip_retest": "🪜"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano",
@@ -9815,7 +9815,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "support_defense": "ЗАЩИТА ПОДДЕРЖКИ",
                        "channel_top": "КРЫША КАНАЛА",
                        "corridor": "КОРИДОР",
-                       "level_touch": "УРОВЕНЬ"}
+                       "level_touch": "УРОВЕНЬ",
+                       "flip_retest": "ФЛИП-РЕТЕСТ"}
         for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
@@ -9831,6 +9832,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "indicators.phase": 1, "indicators.rsi1d_state": 1,  # 🧿 элита-1d
             "indicators.strength": 1, "indicators.touches": 1,  # 📏 уровень
             "indicators.mtf": 1, "indicators.rsi1h": 1,
+            "indicators.vol_x": 1, "indicators.brk_ago_h": 1,  # 🪜 флип
+            "indicators.risk_pct": 1,
             "hot": 1,  # 🔥 горячая монета на момент сигнала
         }).sort("created_at", -1).limit(400):
             at_dt = n.get("created_at")
@@ -9870,6 +9873,12 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 if _lti.get("mtf"):
                     _ltx += f" · 🔗{_lti['mtf']}"
                 extra_parts.append(_ltx)
+            elif strat == "flip_retest":
+                _fri = n.get("indicators") or {}
+                extra_parts.append(
+                    f"флип: пробой ×{_fri.get('vol_x', '?')} объёма "
+                    f"{_fri.get('brk_ago_h', '?')}ч назад · риск "
+                    f"{_fri.get('risk_pct', '?')}%")
             # 🔁 повтор-усилитель (бэктест 28.07): thin_pump 2-й+ /
             # blowoff 3-я+ вершина — повтор отрабатывает сильнее первого
             _rs2 = n.get("rep_seq") or 1
@@ -10327,7 +10336,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "vol_anomaly": "⚡", "vol_anomaly4h": "🌩", "potok": "🌊",
                         "rocket_pullback": "🪃", "support_defense": "🧱",
                         "channel_top": "📐", "corridor": "🎈",
-                        "level_touch": "📏"}
+                        "level_touch": "📏", "flip_retest": "🪜"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
                        "second_flip": "Second Flip", "combo": "COMBO",
@@ -10344,7 +10353,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "support_defense": "ЗАЩИТА ПОДДЕРЖКИ",
                        "channel_top": "КРЫША КАНАЛА",
                        "corridor": "КОРИДОР",
-                       "level_touch": "УРОВЕНЬ"}
+                       "level_touch": "УРОВЕНЬ",
+                       "flip_retest": "ФЛИП-РЕТЕСТ"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
@@ -10370,7 +10380,7 @@ def _compute_journal_sync(_fast_only: bool = False):
              "strategy": {"$in": ["rocket_pullback", "capitulation",
                                   "floor_buy", "support_defense",
                                   "channel_top", "corridor",
-                                  "level_touch"]}})
+                                  "level_touch", "flip_retest"]}})
             .sort("created_at", -1).limit(800) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
             at_dt = n.get("created_at")
@@ -10471,6 +10481,13 @@ def _compute_journal_sync(_fast_only: bool = False):
                          + (" · год: WR68 EV+0.69R"
                             if n.get("direction") == "LONG"
                             else " · год: WR63 EV+0.58R"))
+            elif strat == "flip_retest":
+                _fri2 = n.get("indicators") or {}
+                extra = (f" · флип-ретест: пробой сопротивления на объёме "
+                         f"×{_fri2.get('vol_x', '?')} {_fri2.get('brk_ago_h', '?')}ч "
+                         f"назад · вход от уровня, стоп под флип-зоной "
+                         f"−{_fri2.get('risk_pct', '?')}% · после +1R стоп в БУ · "
+                         f"год: 33% тейк 2R / 48% БУ / 19% стоп · PF 3.45")
             elif strat == "channel_top":
                 _cti = n.get("indicators") or {}
                 _ph = _cti.get("phase")
@@ -10634,6 +10651,9 @@ def _compute_journal_sync(_fast_only: bool = False):
                 # 📏 level_touch — бэкфилл 62д, вход от края зоны, 3%/3%:
                 # LONG WR 63.6 → +0.82, SHORT WR 70.5 → +1.23 на сделку
                 "level_touch": (0.82, 1.23),
+                # 🪜 flip_retest — год-бэктест R20: +0.46R × медиана
+                # риска 1.5% ≈ +0.70%/сделку
+                "flip_retest": (0.70, None),
                 "floor_buy": (1.54, None), "blowoff": (1.04, 1.57),
                 "potok": (3.86, None),
                 "volcano": (0.48, 0.74), "st_break4h": (0.44, 0.82),

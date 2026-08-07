@@ -1229,6 +1229,32 @@ def scan_universe(max_pairs: int = 300):
                                     f"<i>год-бэктест 200k касаний: {_bt}</i>")
                 except Exception:
                     pass
+                # 🪜 ФЛИП-РЕТЕСТ → LONG (бэктест 07.08: 2R+БУ EV +0.47R,
+                # PF 3.45, риск медиана 1.5%; кулдаун 24ч)
+                try:
+                    from level_signal import check_flip_retest
+                    _fr = check_flip_retest(pair, kd)
+                    if _fr is not None:
+                        from impulse_detector import store_signal
+                        if store_signal(_fr, cooldown_h=24):
+                            ds_fired += 1
+                            _fi = _fr["indicators"]
+                            _tg16(
+                                f"🪜 <b>ФЛИП-РЕТЕСТ · "
+                                f"{pair.replace('/USDT', '')}</b>\n"
+                                f"🟢 LONG — ретест пробитого сопротивления\n"
+                                f"вход ОТ УРОВНЯ {_fr['entry']:.6g} (лимитка; "
+                                f"цена {_fi['touch_px']:.6g})\n"
+                                f"пробой {_fi['brk_ago_h']}ч назад на объёме "
+                                f"×{_fi['vol_x']} · зона {_fi['zone_lo']:.6g}–"
+                                f"{_fi['zone_hi']:.6g}\n"
+                                f"SL {_fr['sl']:.6g} (под флип-зоной, "
+                                f"−{_fi['risk_pct']}%) · TP 2R "
+                                f"{_fr['tp']:.6g} · после +1R стоп в БУ\n"
+                                f"<i>год-бэктест 3529 сетапов: 33% тейк / "
+                                f"48% БУ / 19% стоп · PF 3.45</i>")
+                except Exception:
+                    pass
                 # 🛟 капитуляция-дно → LONG (кулдаун 24ч; вход сразу,
                 # структурный стоп; TG с пометкой режимности)
                 _cp = _capitulation_sig(pair, kd)

@@ -3252,7 +3252,7 @@ function _renderSetupResult(d) {
                     st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
                     second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', ten:'💰', accum:'🧊',
                     blowoff:'🌋', capitulation:'🛟', thin_pump:'💨', floor_buy:'💎', st_break:'🧨', st_break4h:'💣',
-                    vol_anomaly:'⚡', vol_anomaly4h:'🌩', delta_series:'🫧', potok:'🌊', rocket_pullback:'🪃', support_defense:'🧱', channel_top:'📐', corridor:'🎈', level_touch:'📏', alarm:'⏰'};
+                    vol_anomaly:'⚡', vol_anomaly4h:'🌩', delta_series:'🫧', potok:'🌊', rocket_pullback:'🪃', support_defense:'🧱', channel_top:'📐', corridor:'🎈', level_touch:'📏', flip_retest:'🪜', alarm:'⏰'};
   const recentHtml = (d.recent_signals || []).slice(0, 30).map(rs => {
     let em = srcEmoji[rs.source] || '•';
     if (rs.source === 'whale' && (rs.whale_seq||1) >= 2) em = '🐳';
@@ -7311,6 +7311,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="channel_top">📐 Крыша канала (шорт верха восходящего · EV+1.29)</option>
     <option value="corridor">🎈 Коридор (лонг: полка+пустой путь+покупатель · EV+0.49)</option>
     <option value="level_touch">📏 Уровень (касание+RSI · LONG WR68 +0.69R · SHORT WR63 +0.58R)</option>
+    <option value="flip_retest">🪜 Флип-ретест (лонг от пробитого сопротивления · 2R+БУ +0.47R · PF 3.45)</option>
     <option value="vol_anomaly">⚡ Аномалия объёма 1h (&gt;8× нормы, где угодно, инфо)</option>
     <option value="vol_anomaly4h">🌩 Аномалия объёма 4h (&gt;6× нормы, инфо)</option>
     <option value="potok">🌊 ПОТОК·авто (входы канала)</option>
@@ -9434,7 +9435,7 @@ function filterJournal() {
     if (minTs && !sourceExplicit && (s.at_ts || 0) < minTs) return false;
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
-      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','ten','delta_series','st_break','st_break4h','blowoff','capitulation','thin_pump','floor_buy','vol_anomaly','vol_anomaly4h','potok','rocket_pullback','support_defense','channel_top','corridor','level_touch'].includes(s.source)) return false;
+      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','ten','delta_series','st_break','st_break4h','blowoff','capitulation','thin_pump','floor_buy','vol_anomaly','vol_anomaly4h','potok','rocket_pullback','support_defense','channel_top','corridor','level_touch','flip_retest'].includes(s.source)) return false;
     } else if (src === 'whale2') {
       // 🐳 повторный кит ≤14д (бэктест 28.07: ниже 1-го EV +2.2)
       if (!(s.source === 'whale' && (s.whale_seq || 1) >= 2)) return false;
@@ -10088,6 +10089,7 @@ function renderJournal(items, startIdx) {
       channel_top: 'КРЫША КАНАЛА',
       corridor: 'КОРИДОР',
       level_touch: 'УРОВЕНЬ',
+      flip_retest: 'ФЛИП-РЕТЕСТ',
     })[s.source] || (s.source || '—');
     const stFail = s.st_passed === false;
     const stPass = s.st_passed === true;

@@ -181,6 +181,91 @@ def mtf_confluence(pair: str, z_lo: float, z_hi: float,
     return None
 
 
+def check_flip_retest(pair: str, kd: list[dict]) -> Optional[dict]:
+    """🪜 ФЛИП-РЕТЕСТ → LONG (бэктест 07.08.26, год, 303 пары, 3529
+    сетапов): сопротивление пробито ЗАКРЫТИЕМ на объёме >=1.5×MA20,
+    цена вернулась сверху и первый раз коснулась верха зоны, заход не
+    глубже середины. Вход = верх зоны (лимитка), стоп ПОД зоной
+    −0.5×avg (медиана риска 1.5%, кап 5%). Тейк 2R: WR 49, EV +0.46R,
+    PF 1.90; с БУ после +1R: 33% тейк / 48% БУ / 19% стоп, PF 3.45.
+    Полугодия +0.45/+0.48. RSI-фильтр не нужен. Глубокий заход (ниже
+    середины зоны) — анти-сетап (EV −0.08), не сигналим."""
+    try:
+        if not kd or len(kd) < 200:
+            return None
+        last = kd[-2]                       # последний закрытый бар
+        # зоны по срезу ДО окна пробой+ретест (как в бэктесте: зона
+        # существовала до событий)
+        base = kd[:-62]
+        if len(base) < 120:
+            return None
+        zones = [z for z in build_zones(base) if z["res"]]
+        if not zones:
+            return None
+        closes = kd[:-1]
+        n = len(closes)
+        for z in zones:
+            hi, lo = z["hi"], z["lo"]
+            entry = hi
+            sl = lo - z["avg"] * 0.5
+            risk = entry - sl
+            if risk <= 0 or risk / entry > 0.05:
+                continue
+            # пробой: первое закрытие выше зоны в окне [-62..-3]
+            brk = None
+            for j in range(n - 61, n - 2):
+                if closes[j]["c"] > hi:
+                    brk = j
+                    break
+                if closes[j]["c"] < lo - z["avg"]:
+                    break
+            if brk is None:
+                continue
+            # объём пробоя >= 1.5×MA20 (по барам до пробоя)
+            vv = [closes[k].get("v") or 0 for k in range(max(0, brk - 21), brk - 1)]
+            vma = sum(vv) / len(vv) if vv else 0
+            if vma <= 0 or (closes[brk].get("v") or 0) / vma < 1.5:
+                continue
+            # после пробоя до ТЕКУЩЕГО бара: ни ретеста, ни провала
+            ok = True
+            for j in range(brk + 1, n - 1):
+                if closes[j]["c"] < lo:
+                    ok = False
+                    break
+                if closes[j]["l"] <= hi * 1.003:
+                    ok = False               # ретест уже был — не первый
+                    break
+            if not ok:
+                continue
+            # текущий закрытый бар — ПЕРВЫЙ ретест, заход мелкий
+            if not (last["l"] <= hi * 1.003):
+                continue
+            if last["l"] < (lo + hi) / 2:
+                continue                     # глубокий заход — анти
+            if last["c"] < lo:
+                continue
+            vol_x = round((closes[brk].get("v") or 0) / vma, 1)
+            return {"strategy": "flip_retest", "direction": "LONG",
+                    "pair": pair, "symbol": pair.replace("/", "").upper(),
+                    "entry": entry, "tp": entry + 2 * risk, "sl": sl,
+                    "horizon_h": 96,
+                    "indicators": {
+                        "zone_lo": lo, "zone_hi": hi,
+                        "risk_pct": round(risk / entry * 100, 2),
+                        "vol_x": vol_x,
+                        "brk_ago_h": n - 1 - brk,
+                        "touch_px": last["c"],
+                        "entry_bar_t": int(last["t"] // 1000),
+                        "entry_hint": ("ретест пробитого сопротивления — "
+                                       "вход ОТ УРОВНЯ (лимитка), стоп под "
+                                       "флип-зоной"),
+                    }}
+        return None
+    except Exception:
+        logger.debug(f"flip_retest fail {pair}", exc_info=True)
+        return None
+
+
 def check_level_touch(pair: str, kd: list[dict]) -> Optional[dict]:
     """Касание уровня на последнем ЗАКРЫТОМ 1h-баре + RSI-гейт.
     kd — те же 400 баров, что у скана (t в ms)."""
