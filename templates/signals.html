@@ -6529,6 +6529,10 @@ setTimeout(() => {
     style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:9px 13px;font-size:12px;font-family:var(--font-mono);width:170px;text-transform:uppercase;">
   <span id="trUpd" style="font-size:10.5px;color:var(--muted);"></span>
 </div>
+<div style="font-size:10.5px;color:var(--muted);margin:-6px 0 10px;line-height:1.5;">
+  🎯 = шорт-сетап <b>▲▲▼▼</b> / <b>▲▼▼▼</b> — отскок в даунтренде (год-бэктест 100k смен паттернов: +0.20% / +0.11% на сделку, WR 53) ·
+  лонг-эджа в матрице трендов нет — лонговые входы бери от уровней (📏 Уровень / 🪜 Флип-ретест)
+</div>
 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
   <div>
     <div style="background:rgba(255,77,109,0.14);border:1px solid rgba(255,77,109,0.4);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#ff5e9c;">🔻 Только вниз (все ТФ)</div>
@@ -6613,14 +6617,22 @@ function trRender() {
   const arrow = v => v > 0
     ? '<span style="color:#00e5a0;">▲</span>'
     : v < 0 ? '<span style="color:#ff5e9c;">▼</span>' : '<span style="color:var(--muted);">·</span>';
+  // 🎯 бэктест 07.08 (100k смен паттернов, год): шорт-сетапы
+  // ▲▲▼▼ (+0.20%/сделку WR53, стабильно) и ▲▼▼▼ (+0.11) — отскок в
+  // даунтренде; лонг-эджа в матрице НЕТ (лонги — от уровней 📏🪜)
+  const bestShort = r => {
+    const p = d.tfs.map(tf => (r.d || {})[tf] || 0).join(',');
+    return p === '1,1,-1,-1' || p === '1,-1,-1,-1';
+  };
   const rowHtml = r => {
     const lf = lastFlip(r);
+    const bs = bestShort(r);
     // «какой тренд пришёл последним»: ТФ + куда + когда
     const lfTxt = lf
       ? `<span style="color:${((r.d || {})[lf[0]] || 0) > 0 ? '#00e5a0' : '#ff5e9c'};font-weight:800;">${lf[0]}${((r.d || {})[lf[0]] || 0) > 0 ? '▲' : '▼'}</span> <span style="color:var(--muted);">${fmtChg(lf[1])}</span>`
       : '';
-    return `<div onclick="try{openPairChart('${r.s}','1h')}catch(e){}" style="display:grid;grid-template-columns:86px repeat(${d.tfs.length},20px) 1fr;align-items:center;gap:2px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
-      <b style="overflow:hidden;text-overflow:ellipsis;">${r.s.replace('USDT','')}</b>
+    return `<div onclick="try{openPairChart('${r.s}','1h')}catch(e){}" style="display:grid;grid-template-columns:86px repeat(${d.tfs.length},20px) 1fr;align-items:center;gap:2px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);${bs ? 'background:rgba(255,77,109,0.07);' : ''}">
+      <b style="overflow:hidden;text-overflow:ellipsis;">${bs ? '🎯' : ''}${r.s.replace('USDT','')}</b>
       ${d.tfs.map(tf => `<span style="text-align:center;">${arrow((r.d || {})[tf])}</span>`).join('')}
       <span style="font-size:10.5px;text-align:right;">${lfTxt}</span>
     </div>`;
