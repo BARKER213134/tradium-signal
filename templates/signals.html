@@ -6631,7 +6631,7 @@ function trRender() {
     const lfTxt = lf
       ? `<span style="color:${((r.d || {})[lf[0]] || 0) > 0 ? '#00e5a0' : '#ff5e9c'};font-weight:800;">${lf[0]}${((r.d || {})[lf[0]] || 0) > 0 ? '▲' : '▼'}</span> <span style="color:var(--muted);">${fmtChg(lf[1])}</span>`
       : '';
-    return `<div onclick="try{openPairChart('${r.s}','1h')}catch(e){}" style="display:grid;grid-template-columns:86px repeat(${d.tfs.length},20px) 1fr;align-items:center;gap:2px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);${bs ? 'background:rgba(255,77,109,0.07);' : ''}">
+    return `<div onclick="location.href='/signals?bot=journal&chart=${r.s}'" style="display:grid;grid-template-columns:86px repeat(${d.tfs.length},20px) 1fr;align-items:center;gap:2px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);${bs ? 'background:rgba(255,77,109,0.07);' : ''}">
       <b style="overflow:hidden;text-overflow:ellipsis;">${bs ? '🎯' : ''}${r.s.replace('USDT','')}</b>
       ${d.tfs.map(tf => `<span style="text-align:center;">${arrow((r.d || {})[tf])}</span>`).join('')}
       <span style="font-size:10.5px;text-align:right;">${lfTxt}</span>
@@ -8894,6 +8894,30 @@ if (document.readyState !== 'loading') hotLoad();
 <script>
 let _journalData = [];
 let _journalFiltered = [];
+// 🔗 автооткрытие ЖУРНАЛЬНОГО модала по ?chart=SYMBOL (клик из
+// «Трендов» и других вкладок): полный функционал — ТФ-бар, движки,
+// 🧮 Кластеры, стрелки. Если сигналов монеты нет — quick-модал.
+(function () {
+  const q = new URLSearchParams(location.search).get('chart');
+  if (!q) return;
+  const sym = q.toUpperCase().replace('/', '');
+  let tries = 0;
+  const t = setInterval(() => {
+    tries++;
+    if (window._journalFiltered === undefined && tries > 3) {}
+    const jf = (typeof _journalFiltered !== 'undefined' && _journalFiltered) || [];
+    if (jf.length) {
+      clearInterval(t);
+      const idx = jf.findIndex(s =>
+        ((s.symbol || (s.pair || '').replace('/', '')).toUpperCase()) === sym);
+      if (idx >= 0) { try { openJournalChart(idx); return; } catch (e) {} }
+      if (window.openPairChart) openPairChart(sym, '1h');
+    } else if (tries > 100) {
+      clearInterval(t);
+      if (window.openPairChart) openPairChart(sym, '1h');
+    }
+  }, 300);
+})();
 let _lwcLoaded = false;
 let _coinSearchTimer = null;
 let _markerMap = new Map();
