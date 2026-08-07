@@ -8952,6 +8952,24 @@ function _setModalTF(tf) {
   // Если резонанс открыт — перерисуем для нового TF
   if (window._resonanceRerenderIfOn) window._resonanceRerenderIfOn();
 }
+// ⌨️ клавиатура журнального модала: ←/→ — сигналы, ↑/↓ — таймфрейм,
+// ESC — закрыть (как в quick-модале)
+document.addEventListener('keydown', ev => {
+  const m = document.getElementById('journalChartModal');
+  if (!m || !m.classList.contains('open')) return;
+  if (ev.key === 'ArrowLeft') openJournalChart(_currentJournalIdx - 1);
+  if (ev.key === 'ArrowRight') openJournalChart(_currentJournalIdx + 1);
+  if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
+    ev.preventDefault();
+    const order = ['5m', '15m', '30m', '1h', '4h', '12h', '1d'];
+    const i = order.indexOf(_modalTF);
+    if (i >= 0) {
+      const n = Math.max(0, Math.min(order.length - 1,
+        i + (ev.key === 'ArrowUp' ? 1 : -1)));
+      if (order[n] !== _modalTF) _setModalTF(order[n]);
+    }
+  }
+});
 
 function _srcLabel(src) {
   if (src === 'anomaly')           return '⚠️ Аномалия';
