@@ -3913,6 +3913,7 @@ window.openPairChart = function(symbol, tf) {
       'style="background:none;border:1px solid rgba(76,201,240,0.45);border-radius:6px;' +
       'color:#4cc9f0;font-size:11px;cursor:pointer;padding:3px 10px;' +
       'font-family:var(--font-mono,monospace);">🗞 Журнал</button>' +
+      '<span id="kcQmTrend" style="display:flex;gap:6px;align-items:center;margin-left:8px;"></span>' +
       '<span style="flex:1;"></span>' +
       '<span id="kcQmNavBox" style="display:none;align-items:center;gap:6px;">' +
       '<button onclick="window._kcQmNav(-1)" style="background:none;border:1px solid var(--border,#334);' +
@@ -3952,6 +3953,7 @@ window.openPairChart = function(symbol, tf) {
     `color:${t === tfCur ? '#4cc9f0' : 'var(--muted,#8892a4)'};font-size:11px;cursor:pointer;padding:3px 9px;` +
     `font-family:var(--font-mono,monospace);">${t}</button>`).join('');
   m.style.display = 'flex';
+  window._kcTrendBadge(sym, document.getElementById('kcQmTrend'));
   const body = document.getElementById('kcQmBody');
   // 🧮 режим кластеров (как в журнале): iframe footprint-view с той же
   // монетой и ТФ; кнопка-тумблер подсвечивается
@@ -3984,6 +3986,31 @@ window._kcQmNav = function(step) {
   if (ix < 0 || !list.length) return;
   const nx = (ix + step + list.length) % list.length;
   openPairChart(list[nx], localStorage.getItem('kc_qm_tf') || '1h');
+};
+// 📈 бейдж текущего тренда монеты (матрица /api/trends, кэш 2 мин) —
+// показывается в шапке ЛЮБОГО графика: quick-модал и журнальный
+window._kcTrendBadge = async function(sym, el) {
+  try {
+    if (!el) return;
+    el.innerHTML = '';
+    const now = Date.now();
+    if (!window._trMxCache || now - window._trMxCache.t > 120000) {
+      const r = await fetch('/api/trends');
+      window._trMxCache = { t: now, d: await r.json() };
+    }
+    const dd = window._trMxCache.d || {};
+    const row = (dd.rows || []).find(x => x.s === sym);
+    if (!row) return;
+    el.innerHTML =
+      '<span style="font-size:10px;color:var(--muted,#8892a4);">тренд</span> ' +
+      (dd.tfs || ['1h', '2h', '4h', '12h']).map(tf => {
+        const v = (row.d || {})[tf] || 0;
+        const a = v > 0 ? '▲' : v < 0 ? '▼' : '·';
+        const c = v > 0 ? '#00e5a0' : v < 0 ? '#ff5e9c' : '#8892a4';
+        return '<span style="font-size:10.5px;font-family:var(--font-mono,monospace);' +
+          'color:' + c + ';font-weight:800;">' + tf + a + '</span>';
+      }).join(' ');
+  } catch (e) {}
 };
 window._kcQmClose = function() {
   const m = document.getElementById('kcQuickModal');
