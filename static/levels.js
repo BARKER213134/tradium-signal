@@ -169,3 +169,41 @@ window._kcBuildZones = function(bars) {
   }
   return out;
 };
+
+// 📈 ST(10,3)-флипы для меток «тренд сменился» на графике (тумблер
+// kc_trend_flips). Возвращает [{t, dir, price}] по закрытым барам.
+window._stFlipMarks = function(bars, period, mult) {
+  period = period || 10; mult = mult || 3.0;
+  const out = [];
+  const n = bars.length;
+  if (n < period + 4) return out;
+  const atr = new Array(n).fill(0);
+  let s = 0;
+  for (let i = 1; i <= period; i++) {
+    s += Math.max(bars[i].h - bars[i].l,
+      Math.abs(bars[i].h - bars[i - 1].c), Math.abs(bars[i].l - bars[i - 1].c));
+  }
+  atr[period] = s / period;
+  for (let i = period + 1; i < n; i++) {
+    const tr = Math.max(bars[i - 1].h - bars[i - 1].l,
+      Math.abs(bars[i - 1].h - bars[i - 2].c),
+      Math.abs(bars[i - 1].l - bars[i - 2].c));
+    atr[i] = (atr[i - 1] * (period - 1) + tr) / period;
+  }
+  let fu = 0, fl = 0, dir = 1, prev = 1;
+  for (let i = period + 1; i < n; i++) {
+    const hl2 = (bars[i].h + bars[i].l) / 2;
+    const ub = hl2 + mult * atr[i];
+    const lb = hl2 - mult * atr[i];
+    fu = (i === period + 1 || ub < fu || bars[i - 1].c > fu) ? ub : fu;
+    fl = (i === period + 1 || lb > fl || bars[i - 1].c < fl) ? lb : fl;
+    prev = dir;
+    if (bars[i].c < fl) dir = -1;
+    else if (bars[i].c > fu) dir = 1;
+    if (i > period + 2 && dir !== prev) {
+      out.push({ t: bars[i].t, dir: dir,
+                 price: dir > 0 ? bars[i].l : bars[i].h });
+    }
+  }
+  return out;
+};

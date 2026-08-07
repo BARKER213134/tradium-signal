@@ -15,7 +15,7 @@
     <script defer src="/static/lightweight-charts.js?v=mk4"
             onload="window._lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat();"></script>
     <!-- 📏 единый билдер уровней-зон (KChart + кластеры) -->
-    <script src="/static/levels.js?v=1"></script>
+    <script src="/static/levels.js?v=2"></script>
     <style>
         :root {
             /* ── Modern Deep-Space palette (v2, 2026-07) ──
@@ -3913,6 +3913,11 @@ window.openPairChart = function(symbol, tf) {
       'style="background:none;border:1px solid rgba(76,201,240,0.45);border-radius:6px;' +
       'color:#4cc9f0;font-size:11px;cursor:pointer;padding:3px 10px;' +
       'font-family:var(--font-mono,monospace);">🗞 Журнал</button>' +
+      '<button id="kcQmFlipBtn" onclick="window._kcQmFlips()" ' +
+      'title="Метки смены тренда (ST-флипы) на графике" ' +
+      'style="background:none;border:1px solid var(--border,#334);border-radius:6px;' +
+      'color:var(--muted,#8892a4);font-size:11px;cursor:pointer;padding:3px 10px;' +
+      'font-family:var(--font-mono,monospace);">⚡Тренд</button>' +
       '<span id="kcQmTrend" style="display:flex;gap:6px;align-items:center;margin-left:8px;"></span>' +
       '<span style="flex:1;"></span>' +
       '<span id="kcQmNavBox" style="display:none;align-items:center;gap:6px;">' +
@@ -3932,6 +3937,8 @@ window.openPairChart = function(symbol, tf) {
       if (ev.key === 'Escape') window._kcQmClose();
       if (ev.key === 'ArrowLeft') window._kcQmNav(-1);
       if (ev.key === 'ArrowRight') window._kcQmNav(1);
+      if (ev.key === 'ArrowUp') { ev.preventDefault(); window._kcQmTf(1); }
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); window._kcQmTf(-1); }
     });
   }
   const tfCur = tf || localStorage.getItem('kc_qm_tf') || '1h';
@@ -3963,12 +3970,34 @@ window.openPairChart = function(symbol, tf) {
     fpBtn.style.background = fpMode ? 'rgba(123,92,255,0.25)' : 'none';
     fpBtn.style.color = fpMode ? '#d4beff' : '#b28bff';
   }
+  const flipBtn = document.getElementById('kcQmFlipBtn');
+  if (flipBtn) {
+    const flipsOn = localStorage.getItem('kc_trend_flips') !== '0';
+    flipBtn.style.color = flipsOn ? '#ffd23e' : 'var(--muted,#8892a4)';
+    flipBtn.style.borderColor = flipsOn ? 'rgba(255,210,62,0.5)' : 'var(--border,#334)';
+  }
   if (fpMode) {
     if (body._kChart) { try { klinecharts.dispose(body); } catch (e) {} body._kChart = null; }
     const fpTf = ['15m', '1h', '4h', '1d'].includes(tfCur) ? tfCur : '1h';
     body.innerHTML = '<iframe src="/footprint-view?pair=' + sym + '&tf=' + fpTf +
       '&_=' + (localStorage.getItem('kc_qm_fp_bust') || '') +
       '" style="width:100%;height:100%;border:none;background:#0a0e14;"></iframe>';
+    // клавиатура работает и при фокусе внутри iframe кластеров
+    // (same-origin): пробрасываем стрелки/ESC в модал
+    const ifr = body.querySelector('iframe');
+    if (ifr) {
+      ifr.addEventListener('load', () => {
+        try {
+          ifr.contentWindow.document.addEventListener('keydown', ev => {
+            if (ev.key === 'Escape') window._kcQmClose();
+            if (ev.key === 'ArrowLeft') window._kcQmNav(-1);
+            if (ev.key === 'ArrowRight') window._kcQmNav(1);
+            if (ev.key === 'ArrowUp') { ev.preventDefault(); window._kcQmTf(1); }
+            if (ev.key === 'ArrowDown') { ev.preventDefault(); window._kcQmTf(-1); }
+          });
+        } catch (e) {}
+      });
+    }
     return;
   }
   body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted,#8892a4);">Загрузка графика…</div>';
@@ -3986,6 +4015,23 @@ window._kcQmNav = function(step) {
   if (ix < 0 || !list.length) return;
   const nx = (ix + step + list.length) % list.length;
   openPairChart(list[nx], localStorage.getItem('kc_qm_tf') || '1h');
+};
+// ↑↓ — переключение таймфрейма с клавиатуры
+window._kcQmTf = function(step) {
+  const order = ['5m', '15m', '30m', '1h', '4h', '12h', '1d'];
+  const cur = localStorage.getItem('kc_qm_tf') || '1h';
+  const i = order.indexOf(cur);
+  if (i < 0 || !window._kcQmSym) return;
+  const n = Math.max(0, Math.min(order.length - 1, i + step));
+  if (order[n] !== cur) openPairChart(window._kcQmSym, order[n]);
+};
+// ⚡Тренд — тумблер меток смены тренда на графике
+window._kcQmFlips = function() {
+  const off = localStorage.getItem('kc_trend_flips') === '0';
+  localStorage.setItem('kc_trend_flips', off ? '1' : '0');
+  if (window._kcQmSym) {
+    openPairChart(window._kcQmSym, localStorage.getItem('kc_qm_tf') || '1h');
+  }
 };
 // 📈 бейдж текущего тренда монеты (матрица /api/trends, кэш 2 мин) —
 // показывается в шапке ЛЮБОГО графика: quick-модал и журнальный
@@ -4487,6 +4533,22 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   };
   if (opts.levels !== false) {
     try { window._kcDrawZones(chart, bars, sym, tf); } catch (e) {}
+  }
+  // 📈 метки смены тренда (ST-флипы текущего ТФ) — тумблер «⚡Тренд» в
+  // модале, выключается localStorage kc_trend_flips='0'
+  if (opts.trendFlips !== false
+      && localStorage.getItem('kc_trend_flips') !== '0') {
+    try {
+      (window._stFlipMarks ? window._stFlipMarks(bars) : [])
+        .slice(-40).forEach(f => {
+          chart.createOverlay({
+            name: 'simpleAnnotation', lock: true, groupId: 'trflip',
+            points: [{ timestamp: f.t, value: f.price }],
+            extendData: f.dir > 0 ? '▲тренд' : '▼тренд',
+            styles: { text: { color: f.dir > 0 ? '#00e5a0' : '#ff5e9c',
+                              size: 10 } } });
+        });
+    } catch (e) {}
   }
   // 💠 инфо-маркеры «серия дельт»: 3 подряд бара с дельтой одного знака,
   // |Σ| >= 2σ√3, объём серии >= 1.8×MA20, цена в сторону серии.
