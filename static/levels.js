@@ -201,7 +201,9 @@ window._stFlipMarks = function(bars, period, mult) {
     if (bars[i].c < fl) dir = -1;
     else if (bars[i].c > fu) dir = 1;
     if (i > period + 2 && dir !== prev) {
-      out.push({ t: bars[i].t, dir: dir,
+      // prevLen — сколько баров держался прошлый тренд (для тултипа)
+      const prevFlip = out.length ? out[out.length - 1].i : period + 1;
+      out.push({ t: bars[i].t, dir: dir, i: i, prevLen: i - prevFlip,
                  price: dir > 0 ? bars[i].l : bars[i].h });
     }
   }

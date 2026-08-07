@@ -15,7 +15,7 @@
     <script defer src="/static/lightweight-charts.js?v=mk4"
             onload="window._lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat();"></script>
     <!-- 📏 единый билдер уровней-зон (KChart + кластеры) -->
-    <script src="/static/levels.js?v=2"></script>
+    <script src="/static/levels.js?v=3"></script>
     <style>
         :root {
             /* ── Modern Deep-Space palette (v2, 2026-07) ──
@@ -4539,6 +4539,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   if (opts.trendFlips !== false
       && localStorage.getItem('kc_trend_flips') !== '0') {
     try {
+      container._kcSigs = container._kcSigs || [];
+      const ivH = Math.round((bars.length > 1
+        ? bars[1].t - bars[0].t : 3600000) / 3600000 * 10) / 10;
       (window._stFlipMarks ? window._stFlipMarks(bars) : [])
         .slice(-40).forEach(f => {
           chart.createOverlay({
@@ -4547,6 +4550,17 @@ window.renderKChart = async function(container, symbol, tf, opts) {
             extendData: f.dir > 0 ? '▲тренд' : '▼тренд',
             styles: { text: { color: f.dir > 0 ? '#00e5a0' : '#ff5e9c',
                               size: 10 } } });
+          // ховер-тултип: полное описание смены тренда
+          const dt = new Date(f.t).toLocaleString('ru',
+            { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+          const col = f.dir > 0 ? '#00e5a0' : '#ff5e9c';
+          container._kcSigs.push({
+            ts: f.t, value: f.price, below: f.dir > 0,
+            info: `<b style="color:${col};">${f.dir > 0 ? '▲ Тренд сменился ВВЕРХ' : '▼ Тренд сменился ВНИЗ'}</b><br>` +
+              `${dt} · ТФ ${tf || '1h'} · SuperTrend(10,3)<br>` +
+              `<span style="color:#aab3c2;">прошлый тренд держался ` +
+              `${f.prevLen} бар. (~${Math.round(f.prevLen * ivH)}ч)</span>`,
+          });
         });
     } catch (e) {}
   }
