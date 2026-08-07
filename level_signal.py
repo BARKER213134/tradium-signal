@@ -194,26 +194,34 @@ def check_flip_retest(pair: str, kd: list[dict]) -> Optional[dict]:
         if not kd or len(kd) < 200:
             return None
         last = kd[-2]                       # последний закрытый бар
-        # зоны по срезу ДО окна пробой+ретест (как в бэктесте: зона
-        # существовала до событий)
-        base = kd[:-62]
-        if len(base) < 120:
-            return None
-        zones = [z for z in build_zones(base) if z["res"]]
-        if not zones:
-            return None
         closes = kd[:-1]
         n = len(closes)
-        for z in zones:
+        # лаговые срезы: зона должна существовать НЕЗАДОЛГО до пробоя
+        # (бэктест: срезы раз в 12 баров, пробой в <=12 барах после
+        # среза, ретест в <=48 после пробоя) — перебираем лаги
+        seen = set()
+        cand = []
+        for lag in (12, 24, 36, 48, 60):
+            base = kd[:-lag]
+            if len(base) < 120:
+                continue
+            for z in build_zones(base):
+                if z["res"]:
+                    key = round(z["hi"], 10)
+                    if key not in seen:
+                        seen.add(key)
+                        cand.append((lag, z))
+        for lag, z in cand:
             hi, lo = z["hi"], z["lo"]
             entry = hi
             sl = lo - z["avg"] * 0.5
             risk = entry - sl
             if risk <= 0 or risk / entry > 0.05:
                 continue
-            # пробой: первое закрытие выше зоны в окне [-62..-3]
+            # пробой: первое закрытие выше зоны в <=12 барах после среза
+            seg0 = n - lag
             brk = None
-            for j in range(n - 61, n - 2):
+            for j in range(seg0, min(seg0 + 12, n - 1)):
                 if closes[j]["c"] > hi:
                     brk = j
                     break
@@ -227,6 +235,8 @@ def check_flip_retest(pair: str, kd: list[dict]) -> Optional[dict]:
             if vma <= 0 or (closes[brk].get("v") or 0) / vma < 1.5:
                 continue
             # после пробоя до ТЕКУЩЕГО бара: ни ретеста, ни провала
+            if n - 1 - brk > 48:
+                continue                     # ретест только в 48 барах
             ok = True
             for j in range(brk + 1, n - 1):
                 if closes[j]["c"] < lo:
