@@ -4045,8 +4045,35 @@ window._kcTrendBadge = async function(sym, el) {
       window._trMxCache = { t: now, d: await r.json() };
     }
     const dd = window._trMxCache.d || {};
-    const row = (dd.rows || []).find(x => x.s === sym);
-    if (!row) return;
+    let row = (dd.rows || []).find(x => x.s === sym);
+    if (!row) {
+      // фолбэк: монеты нет в матрице скана (вне топ-300) — считаем
+      // тренды сами из 1h-свечей (ST(10,3) на ресемпле)
+      const r2 = await fetch('/api/journal-candles?symbol=' + sym + '&tf=1h&limit=400');
+      const d2 = await r2.json();
+      const kb = (d2.candles || []).map(b => ({
+        t: (b.time || 0) * 1000, o: +b.open, h: +b.high,
+        l: +b.low, c: +b.close }));
+      if (kb.length < 80 || !window._stFlipMarks) return;
+      const dirs = {};
+      [['1h', 1], ['2h', 2], ['4h', 4], ['12h', 12]].forEach(pr => {
+        const tfx = pr[0], k = pr[1];
+        let b2;
+        if (k === 1) b2 = kb.slice(0, -1);
+        else {
+          const g = {};
+          kb.forEach(x => {
+            const kk = Math.floor(x.t / (k * 3600000));
+            if (!g[kk]) g[kk] = { t: x.t, o: x.o, h: x.h, l: x.l, c: x.c };
+            else { g[kk].h = Math.max(g[kk].h, x.h); g[kk].l = Math.min(g[kk].l, x.l); g[kk].c = x.c; }
+          });
+          b2 = Object.keys(g).sort((a, b) => a - b).map(kk => g[kk]).slice(0, -1);
+        }
+        const fl = window._stFlipMarks(b2);
+        dirs[tfx] = fl.length ? fl[fl.length - 1].dir : 0;
+      });
+      row = { d: dirs };
+    }
     el.innerHTML =
       '<span style="font-size:10px;color:var(--muted,#8892a4);">тренд</span> ' +
       (dd.tfs || ['1h', '2h', '4h', '12h']).map(tf => {
@@ -4555,7 +4582,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
             { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
           const col = f.dir > 0 ? '#00e5a0' : '#ff5e9c';
           container._kcSigs.push({
-            ts: f.t, value: f.price, below: f.dir > 0,
+            // simpleAnnotation рисует баббл НАД точкой → below:false,
+            // иначе тултип-поиск мерил до точки на 32px ниже баббла
+            ts: f.t, value: f.price, below: false,
             info: `<b style="color:${col};">${f.dir > 0 ? '▲ Тренд сменился ВВЕРХ' : '▼ Тренд сменился ВНИЗ'}</b><br>` +
               `${dt} · ТФ ${tf || '1h'} · SuperTrend(10,3)<br>` +
               `<span style="color:#aab3c2;">прошлый тренд держался ` +
