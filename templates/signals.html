@@ -7451,6 +7451,8 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="channel_top">📐 Крыша канала (шорт верха восходящего · EV+1.29)</option>
     <option value="corridor">🎈 Коридор (лонг: полка+пустой путь+покупатель · EV+0.49)</option>
     <option value="level_touch">📏 Уровень (касание+RSI · LONG WR68 +0.69R · SHORT WR63 +0.58R)</option>
+    <option value="lt_pullback">🪂 Откат в аптренде (📏 LONG при 1h▼ и 4h/12h▲ · +0.7..0.9R WR67-78)</option>
+    <option value="lt_bulltrap">🪤 Ловушка быков (📏 SHORT при 1h▲ и 4h+12h▼ · +0.81R WR72)</option>
     <option value="flip_retest">🪜 Флип-ретест (лонг от пробитого сопротивления · 2R+БУ +0.47R · PF 3.45)</option>
     <option value="vol_anomaly">⚡ Аномалия объёма 1h (&gt;8× нормы, где угодно, инфо)</option>
     <option value="vol_anomaly4h">🌩 Аномалия объёма 4h (&gt;6× нормы, инфо)</option>
@@ -9639,6 +9641,12 @@ function filterJournal() {
     } else if (src === 'blowoff_elite') {
       // 🧿 blowoff ЭЛИТА-1d: гейт + дневной RSI-медведь (WR 69, EV +3.78)
       if (!(s.source === 'blowoff' && s.elite_1d)) return false;
+    } else if (src === 'lt_pullback') {
+      // 🪂 level_touch LONG при 1h▼ и держащих старших (+0.7..0.9R WR67-78)
+      if (!(s.source === 'level_touch' && s.pullback)) return false;
+    } else if (src === 'lt_bulltrap') {
+      // 🪤 level_touch SHORT при 1h▲ и медвежьих 4h+12h (+0.81R WR72)
+      if (!(s.source === 'level_touch' && s.bulltrap)) return false;
     } else if (src && s.source !== src) return false;
     // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
     if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;
