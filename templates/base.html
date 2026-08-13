@@ -4700,10 +4700,16 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     try {
       container._kcSigs = container._kcSigs || [];
       const zs = window._kcBuildZones(bars);
+      // simpleAnnotation рисует НАД точкой якоря → для лонгов (у
+      // поддержки) смещаем якорь под свечу на ~средний диапазон бара,
+      // чтобы 🕯▲ был СНИЗУ, а 🕯▼ у сопротивления остался сверху (13.08)
+      const _sl = bars.slice(-120);
+      const _avgR = _sl.reduce((a, b) => a + (b.h - b.l), 0) / (_sl.length || 1);
       window._kcRevMarks(bars, zs).slice(-30).forEach(m => {
+        const _anchor = m.dir > 0 ? m.price - _avgR * 0.9 : m.price;
         chart.createOverlay({
           name: 'simpleAnnotation', lock: true, groupId: 'revcdl',
-          points: [{ timestamp: m.t, value: m.price }],
+          points: [{ timestamp: m.t, value: _anchor }],
           extendData: m.dir > 0 ? '🕯▲' : '🕯▼',
           styles: { text: { color: m.dir > 0 ? '#ffd23e' : '#ff9e3e',
                             size: 14 } } });
@@ -4713,7 +4719,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         const sideTxt = m.dir > 0 ? 'у поддержки → отскок вверх'
                                   : 'у сопротивления → отбой вниз';
         container._kcSigs.push({
-          ts: m.t, value: m.price, below: false,
+          ts: m.t, value: _anchor, below: false,
           info: `<b style="color:#ffd23e;">🕯 ${kindTxt} ${sideTxt}</b><br>` +
             `${dt} · ТФ ${tf} · зона ⚡${m.strength}%<br>` +
             `<span style="color:#aab3c2;">подсказка, не сигнал — бэктест: ` +
