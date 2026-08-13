@@ -170,6 +170,52 @@ window._kcBuildZones = function(bars) {
   return out;
 };
 
+// 🕯 Разворотные свечи У ЗОНЫ (пин-бар / поглощение) — визуальный слой
+// для 4h+ (тумблер kc_rev_candles). Бэктест 13.08 (год, 164k касаний):
+// вход по таким свечам эджа НЕ даёт (пин+ядро −0.21R против +0.64R от
+// края) — поэтому только метки, не сигнал. Анти-шум: первый заход в
+// живую зону (prev close вне), строгий пин (фитиль ≥60% диапазона,
+// тело ≤30%), поглощение тело-к-телу следующим баром.
+window._kcRevMarks = function(bars, zones) {
+  const out = [];
+  if (!bars || bars.length < 3 || !zones || !zones.length) return out;
+  for (let j = 1; j < bars.length; j++) {
+    const b = bars[j], p = bars[j - 1];
+    const rng = b.h - b.l;
+    for (const z of zones) {
+      if (b.t < (z.t || 0)) continue;
+      let touched, wick;
+      if (z.res) {
+        touched = b.h >= z.lo && p.c < z.lo;
+        wick = b.h - Math.max(b.o, b.c);
+      } else {
+        touched = b.l <= z.hi && p.c > z.hi;
+        wick = Math.min(b.o, b.c) - b.l;
+      }
+      if (!touched) continue;
+      const body = Math.abs(b.c - b.o);
+      if (rng > 0 && wick >= 0.6 * rng && body <= 0.3 * rng) {
+        out.push({ t: b.t, i: j, dir: z.res ? -1 : 1, kind: 'pin',
+                   price: z.res ? b.h : b.l, strength: z.strength || 0 });
+      } else {
+        const nb = bars[j + 1];
+        if (nb) {
+          const eng = z.res
+            ? (b.c > b.o && nb.c < nb.o && nb.o >= b.c && nb.c <= b.o)
+            : (b.c < b.o && nb.c > nb.o && nb.o <= b.c && nb.c >= b.o);
+          if (eng) {
+            out.push({ t: nb.t, i: j + 1, dir: z.res ? -1 : 1, kind: 'engulf',
+                       price: z.res ? Math.max(nb.h, b.h) : Math.min(nb.l, b.l),
+                       strength: z.strength || 0 });
+          }
+        }
+      }
+      break;  // бар уже сопоставлен своей зоне
+    }
+  }
+  return out;
+};
+
 // 📈 ST(10,3)-флипы для меток «тренд сменился» на графике (тумблер
 // kc_trend_flips). Возвращает [{t, dir, price}] по закрытым барам.
 window._stFlipMarks = function(bars, period, mult) {

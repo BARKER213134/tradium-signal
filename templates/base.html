@@ -15,7 +15,7 @@
     <script defer src="/static/lightweight-charts.js?v=mk4"
             onload="window._lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat();"></script>
     <!-- 📏 единый билдер уровней-зон (KChart + кластеры) -->
-    <script src="/static/levels.js?v=4"></script>
+    <script src="/static/levels.js?v=5"></script>
     <style>
         :root {
             /* ── Modern Deep-Space palette (v2, 2026-07) ──
@@ -3930,6 +3930,11 @@ window.openPairChart = function(symbol, tf) {
       'style="background:none;border:1px solid var(--border,#334);border-radius:6px;' +
       'color:var(--muted,#8892a4);font-size:11px;cursor:pointer;padding:3px 10px;' +
       'font-family:var(--font-mono,monospace);">⚡Тренд</button>' +
+      '<button id="kcQmRevBtn" onclick="window._kcQmRev()" ' +
+      'title="🕯 Разворотные свечи у зоны (пин-бар/поглощение) — только 4h/12h/1d. Подсказка, не сигнал: бэктест 164k касаний — вход по такой свече эджа не даёт, вход лимиткой от края" ' +
+      'style="background:none;border:1px solid var(--border,#334);border-radius:6px;' +
+      'color:var(--muted,#8892a4);font-size:11px;cursor:pointer;padding:3px 10px;' +
+      'font-family:var(--font-mono,monospace);">🕯Свечи</button>' +
       '<span id="kcQmTrend" style="display:flex;gap:6px;align-items:center;margin-left:8px;"></span>' +
       '<span style="flex:1;"></span>' +
       '<span id="kcQmNavBox" style="display:none;align-items:center;gap:6px;">' +
@@ -4041,6 +4046,14 @@ window._kcQmTf = function(step) {
 window._kcQmFlips = function() {
   const off = localStorage.getItem('kc_trend_flips') === '0';
   localStorage.setItem('kc_trend_flips', off ? '1' : '0');
+  if (window._kcQmSym) {
+    openPairChart(window._kcQmSym, localStorage.getItem('kc_qm_tf') || '1h');
+  }
+};
+// 🕯 — тумблер меток разворотных свечей у зоны (только 4h/12h/1d)
+window._kcQmRev = function() {
+  const off = localStorage.getItem('kc_rev_candles') === '0';
+  localStorage.setItem('kc_rev_candles', off ? '1' : '0');
   if (window._kcQmSym) {
     openPairChart(window._kcQmSym, localStorage.getItem('kc_qm_tf') || '1h');
   }
@@ -4633,6 +4646,37 @@ window.renderKChart = async function(container, symbol, tf, opts) {
               `${f.prevLen} бар. (~${Math.round(f.prevLen * ivH)}ч)</span>`,
           });
         });
+    } catch (e) {}
+  }
+  // 🕯 разворотные свечи у зоны (пин-бар / поглощение) — ТОЛЬКО 4h+,
+  // тумблер kc_rev_candles. Бэктест 13.08 (164k касаний): вход по таким
+  // свечам эджа не даёт — это визуальная подсказка, не сигнал
+  if (['4h', '12h', '1d'].includes(tf)
+      && localStorage.getItem('kc_rev_candles') !== '0'
+      && window._kcRevMarks && window._kcBuildZones) {
+    try {
+      container._kcSigs = container._kcSigs || [];
+      const zs = window._kcBuildZones(bars);
+      window._kcRevMarks(bars, zs).slice(-30).forEach(m => {
+        chart.createOverlay({
+          name: 'simpleAnnotation', lock: true, groupId: 'revcdl',
+          points: [{ timestamp: m.t, value: m.price }],
+          extendData: '🕯',
+          styles: { text: { color: m.dir > 0 ? '#ffd23e' : '#ff9e3e',
+                            size: 11 } } });
+        const dt = new Date(m.t).toLocaleString('ru',
+          { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const kindTxt = m.kind === 'pin' ? 'Пин-бар' : 'Поглощение';
+        const sideTxt = m.dir > 0 ? 'у поддержки → отскок вверх'
+                                  : 'у сопротивления → отбой вниз';
+        container._kcSigs.push({
+          ts: m.t, value: m.price, below: false,
+          info: `<b style="color:#ffd23e;">🕯 ${kindTxt} ${sideTxt}</b><br>` +
+            `${dt} · ТФ ${tf} · зона ⚡${m.strength}%<br>` +
+            `<span style="color:#aab3c2;">подсказка, не сигнал — бэктест: ` +
+            `вход по такой свече эджа не даёт, вход лимиткой от края зоны</span>`,
+        });
+      });
     } catch (e) {}
   }
   // 🔎 история трендов ВСЕХ ТФ (1h/2h/4h/12h из 1h×1000) — для окошка
