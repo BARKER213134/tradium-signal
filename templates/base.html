@@ -4310,7 +4310,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       const sigs = container._kcSigs || [];
       const t = container._kcTip;
       if (!t || !sigs.length || !container._kChart) return;
-      let best = null, bestD = 30;
+      let best = null, bestD = 42;  // 13.08: 30 → 42, в иконку было сложно попасть
       try {
         const coords = container._kChart.convertToPixel(
           sigs.map(s => ({ timestamp: s.ts, value: s.value })),
