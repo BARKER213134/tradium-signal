@@ -2939,13 +2939,15 @@ async def _new_strategies_updater_loop():
         try:
             await _asyncio.to_thread(_hb, "outcomes")
             import new_strategies as ns
-            res = await _asyncio.wait_for(ns.update_waiting_outcomes(), timeout=60.0)
+            # 13.08: 60с не хватало на 400 доков × ~170 пар — цикл резался
+            res = await _asyncio.wait_for(ns.update_waiting_outcomes(), timeout=240.0)
             if res.get("updated", 0) > 0:
                 logger.info(f"[new-strategies] updater synced {res['updated']} outcomes")
         except _asyncio.TimeoutError:
             logger.warning("[new-strategies] updater TIMEOUT 60s")
         except Exception:
-            logger.debug("[new-strategies] updater error", exc_info=True)
+            # 13.08: debug прятал смерть трекера 2 недели — только warning
+            logger.warning("[new-strategies] updater error", exc_info=True)
         await _asyncio.sleep(300)  # каждые 5 минут
 
 

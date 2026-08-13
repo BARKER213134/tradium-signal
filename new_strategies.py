@@ -718,84 +718,91 @@ async def update_waiting_outcomes() -> dict:
                 pass
             continue
         for sig in sigs:
-            entry = sig.get('entry')
-            sl = sig.get('sl')
-            tp = sig.get('tp')
-            direction = sig.get('direction')
-            created_at = sig.get('created_at')
-            if not (entry and sl and tp and direction and created_at):
-                continue
-            # Time of signal in ms
-            sig_ts = int(created_at.replace(tzinfo=timezone.utc).timestamp() * 1000) \
-                if created_at.tzinfo is None else int(created_at.timestamp() * 1000)
-            # Find first candle at or after sig_ts and walk forward
-            # (только в пределах горизонта стратегии — TP за горизонтом
-            # не считается)
-            hz_h = sig.get('horizon_h') or 24
-            hz_end = sig_ts + hz_h * 3600 * 1000
-            outcome = None
-            outcome_price = None
-            outcome_at = None
-            for c in candles:
-                if c['t'] < sig_ts:
+            try:  # 13.08: кривой док не валит всю очередь
+                entry = sig.get('entry')
+                sl = sig.get('sl')
+                tp = sig.get('tp')
+                direction = sig.get('direction')
+                created_at = sig.get('created_at')
+                if not (entry and sl and tp and direction and created_at):
                     continue
-                if c['t'] >= hz_end:
-                    break
-                if direction == 'LONG':
-                    if c['l'] <= sl:
-                        outcome = 'SL'; outcome_price = sl
-                        outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
-                    if c['h'] >= tp:
-                        outcome = 'TP'; outcome_price = tp
-                        outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
-                else:
-                    if c['h'] >= sl:
-                        outcome = 'SL'; outcome_price = sl
-                        outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
-                    if c['l'] <= tp:
-                        outcome = 'TP'; outcome_price = tp
-                        outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
-            # Timeout: горизонт стратегии прошёл без TP/SL — закрытие по
-            # close последней свечи В ПРЕДЕЛАХ горизонта (не по цене «сейчас»)
-            age_h = (utcnow() - (created_at if created_at.tzinfo else
-                                 created_at.replace(tzinfo=timezone.utc))).total_seconds() / 3600
-            if outcome is None and age_h >= hz_h:
-                in_hz = [c for c in candles if sig_ts <= c['t'] < hz_end]
-                outcome = 'TIMEOUT'
-                outcome_price = (in_hz[-1]['c'] if in_hz
-                                 else candles[-1]['c'] if candles else None)
-                outcome_at = (datetime.fromtimestamp(in_hz[-1]['t'] / 1000 + 3600,
-                                                     tz=timezone.utc)
-                              if in_hz else utcnow())
-            if outcome is None:
+                # Time of signal in ms
+                sig_ts = int(created_at.replace(tzinfo=timezone.utc).timestamp() * 1000) \
+                    if created_at.tzinfo is None else int(created_at.timestamp() * 1000)
+                # Find first candle at or after sig_ts and walk forward
+                # (только в пределах горизонта стратегии — TP за горизонтом
+                # не считается)
+                hz_h = sig.get('horizon_h') or 24
+                hz_end = sig_ts + hz_h * 3600 * 1000
+                outcome = None
+                outcome_price = None
+                outcome_at = None
+                for c in candles:
+                    if c['t'] < sig_ts:
+                        continue
+                    if c['t'] >= hz_end:
+                        break
+                    if direction == 'LONG':
+                        if c['l'] <= sl:
+                            outcome = 'SL'; outcome_price = sl
+                            outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
+                        if c['h'] >= tp:
+                            outcome = 'TP'; outcome_price = tp
+                            outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
+                    else:
+                        if c['h'] >= sl:
+                            outcome = 'SL'; outcome_price = sl
+                            outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
+                        if c['l'] <= tp:
+                            outcome = 'TP'; outcome_price = tp
+                            outcome_at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc); break
+                # Timeout: горизонт стратегии прошёл без TP/SL — закрытие по
+                # close последней свечи В ПРЕДЕЛАХ горизонта (не по цене «сейчас»)
+                # 13.08: utcnow() у нас naive — вычитание должно быть naive-naive;
+                # прежний naive−aware TypeError убивал ВЕСЬ цикл на первом же
+                # сигнале (updated=0 с 31.07, 7k застрявших WAITING)
+                age_h = (utcnow() - (created_at.replace(tzinfo=None)
+                                     if created_at.tzinfo else
+                                     created_at)).total_seconds() / 3600
+                if outcome is None and age_h >= hz_h:
+                    in_hz = [c for c in candles if sig_ts <= c['t'] < hz_end]
+                    outcome = 'TIMEOUT'
+                    outcome_price = (in_hz[-1]['c'] if in_hz
+                                     else candles[-1]['c'] if candles else None)
+                    outcome_at = (datetime.fromtimestamp(in_hz[-1]['t'] / 1000 + 3600,
+                                                         tz=timezone.utc)
+                                  if in_hz else utcnow())
+                if outcome is None:
+                    continue
+                # Compute pnl_pct
+                pnl_pct = 0
+                if outcome_price and entry:
+                    if direction == 'LONG':
+                        pnl_pct = (outcome_price - entry) / entry * 100
+                    else:
+                        pnl_pct = (entry - outcome_price) / entry * 100
+                def _save(sig_id=sig['_id'], outcome=outcome, outcome_price=outcome_price,
+                         outcome_at=outcome_at, pnl_pct=pnl_pct):
+                    _get_db().new_strategy_signals.update_one(
+                        {'_id': sig_id},
+                        {'$set': {
+                            'state': outcome,
+                            'exit_price': outcome_price,
+                            'exit_at': (outcome_at.replace(tzinfo=None) if outcome_at and outcome_at.tzinfo
+                                        else outcome_at),
+                            'pnl_pct': round(pnl_pct, 3),
+                            'updated_at': utcnow(),
+                        }}
+                    )
+                try:
+                    await asyncio.wait_for(asyncio.to_thread(_save), timeout=3.0)
+                    updated += 1
+                    if outcome == 'TIMEOUT':
+                        timeouts += 1
+                except (asyncio.TimeoutError, Exception):
+                    pass
+            except Exception:
                 continue
-            # Compute pnl_pct
-            pnl_pct = 0
-            if outcome_price and entry:
-                if direction == 'LONG':
-                    pnl_pct = (outcome_price - entry) / entry * 100
-                else:
-                    pnl_pct = (entry - outcome_price) / entry * 100
-            def _save(sig_id=sig['_id'], outcome=outcome, outcome_price=outcome_price,
-                     outcome_at=outcome_at, pnl_pct=pnl_pct):
-                _get_db().new_strategy_signals.update_one(
-                    {'_id': sig_id},
-                    {'$set': {
-                        'state': outcome,
-                        'exit_price': outcome_price,
-                        'exit_at': (outcome_at.replace(tzinfo=None) if outcome_at and outcome_at.tzinfo
-                                    else outcome_at),
-                        'pnl_pct': round(pnl_pct, 3),
-                        'updated_at': utcnow(),
-                    }}
-                )
-            try:
-                await asyncio.wait_for(asyncio.to_thread(_save), timeout=3.0)
-                updated += 1
-                if outcome == 'TIMEOUT':
-                    timeouts += 1
-            except (asyncio.TimeoutError, Exception):
-                pass
 
     if updated:
         logger.info(f'[new-strategies] updated {updated} outcomes ({timeouts} timeouts)')
