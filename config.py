@@ -145,7 +145,9 @@ TV_WEBHOOK_SECRET = os.getenv("TV_WEBHOOK_SECRET", "tv_f9c3a8b2d4e7f6a1b8c5d9e2f
 # category: 'crypto' | 'stocks'
 # tradium / cryptovizor / cv_flip вкладки удалены — ingestion отключён (2026-07-01)
 BOTS = [
-    {"id": "confluence", "label": "Confluence", "category": "crypto"},
+    # ✂ 13.08: вкладки мёртвых источников скрыты (аудит 180д + чистка);
+    # все живы по прямым URL /signals?bot=<id>. Вернуть: раскомментировать.
+    # {"id": "confluence", "label": "Confluence", "category": "crypto"},
     {"id": "supertrend", "label": "🌀 SuperTrend", "category": "crypto"},
     {"id": "new_strategies", "label": "🌊 New Strategy", "category": "crypto"},
     # {"id": "conflicts", "label": "⚠ Conflicts", "category": "crypto"},  # кнопка скрыта
@@ -153,14 +155,14 @@ BOTS = [
     # /signals?bot=conflicts работает, данные детектируются в фоне через
     # anti_cluster_detector. Включить обратно: раскомментировать строку.
     {"id": "entry_checker", "label": "🎯 Entry Checker", "category": "crypto"},
-    {"id": "whale", "label": "🐋 WHALE", "category": "crypto"},
-    {"id": "shark", "label": "🦈 SHARK", "category": "crypto"},
+    # {"id": "whale", "label": "🐋 WHALE", "category": "crypto"},      # ✂ 13.08
+    # {"id": "shark", "label": "🦈 SHARK", "category": "crypto"},      # ✂ 13.08
     {"id": "stack", "label": "🧩 Stack", "category": "crypto"},
-    {"id": "momentum", "label": "🚀 Impulse·Fade", "category": "crypto"},
-    {"id": "st_break", "label": "🧨 ST-Пробой", "category": "crypto"},
+    # {"id": "momentum", "label": "🚀 Impulse·Fade", "category": "crypto"},  # ✂ 13.08 (fade — в журнале)
+    # {"id": "st_break", "label": "🧨 ST-Пробой", "category": "crypto"},     # ✂ 13.08
     {"id": "st_break4h", "label": "💣 ST-Пробой 4h", "category": "crypto"},
     {"id": "blowoff", "label": "🌋 Blowoff", "category": "crypto"},
-    {"id": "capitulation", "label": "🛟 Капитуляция", "category": "crypto"},
+    # {"id": "capitulation", "label": "🛟 Капитуляция", "category": "crypto"},  # ✂ 13.08
     {"id": "footprint", "label": "🧮 Кластеры", "category": "crypto"},
     {"id": "potok", "label": "🌊 ПОТОК (авто)", "category": "crypto"},
     {"id": "thin_pump", "label": "💨 Тонкий памп", "category": "crypto"},
