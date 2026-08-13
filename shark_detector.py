@@ -531,6 +531,10 @@ def maybe_fire_shark(signal_data: dict) -> dict | None:
     """
     pair = signal_data.get('pair', '?')
     try:
+        # ✂ 13.08: shark выключен (аудит 180д: ≈−0.3, бэкфилл-часть −2.14)
+        from config import DISABLED_STRATEGIES
+        if "shark" in DISABLED_STRATEGIES:
+            return None
         source = signal_data.get('source', '')
         if source != 'supertrend':
             return None
@@ -639,6 +643,13 @@ def maybe_fire_shark(signal_data: dict) -> dict | None:
 def scan_recent_flips_for_shark(pairs: list[str] | None = None,
                                   lookback_hours: int = 6) -> dict:
     """Сканит топ пары на пропущенные SHARK flips DOWN (mirror WHALE scanner)."""
+    # ✂ 13.08: shark выключен (аудит 180д)
+    try:
+        from config import DISABLED_STRATEGIES
+        if "shark" in DISABLED_STRATEGIES:
+            return {"scanned": 0, "fired": 0, "disabled": True}
+    except Exception:
+        pass
     from database import _get_db, utcnow
     from datetime import datetime, timezone, timedelta
     from exchange import get_klines_any

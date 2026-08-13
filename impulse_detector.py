@@ -316,6 +316,13 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
     """Сохраняет в new_strategy_signals с кулдауном на пару+strategy
     (default COOLDOWN_H=12; TEN использует 24)."""
     try:
+        # ✂ 13.08: выключенные стратегии (аудит 180д) не пишутся и не шлются
+        try:
+            from config import DISABLED_STRATEGIES
+            if sig.get("strategy") in DISABLED_STRATEGIES:
+                return False
+        except Exception:
+            pass
         from database import _get_db, utcnow
         from datetime import timedelta
         db = _get_db()

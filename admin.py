@@ -8705,10 +8705,11 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
     # иначе фильтр по источнику показывал пустоту («нет сигналов за всё
     # время» — старые строки вылетали из среза 1500 свежайших)
     if limit and limit > 0 and total > limit:
-        _DEEP_SRC = {"blowoff", "capitulation", "thin_pump", "floor_buy",
+        # ✂ 13.08: whale/shark/capitulation выключены (аудит 180д)
+        _DEEP_SRC = {"blowoff", "thin_pump", "floor_buy",
                      "vol_anomaly", "vol_anomaly4h", "rocket_pullback",
                      "support_defense", "channel_top", "corridor",
-                     "whale", "shark", "level_touch", "flip_retest",
+                     "level_touch", "flip_retest",
                      "rev_candle"}
         head = items[:limit]
         tail_special = [x for x in items[limit:]
@@ -9663,8 +9664,10 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
 
     # Anomalies удалены (2026-07-02)
 
-    # Confluence
-    for c in _confluence().find({"detected_at": {"$gte": since}, **pair_or}, {
+    # Confluence — ✂ 13.08: убран с графиков ПОЛНОСТЬЮ (решение юзера:
+    # конфлюенс живёт только как вход светофора). Детектор работает,
+    # доки пишутся — просто не рисуем.
+    for c in _confluence().find({"_id": None}, {
         "symbol":1, "pair":1, "direction":1, "price":1, "r1":1, "s1":1,
         "pattern":1, "strength":1, "factors":1, "score":1,
         "st_passed":1, "pump_score":1, "is_top_pick":1,
@@ -9843,7 +9846,10 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "level_touch": "УРОВЕНЬ",
                        "flip_retest": "ФЛИП-РЕТЕСТ",
                        "rev_candle": "РАЗВОРОТ 4h"}
-        for n in nss.find({"created_at": {"$gte": since}, **pair_or}, {
+        # ✂ 13.08: выключенные стратегии скрыты и с графиков (аудит 180д)
+        from config import DISABLED_STRATEGIES as _DIS_BS
+        for n in nss.find({"created_at": {"$gte": since}, **pair_or,
+                           "strategy": {"$nin": list(_DIS_BS)}}, {
             "strategy": 1, "pair": 1, "direction": 1, "entry": 1,
             "tp": 1, "sl": 1, "created_at": 1, "state": 1,
             "whale_tier": 1, "whale_score": 1, "whale_indicators": 1,
@@ -10128,8 +10134,9 @@ def _compute_journal_sync(_fast_only: bool = False):
 
     # Anomalies удалены (2026-07-02)
 
-    # Confluence (14 дней, cap 1500 — их ~1500 за 14 дней)
-    for c in _confluence().find({"detected_at": {"$gte": since_14d}}, {
+    # Confluence — ✂ 13.08: убран из журнала ПОЛНОСТЬЮ (решение юзера:
+    # только вход светофора; детектор и коллекция живут)
+    for c in _confluence().find({"_id": None}, {
         "symbol":1, "pair":1, "direction":1, "price":1, "r1":1, "s1":1,
         "pattern":1, "strength":1, "factors":1, "score":1,
         "st_passed":1, "pump_score":1, "is_top_pick":1,
@@ -10405,8 +10412,11 @@ def _compute_journal_sync(_fast_only: bool = False):
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
         # из limit(2000)
+        # ✂ 13.08: выключенные стратегии скрыты из журнала (аудит 180д)
+        from config import DISABLED_STRATEGIES as _DIS
         _nss_docs = list(nss_col.find(
             {"created_at": {"$gte": nss_since},
+             "strategy": {"$nin": list(_DIS)},
              "indicators.backfill": {"$ne": True}}).sort("created_at", -1).limit(2000))
         # 🌋 спец-стратегии: история глубже общего окна — своя выборка на
         # 60 ДНЕЙ (29.07 «фильтр ракеты пустой»: бэкфиллы размазаны по
@@ -10424,7 +10434,7 @@ def _compute_journal_sync(_fast_only: bool = False):
         _seen_nss = {d["_id"] for d in _nss_docs}
         _nss_docs += [d for d in nss_col.find(
             {"created_at": {"$gte": _deep_since},
-             "strategy": {"$in": ["rocket_pullback", "capitulation",
+             "strategy": {"$in": ["rocket_pullback",
                                   "floor_buy", "support_defense",
                                   "channel_top", "corridor",
                                   "level_touch", "flip_retest",

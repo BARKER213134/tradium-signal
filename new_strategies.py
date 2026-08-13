@@ -630,6 +630,13 @@ async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,
                         f"— existing within 60min"
                     )
                     continue
+                # ✂ 13.08: выключенные стратегии (аудит 180д) не пишутся
+                try:
+                    from config import DISABLED_STRATEGIES
+                    if sig.get('strategy') in DISABLED_STRATEGIES:
+                        continue
+                except Exception:
+                    pass
                 try:
                     from hot_engine import is_hot
                     sig['hot'] = bool(is_hot(sig.get('symbol') or sig.get('pair')))

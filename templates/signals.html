@@ -7413,31 +7413,22 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     style="background:rgba(255,210,62,0.08);color:#ffd23e;border:2px solid rgba(255,210,62,0.55);border-radius:8px;padding:8px 14px;font-size:14px;font-weight:800;font-family:var(--font-mono);width:190px;text-transform:uppercase;letter-spacing:0.05em;box-shadow:0 0 12px rgba(255,210,62,0.15);outline:none;">
   <select id="jFilterSrc" onchange="filterJournal()" style="background:var(--dark);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:11px;font-family:var(--font-mono);">
     <option value="">Все источники</option>
-    <option value="confluence">🎯 Confluence</option>
+    <!-- ✂ 13.08: удалены по аудиту 180д: confluence (только светофор),
+         volume_surge, vol_accum, second_flip, whale/whale2, shark,
+         impulse, ignition, ten, st_break 1h, capitulation, combo -->
     <option value="paper">🤖 Paper Trade</option>
     <option value="supertrend">🌀 SuperTrend</option>
     <option value="verified">✨ Verified</option>
-    <option value="new_strategies">🌊🐉🔋🌋♻️ New Strategies (все)</option>
-    <option value="volume_surge">🌊 Volume Surge</option>
+    <option value="new_strategies">🧬 Все стратегии платформы</option>
     <option value="triple_confluence">🐉 Triple Confluence</option>
-    <option value="vol_accum">🔋 Vol Accumulation</option>
     <option value="volcano">🌋 Volcano Breakout ★</option>
-    <option value="second_flip">♻️ Second Flip Confirmation</option>
-    <option value="whale">🐋 WHALE (ST flip 2H UP + vol spike + amplifiers, LONG)</option>
-    <option value="whale2">🐳 ВТОРОЙ КИТ (повтор ≤14д; ниже 1-го EV +2.2)</option>
-    <option value="shark">🦈 SHARK (ST flip 2H DOWN + distribution top + multi-top, SHORT)</option>
-    <option value="impulse">🚀 IMPULSE (LONG momentum, WR 82%)</option>
-    <option value="ignition">💥 IGNITION (ранний LONG, WR 70%)</option>
-    <option value="ten">💰 TEN (LONG до +10%, WR 65%)</option>
     <option value="fade">🎣 FADE (SHORT отскока, WR 54%)</option>
     <option value="stack">🧩 STACK (семейная группа 2+ сигналов)</option>
     <option value="rsi_cross_12h">⚡ RSI/SMA cross 12h + vol≥2×</option>
     <option value="accum">🧊 Накопление (разрешившиеся базы)</option>
     <option value="delta_series">🫧 Серия дельт (крупный поток 3×4h, инфо)</option>
-    <option value="st_break">🧨 ST-пробой 1h (по фазе: ⚪/🟢 лонг, 🔴 шорт)</option>
     <option value="st_break4h">💣 ST-пробой 4h (лонг все фазы, шорт ⚪/🔴)</option>
     <option value="blowoff">🌋 Blowoff (шорт вершины: 24ч-хай + слабое закрытие)</option>
-    <option value="capitulation">🛟 Капитуляция (лонг дна: слив + разворот RSI4h)</option>
     <option value="thin_pump">💨 Тонкий памп (шорт роста без объёма)</option>
     <option value="rep_hot">🔁 Повторные (🐳 кит / 💨 памп / 🌋 вершина)</option>
     <option value="ten_plus">🏅 ДЕСЯТКА — кандидаты +10%/сделку (кит · blowoff-разгон)</option>
@@ -9620,7 +9611,8 @@ function filterJournal() {
     if (minTs && !sourceExplicit && (s.at_ts || 0) < minTs) return false;
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
-      if (!['volume_surge','triple_confluence','vol_accum','volcano','second_flip','whale','shark','stack','impulse','fade','ignition','ten','delta_series','st_break','st_break4h','blowoff','capitulation','thin_pump','floor_buy','vol_anomaly','vol_anomaly4h','potok','rocket_pullback','support_defense','channel_top','corridor','level_touch','flip_retest','rev_candle'].includes(s.source)) return false;
+      // ✂ 13.08: удалённые стратегии вычищены из meta-списка
+      if (!['triple_confluence','volcano','stack','fade','delta_series','st_break4h','blowoff','thin_pump','floor_buy','vol_anomaly','vol_anomaly4h','potok','rocket_pullback','support_defense','channel_top','corridor','level_touch','flip_retest','rev_candle'].includes(s.source)) return false;
     } else if (src === 'whale2') {
       // 🐳 повторный кит ≤14д (бэктест 28.07: ниже 1-го EV +2.2)
       if (!(s.source === 'whale' && (s.whale_seq || 1) >= 2)) return false;

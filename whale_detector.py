@@ -400,6 +400,14 @@ def scan_recent_flips_for_whale(pairs: list[str] | None = None,
 
     Returns dict с stats {scanned, flips_found, fired, by_tier, errors}.
     """
+    # ✂ 13.08: whale выключен (аудит 180д: −0.82% на 1055 закрытых)
+    try:
+        from config import DISABLED_STRATEGIES
+        if "whale" in DISABLED_STRATEGIES:
+            return {"scanned": 0, "flips_found": 0, "fired": 0,
+                    "by_tier": {}, "errors": 0, "disabled": True}
+    except Exception:
+        pass
     from database import _get_db, utcnow
     from datetime import datetime, timezone, timedelta
     from exchange import get_klines_any
@@ -563,6 +571,10 @@ def maybe_fire_whale(signal_data: dict) -> dict | None:
     """
     pair = signal_data.get('pair', '?')
     try:
+        # ✂ 13.08: whale выключен (аудит 180д)
+        from config import DISABLED_STRATEGIES
+        if "whale" in DISABLED_STRATEGIES:
+            return None
         source = signal_data.get('source', '')
         if source != 'supertrend':
             return None  # only ST events trigger WHALE

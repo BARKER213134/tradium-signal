@@ -5,6 +5,16 @@ load_dotenv(override=True)
 
 # Telethon userbot удалён — Telegram-сканирование отключено (2026-07-01)
 
+# ✂ 13.08.26: полугодовой аудит живых исходов (44k сигналов) — стабильный
+# минус/ноль при огромном потоке. Генерация выключена, старые доки в Mongo
+# остаются, из журнала/графиков скрыты. vol_anomaly/vol_anomaly4h оставлены
+# по решению юзера. Вернуть стратегию = убрать из этого сета.
+DISABLED_STRATEGIES = {
+    "st_break", "vol_accum", "second_flip", "volume_surge",
+    "whale", "shark", "impulse", "ignition", "ten", "combo",
+    "capitulation",
+}
+
 # Telegram Bot (Aiogram)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
