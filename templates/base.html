@@ -4296,6 +4296,35 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           if (dist < bestD) { bestD = dist; best = sigs[i]; }
         });
       } catch (e) { return; }
+      // 🔎 окошко «тренды на этой свече» (все ТФ, историческое состояние)
+      try {
+        const th = container._kcTrendHist;
+        const box = container._kcTrendBox;
+        if (th && box && container._kChart) {
+          const pt = container._kChart.convertFromPixel(
+            { x: mx, y: my }, { paneId: 'candle_pane' });
+          const ts2 = pt && pt.timestamp;
+          if (ts2) {
+            const dirAt = (arr) => {
+              let d0 = 0;
+              for (let q = 0; q < arr.length; q++) {
+                if (arr[q][0] <= ts2) d0 = arr[q][1]; else break;
+              }
+              return d0;
+            };
+            const dt2 = new Date(ts2).toLocaleString('ru',
+              { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+            box.innerHTML = '<span style="color:#8892a4;">тренды ' + dt2 + ':</span> ' +
+              Object.keys(th).map(tf2 => {
+                const v = dirAt(th[tf2]);
+                const a = v > 0 ? '▲' : v < 0 ? '▼' : '·';
+                const c2 = v > 0 ? '#00e5a0' : v < 0 ? '#ff5e9c' : '#8892a4';
+                return '<span style="color:' + c2 + ';font-weight:800;">' + tf2 + a + '</span>';
+              }).join(' ');
+            box.style.display = 'flex';
+          }
+        }
+      } catch (e) {}
       if (best) {
         t.innerHTML = best.info;
         t.style.left = Math.max(4, Math.min(mx + 14, container.clientWidth - 310)) + 'px';
@@ -4593,6 +4622,46 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         });
     } catch (e) {}
   }
+  // 🔎 история трендов ВСЕХ ТФ (1h/2h/4h/12h из 1h×1000) — для окошка
+  // «тренды на этой свече» при наведении (обработчик в mousemove выше)
+  (async () => {
+    try {
+      const r = await fetch(`/api/journal-candles?symbol=${sym}&tf=1h&limit=1000`);
+      const d = await r.json();
+      const kb = (d.candles || []).map(b => ({
+        t: (b.time || 0) * 1000, o: +b.open, h: +b.high,
+        l: +b.low, c: +b.close }));
+      if (kb.length < 80 || !window._stFlipMarks) return;
+      const hist = {};
+      [['1h', 1], ['2h', 2], ['4h', 4], ['12h', 12]].forEach(pr => {
+        const k = pr[1];
+        let b2;
+        if (k === 1) b2 = kb.slice(0, -1);
+        else {
+          const g = {};
+          kb.forEach(x => {
+            const kk = Math.floor(x.t / (k * 3600000));
+            if (!g[kk]) g[kk] = { t: x.t, o: x.o, h: x.h, l: x.l, c: x.c };
+            else { g[kk].h = Math.max(g[kk].h, x.h); g[kk].l = Math.min(g[kk].l, x.l); g[kk].c = x.c; }
+          });
+          b2 = Object.keys(g).sort((a, b) => a - b).map(kk => g[kk]).slice(0, -1);
+        }
+        const fl = window._stFlipMarks(b2);
+        hist[pr[0]] = fl.map(f => [f.t, f.dir]);
+      });
+      container._kcTrendHist = hist;
+      if (!container._kcTrendBox) {
+        const box = document.createElement('div');
+        box.style.cssText = 'position:absolute;top:8px;right:80px;z-index:6;' +
+          'background:rgba(10,14,22,0.88);border:1px solid #26314a;' +
+          'border-radius:8px;padding:5px 11px;font-size:10.5px;' +
+          'font-family:var(--font-mono,monospace);display:none;gap:7px;' +
+          'pointer-events:none;align-items:center;';
+        container.appendChild(box);
+        container._kcTrendBox = box;
+      }
+    } catch (e) {}
+  })();
   // 💠 инфо-маркеры «серия дельт»: 3 подряд бара с дельтой одного знака,
   // |Σ| >= 2σ√3, объём серии >= 1.8×MA20, цена в сторону серии.
   // Бэктест 2026-07-13 (год, 5894 событий): направление НЕ предсказывает
