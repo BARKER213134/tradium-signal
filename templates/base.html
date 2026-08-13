@@ -721,6 +721,10 @@
         // 🧿 blowoff ЭЛИТА-1d — гейт + дневной RSI-медведь (WR 69, EV +3.78)
         if (src === 'blowoff' && meta && meta.elite_1d)
           return hotPfx + tenPfx + '🧿🌋';
+        // 🪂 ОТКАТ В АПТРЕНДЕ — level_touch LONG при 1h▼ и держащих старших
+        // (год: +0.7..0.9R, WR 67-78)
+        if (src === 'level_touch' && meta && meta.pullback)
+          return hotPfx + tenPfx + '🪂📏';
         // 🐳 ВТОРОЙ КИТ — повтор ≤14д (бэктест 28.07: ниже 1-го EV +2.2)
         if (src === 'whale' && meta && (meta.whale_seq || 1) >= 2)
           return tenPfx + (meta.whale_tier === 'PREMIUM' ? '👑' : '') + '🐳';
@@ -782,9 +786,11 @@
       // чтобы не загромождать). Top Pick визуализируется цветом через color param.
       // Exception: WHALE/SHARK PREMIUM — крупные эмодзи 👑🐋/👑🦈 чтоб
       // PREMIUM signals (4 в день) сразу бросались в глаза на чарте.
-      window.sigIconCompact = function(src, score, tier, whaleSeq, repHot, tenPlus, elite1d) {
+      window.sigIconCompact = function(src, score, tier, whaleSeq, repHot, tenPlus, elite1d, pullback) {
         // 🧿 blowoff ЭЛИТА-1d — сильнейший разрез (WR 69, EV +3.78)
         if (src === 'blowoff' && elite1d) return '🧿🌋';
+        // 🪂 level_touch LONG при 1h▼ и держащих старших (+0.7..0.9R WR67-78)
+        if (src === 'level_touch' && pullback) return '🪂📏';
         // 🏅 ДЕСЯТКА — кандидат +10%/сделку (кит / blowoff-разгон>15)
         const tpfx = tenPlus ? '🏅' : '';
         if (src === 'whale' && (whaleSeq || 1) >= 2)
@@ -4454,7 +4460,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           return bars[idx];
         };
         (d.items || []).filter(s => s.at_ts && s.at_ts * 1000 >= t0).slice(0, 300).forEach(s => {
-          const emoji0 = window.sigIconCompact ? (s.hot ? '🔥' : '') + window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot, s.ten_plus, s.elite_1d) : '•';
+          const emoji0 = window.sigIconCompact ? (s.hot ? '🔥' : '') + window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot, s.ten_plus, s.elite_1d, s.pullback) : '•';
           // ✅ галочка — светофор на момент сигнала говорил ДА; ⭐ — отборный
           // вход (профиль победителей, бэкфилл 60д + live-штамп)
           const sv = s.svetofor || s.pro_verdict;
@@ -4874,6 +4880,7 @@ function _sigTooltipHTML(o) {
     whale_tier: o.whale_tier || meta.whale_tier,
     whale_seq: o.whale_seq || meta.whale_seq,
     rep_hot: o.rep_hot || meta.rep_hot,
+    pullback: o.pullback || meta.pullback,
   });
   const srcIcon = window.sigIcon ? window.sigIcon(o.source, score, _tipMeta) : '';
   const titleStr = (srcIcon ? srcIcon + ' ' : '') + (o.title || o.symbol || '');
@@ -5102,6 +5109,7 @@ async function _renderLwcSignalChart(containerId, opts) {
         whale_tier: m.whale_tier || (m.meta || {}).whale_tier,
         whale_seq: m.whale_seq || (m.meta || {}).whale_seq,
         rep_hot: m.rep_hot || (m.meta || {}).rep_hot,
+        pullback: m.pullback || (m.meta || {}).pullback,
       });
       const iconResult = _sigIconLookup(m.source, mScore, _mkMeta);
       g.icons.add(iconResult);

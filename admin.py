@@ -9857,6 +9857,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "indicators.mtf": 1, "indicators.rsi1h": 1,
             "indicators.vol_x": 1, "indicators.brk_ago_h": 1,  # 🪜 флип
             "indicators.risk_pct": 1,
+            "indicators.trend_pat": 1, "indicators.pullback": 1,  # 🪂
             "hot": 1,  # 🔥 горячая монета на момент сигнала
         }).sort("created_at", -1).limit(400):
             at_dt = n.get("created_at")
@@ -9895,6 +9896,11 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         f"RSI {_lti.get('rsi1h', '?')}")
                 if _lti.get("mtf"):
                     _ltx += f" · 🔗{_lti['mtf']}"
+                if _lti.get("trend_pat"):
+                    _ltx += f" · тренды {_lti['trend_pat']}"
+                if _lti.get("pullback"):
+                    em = "🪂" + em
+                    _ltx += " · 🪂 откат в аптренде (год: +0.7..0.9R WR67-78)"
                 extra_parts.append(_ltx)
             elif strat == "flip_retest":
                 _fri = n.get("indicators") or {}
@@ -9977,6 +9983,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "rep_hot": _rep_hot2,
                 "ten_plus": _ten2,
                 "elite_1d": _elite1d,
+                "pullback": bool((n.get("indicators") or {}).get("pullback")),
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),
                 "svetofor": n.get("svetofor"), "svetofor_star": n.get("svetofor_star"),
@@ -10501,6 +10508,10 @@ def _compute_journal_sync(_fast_only: bool = False):
                          f"{_lvi.get('touches', '?')}кас · "
                          f"RSI {_lvi.get('rsi1h', '?')} (подход без ножа)"
                          + (f" · 🔗{_lvi['mtf']}" if _lvi.get("mtf") else "")
+                         + (f" · тренды {_lvi['trend_pat']}"
+                            if _lvi.get("trend_pat") else "")
+                         + (" · 🪂 ОТКАТ В АПТРЕНДЕ (+0.7..0.9R WR67-78)"
+                            if _lvi.get("pullback") else "")
                          + (" · год: WR68 EV+0.69R"
                             if n.get("direction") == "LONG"
                             else " · год: WR63 EV+0.58R"))
@@ -10733,6 +10744,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "ten_plus": _ten_plus,
                 # 🧿 blowoff элита-1d (гейт + дневной RSI-медведь)
                 "elite_1d": _elite1d,
+                # 🪂 level_touch LONG при 1h▼ и держащих старших
+                "pullback": bool((n.get("indicators") or {}).get("pullback")),
                 # SHARK tier (тот же mechanism — для filtering и UI tooltip)
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),

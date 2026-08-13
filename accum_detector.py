@@ -1229,6 +1229,23 @@ def scan_universe(max_pairs: int = 300):
                     _lt = check_level_touch(pair, kd)
                     if _lt is not None:
                         _li = _lt["indicators"]
+                        # 📈 тренд-паттерн на момент сигнала + 🪂 бейдж
+                        # (бэктест 08.08: LONG-ядро при 1h▼ и живом
+                        # старшем (4h▲ или 12h▲) → +0.7..0.9R, WR 67-78)
+                        try:
+                            _tdm = _trend_dirs(kd)
+                            if _tdm:
+                                _li["trend_pat"] = "".join(
+                                    "▲" if _tdm.get(x, 0) > 0 else
+                                    "▼" if _tdm.get(x, 0) < 0 else "·"
+                                    for x in ("1h", "2h", "4h", "12h"))
+                                if (_lt["direction"] == "LONG"
+                                        and _tdm.get("1h", 0) < 0
+                                        and (_tdm.get("4h", 0) > 0
+                                             or _tdm.get("12h", 0) > 0)):
+                                    _li["pullback"] = True
+                        except Exception:
+                            pass
                         # 🔗 конфлюэнс со старшим ТФ — только для
                         # сработавших (2 нативных фетча)
                         _mtf = mtf_confluence(
@@ -1243,19 +1260,26 @@ def scan_universe(max_pairs: int = 300):
                             ds_fired += 1
                             # TG только конфлюэнс или сила>=65 — иначе
                             # ~12 карточек/день на 300 пар
-                            if _mtf or _li["strength"] >= 65:
+                            if _mtf or _li["strength"] >= 65 or _li.get("pullback"):
                                 _dirw = ("🟢 LONG — отскок от поддержки"
                                          if _lt["direction"] == "LONG"
                                          else "🔴 SHORT — отбой от сопротивления")
+                                _pbl = ("🪂 <b>ОТКАТ В АПТРЕНДЕ</b> — младшие "
+                                        "ТФ красные при держащих старших "
+                                        f"({_li.get('trend_pat', '?')}) · год: "
+                                        "+0.7..0.9R, WR 67-78\n"
+                                        if _li.get("pullback") else "")
                                 _bt = ("WR 68, EV +0.69R"
                                        if _lt["direction"] == "LONG"
                                        else "WR 63, EV +0.58R")
                                 _tg16(
+                                    f"{'🪂 ' if _li.get('pullback') else ''}"
                                     f"📏 <b>УРОВЕНЬ · "
                                     f"{pair.replace('/USDT', '')}</b>\n"
                                     f"{_dirw} @ {_lt['entry']:.6g} "
                                     f"(вход ОТ УРОВНЯ, лимитка; цена "
                                     f"{_li.get('touch_px', 0):.6g})\n"
+                                    + _pbl +
                                     f"зона {_li['zone_lo']:.6g}–"
                                     f"{_li['zone_hi']:.6g} · "
                                     f"⚡{_li['strength']}% · "
