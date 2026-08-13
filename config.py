@@ -172,6 +172,7 @@ BOTS = [
     {"id": "setup_check", "label": "🎰 Setup Check", "category": "crypto"},
     # 📈 Тренды — своя замена вкладки CryptoVizor (07.08.26): матрица
     # SuperTrend-направлений по ТФ из скана, спидометр широты рынка
+    {"id": "today", "label": "🧭 Сегодня", "category": "crypto"},
     {"id": "trends", "label": "📈 Тренды", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     # 💱 FOREX: проп FundingPips — уикенд-гэп на кроссах (единственная

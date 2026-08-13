@@ -1097,6 +1097,7 @@ def scan_universe(max_pairs: int = 300):
     cand_rows = []
     vol_anoms = []
     trend_rows = []          # 📈 матрица трендов для вкладки «Тренды»
+    radar_rows = []          # 🧭 зонный радар для вкладки «Сегодня» (13.08)
     for sym in pairs:
         pair = sym.replace("USDT", "/USDT") if "/" not in sym else sym
         try:
@@ -1126,11 +1127,94 @@ def scan_universe(max_pairs: int = 300):
                     if _rv12[0] > _rv12[1]:
                         breadth12_bull += 1
                 # 📈 матрица трендов (вкладка «Тренды»)
+                _td_cur = None
                 try:
                     _td = _trend_dirs(kd)
                     if _td:
+                        _td_cur = _td
                         trend_rows.append(
                             {"s": pair.replace("/", "").upper(), "d": _td})
+                except Exception:
+                    pass
+                # 🧭 зонный радар: ближайшая поддержка/сопротивление в 4% —
+                # для скринера «У зоны сейчас» (лимитка ДО касания) и
+                # ⏳-алертов подхода. Движок зон тот же, что у 📏.
+                try:
+                    from level_signal import build_zones as _bz, _rsi14 as _r14
+                    _zs = _bz(kd[:-1])
+                    _pxr = kd[-1]["c"]
+                    _rr = _r14([x["c"] for x in kd[:-1]])
+                    if _zs and _pxr > 0:
+                        _sup = _res = None
+                        for _z in _zs:
+                            if _z["res"] and _z["lo"] > _pxr:
+                                if _res is None or _z["lo"] < _res["lo"]:
+                                    _res = _z
+                            elif not _z["res"] and _z["hi"] < _pxr:
+                                if _sup is None or _z["hi"] > _sup["hi"]:
+                                    _sup = _z
+                        _sym_u = pair.replace("/", "").upper()
+                        _tp_str = ("".join(
+                            "▲" if _td_cur.get(x, 0) > 0 else
+                            "▼" if _td_cur.get(x, 0) < 0 else "·"
+                            for x in ("1h", "2h", "4h", "12h"))
+                            if _td_cur else None)
+                        try:
+                            from hot_engine import is_hot as _ih
+                            _hotr = bool(_ih(_sym_u))
+                        except Exception:
+                            _hotr = False
+                        for _z, _sd in ((_sup, "sup"), (_res, "res")):
+                            if _z is None:
+                                continue
+                            _edge = _z["hi"] if _sd == "sup" else _z["lo"]
+                            _dist = abs(_pxr / _edge - 1) * 100
+                            if _dist > 4:
+                                continue
+                            _core = (_rr is not None and (
+                                (50 <= _rr < 70) if _sd == "sup"
+                                else (30 <= _rr < 50)))
+                            radar_rows.append({
+                                "s": _sym_u, "side": _sd,
+                                "edge": _edge, "lo": _z["lo"], "hi": _z["hi"],
+                                "dist": round(_dist, 2),
+                                "st": _z["strength"], "tch": _z["touches"],
+                                "rsi": round(_rr, 1) if _rr is not None else None,
+                                "core": bool(_core), "tp": _tp_str,
+                                "hot": _hotr, "px": _pxr})
+                            # ⏳ TG-алерт подхода: близко к СИЛЬНОЙ зоне и
+                            # RSI уже в ядре — время выставлять лимитку
+                            if (_dist <= 0.4 and _z["strength"] >= 70
+                                    and _core):
+                                try:
+                                    from database import _get_db as _gza
+                                    _zac = _gza().zone_alerts
+                                    _dup = _zac.find_one({
+                                        "pair": pair, "side": _sd,
+                                        "at": {"$gte": utcnow()
+                                               - timedelta(hours=12)}})
+                                    if not _dup:
+                                        _zac.insert_one({
+                                            "pair": pair, "side": _sd,
+                                            "edge": _edge, "at": utcnow()})
+                                        _dw = ("🟢 ЛОНГ от поддержки"
+                                               if _sd == "sup"
+                                               else "🔴 ШОРТ от сопротивления")
+                                        _tg16(
+                                            f"⏳ <b>ПОДХОД К ЗОНЕ · "
+                                            f"{pair.replace('/USDT', '')}</b>\n"
+                                            f"{_dw} — цена в {_dist:.1f}% от "
+                                            f"края {_edge:.6g}\n"
+                                            f"зона ⚡{_z['strength']}% · "
+                                            f"{_z['touches']}кас · RSI "
+                                            f"{_rr:.0f} (ядро)"
+                                            + (f" · тренды {_tp_str}"
+                                               if _tp_str else "") + "\n"
+                                            f"<i>лимитка ОТ КРАЯ зоны — "
+                                            f"вход по бэктесту 📏 (WR 63-70)"
+                                            f"</i>")
+                                except Exception:
+                                    pass
                 except Exception:
                     pass
                 # 💠 серия дельт — инфо-сигнал в журнал (кулдаун 24ч на пару)
@@ -1856,6 +1940,18 @@ def scan_universe(max_pairs: int = 300):
             _last_scan["trend_rows"] = len(trend_rows)
     except Exception:
         logger.exception("[accum] trend matrix store fail")
+    # 🧭 запись зонного радара (вкладка «Сегодня»)
+    try:
+        if radar_rows:
+            from database import _get_db as _gdbr
+            _gdbr().market_state.update_one(
+                {"_id": "zone_radar"},
+                {"$set": {"rows": radar_rows,
+                          "updated": utcnow().isoformat()}},
+                upsert=True)
+            _last_scan["radar_rows"] = len(radar_rows)
+    except Exception:
+        logger.exception("[accum] zone radar store fail")
     # sample: сколько пар вообще дали свечи (диагностика get_klines_any)
     try:
         if pairs:

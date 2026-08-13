@@ -9156,6 +9156,67 @@ async def api_trends():
     return await asyncio.to_thread(_q)
 
 
+@app.get("/api/zone-radar")
+async def api_zone_radar():
+    """🧭 Вкладка «Сегодня»: монеты у сильных зон ПРЯМО СЕЙЧАС (лимитка
+    до касания). Данные пишет scan_universe (движок зон 📏)."""
+    def _q():
+        from database import _get_db
+        doc = _get_db().market_state.find_one({"_id": "zone_radar"}) or {}
+        rows = doc.get("rows") or []
+        rows.sort(key=lambda r: r.get("dist") or 99)
+        return {"ok": True, "rows": rows, "updated": doc.get("updated")}
+    return await asyncio.to_thread(_q)
+
+
+_SOURCE_PULSE_CACHE: dict = {}
+
+
+@app.get("/api/source-pulse")
+async def api_source_pulse():
+    """💓 Пульс источников за 7 дней: живые закрытые исходы per стратегия
+    (трекер). Кэш 10 мин."""
+    import time as _t
+    if _SOURCE_PULSE_CACHE.get("t", 0) > _t.time() - 600:
+        return _SOURCE_PULSE_CACHE["data"]
+
+    def _q():
+        from database import _get_db, utcnow
+        from datetime import timedelta
+        col = _get_db().new_strategy_signals
+        since = utcnow() - timedelta(days=7)
+        agg: dict = {}
+        for d in col.find(
+                {"backfill": {"$exists": False},
+                 "created_at": {"$gte": since},
+                 "state": {"$in": ["TP", "SL", "TIMEOUT"]},
+                 "pnl_pct": {"$ne": None},
+                 "strategy": {"$nin": ["potok"]}},
+                {"strategy": 1, "state": 1, "pnl_pct": 1}):
+            a = agg.setdefault(d["strategy"], {"n": 0, "tp": 0, "sl": 0,
+                                               "pnl": 0.0})
+            a["n"] += 1
+            a["pnl"] += d["pnl_pct"]
+            if d["state"] == "TP":
+                a["tp"] += 1
+            elif d["state"] == "SL":
+                a["sl"] += 1
+        rows = []
+        for s, a in agg.items():
+            if a["n"] < 5:
+                continue
+            cl = a["tp"] + a["sl"]
+            rows.append({"s": s, "n": a["n"],
+                         "wr": round(a["tp"] / cl * 100) if cl else None,
+                         "ev": round(a["pnl"] / a["n"], 2)})
+        rows.sort(key=lambda r: -(r["ev"] or 0))
+        return {"ok": True, "rows": rows, "days": 7}
+    data = await asyncio.to_thread(_q)
+    _SOURCE_PULSE_CACHE["t"] = _t.time()
+    _SOURCE_PULSE_CACHE["data"] = data
+    return data
+
+
 @app.get("/api/gap-signals")
 async def api_gap_signals():
     """💱 Вкладка FundingPips: журнал уикенд-гэпов + статистика +
