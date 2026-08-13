@@ -209,3 +209,35 @@ window._stFlipMarks = function(bars, period, mult) {
   }
   return out;
 };
+
+// 📈 текущее направление ST(10,3) последнего бара (для ТФ, где в окне
+// истории не было ни одного флипа — иначе «серые» 4h/12h)
+window._stDirNow = function(bars, period, mult) {
+  period = period || 10; mult = mult || 3.0;
+  const n = bars.length;
+  if (n < period + 4) return 0;
+  const atr = new Array(n).fill(0);
+  let s = 0;
+  for (let i = 1; i <= period; i++) {
+    s += Math.max(bars[i].h - bars[i].l,
+      Math.abs(bars[i].h - bars[i - 1].c), Math.abs(bars[i].l - bars[i - 1].c));
+  }
+  atr[period] = s / period;
+  for (let i = period + 1; i < n; i++) {
+    const tr = Math.max(bars[i - 1].h - bars[i - 1].l,
+      Math.abs(bars[i - 1].h - bars[i - 2].c),
+      Math.abs(bars[i - 1].l - bars[i - 2].c));
+    atr[i] = (atr[i - 1] * (period - 1) + tr) / period;
+  }
+  let fu = 0, fl = 0, dir = 1;
+  for (let i = period + 1; i < n; i++) {
+    const hl2 = (bars[i].h + bars[i].l) / 2;
+    const ub = hl2 + mult * atr[i];
+    const lb = hl2 - mult * atr[i];
+    fu = (i === period + 1 || ub < fu || bars[i - 1].c > fu) ? ub : fu;
+    fl = (i === period + 1 || lb > fl || bars[i - 1].c < fl) ? lb : fl;
+    if (bars[i].c < fl) dir = -1;
+    else if (bars[i].c > fu) dir = 1;
+  }
+  return dir;
+};

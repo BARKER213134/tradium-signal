@@ -15,7 +15,7 @@
     <script defer src="/static/lightweight-charts.js?v=mk4"
             onload="window._lwcLoaded = true; if (window._installLwcCompat) window._installLwcCompat();"></script>
     <!-- 📏 единый билдер уровней-зон (KChart + кластеры) -->
-    <script src="/static/levels.js?v=3"></script>
+    <script src="/static/levels.js?v=4"></script>
     <style>
         :root {
             /* ── Modern Deep-Space palette (v2, 2026-07) ──
@@ -4070,7 +4070,8 @@ window._kcTrendBadge = async function(sym, el) {
           b2 = Object.keys(g).sort((a, b) => a - b).map(kk => g[kk]).slice(0, -1);
         }
         const fl = window._stFlipMarks(b2);
-        dirs[tfx] = fl.length ? fl[fl.length - 1].dir : 0;
+        dirs[tfx] = fl.length ? fl[fl.length - 1].dir
+          : (window._stDirNow ? window._stDirNow(b2) : 0);
       });
       row = { d: dirs };
     }
@@ -4648,6 +4649,13 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         }
         const fl = window._stFlipMarks(b2);
         hist[pr[0]] = fl.map(f => [f.t, f.dir]);
+        // начальное направление до первого флипа (иначе старшие ТФ без
+        // флипов в окне отображались серыми «·»)
+        if (!fl.length) {
+          hist[pr[0]] = [[b2[0].t, window._stDirNow ? window._stDirNow(b2) : 0]];
+        } else {
+          hist[pr[0]].unshift([b2[0].t, -fl[0].dir]);
+        }
       });
       container._kcTrendHist = hist;
       // контейнер очищается при каждом рендере (innerHTML='') — бокс
