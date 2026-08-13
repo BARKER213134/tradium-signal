@@ -10738,6 +10738,9 @@ def _compute_journal_sync(_fast_only: bool = False):
             _prio = None
             if _pb is not None:
                 _prio = (_pb[1] if (_hot2 and _pb[1] is not None) else _pb[0])
+            # None-EV (инфо-сигналы типа rev_candle) класса не имеют;
+            # 13.08: None >= float ронял ВСЮ ns-ветку журнала
+            if _prio is not None:
                 _cls = ("S" if _prio >= 1.2 else "A" if _prio >= 0.6 else
                         "B" if _prio >= 0.2 else "C" if _prio >= -0.2 else "D")
                 if _cls in ("S", "A"):
