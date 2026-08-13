@@ -1330,6 +1330,38 @@ def scan_universe(max_pairs: int = 300):
                                 f"48% БУ / 19% стоп · PF 3.45</i>")
                 except Exception:
                     pass
+                # 🕯 РАЗВОРОТ — чёткая разворотная свеча у 4h-зоны
+                # (13.08, по запросу: «хочу видеть когда она приходит»;
+                # инфо-тайминг, вход по свече эджа не даёт — бэктест 164k)
+                try:
+                    from level_signal import check_reversal_candle
+                    _rc = check_reversal_candle(pair, kd)
+                    if _rc is not None:
+                        from impulse_detector import store_signal
+                        if store_signal(_rc, cooldown_h=24):
+                            ds_fired += 1
+                            _ri = _rc["indicators"]
+                            _rk = ("ПИН-БАР" if _ri["kind"] == "pin"
+                                   else "ПОГЛОЩЕНИЕ")
+                            _rd = ("🟢 LONG — отскок от поддержки"
+                                   if _rc["direction"] == "LONG"
+                                   else "🔴 SHORT — отбой от сопротивления")
+                            _tg16(
+                                f"🕯 <b>РАЗВОРОТ 4h · {_rk} · "
+                                f"{pair.replace('/USDT', '')}</b>\n"
+                                f"{_rd} у зоны ⚡{_ri['strength']}% "
+                                f"({_ri['zone_lo']:.6g}–{_ri['zone_hi']:.6g})\n"
+                                f"свеча ×{_ri['rng_x']} среднего диапазона, "
+                                f"закрытие ЗА краем зоны · RSI4h "
+                                f"{_ri.get('rsi4h', '?')}\n"
+                                f"стоп за экстремумом {_rc['sl']:.6g} "
+                                f"(−{_ri['risk_pct']}%) · TP 1.5R "
+                                f"{_rc['tp']:.6g} · до 96ч\n"
+                                f"<i>тайминг-сигнал: бэктест 164k касаний — "
+                                f"эдж у ЛИМИТКИ ОТ КРАЯ зоны, свеча лишь "
+                                f"подтверждает разворот</i>")
+                except Exception:
+                    pass
                 # 🛟 капитуляция-дно → LONG (кулдаун 24ч; вход сразу,
                 # структурный стоп; TG с пометкой режимности)
                 _cp = _capitulation_sig(pair, kd)

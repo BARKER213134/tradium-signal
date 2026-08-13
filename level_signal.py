@@ -276,6 +276,94 @@ def check_flip_retest(pair: str, kd: list[dict]) -> Optional[dict]:
         return None
 
 
+def check_reversal_candle(pair: str, kd: list[dict]) -> Optional[dict]:
+    """🕯 РАЗВОРОТ — чёткая разворотная свеча у зоны на 4h.
+
+    По запросу юзера 13.08 (скрин PLUME): крупный пин-бар или поглощение
+    на ПЕРВОМ заходе в живую 4h-зону, с закрытием ЗА краем зоны (отбой
+    состоялся). Анти-шум: диапазон свечи ≥ среднего, сила зоны ≥ 55.
+    Честность: бэктест 164k касаний — вход по такой свече эджа НЕ даёт
+    (пин+ядро −0.21R против +0.64R от края зоны) → это ИНФО-сигнал про
+    тайминг («разворот пришёл»), модель исходов — стоп за экстремум
+    свечи, TP 1.5R, 96ч."""
+    try:
+        if not kd or len(kd) < 200:
+            return None
+        grp: dict = {}
+        for x in kd:
+            k = x["t"] // (4 * 3600_000)
+            if k not in grp:
+                grp[k] = dict(x)
+            else:
+                grp[k]["h"] = max(grp[k]["h"], x["h"])
+                grp[k]["l"] = min(grp[k]["l"], x["l"])
+                grp[k]["c"] = x["c"]
+        b4 = [grp[k] for k in sorted(grp)][:-1]  # только закрытые 4h
+        if len(b4) < 40:
+            return None
+        last, prev = b4[-1], b4[-2]
+        prev2 = b4[-3]
+        zones = build_zones(b4[:-1])             # зоны без последнего бара
+        if not zones:
+            return None
+        seg = b4[-120:]
+        avg = sum(x["h"] - x["l"] for x in seg) / len(seg)
+        rng = last["h"] - last["l"]
+        if not (avg > 0) or rng < avg:
+            return None                          # мелкая свеча ≠ «чёткая»
+        body = abs(last["c"] - last["o"])
+        rsi = _rsi14([x["c"] for x in b4])
+        for z in zones:
+            if (z.get("strength") or 0) < 55:
+                continue
+            if z["res"]:
+                pin = (last["h"] >= z["lo"] and prev["c"] < z["lo"]
+                       and last["h"] - max(last["o"], last["c"]) >= 0.65 * rng
+                       and body <= 0.25 * rng and last["c"] < z["lo"])
+                eng = (prev["h"] >= z["lo"] and prev2["c"] < z["lo"]
+                       and prev["c"] > prev["o"] and last["c"] < last["o"]
+                       and last["o"] >= prev["c"] and last["c"] <= prev["o"]
+                       and body >= 0.8 * avg and last["c"] < z["lo"])
+                if not (pin or eng):
+                    continue
+                direction, ext = "SHORT", max(last["h"], prev["h"])
+            else:
+                pin = (last["l"] <= z["hi"] and prev["c"] > z["hi"]
+                       and min(last["o"], last["c"]) - last["l"] >= 0.65 * rng
+                       and body <= 0.25 * rng and last["c"] > z["hi"])
+                eng = (prev["l"] <= z["hi"] and prev2["c"] > z["hi"]
+                       and prev["c"] < prev["o"] and last["c"] > last["o"]
+                       and last["o"] <= prev["c"] and last["c"] >= prev["o"]
+                       and body >= 0.8 * avg and last["c"] > z["hi"])
+                if not (pin or eng):
+                    continue
+                direction, ext = "LONG", min(last["l"], prev["l"])
+            entry = last["c"]
+            sl = (ext - 0.25 * avg) if direction == "LONG" \
+                else (ext + 0.25 * avg)
+            risk = abs(entry - sl)
+            if risk <= 0 or risk / entry > 0.08:
+                continue
+            tp = entry + (risk * 1.5 if direction == "LONG" else -risk * 1.5)
+            return {"strategy": "rev_candle", "direction": direction,
+                    "pair": pair, "symbol": pair.replace("/", "").upper(),
+                    "entry": entry, "tp": tp, "sl": sl, "horizon_h": 96,
+                    "indicators": {
+                        "kind": "pin" if pin else "engulf",
+                        "rng_x": round(rng / avg, 2),
+                        "rsi4h": round(rsi, 1) if rsi is not None else None,
+                        "strength": z["strength"],
+                        "touches": z["touches"],
+                        "zone_lo": z["lo"], "zone_hi": z["hi"],
+                        "risk_pct": round(risk / entry * 100, 2),
+                        "entry_bar_t": int(last["t"] // 1000),
+                    }}
+        return None
+    except Exception:
+        logger.debug(f"rev_candle fail {pair}", exc_info=True)
+        return None
+
+
 def check_level_touch(pair: str, kd: list[dict]) -> Optional[dict]:
     """Касание уровня на последнем ЗАКРЫТОМ 1h-баре + RSI-гейт.
     kd — те же 400 баров, что у скана (t в ms)."""
