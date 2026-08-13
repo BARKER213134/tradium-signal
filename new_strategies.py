@@ -514,6 +514,14 @@ async def run_detectors_on_flip(pair: str, direction: str, entry: float,
     except Exception:
         logger.exception('[new-strategies] triple_confluence fail')
 
+    # ✂ 13.08: выключенные стратегии режем ДО сохранения и ДО TG-алертов
+    # (раньше гейт стоял только на insert — alert мог уйти без дока)
+    try:
+        from config import DISABLED_STRATEGIES
+        triggered = [s for s in triggered
+                     if s.get('strategy') not in DISABLED_STRATEGIES]
+    except Exception:
+        pass
     # Persist all triggered to Mongo
     if triggered:
         await _save_strategy_signals(triggered, flip_ts, signal_id, tier)
@@ -905,6 +913,30 @@ async def _send_strategy_alert(sig: dict) -> None:
         return
     if not BOT13_BOT_TOKEN or not NEW_STRATEGY_CHAT_ID:
         return
+    # 📈 13.08: ST-фильтр (бэктест 180д, 13.9k исходов): volcano LONG при
+    # ST4h▼ = −0.62% против +0.82% при ST4h▲ — против 4h-тренда в TG не
+    # шлём (в журнале остаётся)
+    if sig.get('strategy') == 'volcano':
+        try:
+            from exchange import get_klines_any
+            from backtest_supertrend import compute_st_series
+            kd = await asyncio.to_thread(get_klines_any, sig['pair'], '1h', 400)
+            grp = {}
+            for x in kd or []:
+                k = x['t'] // (4 * 3600_000)
+                if k not in grp:
+                    grp[k] = dict(x)
+                else:
+                    grp[k]['h'] = max(grp[k]['h'], x['h'])
+                    grp[k]['l'] = min(grp[k]['l'], x['l'])
+                    grp[k]['c'] = x['c']
+            b4 = [grp[k] for k in sorted(grp)][:-1]
+            s4 = compute_st_series(b4, 10, 3.0) if len(b4) >= 14 else []
+            if s4 and int(s4[-1].get('trend') or 0) < 0:
+                logger.info(f"[st-gate] volcano {sig['pair']} TG skip — ST4h вниз")
+                return
+        except Exception:
+            pass
     chat_id = NEW_STRATEGY_CHAT_ID
     emoji = STRATEGY_EMOJI.get(sig['strategy'], '✨')
     label = STRATEGY_LABEL.get(sig['strategy'], sig['strategy'])

@@ -1427,9 +1427,20 @@ def scan_universe(max_pairs: int = 300):
                         if store_signal(_tp_, cooldown_h=24):
                             ds_fired += 1
                             _i = _tp_["indicators"]
+                            # 📈 13.08 ST-фильтр (бэктест 180д): шорт при
+                            # ST12h▼ +1.14%, при ST12h▲ +0.44% — против
+                            # 12h-тренда в TG не шлём (журнал остаётся)
+                            _st12ok = True
+                            try:
+                                _td12 = _trend_dirs(kd)
+                                if _td12 and _td12.get("12h", 0) > 0:
+                                    _st12ok = False
+                                    _i["st_gate"] = "против 12h"
+                            except Exception:
+                                pass
                             # TG — только строгий уровень (~6/день), loose
                             # (~ещё 6/день) остаётся в журнале/вкладке
-                            if _i.get("tier") == "strict":
+                            if _i.get("tier") == "strict" and _st12ok:
                                 # 🔁 повторный тонкий памп ≤14д — усилитель
                                 # (бэктест 28.07: 2-й EV +1.44, 3-й+ +1.64
                                 # против +0.72 у первого)
