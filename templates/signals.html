@@ -2980,7 +2980,7 @@ async function bcLoadSignals(pair, bars) {
     items.forEach(s => {
       const ts = s.at_ts * 1000;
       if (ts < t0) return;
-      const emoji = window.sigIconCompact ? (s.hot ? '🔥' : '') + window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot, s.ten_plus, s.elite_1d, s.pullback) : '•';
+      const emoji = window.sigIconCompact ? (s.hot ? '🔥' : '') + window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot, s.ten_plus, s.elite_1d, s.pullback, s.bulltrap) : '•';
       const long = s.direction === 'LONG';
       chart.createOverlay({
         name: 'simpleAnnotation', groupId: 'sig', lock: true,
@@ -5062,7 +5062,7 @@ async function _drawPaperHistChart(idx) {
       if (!byTime.has(key)) byTime.set(key, { time: mc.time, isLong: isL, icons: new Set(), items: [] });
       const g = byTime.get(key);
       const _strong = window.isStrongSignal ? window.isStrongSignal(s) : false;
-      const icon = window.sigIcon(s.source, s.score, { is_top_pick: !!s.is_top_pick, strong: _strong, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot, pullback: s.pullback });
+      const icon = window.sigIcon(s.source, s.score, { is_top_pick: !!s.is_top_pick, strong: _strong, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot, pullback: s.pullback, bulltrap: s.bulltrap });
       g.icons.add(icon);
       if (s.source === 'whale' && (s.whale_seq || 1) >= 2) g.hasW2 = true;
       if (s.rep_hot) g.hasRep = true;
@@ -5335,7 +5335,7 @@ async function _renderPaperChart(idx, tf) {
       const g = byKey.get(key);
       const _pMeta = Object.assign({}, m.meta || {}, {
         strong: window.isStrongSignal ? window.isStrongSignal(m) : false,
-        whale_seq: m.whale_seq, rep_hot: m.rep_hot, ten_plus: m.ten_plus, hot: m.hot, pullback: m.pullback});
+        whale_seq: m.whale_seq, rep_hot: m.rep_hot, ten_plus: m.ten_plus, hot: m.hot, pullback: m.pullback, bulltrap: m.bulltrap});
       g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, _pMeta));
       if (m.source === 'whale' && (m.whale_seq || 1) >= 2) g.hasW2 = true;
       if (m.rep_hot) g.hasRep = true;
@@ -9183,7 +9183,7 @@ async function loadCoinChart(coin) {
       }
       const isLong = s.direction === 'LONG';
       const _strongM = window.isStrongSignal ? window.isStrongSignal(s) : false;
-      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _strongM, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot, pullback: s.pullback});
+      const srcIcon = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _strongM, whale_tier: s.whale_tier, shark_tier: s.shark_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot, pullback: s.pullback, bulltrap: s.bulltrap});
       markers.push({
         time: mc.time,
         direction: s.direction,
@@ -9301,7 +9301,7 @@ function _showJournalToast(newSignals) {
 
   const count = newSignals.length;
   const previews = newSignals.slice(0, 3).map(s => {
-    const src = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot, pullback: s.pullback});
+    const src = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot, pullback: s.pullback, bulltrap: s.bulltrap});
     const pair = (s.symbol || s.pair || '').replace('USDT','').replace('/','');
     const dir = s.direction === 'LONG' ? '🟢' : '🔴';
     const score = s.score ? ` · ${s.score}` : '';
@@ -10249,7 +10249,7 @@ function renderJournal(items, startIdx) {
     const time = s.at ? new Date(s.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
     const isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
     const srcBadge = window.sigIcon
-      ? window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot, pullback: s.pullback})
+      ? window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot, pullback: s.pullback, bulltrap: s.bulltrap})
       : ((s.is_top_pick ? '👑 ' : (isStrong ? '⭐ ' : '')) +
          ({anomaly:'⚠', paper:'🤖', confluence:'🎯', supertrend:'🌀', verified:'✨'}[s.source] || '•'));
     const srcName = ({
@@ -11680,7 +11680,7 @@ async function openJournalChart(idx, forceTF) {
   const dirE = s.direction === 'LONG' ? '🟢' : s.direction === 'SHORT' ? '🔴' : '';
 
   const _isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
-  const srcBadge = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot, pullback: s.pullback});
+  const srcBadge = window.sigIcon(s.source, s.score, {is_top_pick: !!s.is_top_pick, strong: _isStrong, whale_tier: s.whale_tier, whale_seq: s.whale_seq, rep_hot: s.rep_hot, ten_plus: s.ten_plus, elite_1d: s.elite_1d, hot: s.hot, pullback: s.pullback, bulltrap: s.bulltrap});
   const srcName = (s.source === 'whale' && (s.whale_seq || 1) >= 2) ? 'ВТОРОЙ КИТ'
     : ({anomaly:'Аномалия', cluster:'Cluster', paper:'Paper', supertrend:'SuperTrend',
     whale:'WHALE', shark:'SHARK', combo:'COMBO', volume_surge:'Volume Surge',
@@ -11909,7 +11909,8 @@ async function openJournalChart(idx, forceTF) {
         strong: window.isStrongSignal ? window.isStrongSignal(m) : false,
         whale_tier: m.whale_tier || (m.meta && m.meta.tier),
         shark_tier: m.shark_tier || (m.meta && m.meta.tier),
-        pullback: m.pullback || (m.meta && m.meta.pullback)});
+        pullback: m.pullback || (m.meta && m.meta.pullback),
+        bulltrap: m.bulltrap || (m.meta && m.meta.bulltrap)});
       g.icons.add(window.sigIcon(m.source, m.meta?.score ?? m.score, _mMeta));
       g.items.push(m);
       modalMarkerMap.set(mc.time, m);

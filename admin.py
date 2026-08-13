@@ -9858,6 +9858,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "indicators.vol_x": 1, "indicators.brk_ago_h": 1,  # 🪜 флип
             "indicators.risk_pct": 1,
             "indicators.trend_pat": 1, "indicators.pullback": 1,  # 🪂
+            "indicators.bulltrap": 1,  # 🪤
             "hot": 1,  # 🔥 горячая монета на момент сигнала
         }).sort("created_at", -1).limit(400):
             at_dt = n.get("created_at")
@@ -9901,6 +9902,9 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 if _lti.get("pullback"):
                     em = "🪂" + em
                     _ltx += " · 🪂 откат в аптренде (год: +0.7..0.9R WR67-78)"
+                if _lti.get("bulltrap"):
+                    em = "🪤" + em
+                    _ltx += " · 🪤 ловушка быков (год: +0.81R WR72)"
                 extra_parts.append(_ltx)
             elif strat == "flip_retest":
                 _fri = n.get("indicators") or {}
@@ -9984,6 +9988,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "ten_plus": _ten2,
                 "elite_1d": _elite1d,
                 "pullback": bool((n.get("indicators") or {}).get("pullback")),
+                "bulltrap": bool((n.get("indicators") or {}).get("bulltrap")),
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),
                 "svetofor": n.get("svetofor"), "svetofor_star": n.get("svetofor_star"),
@@ -10512,6 +10517,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                             if _lvi.get("trend_pat") else "")
                          + (" · 🪂 ОТКАТ В АПТРЕНДЕ (+0.7..0.9R WR67-78)"
                             if _lvi.get("pullback") else "")
+                         + (" · 🪤 ЛОВУШКА БЫКОВ (+0.81R WR72)"
+                            if _lvi.get("bulltrap") else "")
                          + (" · год: WR68 EV+0.69R"
                             if n.get("direction") == "LONG"
                             else " · год: WR63 EV+0.58R"))
@@ -10746,6 +10753,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "elite_1d": _elite1d,
                 # 🪂 level_touch LONG при 1h▼ и держащих старших
                 "pullback": bool((n.get("indicators") or {}).get("pullback")),
+                # 🪤 level_touch SHORT при 1h▲ и медвежьих 4h+12h
+                "bulltrap": bool((n.get("indicators") or {}).get("bulltrap")),
                 # SHARK tier (тот же mechanism — для filtering и UI tooltip)
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),

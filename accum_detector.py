@@ -1244,6 +1244,13 @@ def scan_universe(max_pairs: int = 300):
                                         and (_tdm.get("4h", 0) > 0
                                              or _tdm.get("12h", 0) > 0)):
                                     _li["pullback"] = True
+                                # 🪤 зеркалка для SHORT (бэктест 13.08:
+                                # ядро при 1h▲ и 4h▼+12h▼ → +0.81R WR72)
+                                if (_lt["direction"] == "SHORT"
+                                        and _tdm.get("1h", 0) > 0
+                                        and _tdm.get("4h", 0) < 0
+                                        and _tdm.get("12h", 0) < 0):
+                                    _li["bulltrap"] = True
                         except Exception:
                             pass
                         # 🔗 конфлюэнс со старшим ТФ — только для
@@ -1260,7 +1267,9 @@ def scan_universe(max_pairs: int = 300):
                             ds_fired += 1
                             # TG только конфлюэнс или сила>=65 — иначе
                             # ~12 карточек/день на 300 пар
-                            if _mtf or _li["strength"] >= 65 or _li.get("pullback"):
+                            if (_mtf or _li["strength"] >= 65
+                                    or _li.get("pullback")
+                                    or _li.get("bulltrap")):
                                 _dirw = ("🟢 LONG — отскок от поддержки"
                                          if _lt["direction"] == "LONG"
                                          else "🔴 SHORT — отбой от сопротивления")
@@ -1269,11 +1278,16 @@ def scan_universe(max_pairs: int = 300):
                                         f"({_li.get('trend_pat', '?')}) · год: "
                                         "+0.7..0.9R, WR 67-78\n"
                                         if _li.get("pullback") else "")
+                                _pbl += ("🪤 <b>ЛОВУШКА БЫКОВ</b> — отскок "
+                                         "вверх при медвежьих 4h+12h "
+                                         f"({_li.get('trend_pat', '?')}) · год: "
+                                         "+0.81R, WR 72\n"
+                                         if _li.get("bulltrap") else "")
                                 _bt = ("WR 68, EV +0.69R"
                                        if _lt["direction"] == "LONG"
                                        else "WR 63, EV +0.58R")
                                 _tg16(
-                                    f"{'🪂 ' if _li.get('pullback') else ''}"
+                                    f"{'🪂 ' if _li.get('pullback') else '🪤 ' if _li.get('bulltrap') else ''}"
                                     f"📏 <b>УРОВЕНЬ · "
                                     f"{pair.replace('/USDT', '')}</b>\n"
                                     f"{_dirw} @ {_lt['entry']:.6g} "
