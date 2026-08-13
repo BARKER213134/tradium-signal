@@ -3690,8 +3690,8 @@ window._kcRegisterIndicators = function() {
     precision: 8,
     calcParams: [10, 3],
     figures: [
-      { key: 'stUp', title: 'ST↑ ', type: 'line', styles: () => ({ color: '#00e5a0' }) },
-      { key: 'stDn', title: 'ST↓ ', type: 'line', styles: () => ({ color: '#ff6b6b' }) },
+      { key: 'stUp', title: 'ST↑ ', type: 'line', styles: () => ({ color: '#00e5a0', size: 2 }) },
+      { key: 'stDn', title: 'ST↓ ', type: 'line', styles: () => ({ color: '#ff6b6b', size: 2 }) },
     ],
     calc: (list, indicator) => {
       const period = (indicator.calcParams && indicator.calcParams[0]) || 10;
