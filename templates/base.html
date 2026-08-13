@@ -269,7 +269,7 @@
         /* ── Bot switcher ── */
         .bot-switcher {
             display: inline-flex;
-            gap: 4px;
+            gap: 3px;
             padding: 5px;
             background: rgba(12,14,21,0.65);
             border: 1px solid var(--border);
@@ -284,17 +284,19 @@
         .bot-switcher::-webkit-scrollbar { height: 4px; }
         .bot-switcher::-webkit-scrollbar-thumb { background: rgba(91,140,255,0.22); border-radius: 2px; }
         .bot-counter {
-          display: inline-block;
-          margin-left: 6px;
-          padding: 1px 7px;
+          /* 13.08: absolute — появление счётчика больше не меняет ширину
+             кнопки (кнопка «Журнал» прыгала при каждом новом сигнале) */
+          position: absolute;
+          top: -7px;
+          right: -5px;
+          padding: 1px 6px;
           background: linear-gradient(135deg, #ff4d6d, #ff8c50);
           color: #fff;
           font-family: var(--font-mono);
-          font-size: 10px;
+          font-size: 9px;
           font-weight: 800;
           border-radius: 10px;
           line-height: 1.4;
-          vertical-align: middle;
           box-shadow: 0 0 8px rgba(255, 77, 109, 0.5);
           animation: bot-counter-pulse 2.5s infinite ease-in-out;
         }
@@ -303,11 +305,12 @@
           50% { box-shadow: 0 0 14px rgba(255, 77, 109, 0.85); }
         }
         .bot-switch {
-            padding: 7px 12px;         /* было 14 */
+            position: relative;         /* якорь для absolute .bot-counter */
+            padding: 6px 8px;          /* было 7×12 — ужато, чтобы весь ряд влезал в 1 строку */
             font-family: var(--font-mono);
-            font-size: 10.5px;          /* было 11 */
+            font-size: 10px;            /* было 10.5 */
             font-weight: 700;
-            letter-spacing: 0.06em;     /* было 0.1 — чуть теснее */
+            letter-spacing: 0.03em;     /* было 0.06 — теснее, экономит ширину */
             text-transform: uppercase;
             color: var(--muted);
             text-decoration: none;
@@ -318,11 +321,49 @@
             flex-shrink: 0;             /* не ужимать кнопки — скроллим весь ряд */
         }
         .bot-switch:hover { color: var(--text); background: rgba(148,163,184,0.06); }
+        /* 13.08: главные вкладки выделены постоянно (просьба юзера) */
+        .bot-switch[data-bot="journal"] {
+            color: #ffd23e;
+            border-color: rgba(255,210,62,0.55);
+            background: rgba(255,210,62,0.08);
+            font-weight: 800;
+        }
+        .bot-switch[data-bot="trends"] {
+            color: #00e5a0;
+            border-color: rgba(0,229,160,0.5);
+            background: rgba(0,229,160,0.07);
+            font-weight: 800;
+        }
+        .bot-switch[data-bot="journal"].active,
+        .bot-switch[data-bot="trends"].active { filter: brightness(1.25); }
         .bot-switch.active {
             background: linear-gradient(120deg, rgba(91,140,255,0.20), rgba(76,201,240,0.10));
             color: #cfe0ff;
             border-color: rgba(91,140,255,0.42);
             box-shadow: 0 2px 12px rgba(91,140,255,0.18), inset 0 1px 0 rgba(255,255,255,0.06);
+        }
+
+        /* ━━━ 📈 ТРЕНДЫ + 📓 ЖУРНАЛ — выделенные утилиты — янтарный glow ━━━ */
+        .bot-switch[data-bot="trends"],
+        .bot-switch[data-bot="journal"] {
+            background: linear-gradient(135deg, rgba(255,179,71,0.16), rgba(255,140,80,0.09));
+            color: #ffcf8f;
+            border-color: rgba(255,179,71,0.55);
+            font-weight: 800;
+            box-shadow: 0 0 8px rgba(255,179,71,0.28), inset 0 0 4px rgba(255,179,71,0.12);
+        }
+        .bot-switch[data-bot="trends"]:hover,
+        .bot-switch[data-bot="journal"]:hover {
+            background: linear-gradient(135deg, rgba(255,179,71,0.26), rgba(255,140,80,0.16));
+            color: #ffe0b0;
+            box-shadow: 0 0 14px rgba(255,179,71,0.5), inset 0 0 6px rgba(255,179,71,0.22);
+        }
+        .bot-switch[data-bot="trends"].active,
+        .bot-switch[data-bot="journal"].active {
+            background: linear-gradient(135deg, rgba(255,179,71,0.4), rgba(255,140,80,0.22));
+            color: #fff;
+            border-color: #ffb347;
+            box-shadow: 0 0 18px rgba(255,179,71,0.7), inset 0 0 10px rgba(255,179,71,0.3);
         }
 
         /* ━━━ 🐋 WHALE (LONG) — production star — синий glow ━━━ */
