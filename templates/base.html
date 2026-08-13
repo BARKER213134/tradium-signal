@@ -4663,9 +4663,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         chart.createOverlay({
           name: 'simpleAnnotation', lock: true, groupId: 'revcdl',
           points: [{ timestamp: m.t, value: m.price }],
-          extendData: '🕯',
+          extendData: m.dir > 0 ? '🕯▲' : '🕯▼',
           styles: { text: { color: m.dir > 0 ? '#ffd23e' : '#ff9e3e',
-                            size: 11 } } });
+                            size: 14 } } });
         const dt = new Date(m.t).toLocaleString('ru',
           { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
         const kindTxt = m.kind === 'pin' ? 'Пин-бар' : 'Поглощение';
