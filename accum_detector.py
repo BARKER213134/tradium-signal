@@ -1164,6 +1164,16 @@ def scan_universe(max_pairs: int = 300):
                             _hotr = bool(_ih(_sym_u))
                         except Exception:
                             _hotr = False
+                        # 💰 объём 24ч ($М), всплеск ×, дельта-z (фильтры
+                        # вкладки «Сегодня», 13.08)
+                        try:
+                            _v24 = sum(x["v"] * x["c"] for x in kd[-24:])
+                            _vb = [x["v"] for x in kd[-240:-24]]
+                            _vx = (sum(x["v"] for x in kd[-24:]) / 24
+                                   / (sum(_vb) / len(_vb))) if _vb else None
+                            _dzr = _delta_z(kd, len(kd) - 24)
+                        except Exception:
+                            _v24 = _vx = _dzr = None
                         for _z, _sd in ((_sup, "sup"), (_res, "res")):
                             if _z is None:
                                 continue
@@ -1181,7 +1191,10 @@ def scan_universe(max_pairs: int = 300):
                                 "st": _z["strength"], "tch": _z["touches"],
                                 "rsi": round(_rr, 1) if _rr is not None else None,
                                 "core": bool(_core), "tp": _tp_str,
-                                "hot": _hotr, "px": _pxr})
+                                "hot": _hotr, "px": _pxr,
+                                "v24m": round(_v24 / 1e6, 1) if _v24 else None,
+                                "vx": round(_vx, 2) if _vx else None,
+                                "dz": _dzr})
                             # ⏳ TG-алерт подхода: близко к СИЛЬНОЙ зоне и
                             # RSI уже в ядре — время выставлять лимитку
                             if (_dist <= 0.4 and _z["strength"] >= 70
