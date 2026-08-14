@@ -7652,6 +7652,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="level_touch">📏 Уровень (касание+RSI · LONG WR68 +0.69R · SHORT WR63 +0.58R)</option>
     <option value="lt_pullback">🪂 Откат в аптренде (📏 LONG при 1h▼ и 4h/12h▲ · +0.7..0.9R WR67-78)</option>
     <option value="lt_bulltrap">🪤 Ловушка быков (📏 SHORT при 1h▲ и 4h+12h▼ · +0.81R WR72)</option>
+    <option value="lt_absorb">💪 Поглощение (📏 + дельта в сторону отскока · LONG +0.93R WR77 / SHORT +0.77R WR71)</option>
     <option value="flip_retest">🪜 Флип-ретест (лонг от пробитого сопротивления · 2R+БУ +0.47R · PF 3.45)</option>
     <option value="rev_candle">🕯 Разворот 4h (чёткий пин/поглощение у зоны · тайминг-инфо)</option>
     <option value="vol_anomaly">⚡ Аномалия объёма 1h (&gt;8× нормы, где угодно, инфо)</option>
@@ -9869,6 +9870,9 @@ function filterJournal() {
     } else if (src === 'lt_bulltrap') {
       // 🪤 level_touch SHORT при 1h▲ и медвежьих 4h+12h (+0.81R WR72)
       if (!(s.source === 'level_touch' && s.bulltrap)) return false;
+    } else if (src === 'lt_absorb') {
+      // 💪 level_touch + дельта в сторону отскока (+0.8..1.0R WR71-82)
+      if (!(s.source === 'level_touch' && s.absorb)) return false;
     } else if (src && s.source !== src) return false;
     // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
     if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;
