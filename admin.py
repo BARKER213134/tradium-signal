@@ -9929,6 +9929,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "indicators.risk_pct": 1,
             "indicators.trend_pat": 1, "indicators.pullback": 1,  # 🪂
             "indicators.bulltrap": 1,  # 🪤
+            "indicators.dz": 1, "indicators.absorb": 1,  # 💪
+            "indicators.push_against": 1,
             "hot": 1,  # 🔥 горячая монета на момент сигнала
         }).sort("created_at", -1).limit(400):
             at_dt = n.get("created_at")
@@ -9975,6 +9977,13 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 if _lti.get("bulltrap"):
                     em = "🪤" + em
                     _ltx += " · 🪤 ловушка быков (год: +0.81R WR72)"
+                if _lti.get("absorb"):
+                    em = "💪" + em
+                    _ltx += (f" · 💪 поглощение Δz {_lti.get('dz', 0):+.1f} "
+                             f"(год: +0.8..1.0R WR 71-82)")
+                elif _lti.get("push_against"):
+                    _ltx += (f" · ⚠ дельта против Δz {_lti.get('dz', 0):+.1f}"
+                             f" — зона под давлением")
                 extra_parts.append(_ltx)
             elif strat == "flip_retest":
                 _fri = n.get("indicators") or {}
@@ -10066,6 +10075,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "elite_1d": _elite1d,
                 "pullback": bool((n.get("indicators") or {}).get("pullback")),
                 "bulltrap": bool((n.get("indicators") or {}).get("bulltrap")),
+                "absorb": bool((n.get("indicators") or {}).get("absorb")),
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),
                 "svetofor": n.get("svetofor"), "svetofor_star": n.get("svetofor_star"),
@@ -10603,6 +10613,12 @@ def _compute_journal_sync(_fast_only: bool = False):
                             if _lvi.get("pullback") else "")
                          + (" · 🪤 ЛОВУШКА БЫКОВ (+0.81R WR72)"
                             if _lvi.get("bulltrap") else "")
+                         + ((f" · 💪 ПОГЛОЩЕНИЕ Δz {_lvi.get('dz', 0):+.1f} "
+                             f"(+0.8..1.0R WR 71-82)")
+                            if _lvi.get("absorb") else "")
+                         + ((f" · ⚠ дельта против Δz {_lvi.get('dz', 0):+.1f}"
+                             f" — зона под давлением")
+                            if _lvi.get("push_against") else "")
                          + (" · год: WR68 EV+0.69R"
                             if n.get("direction") == "LONG"
                             else " · год: WR63 EV+0.58R"))
@@ -10854,6 +10870,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "pullback": bool((n.get("indicators") or {}).get("pullback")),
                 # 🪤 level_touch SHORT при 1h▲ и медвежьих 4h+12h
                 "bulltrap": bool((n.get("indicators") or {}).get("bulltrap")),
+                # 💪 level_touch: агрессивная дельта в сторону отскока
+                "absorb": bool((n.get("indicators") or {}).get("absorb")),
                 # SHARK tier (тот же mechanism — для filtering и UI tooltip)
                 "shark_tier": n.get("shark_tier"),
                 "shark_score": n.get("shark_score"),

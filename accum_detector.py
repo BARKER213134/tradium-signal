@@ -1350,6 +1350,27 @@ def scan_universe(max_pairs: int = 300):
                                     _li["bulltrap"] = True
                         except Exception:
                             pass
+                        # 💪 тайкер-дельта бара касания (бэктест 13.08,
+                        # 116k касаний: ядро+дельта ЗА z≥1 → LONG +0.93R
+                        # WR77 / SHORT +0.77R WR71; дельта ПРОТИВ z≤−1 —
+                        # зона под давлением, в TG не шлём)
+                        try:
+                            _dls = [2 * x.get("tb", x["v"] / 2) - x["v"]
+                                    for x in kd[:-1]]
+                            _dh = _dls[-201:-1]
+                            _dm = sum(_dh) / len(_dh)
+                            _dsd = (sum((x - _dm) ** 2 for x in _dh)
+                                    / len(_dh)) ** 0.5
+                            if _dsd > 0:
+                                _dzt = round(_dls[-1] / _dsd, 2)
+                                _li["dz"] = _dzt
+                                _sgn = 1 if _lt["direction"] == "LONG" else -1
+                                if _sgn * _dzt >= 1:
+                                    _li["absorb"] = True
+                                elif _sgn * _dzt <= -1:
+                                    _li["push_against"] = True
+                        except Exception:
+                            pass
                         # 🔗 конфлюэнс со старшим ТФ — только для
                         # сработавших (2 нативных фетча)
                         _mtf = mtf_confluence(
@@ -1364,9 +1385,15 @@ def scan_universe(max_pairs: int = 300):
                             ds_fired += 1
                             # TG только конфлюэнс или сила>=65 — иначе
                             # ~12 карточек/день на 300 пар
-                            if (_mtf or _li["strength"] >= 65
+                            # 💪 absorb пропускает в TG; дельта ПРОТИВ
+                            # (push_against) блокирует TG даже при mtf —
+                            # зона под давлением (бэктест: −0.20..−0.36R)
+                            if _li.get("push_against"):
+                                pass
+                            elif (_mtf or _li["strength"] >= 65
                                     or _li.get("pullback")
-                                    or _li.get("bulltrap")):
+                                    or _li.get("bulltrap")
+                                    or _li.get("absorb")):
                                 _dirw = ("🟢 LONG — отскок от поддержки"
                                          if _lt["direction"] == "LONG"
                                          else "🔴 SHORT — отбой от сопротивления")
@@ -1380,11 +1407,18 @@ def scan_universe(max_pairs: int = 300):
                                          f"({_li.get('trend_pat', '?')}) · год: "
                                          "+0.81R, WR 72\n"
                                          if _li.get("bulltrap") else "")
+                                _pbl += ((f"💪 <b>ПОГЛОЩЕНИЕ</b> — "
+                                          f"{'покупатель' if _lt['direction'] == 'LONG' else 'продавец'}"
+                                          f" в баре касания (Δz "
+                                          f"{_li.get('dz', 0):+.1f}) · год: "
+                                          f"{'+0.93..1.04R WR 77-82' if _lt['direction'] == 'LONG' else '+0.77..0.83R WR 71-73'}\n")
+                                         if _li.get("absorb") else "")
                                 _bt = ("WR 68, EV +0.69R"
                                        if _lt["direction"] == "LONG"
                                        else "WR 63, EV +0.58R")
                                 _tg16(
                                     f"{'🪂 ' if _li.get('pullback') else '🪤 ' if _li.get('bulltrap') else ''}"
+                                    f"{'💪 ' if _li.get('absorb') else ''}"
                                     f"📏 <b>УРОВЕНЬ · "
                                     f"{pair.replace('/USDT', '')}</b>\n"
                                     f"{_dirw} @ {_lt['entry']:.6g} "
