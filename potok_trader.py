@@ -35,10 +35,10 @@ logger = logging.getLogger(__name__)
 # (+0.51%), blowoff SHORT (+0.64%, стабилен по третям). Гейты канала
 # (светофор ДА + поток/фандинг) остаются поверх без изменений.
 LONG_SRC = {"triple_confluence", "st_mtf", "st_vip", "floor_buy",
-            "level_touch", "corridor"}
+            "level_touch", "level_touch_abs", "corridor"}
 SHORT_SRC = {"triple_confluence", "thin_pump",
              "st_mtf", "st_vip", "confluence_5plus", "confluence_lo",
-             "level_touch", "blowoff"}
+             "level_touch", "level_touch_abs", "blowoff"}
 SLOTS = 10
 # 💵 макс-загрузка (03.08, запрос юзера): позиция = депо/СЛОТЫ × mult —
 # 10 сделок по 10% депо = 100% без плеча (риск 0.5% депо/сделку при SL −5)
@@ -316,6 +316,28 @@ def try_open() -> int:
                           n_.get("symbol") or _n(n_.get("pair")),
                           n_.get("pair") or "", n_["created_at"],
                           n_.get("svetofor_score", 0), n_.get("svetofor_star")))
+    # 📏 уровневые — МИМО светофора (13.08: он заточен под тренд, 📏
+    # получает ДА в 1% — контртрендовый вход от зоны всегда «НЕТ»).
+    # Гейт качества = бейджи бэктестов: 💪 absorb / 🪂 / 🪤 (+0.77..
+    # +1.04R WR71-82) или 🔗 mtf / сила ≥65; «дельта против» — скип.
+    for n_ in db.new_strategy_signals.find(
+            {"created_at": {"$gte": since}, "strategy": "level_touch"},
+            {"pair": 1, "symbol": 1, "direction": 1, "created_at": 1,
+             "svetofor_score": 1, "svetofor_star": 1,
+             "indicators": 1}).limit(100):
+        _li = n_.get("indicators") or {}
+        if _li.get("push_against") or not n_.get("direction"):
+            continue
+        strong = bool(_li.get("absorb") or _li.get("pullback")
+                      or _li.get("bulltrap"))
+        if not (strong or _li.get("mtf") or (_li.get("strength") or 0) >= 65):
+            continue
+        cands.append(("level_touch_abs" if strong else "level_touch",
+                      n_["direction"],
+                      n_.get("symbol") or _n(n_.get("pair")),
+                      n_.get("pair") or "", n_["created_at"],
+                      n_.get("svetofor_score", 0),
+                      n_.get("svetofor_star")))
     for s_ in db.supertrend_signals.find(
             {"flip_at": {"$gte": since}, "svetofor": "ДА"},
             {"tier": 1, "pair": 1, "direction": 1, "flip_at": 1,
@@ -376,16 +398,20 @@ def try_open() -> int:
         if d_ == "LONG":
             if rate < 0:
                 continue
-            cvd = ctx.get("cvd24")
-            if cvd is None or cvd <= 0:
-                continue
-            ab = ctx.get("anom_buy_ts")
-            if not ab:
-                continue
-            age_h = (now.timestamp() - ab / 1000) / 3600
-            if age_h > 12:
-                continue
-            ctx["_anom_age_h"] = age_h
+            # 💪/🪂/🪤-бейджи 📏 сами являются «подтверждением потоком»
+            # (дельта бара касания / контекст трендов) — CVD/аномалия-
+            # гейты для них пропускаем, funding остаётся (13.08)
+            if src != "level_touch_abs":
+                cvd = ctx.get("cvd24")
+                if cvd is None or cvd <= 0:
+                    continue
+                ab = ctx.get("anom_buy_ts")
+                if not ab:
+                    continue
+                age_h = (now.timestamp() - ab / 1000) / 3600
+                if age_h > 12:
+                    continue
+                ctx["_anom_age_h"] = age_h
             kit = bool((ctx.get("cvd24") or 0) > 0 and (ctx.get("dz24") or 0) < 0)
         else:
             if rate <= -0.0005:
