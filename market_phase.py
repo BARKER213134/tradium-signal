@@ -91,13 +91,27 @@ def _btc_atr_pct(tf: str = "1h", period: int = 14) -> Optional[float]:
 
 
 def _avg_funding_top_pairs(n: int = 30) -> Optional[float]:
-    """Средний funding по топ-N парам (из anomaly_scanner batch-кеша)."""
+    """Средний funding по топ-N парам, В ПРОЦЕНТАХ.
+    14.08: batch-кэш anomaly_scanner давно пуст — avg_funding=None во
+    всех записях фаз с апреля, ветки EUPHORIA/CAPITULATION работали
+    вполсилы. Основной источник теперь market_state.funding_now
+    (живой — его пишет коллектор ПОТОКА), batch-кэш — фолбэк."""
+    try:
+        from database import _get_db
+        fn = _get_db().market_state.find_one({"_id": "funding_now"}) or {}
+        rates = fn.get("rates") or {}
+        if rates:
+            vals = [float(v) for v in list(rates.values())[:max(n, 30)]
+                    if v is not None]
+            if vals:
+                return round(sum(vals) / len(vals) * 100, 4)
+    except Exception:
+        logger.debug("[market-phase] funding_now fail", exc_info=True)
     try:
         from futures_data import _batch_cache
         funding_map = _batch_cache.get("funding") or {}
         if not funding_map:
             return None
-        # Берём топ-N ключей (не важно какие — scan_all уже даёт активные)
         vals = list(funding_map.values())[:n] if isinstance(funding_map, dict) else []
         if not vals:
             return None

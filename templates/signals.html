@@ -9587,12 +9587,36 @@ async function loadJournalRegime() {
   const txt = document.getElementById('jRegimeText');
   if (!el || !txt) return;
   try {
-    const r = await fetch('/api/auto-strategy/info');
+    // 14.08: старый /api/auto-strategy/info удалён — бейдж висел «? ?»;
+    // теперь живой детектор фаз /api/market-phase
+    const r = await fetch('/api/market-phase');
     const d = await r.json();
-    const reg = d.current_regime || d.regime || '?';
-    // API возвращает regime_config = REGIME_CONFIG.get(current_regime, {}) уже для текущего regime,
-    // не вложенный dict. Берём напрямую.
-    const cfg = d.regime_config || {};
+    const reg = d.phase || '?';
+    const m = d.metrics || {};
+    const bst = m.btc_st || {};
+    const cfg = {};
+    const styles2 = {
+      EUPHORIA:     {bg:'rgba(255,140,80,0.15)', border:'#ff8c50', color:'#ff8c50', emoji:'🔥', desc:'funding перегрет + BTC вверх — шорты у сопротивлений'},
+      BULL_TREND:   {bg:'rgba(0,229,160,0.15)', border:'#00e5a0', color:'#00e5a0', emoji:'🚀', desc:'BTC в аптренде — лонги от поддержек'},
+      CHOP:         {bg:'rgba(255,215,0,0.13)', border:'#ffd23e', color:'#ffd23e', emoji:'🌀', desc:'пила — только от уровней, обе стороны'},
+      BEAR_TREND:   {bg:'rgba(255,77,109,0.15)', border:'#ff4d6d', color:'#ff4d6d', emoji:'📉', desc:'BTC в даунтренде — шорты в приоритете'},
+      CAPITULATION: {bg:'rgba(180,140,255,0.15)', border:'#b48cff', color:'#b48cff', emoji:'💀', desc:'funding в минусе + слив — лонги только от сильных зон'}};
+    const s2 = styles2[reg];
+    if (s2) {
+      el.style.background = s2.bg;
+      el.style.borderColor = s2.border;
+      el.style.color = s2.color;
+      const arrows = ['1h','4h','1d'].map(tf => {
+        const v = bst[tf];
+        const a = v === 'UP' ? '▲' : v === 'DOWN' ? '▼' : '·';
+        const c = v === 'UP' ? '#00e5a0' : v === 'DOWN' ? '#ff5e9c' : 'var(--muted)';
+        return `<span style="color:${c};">${tf}${a}</span>`;
+      }).join(' ');
+      const fu = m.avg_funding != null ? ` · f ${m.avg_funding > 0 ? '+' : ''}${m.avg_funding}%` : '';
+      txt.innerHTML = `<span style="font-size:13px;">${s2.emoji}</span> <b>${reg}</b> <span style="font-weight:400;font-size:10px;">${d.confidence || 0}%</span> <span style="color:var(--muted);font-weight:400;font-size:10px;">· BTC ${arrows}${fu}</span>`;
+      el.title = `Фаза рынка (market_phase, обновление ~3 мин)\n${reg} · уверенность ${d.confidence || 0}%\n${s2.desc}\nBTC ST: 1h ${bst['1h'] || '?'} · 4h ${bst['4h'] || '?'} · 1d ${bst['1d'] || '?'}\nсредний funding: ${m.avg_funding != null ? m.avg_funding + '%' : '—'}`;
+      return;
+    }
     const styles = {
       BULL: {bg:'rgba(0,229,160,0.15)', border:'#00e5a0', color:'#00e5a0', emoji:'🚀', desc:'LONG STRICT, full size'},
       BEAR: {bg:'rgba(255,77,109,0.15)', border:'#ff4d6d', color:'#ff4d6d', emoji:'📉', desc:'SHORT STRICT, be_at_1R'},

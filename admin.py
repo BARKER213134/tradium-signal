@@ -9353,6 +9353,16 @@ async def api_enter_now():
     return await asyncio.to_thread(_q)
 
 
+@app.get("/api/market-phase")
+async def api_market_phase_now():
+    """📊 Текущая фаза рынка (market_phase: EUPHORIA/CAPITULATION/
+    BULL_TREND/CHOP...) — для бейджа PHASE в шапке журнала. 14.08:
+    бейдж кормился с удалённого /api/auto-strategy/info и показывал
+    «? ?»."""
+    import market_phase as mp
+    return await asyncio.to_thread(mp.get_market_phase, False)
+
+
 @app.get("/api/entry-watch")
 async def api_entry_watch_list():
     """🔔 Вотчлист «ЖДАТЬ → ВХОД»: монеты под наблюдением + статусы."""
