@@ -7597,9 +7597,10 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <button class="tf-btn" onclick="_setCoinTF('4h')">4h</button>
     <button class="tf-btn" onclick="_setCoinTF('12h')">12h</button>
     <button class="tf-btn" onclick="_setCoinTF('1d')">1D</button>
+    <button onclick="window._kcSetupModal((document.getElementById('jCoinSearch').value||'').toUpperCase())" title="🎰 Полный разбор: можно ли входить сейчас" style="margin-left:6px;background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.5);border-radius:6px;color:#ffd23e;font-size:11px;font-weight:800;cursor:pointer;padding:3px 10px;font-family:var(--font-mono);">🎰 Вход?</button>
   </div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px;font-size:10px;color:var(--muted);font-family:var(--font-mono);">
-    <span>🌀 ST</span><span>🎯 Conf</span><span>🐋 WHALE</span><span>🦈 SHARK</span><span>🚀 IMPULSE</span><span>💥 IGNITION</span><span>🧩 STACK</span>
+    <span>🌀 ST</span><span>📏 УРОВЕНЬ</span><span>🌋 BLOWOFF</span><span>💣 ST-4H</span><span>🧩 STACK</span>
     <span style="color:var(--buy);">▲ LONG</span><span style="color:var(--sell);">▼ SHORT</span>
   </div>
 </div>
@@ -11929,7 +11930,9 @@ async function openJournalChart(idx, forceTF) {
   const pairClick = `<b class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.45);">${pair}</b>`;
   const dirInfo = s.direction ? ` · ${dirE} ${s.direction}` : '';
   const entryInfo = s.entry ? ` · <code>${s.entry}</code>` : '';
+  window._jModalSym = sym.toUpperCase();
   title.innerHTML = `${srcBadge} ${srcName} · ${pairClick}${dirInfo}${entryInfo}${scoreInfo}` +
+    ` <button onclick="window._kcSetupModal(window._jModalSym)" title="🎰 Полный разбор: можно ли входить сейчас" style="margin-left:10px;background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.5);border-radius:6px;color:#ffd23e;font-size:11px;font-weight:800;cursor:pointer;padding:3px 10px;font-family:var(--font-mono);">🎰 Вход?</button>` +
     ` <span id="jTrendBadge" style="margin-left:10px;display:inline-flex;gap:6px;align-items:center;"></span>`;
   // 📈 какой сейчас тренд (матрица 1h/2h/4h/12h) — в шапке графика
   if (window._kcTrendBadge) {

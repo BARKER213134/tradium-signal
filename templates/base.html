@@ -3984,6 +3984,11 @@ window.openPairChart = function(symbol, tf) {
       'style="background:none;border:1px solid var(--border,#334);border-radius:6px;' +
       'color:var(--muted,#8892a4);font-size:11px;cursor:pointer;padding:3px 10px;' +
       'font-family:var(--font-mono,monospace);">🕯Свечи</button>' +
+      '<button onclick="window._kcSetupModal(window._kcQmSym)" ' +
+      'title="🎰 Полный разбор: можно ли входить сейчас — вердикт, зоны, тренды, дельта, план входа" ' +
+      'style="background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.5);border-radius:6px;' +
+      'color:#ffd23e;font-size:11px;font-weight:800;cursor:pointer;padding:3px 10px;' +
+      'font-family:var(--font-mono,monospace);">🎰 Вход?</button>' +
       '<span id="kcQmTrend" style="display:flex;gap:6px;align-items:center;margin-left:8px;"></span>' +
       '<span style="flex:1;"></span>' +
       '<span id="kcQmNavBox" style="display:none;align-items:center;gap:6px;">' +
@@ -4098,6 +4103,107 @@ window._kcQmFlips = function() {
   if (window._kcQmSym) {
     openPairChart(window._kcQmSym, localStorage.getItem('kc_qm_tf') || '1h');
   }
+};
+// 🎰 «Вход сейчас?» — модал полного разбора Setup Checker v3 (13.08):
+// вердикт, зоны, тренды, дельта, за/против, план входа. Общий для
+// всех графиков платформы.
+window._kcSetupModal = async function(sym) {
+  sym = (sym || '').replace('/', '');
+  if (!sym) return;
+  let m = document.getElementById('kcSetupModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'kcSetupModal';
+    m.style.cssText = 'display:none;position:fixed;inset:0;z-index:100300;' +
+      'background:rgba(4,6,10,0.82);align-items:center;justify-content:center;padding:20px;';
+    m.innerHTML = '<div id="kcSetupBody" style="background:#0d1119;border:1px solid #2a3242;' +
+      'border-radius:14px;max-width:980px;width:100%;max-height:92vh;overflow-y:auto;' +
+      'padding:18px 22px;font-size:12.5px;line-height:1.55;color:#e6eef8;"></div>';
+    m.addEventListener('click', ev => { if (ev.target === m) m.style.display = 'none'; });
+    document.body.appendChild(m);
+    document.addEventListener('keydown', ev => {
+      if (ev.key === 'Escape' && m.style.display === 'flex') m.style.display = 'none';
+    });
+  }
+  const body = m.querySelector('#kcSetupBody');
+  m.style.display = 'flex';
+  body.innerHTML = '<div style="padding:30px;text-align:center;color:#8892a4;">🎰 Разбираю ' +
+    sym.replace('USDT', '') + ' — зоны · тренды · дельта · поток…</div>';
+  let d;
+  try {
+    const r = await fetch('/api/setup-check?pair=' + encodeURIComponent(sym));
+    d = await r.json();
+  } catch (e) {
+    body.innerHTML = '<div style="padding:30px;color:#ff5e9c;">⛔ сеть/сервер недоступны</div>';
+    return;
+  }
+  const mt = d.metrics || {};
+  const fmtP = v => v == null ? '—' : (+v).toPrecision(6).replace(/\.?0+$/, '');
+  const V = {ENTER_LONG: ['🟢 ВХОДИТЬ В ЛОНГ', '#00e5a0'], ENTER_SHORT: ['🔴 ВХОДИТЬ В ШОРТ', '#ff5e9c'],
+             WAIT: ['⏳ ЖДАТЬ', '#ffd23e'], NO_DATA: ['— НЕТ ДАННЫХ', '#8892a4'], ERROR: ['⛔ ОШИБКА', '#8892a4']};
+  const [vTxt, vCol] = V[d.verdict] || V.WAIT;
+  const gradeCol = g => g === 'ДА' ? '#00e5a0' : g === 'МОЖНО' ? '#ffd23e'
+    : (g || '').startsWith('ЖДАТЬ') ? '#4cc9f0' : '#ff5e9c';
+  const chip = (label, val, col) => val == null ? '' :
+    `<span style="background:#141a26;border:1px solid #2a3242;border-radius:6px;padding:4px 9px;font-family:monospace;font-size:11px;">` +
+    `<span style="color:#8892a4;">${label}</span> <b style="color:${col || '#e6eef8'};">${val}</b></span>`;
+  const tpHtml = !mt.trend_pat ? null : mt.trend_pat.split('').map((a, i) =>
+    `<span style="color:${a === '▲' ? '#00e5a0' : a === '▼' ? '#ff5e9c' : '#8892a4'};">${['1h','2h','4h','12h'][i]}${a}</span>`).join(' ');
+  const zoneTxt = z => !z ? null :
+    `⚡${z.strength}% · ${z.touches}кас · в ${z.dist_pct}% (${fmtP(z.lo)}–${fmtP(z.hi)})`;
+  const sideBlock = (title, s, col) => {
+    if (!s || !s.grade) return '';
+    const pl = s.plan || {};
+    const ez = pl.entry_zone || [];
+    return `<div style="flex:1;min-width:300px;background:#10151f;border:1px solid #232b3a;border-radius:10px;padding:12px 14px;">
+      <div style="font-weight:800;font-size:13px;margin-bottom:8px;color:${col};">${title}:
+        <span style="color:${gradeCol(s.grade)};">${s.grade}</span></div>
+      ${(s.pros || []).map(p => `<div style="margin:3px 0;color:#bfe8d4;">✅ ${p}</div>`).join('')}
+      ${(s.cons || []).map(p => `<div style="margin:3px 0;color:#f2b8c6;">❌ ${p}</div>`).join('')}
+      <div style="margin-top:9px;padding-top:8px;border-top:1px solid #232b3a;font-family:monospace;font-size:11.5px;color:#aab3c2;">
+        вход: <b style="color:#e6eef8;">${fmtP(ez[0])}${ez[1] && ez[1] !== ez[0] ? '–' + fmtP(ez[1]) : ''}</b>
+        · стоп: <b style="color:#ff5e9c;">${fmtP(pl.stop)}</b>
+        · цель: <b style="color:#00e5a0;">${fmtP(pl.target)}</b>
+        ${pl.rr != null ? '· R:R <b>' + pl.rr + '</b>' : ''}
+        ${pl.note ? '<div style="margin-top:4px;color:#8892a4;font-family:inherit;">' + pl.note + '</div>' : ''}
+      </div></div>`;
+  };
+  const act = (d.active_trades || []).map(t =>
+    `<span style="color:#aab3c2;">${t.strategy} ${t.direction} @ ${fmtP(t.entry)} (${t.age_h}ч, ` +
+    `<b style="color:${(t.pnl_now || 0) >= 0 ? '#00e5a0' : '#ff5e9c'};">${t.pnl_now != null ? (t.pnl_now > 0 ? '+' : '') + t.pnl_now + '%' : '—'}</b>)</span>`).join(' · ');
+  body.innerHTML = `
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
+      <b style="font-size:17px;">🎰 ${sym.replace('USDT', '')} — вход сейчас?</b>
+      <span style="background:${vCol}22;border:1.5px solid ${vCol};border-radius:8px;padding:5px 14px;font-weight:800;color:${vCol};">${vTxt}</span>
+      ${d.confidence ? chip('уверенность', d.confidence + '%') : ''}
+      ${d.hot ? '<span>🔥 горячая</span>' : ''}
+      <span style="flex:1;"></span>
+      <button onclick="document.getElementById('kcSetupModal').style.display='none'"
+        style="background:none;border:1px solid #2a3242;border-radius:6px;color:#8892a4;font-size:15px;cursor:pointer;padding:2px 11px;">✕</button>
+    </div>
+    ${d.verdict_note ? `<div style="color:#ffd23e;margin-bottom:8px;">💡 ${d.verdict_note}</div>` : ''}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+      ${chip('цена', fmtP(mt.price))}
+      ${chip('24ч', (mt.mom24 > 0 ? '+' : '') + mt.mom24 + '%', mt.mom24 >= 0 ? '#00e5a0' : '#ff5e9c')}
+      ${chip('RSI 1h/4h', (mt.rsi1h ?? '—') + ' / ' + (mt.rsi4h ?? '—'))}
+      ${tpHtml ? chip('тренды', tpHtml) : ''}
+      ${mt.bar_dz != null ? chip('Δ бара', (mt.bar_dz > 0 ? '+' : '') + mt.bar_dz, mt.bar_dz >= 1 ? '#00e5a0' : mt.bar_dz <= -1 ? '#ff5e9c' : '#8892a4') : ''}
+      ${mt.cvd24 != null ? chip('CVD24', (mt.cvd24 >= 0 ? '+' : '') + (Math.abs(mt.cvd24) >= 1e6 ? (mt.cvd24 / 1e6).toFixed(1) + 'M' : Math.round(mt.cvd24)), mt.cvd24 >= 0 ? '#00e5a0' : '#ff5e9c') : ''}
+      ${mt.funding_pct != null ? chip('funding', mt.funding_pct + '%', mt.funding_pct >= 0 ? '#00e5a0' : '#ff5e9c') : ''}
+      ${chip('фаза 4h', mt.phase_emoji)}${chip('климат 12h', mt.climate12_emoji)}
+      ${chip('объём', '×' + (mt.vol24_x ?? '—'))}
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+      ${mt.support ? chip('🟢 поддержка', zoneTxt(mt.support)) : chip('🟢 поддержка', 'не найдена рядом')}
+      ${mt.resistance ? chip('🔴 сопротивление', zoneTxt(mt.resistance)) : chip('🔴 сопротивление', 'не найдено рядом')}
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      ${sideBlock('🟢 LONG', d.long, '#00e5a0')}
+      ${sideBlock('🔴 SHORT', d.short, '#ff5e9c')}
+    </div>
+    ${act ? `<div style="margin-top:10px;font-size:11.5px;">⏳ активные сигналы в пути: ${act}</div>` : ''}
+    <div style="margin-top:12px;color:#5b667a;font-size:10.5px;">Setup Checker v3 · зоны 📏 + тренды + дельта бара + поток ·
+    все пороги из год-бэктестов (116k касаний, 13.9k живых исходов) · вход от края зоны лимиткой — по рынку после отскока эдж умирает</div>`;
 };
 // 🕯 — тумблер меток разворотных свечей у зоны (только 4h/12h/1d)
 window._kcQmRev = function() {
