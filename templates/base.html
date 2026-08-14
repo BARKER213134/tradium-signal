@@ -4552,10 +4552,13 @@ window.renderKChart = async function(container, symbol, tf, opts) {
                        (phL ? `<br>фаза рынка: <b style="color:${phC}">${phL}</b>` : '') +
                        (s.pattern ? `<br><span style="color:#aab3c2;">${String(s.pattern).slice(0, 90)}</span>` : '');
           const value = long ? bar.l : bar.h;
-          container._kcSigs.push({ ts, value, info, below: long });
+          // 13.08: якорь = ВРЕМЯ БАРА, не сырое время сигнала — на
+          // 4h/12h/1D сырой timestamp падал между барами и overlay
+          // не отрисовывался («на разных ТФ нет эмодзи»)
+          container._kcSigs.push({ ts: bar.t, value, info, below: long });
           chart.createOverlay({
             name: 'sigMarker', groupId: 'sig', lock: true,
-            points: [{ timestamp: ts, value }],
+            points: [{ timestamp: bar.t, value }],
             extendData: { emoji, dir: long ? 'LONG' : 'SHORT', color },
           });
         });
