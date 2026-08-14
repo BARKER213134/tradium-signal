@@ -4107,7 +4107,7 @@ window._kcQmFlips = function() {
 // 🎰 «Вход сейчас?» — модал полного разбора Setup Checker v3 (13.08):
 // вердикт, зоны, тренды, дельта, за/против, план входа. Общий для
 // всех графиков платформы.
-window._kcSetupModal = async function(sym) {
+window._kcSetupModal = async function(sym, sigCtx) {
   sym = (sym || '').replace('/', '');
   if (!sym) return;
   let m = document.getElementById('kcSetupModal');
@@ -4129,10 +4129,16 @@ window._kcSetupModal = async function(sym) {
   m.style.display = 'flex';
   body.innerHTML = '<div style="padding:30px;text-align:center;color:#8892a4;">🎰 Разбираю ' +
     sym.replace('USDT', '') + ' — зоны · тренды · дельта · поток…</div>';
-  let d;
+  let d, trd = null, pulse = null;
   try {
-    const r = await fetch('/api/setup-check?pair=' + encodeURIComponent(sym));
+    const [r, rt, rp] = await Promise.all([
+      fetch('/api/setup-check?pair=' + encodeURIComponent(sym)),
+      fetch('/api/trends').catch(() => null),
+      fetch('/api/source-pulse').catch(() => null),
+    ]);
     d = await r.json();
+    if (rt) trd = await rt.json().catch(() => null);
+    if (rp) pulse = await rp.json().catch(() => null);
   } catch (e) {
     body.innerHTML = '<div style="padding:30px;color:#ff5e9c;">⛔ сеть/сервер недоступны</div>';
     return;
@@ -4182,6 +4188,42 @@ window._kcSetupModal = async function(sym) {
         style="background:none;border:1px solid #2a3242;border-radius:6px;color:#8892a4;font-size:15px;cursor:pointer;padding:2px 11px;">✕</button>
     </div>
     ${d.verdict_note ? `<div style="color:#ffd23e;margin-bottom:8px;">💡 ${d.verdict_note}</div>` : ''}
+    ${(() => {
+      // 🌍 широта рынка — контекст дня («лонги против рынка» и т.п.)
+      if (!trd || trd.gauge == null) return '';
+      const g = trd.gauge;
+      const gc = g > 15 ? '#00e5a0' : g < -15 ? '#ff5e9c' : '#ffd23e';
+      const hint = g >= 25 ? 'перегрев — статистика за шорты у сопротивлений'
+        : g <= -25 ? 'распродажа — лонги только от сильных поддержек лимиткой'
+        : g < -5 ? 'рынок красный — лонги только от зон, шорты в приоритете'
+        : g > 5 ? 'рынок зелёный — лонги от поддержек, шорты не гнать'
+        : 'смешанный рынок — обе стороны только от уровней';
+      const pcts = (trd.tfs || []).map(tf => {
+        const p = (trd.pct || {})[tf];
+        const c = p == null ? '#8892a4' : p >= 55 ? '#00e5a0' : p <= 45 ? '#ff5e9c' : '#8892a4';
+        return `<span style="color:${c};font-family:monospace;">${tf} ${p == null ? '—' : p + '%▲'}</span>`;
+      }).join(' · ');
+      return `<div style="background:#10151f;border:1px solid #232b3a;border-radius:8px;padding:8px 12px;margin-bottom:10px;">
+        🌍 рынок сейчас: <b style="color:${gc};">широта ${g > 0 ? '+' : ''}${g}</b> · ${pcts}
+        <span style="color:#8892a4;"> — ${hint}</span></div>`;
+    })()}
+    ${(() => {
+      // 🧾 сверка сигнала, из которого открыт модал, с вердиктом панели
+      if (!sigCtx || !sigCtx.direction) return '';
+      const src = sigCtx.source || '?';
+      const dir = sigCtx.direction;
+      const pr = ((pulse || {}).rows || []).find(x => x.s === src);
+      const evTxt = pr ? `живой EV источника за 7д: <b style="color:${pr.ev > 0.2 ? '#00e5a0' : pr.ev < -0.2 ? '#ff5e9c' : '#ffd23e'};">${pr.ev > 0 ? '+' : ''}${pr.ev}%</b> (WR ${pr.wr}%, n=${pr.n})` : 'живого EV источника за 7д нет (мало исходов)';
+      const match = (d.verdict === 'ENTER_LONG' && dir === 'LONG') ||
+                    (d.verdict === 'ENTER_SHORT' && dir === 'SHORT');
+      const against = (d.verdict === 'ENTER_LONG' && dir === 'SHORT') ||
+                      (d.verdict === 'ENTER_SHORT' && dir === 'LONG');
+      const vs = match ? '<b style="color:#00e5a0;">✅ панель подтверждает направление сигнала</b>'
+        : against ? '<b style="color:#ff5e9c;">⛔ панель СЕЙЧАС смотрит в другую сторону — вход по сигналу против разбора</b>'
+        : '<b style="color:#ffd23e;">⏳ панель не даёт уверенного входа — сигнал торгуется только по своему плану (лимитка от зоны + стоп)</b>';
+      return `<div style="background:#10151f;border:1px solid #232b3a;border-radius:8px;padding:8px 12px;margin-bottom:10px;">
+        🧾 сигнал: <b>${src} ${dir}</b> · ${evTxt}<br>${vs}</div>`;
+    })()}
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
       ${chip('цена', fmtP(mt.price))}
       ${chip('24ч', (mt.mom24 > 0 ? '+' : '') + mt.mom24 + '%', mt.mom24 >= 0 ? '#00e5a0' : '#ff5e9c')}
