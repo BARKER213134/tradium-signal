@@ -7815,19 +7815,33 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   </select>
   <script>
   window._enterNowOn = false;
-  window._toggleEnterNow = function() {
+  window._enterNowKeys = null;   // серверный список актуальных по цене
+  window._toggleEnterNow = async function() {
     window._enterNowOn = !window._enterNowOn;
     const b = document.getElementById('jEnterNowBtn');
     const sel = document.getElementById('jEnterNowDir');
     if (window._enterNowOn) {
-      b.textContent = '⚡ Войти сейчас · ON';
+      b.textContent = '⚡ Войти сейчас · …';
       b.style.background = 'linear-gradient(135deg, rgba(255,210,62,0.55), rgba(0,229,160,0.30))';
       b.style.color = '#0a0e14';
       if (sel) sel.style.display = '';
+      // 14.08: сервер проверяет АКТУАЛЬНОСТЬ ЦЕНЫ (|цена−entry|≤1.5%
+      // или <35% пути к TP) — иначе фильтр показывал уехавшие сигналы,
+      // по которым «Вход?» честно говорил «поздно»
+      try {
+        const r = await fetch('/api/enter-now');
+        const d = await r.json();
+        window._enterNowKeys = new Set(d.keys || []);
+        b.textContent = '⚡ Войти сейчас · ON';
+      } catch (e) {
+        window._enterNowKeys = null;
+        b.textContent = '⚡ Войти сейчас · ON';
+      }
     } else {
       b.textContent = '⚡ Войти сейчас · OFF';
       b.style.background = 'linear-gradient(135deg, rgba(255,210,62,0.20), rgba(0,229,160,0.12))';
       b.style.color = '#ffd23e';
+      window._enterNowKeys = null;
       if (sel) sel.style.display = 'none';
     }
     if (typeof filterJournal === 'function') filterJournal();
@@ -9903,15 +9917,21 @@ function filterJournal() {
     } else if (src && s.source !== src) return false;
     // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
     if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;
-    // ⚡ Войти сейчас: сигнал ≤24ч + сделка ещё в пути + S/A или 💪/🪂/🪤
+    // ⚡ Войти сейчас: серверный список (цена ещё актуальна для входа),
+    // фолбэк — старые клиентские условия, если сервер недоступен
     if (window._enterNowOn) {
-      const nowS = Date.now() / 1000;
-      if ((s.at_ts || 0) < nowS - 24 * 3600) return false;
-      if (s.ns_state && s.ns_state !== 'WAITING') return false;
-      if (!((s.prio != null && s.prio >= 0.6) || s.absorb || s.pullback
-            || s.bulltrap)) return false;
       const dEl = document.getElementById('jEnterNowDir');
       if (dEl && dEl.value && s.direction !== dEl.value) return false;
+      if (window._enterNowKeys) {
+        const key = `${(s.symbol || '').replace('/', '')}|${s.source}|${s.at_ts || 0}`;
+        if (!window._enterNowKeys.has(key)) return false;
+      } else {
+        const nowS = Date.now() / 1000;
+        if ((s.at_ts || 0) < nowS - 24 * 3600) return false;
+        if (s.ns_state && s.ns_state !== 'WAITING') return false;
+        if (!((s.prio != null && s.prio >= 0.6) || s.absorb || s.pullback
+              || s.bulltrap)) return false;
+      }
     }
     // ⭐ Отборные — профиль победителей (live pro_star или зафиксированный)
     if (window._starOnlyOn && !(s.pro_star || s.svetofor_star)) return false;

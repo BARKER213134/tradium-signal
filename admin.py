@@ -9288,6 +9288,71 @@ async def api_setup_check(pair: str):
     return res
 
 
+@app.get("/api/enter-now")
+async def api_enter_now():
+    """⚡ «Войти сейчас»: живые сигналы ≤24ч хороших источников, у
+    которых ЦЕНА ЕЩЁ АКТУАЛЬНА для входа (14.08: фильтр по свойствам
+    сигнала отбирал уехавшие — модал честно говорил «поздно/НЕТ»).
+    Критерий актуальности: |цена/entry − 1| ≤ 1.5% ИЛИ цена прошла
+    <35% пути к TP (лимитка от края ещё имеет смысл)."""
+    def _q():
+        from database import _get_db, utcnow
+        from datetime import timedelta
+        from exchange import get_prices
+        col = _get_db().new_strategy_signals
+        since = utcnow() - timedelta(hours=24)
+        GOOD = {"level_touch", "blowoff", "floor_buy", "corridor",
+                "thin_pump", "st_break4h", "fade", "flip_retest"}
+        cands = []
+        for d in col.find(
+                {"backfill": {"$exists": False}, "state": "WAITING",
+                 "created_at": {"$gte": since}},
+                {"strategy": 1, "symbol": 1, "pair": 1, "direction": 1,
+                 "entry": 1, "tp": 1, "created_at": 1,
+                 "indicators.absorb": 1, "indicators.pullback": 1,
+                 "indicators.bulltrap": 1,
+                 "indicators.push_against": 1}).limit(600):
+            _li = d.get("indicators") or {}
+            if _li.get("push_against"):
+                continue
+            badge = (_li.get("absorb") or _li.get("pullback")
+                     or _li.get("bulltrap"))
+            if not (badge or d.get("strategy") in GOOD):
+                continue
+            if d.get("entry") and d.get("direction"):
+                cands.append(d)
+        if not cands:
+            return {"ok": True, "keys": [], "n": 0}
+        pairs = list({(d.get("pair") or
+                       (d.get("symbol") or "").replace("USDT", "/USDT"))
+                      for d in cands})
+        prices = {}
+        try:
+            raw = get_prices(pairs) or {}
+            prices = {k.replace("/", "").upper(): v for k, v in raw.items()}
+        except Exception:
+            pass
+        keys = []
+        for d in cands:
+            sym = (d.get("symbol") or
+                   (d.get("pair") or "").replace("/", "")).upper()
+            px = prices.get(sym)
+            e = d["entry"]
+            if not px or not e:
+                continue
+            near = abs(px / e - 1) * 100 <= 1.5
+            prog_ok = False
+            tp = d.get("tp")
+            if tp and tp != e:
+                prog = (px - e) / (tp - e)
+                prog_ok = 0 <= prog < 0.35
+            if near or prog_ok:
+                at_ts = int(d["created_at"].timestamp())
+                keys.append(f"{sym}|{d.get('strategy')}|{at_ts}")
+        return {"ok": True, "keys": keys, "n": len(keys)}
+    return await asyncio.to_thread(_q)
+
+
 @app.get("/api/entry-watch")
 async def api_entry_watch_list():
     """🔔 Вотчлист «ЖДАТЬ → ВХОД»: монеты под наблюдением + статусы."""
