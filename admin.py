@@ -9263,6 +9263,39 @@ async def api_setup_check(pair: str):
     return await asyncio.to_thread(sc.check_setup, pair)
 
 
+@app.get("/api/entry-watch")
+async def api_entry_watch_list():
+    """🔔 Вотчлист «ЖДАТЬ → ВХОД»: монеты под наблюдением + статусы."""
+    def _q():
+        from database import _get_db
+        rows = list(_get_db().entry_watch.find({}).sort("added_at", -1))
+        for r in rows:
+            r["_id"] = str(r["_id"])
+            for k in ("added_at", "fired_at", "checked_at"):
+                if r.get(k) is not None and hasattr(r[k], "isoformat"):
+                    r[k] = r[k].isoformat()
+        return {"ok": True, "rows": rows}
+    return await asyncio.to_thread(_q)
+
+
+@app.post("/api/entry-watch")
+async def api_entry_watch_add(symbol: str, side: str = "LONG"):
+    """🔔 Добавить/убрать (toggle) монету в слежение за входом."""
+    def _q():
+        from database import _get_db, utcnow
+        col = _get_db().entry_watch
+        sym = symbol.replace("/", "").upper()
+        sd = side.upper()
+        key = {"symbol": sym, "side": sd}
+        if col.find_one(key):
+            col.delete_many(key)
+            return {"ok": True, "watching": False}
+        col.insert_one({**key, "added_at": utcnow(), "fired": False,
+                        "last_grade": None})
+        return {"ok": True, "watching": True}
+    return await asyncio.to_thread(_q)
+
+
 @app.get("/api/market-bias")
 async def api_market_bias(force: bool = False):
     """TOTAL2 SuperTrend → LONG/SHORT/WAIT bias для шапки журнала."""

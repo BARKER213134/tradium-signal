@@ -11967,7 +11967,8 @@ async function openJournalChart(idx, forceTF) {
   const dirInfo = s.direction ? ` · ${dirE} ${s.direction}` : '';
   const entryInfo = s.entry ? ` · <code>${s.entry}</code>` : '';
   window._jModalSym = sym.toUpperCase();
-  window._jModalSig = { source: s.source, direction: s.direction };
+  window._jModalSig = { source: s.source, direction: s.direction,
+    svetofor: s.svetofor || s.pro_verdict || null, at_ts: s.at_ts || null };
   title.innerHTML = `${srcBadge} ${srcName} · ${pairClick}${dirInfo}${entryInfo}${scoreInfo}` +
     ` <button onclick="window._kcSetupModal(window._jModalSym, window._jModalSig)" title="🎰 Полный разбор: можно ли входить сейчас" style="margin-left:10px;background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.5);border-radius:6px;color:#ffd23e;font-size:11px;font-weight:800;cursor:pointer;padding:3px 10px;font-family:var(--font-mono);">🎰 Вход?</button>` +
     ` <span id="jTrendBadge" style="margin-left:10px;display:inline-flex;gap:6px;align-items:center;"></span>`;

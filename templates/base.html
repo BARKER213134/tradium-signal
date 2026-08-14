@@ -4221,8 +4221,18 @@ window._kcSetupModal = async function(sym, sigCtx) {
       const vs = match ? '<b style="color:#00e5a0;">✅ панель подтверждает направление сигнала</b>'
         : against ? '<b style="color:#ff5e9c;">⛔ панель СЕЙЧАС смотрит в другую сторону — вход по сигналу против разбора</b>'
         : '<b style="color:#ffd23e;">⏳ панель не даёт уверенного входа — сигнал торгуется только по своему плану (лимитка от зоны + стоп)</b>';
+      // ⏱ «тогда vs сейчас»: светофор фиксируется В МОМЕНТ сигнала, а
+      // разбор считается на текущей цене — расхождение не баг, а время
+      let then = '';
+      if (sigCtx.svetofor || sigCtx.at_ts) {
+        const age = sigCtx.at_ts ? Math.round((Date.now() / 1000 - sigCtx.at_ts) / 3600) : null;
+        const svC = sigCtx.svetofor === 'ДА' ? '#00e5a0' : sigCtx.svetofor === 'МОЖНО' ? '#ffd23e' : '#ff5e9c';
+        then = `<br><span style="color:#8892a4;">⏱ на момент сигнала${age != null ? ' (' + age + 'ч назад)' : ''}: светофор ` +
+          (sigCtx.svetofor ? `<b style="color:${svC};">${sigCtx.svetofor}</b>` : '—') +
+          ` · разбор выше — состояние СЕЙЧАС: если цена уехала от входа, вердикт честно станет хуже</span>`;
+      }
       return `<div style="background:#10151f;border:1px solid #232b3a;border-radius:8px;padding:8px 12px;margin-bottom:10px;">
-        🧾 сигнал: <b>${src} ${dir}</b> · ${evTxt}<br>${vs}</div>`;
+        🧾 сигнал: <b>${src} ${dir}</b> · ${evTxt}<br>${vs}${then}</div>`;
     })()}
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
       ${chip('цена', fmtP(mt.price))}
