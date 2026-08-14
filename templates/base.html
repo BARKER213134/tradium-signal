@@ -823,6 +823,7 @@
           corridor:'🎈',       // 🎈 лонг: полка+пустой путь+покупатель (год: EV+0.49, 60д +0.33)
           level_touch:'📏',    // 📏 касание уровня + RSI-гейт (год: LONG WR68 +0.69R, SHORT WR63 +0.58R)
           flip_retest:'🪜',    // 🪜 лонг: ретест пробитого сопротивления (год: 2R+БУ +0.47R PF3.45)
+          full_stack:'🧗',     // 🧗 первая свеча полного аптренда + фильтры (полгода: EV +0.90, WR(TP) 28)
           rev_candle:'🕯',     // 🕯 чёткая разворотная свеча у 4h-зоны (тайминг-инфо)
           alarm:'⏰',          // ⏰ сработавший будильник (alarm_events)
           // tradium / cryptovizor / bigbuy удалены (ingestion отключён 2026-07-01)
@@ -879,6 +880,7 @@
         if (src === 'corridor') return '🎈';
         if (src === 'level_touch') return '📏';
         if (src === 'flip_retest') return '🪜';
+        if (src === 'full_stack') return '🧗';
         if (src === 'rev_candle') return '🕯';
         if (src === 'alarm') return '⏰';
         if (src === 'st_break4h') return '💣';

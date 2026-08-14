@@ -511,6 +511,66 @@ def _floor_buy_sig(pair: str, kd: list[dict]):
         return None
 
 
+def _full_stack_sig(pair: str, kd: list[dict]):
+    """🧗 ПОЛНЫЙ СТЕК → LONG: закрытый 1h-бар собирает полный аптренд
+    (ST(10,3) 1h/2h/4h/12h все UP; час назад — ещё не все). Бэктест
+    полгода 15.02–14.08 (3645 переходов, сетка +10/−5/96ч): все подряд
+    EV +0.1%, с фильтрами n=285 EV +0.90% WR(TP) 28%, половины
+    [+0.83/+0.96]. Фильтры:
+      — дельта бара перехода +20..50% объёма (покупатель жив, не истерика;
+        >50% → −0.30, отрицательная → шум)
+      — ход за 24ч 0..+12% (догон >25% → EV −1.90)
+      — RSI1h 55..75 (импульс есть, перегрева нет; <55 → −0.98, >75 → −0.69)
+      — 12h-тренд зрелый: UP ≥8 закрытых 12h-баров (~96ч; свежий
+        12h-флип <24ч, стек «снизу вверх» → −0.52)"""
+    try:
+        if len(kd) < 300:
+            return None
+        b = kd[-2]
+        if not b.get("v") or b["v"] <= 0:
+            return None
+        now = _trend_dirs(kd)
+        if not now or any(now.get(tf, 0) <= 0 for tf in ("1h", "2h", "4h", "12h")):
+            return None
+        prev = _trend_dirs(kd[:-1])
+        if prev and all(prev.get(tf, 0) > 0 for tf in ("1h", "2h", "4h", "12h")):
+            return None  # стек был полным и час назад — не переход
+        dsh = (2 * b.get("tb", b["v"] / 2) - b["v"]) / b["v"]
+        if not (0.2 <= dsh < 0.5):
+            return None
+        c24 = kd[-26]["c"]
+        mom24 = (b["c"] / c24 - 1) * 100 if c24 else 0.0
+        if not (0 <= mom24 < 12):
+            return None
+        rv = _rsi4h_value(kd[:-1], 1)  # RSI14 на закрытых 1h-барах
+        if not rv or not (55 <= rv[0] < 75):
+            return None
+        # зрелость 12h: последние 8 ЗАКРЫТЫХ 12h-баров все в UP
+        from backtest_supertrend import compute_st_series
+        grp = {}
+        for x in kd:
+            k = x["t"] // (12 * 3600_000)
+            if k not in grp:
+                grp[k] = dict(x)
+            else:
+                grp[k]["h"] = max(grp[k]["h"], x["h"])
+                grp[k]["l"] = min(grp[k]["l"], x["l"])
+                grp[k]["c"] = x["c"]
+        bars12 = [grp[k] for k in sorted(grp)][:-1]
+        s12 = compute_st_series(bars12, 10, 3.0) if len(bars12) >= 14 else []
+        if len(s12) < 8 or any((x.get("trend") or 0) <= 0 for x in s12[-8:]):
+            return None
+        price = b["c"]
+        return {"strategy": "full_stack", "direction": "LONG",
+                "pair": pair, "symbol": pair.replace("/", "").upper(),
+                "entry": price, "tp": price * 1.10, "sl": price * 0.95,
+                "horizon_h": 96,
+                "indicators": {"dsh": round(dsh, 2), "mom24": round(mom24, 1),
+                               "rsi1h": round(rv[0], 1)}}
+    except Exception:
+        return None
+
+
 def _support_defense_sig(pair: str, kd: list[dict]):
     """🧱 ЗАЩИТА ПОДДЕРЖКИ → LONG: 30m имбаланс-бар (объём >=3× медианы-48ч,
     дельта покупок >=60% объёма) касается 10-дневного лоу — крупный
@@ -1201,6 +1261,7 @@ def scan_universe(max_pairs: int = 300):
                                     and _core):
                                 try:
                                     from database import _get_db as _gza
+                                    from datetime import timedelta
                                     _zac = _gza().zone_alerts
                                     _dup = _zac.find_one({
                                         "pair": pair, "side": _sd,
@@ -1598,6 +1659,26 @@ def scan_universe(max_pairs: int = 300):
                         from impulse_detector import store_signal
                         if store_signal(_fb, cooldown_h=24):
                             ds_fired += 1
+                    except Exception:
+                        pass
+                # 🧗 полный стек: первая свеча полного аптренда (кулдаун 24ч, TG)
+                _fs = _full_stack_sig(pair, kd)
+                if _fs is not None:
+                    try:
+                        from impulse_detector import store_signal
+                        if store_signal(_fs, cooldown_h=24):
+                            ds_fired += 1
+                            _fi = _fs["indicators"]
+                            _tg16(f"🧗 <b>ПОЛНЫЙ СТЕК · "
+                                  f"{pair.replace('/USDT', '')}</b>\n"
+                                  f"🟢 LONG @ {_fs['entry']:.6g}\n"
+                                  f"1h+2h+4h+12h все ▲ — первая свеча полного "
+                                  f"аптренда, сборка «сверху вниз»\n"
+                                  f"дельта бара +{_fi['dsh']*100:.0f}% · "
+                                  f"24ч {_fi['mom24']:+.1f}% · RSI1h {_fi['rsi1h']:.0f}\n"
+                                  f"TP +10% · SL −5% · до 96ч\n"
+                                  f"<i>бэктест полгода: EV +0.90%/сделку, "
+                                  f"WR(TP+10) 28%</i>")
                     except Exception:
                         pass
                 # 🎈 коридор: полка+воздух+покупатель → LONG (кулдаун 24ч, TG)
