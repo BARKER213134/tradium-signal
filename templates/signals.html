@@ -7807,6 +7807,32 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     if (typeof filterJournal === 'function') filterJournal();
   };
   </script>
+  <button id="jEnterNowBtn" onclick="_toggleEnterNow()" title="⚡ Монеты, в которые МОЖНО ВОЙТИ СЕЙЧАС по сегодняшним сигналам: сигнал ≤24ч, сделка ещё в пути (TP/SL не сработали), источник класса S/A (живой EV ≥ +0.6%/сделку) или бейджи 💪 поглощение / 🪂 откат / 🪤 ловушка. Рядом появится выбор LONG/SHORT." style="background:linear-gradient(135deg, rgba(255,210,62,0.20), rgba(0,229,160,0.12));border:1.5px solid rgba(255,210,62,0.65);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ffd23e;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:800;">⚡ Войти сейчас · OFF</button>
+  <select id="jEnterNowDir" onchange="filterJournal()" style="display:none;background:var(--dark);color:var(--text);border:1.5px solid rgba(255,210,62,0.5);border-radius:6px;padding:4px 8px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">🟢+🔴 обе стороны</option>
+    <option value="LONG">🟢 только LONG</option>
+    <option value="SHORT">🔴 только SHORT</option>
+  </select>
+  <script>
+  window._enterNowOn = false;
+  window._toggleEnterNow = function() {
+    window._enterNowOn = !window._enterNowOn;
+    const b = document.getElementById('jEnterNowBtn');
+    const sel = document.getElementById('jEnterNowDir');
+    if (window._enterNowOn) {
+      b.textContent = '⚡ Войти сейчас · ON';
+      b.style.background = 'linear-gradient(135deg, rgba(255,210,62,0.55), rgba(0,229,160,0.30))';
+      b.style.color = '#0a0e14';
+      if (sel) sel.style.display = '';
+    } else {
+      b.textContent = '⚡ Войти сейчас · OFF';
+      b.style.background = 'linear-gradient(135deg, rgba(255,210,62,0.20), rgba(0,229,160,0.12))';
+      b.style.color = '#ffd23e';
+      if (sel) sel.style.display = 'none';
+    }
+    if (typeof filterJournal === 'function') filterJournal();
+  };
+  </script>
   <button id="jBestEntryBtn" onclick="_toggleBestEntry()" title="🥇 Лучший отбор по бэктестам 90д (~26k точек, цель +10% до −5% за 96ч): LONG + RSI>SMA на 4h+1d (WR 36.3%, EV +0.45%) + RSI 1h и 4h в зоне 50–70 (35–36% vs BE 33). Выставляет фильтры Направление/SMA/RSI одним кликом — их видно и можно поправить руками. Шорты в этой зоне умирают (22.6% WR) — поэтому только LONG." style="background:linear-gradient(135deg, rgba(0,229,160,0.15), rgba(178,139,255,0.10));border:1.5px solid rgba(0,229,160,0.55);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:700;">🥇 Лучший отбор · OFF</button>
   <script>
   window._bestEntryOn = false;
@@ -9877,6 +9903,16 @@ function filterJournal() {
     } else if (src && s.source !== src) return false;
     // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
     if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;
+    // ⚡ Войти сейчас: сигнал ≤24ч + сделка ещё в пути + S/A или 💪/🪂/🪤
+    if (window._enterNowOn) {
+      const nowS = Date.now() / 1000;
+      if ((s.at_ts || 0) < nowS - 24 * 3600) return false;
+      if (s.ns_state && s.ns_state !== 'WAITING') return false;
+      if (!((s.prio != null && s.prio >= 0.6) || s.absorb || s.pullback
+            || s.bulltrap)) return false;
+      const dEl = document.getElementById('jEnterNowDir');
+      if (dEl && dEl.value && s.direction !== dEl.value) return false;
+    }
     // ⭐ Отборные — профиль победителей (live pro_star или зафиксированный)
     if (window._starOnlyOn && !(s.pro_star || s.svetofor_star)) return false;
     if (dir && s.direction !== dir) return false;
