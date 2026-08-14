@@ -4156,7 +4156,20 @@ window._kcSetupModal = async function(sym, sigCtx) {
   const fmtP = v => v == null ? '—' : (+v).toPrecision(6).replace(/\.?0+$/, '');
   const V = {ENTER_LONG: ['🟢 ВХОДИТЬ В ЛОНГ', '#00e5a0'], ENTER_SHORT: ['🔴 ВХОДИТЬ В ШОРТ', '#ff5e9c'],
              WAIT: ['⏳ ЖДАТЬ', '#ffd23e'], NO_DATA: ['— НЕТ ДАННЫХ', '#8892a4'], ERROR: ['⛔ ОШИБКА', '#8892a4']};
-  const [vTxt, vCol] = V[d.verdict] || V.WAIT;
+  let [vTxt, vCol] = V[d.verdict] || V.WAIT;
+  // 14.08: открыт из сигнала → ГЛАВНЫЙ бейдж = грейд стороны сигнала
+  // (общий вердикт «ЖДАТЬ» читался как «нет», хотя SHORT: ДА)
+  let sigSideTxt = '';
+  if (sigCtx && sigCtx.direction) {
+    const sd = sigCtx.direction === 'LONG' ? d.long : d.short;
+    const g = (sd || {}).grade || '?';
+    const de = sigCtx.direction === 'LONG' ? '🟢' : '🔴';
+    if (g === 'ДА') { vTxt = `${de} ${sigCtx.direction}: ДА — входить по плану от зоны`; vCol = sigCtx.direction === 'LONG' ? '#00e5a0' : '#ff5e9c'; }
+    else if (g === 'МОЖНО') { vTxt = `${de} ${sigCtx.direction}: МОЖНО — по плану, без догона`; vCol = '#ffd23e'; }
+    else if ((g || '').startsWith('ЖДАТЬ')) { vTxt = `${de} ${sigCtx.direction}: ${g}`; vCol = '#4cc9f0'; }
+    else { vTxt = `${de} ${sigCtx.direction}: НЕ ВХОДИТЬ`; vCol = '#ff5e9c'; }
+    sigSideTxt = `<span style="color:#8892a4;font-size:11px;">общий вердикт: ${(V[d.verdict] || V.WAIT)[0]}</span>`;
+  }
   const gradeCol = g => g === 'ДА' ? '#00e5a0' : g === 'МОЖНО' ? '#ffd23e'
     : (g || '').startsWith('ЖДАТЬ') ? '#4cc9f0' : '#ff5e9c';
   const chip = (label, val, col) => val == null ? '' :
@@ -4166,11 +4179,13 @@ window._kcSetupModal = async function(sym, sigCtx) {
     `<span style="color:${a === '▲' ? '#00e5a0' : a === '▼' ? '#ff5e9c' : '#8892a4'};">${['1h','2h','4h','12h'][i]}${a}</span>`).join(' ');
   const zoneTxt = z => !z ? null :
     `⚡${z.strength}% · ${z.touches}кас · в ${z.dist_pct}% (${fmtP(z.lo)}–${fmtP(z.hi)})`;
-  const sideBlock = (title, s, col) => {
+  const sideBlock = (title, s, col, hot) => {
     if (!s || !s.grade) return '';
     const pl = s.plan || {};
     const ez = pl.entry_zone || [];
-    return `<div style="flex:1;min-width:300px;background:#10151f;border:1px solid #232b3a;border-radius:10px;padding:12px 14px;">
+    const bd = hot ? `2px solid ${col}` : '1px solid #232b3a';
+    const op = hot === false ? 'opacity:0.65;' : '';
+    return `<div style="flex:1;min-width:300px;background:#10151f;border:${bd};border-radius:10px;padding:12px 14px;${op}">
       <div style="font-weight:800;font-size:13px;margin-bottom:8px;color:${col};">${title}:
         <span style="color:${gradeCol(s.grade)};">${s.grade}</span></div>
       ${(s.pros || []).map(p => `<div style="margin:3px 0;color:#bfe8d4;">✅ ${p}</div>`).join('')}
@@ -4190,6 +4205,7 @@ window._kcSetupModal = async function(sym, sigCtx) {
     <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
       <b style="font-size:17px;">🎰 ${sym.replace('USDT', '')} — вход сейчас?</b>
       <span style="background:${vCol}22;border:1.5px solid ${vCol};border-radius:8px;padding:5px 14px;font-weight:800;color:${vCol};">${vTxt}</span>
+      ${sigSideTxt}
       ${d.confidence ? chip('уверенность', d.confidence + '%') : ''}
       ${d.hot ? '<span>🔥 горячая</span>' : ''}
       <span style="flex:1;"></span>
@@ -4265,8 +4281,14 @@ window._kcSetupModal = async function(sym, sigCtx) {
       ${mt.resistance ? chip('🔴 сопротивление', zoneTxt(mt.resistance)) : chip('🔴 сопротивление', 'не найдено рядом')}
     </div>
     <div style="display:flex;gap:12px;flex-wrap:wrap;">
-      ${sideBlock('🟢 LONG', d.long, '#00e5a0')}
-      ${sideBlock('🔴 SHORT', d.short, '#ff5e9c')}
+      ${(() => {
+        const L = () => sideBlock('🟢 LONG', d.long, '#00e5a0',
+          sigCtx && sigCtx.direction ? sigCtx.direction === 'LONG' : undefined);
+        const S = () => sideBlock('🔴 SHORT', d.short, '#ff5e9c',
+          sigCtx && sigCtx.direction ? sigCtx.direction === 'SHORT' : undefined);
+        // сторона сигнала — первой и с подсветкой
+        return (sigCtx && sigCtx.direction === 'SHORT') ? S() + L() : L() + S();
+      })()}
     </div>
     ${act ? `<div style="margin-top:10px;font-size:11.5px;">⏳ активные сигналы в пути: ${act}</div>` : ''}
     <div style="margin-top:12px;color:#5b667a;font-size:10.5px;">Setup Checker v3 · зоны 📏 + тренды + дельта бара + поток ·
