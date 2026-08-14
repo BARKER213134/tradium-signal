@@ -8021,11 +8021,11 @@ async function _pollDeltaBackfill() {
       <col style="width:5%;">    <!-- Напр. -->
       <col style="width:5%;">    <!-- 🎓 Вход? (оценка сделки) -->
       <col style="width:6%;">    <!-- 🎩 PRO (контекст трейдера) -->
+      <col style="width:6%;">    <!-- Trend (рядом со светофором, 14.08) -->
       <col style="width:6%;">    <!-- Entry -->
       <col style="width:12%;">   <!-- Паттерн -->
       <col style="width:9%;">    <!-- RSI 4 TF -->
       <col style="width:6%;">    <!-- SMA vs RSI -->
-      <col style="width:6%;">    <!-- Trend -->
       <col style="width:4%;">    <!-- Δ24ч фьюч. дельта -->
       <col style="width:5%;">    <!-- 4h state -->
       <col style="width:5%;">    <!-- 12h state -->
@@ -8040,6 +8040,7 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('direction')" id="jSortDir" style="text-align:center;padding:14px 6px;">Напр.</th>
         <th class="sortable" onclick="jSort('trade_ev')" id="jSortGrade" title="🎓 Оценка сделки под ЦЕЛЬ +10%: единый бэктест ВСЕХ сигналов базы (3 мес, ~48k, сетка LONG TP+10/SL−5 · SHORT TP−10/SL+5, горизонт 96ч) в разрезе источник × направление × фаза бейджа на момент сигнала. 🟩 EV ≥ +0.75%/сделку — ВХОД · 🟨 0…+0.75 — слабый плюс · 🟥 < 0 — скип. Число = EV %/сделку. В подсказке ячейки: WR, % доходов до +10%, готовые уровни. Клик — сортировка." style="text-align:center;padding:14px 6px;">Вход?</th>
         <th class="sortable" onclick="jSort('pro_score')" id="jSortPro" title="🚦 Светофор — «входить или нет» считается сервером для каждого свежего сигнала (<48ч), та же логика что модалка проверки входа. Жёсткие НЕТ: против фазы (кроме 💣-реверсала), догон >20%/24ч. Счёт: фаза + RS-сила 7д + RSI4h-зоны + триггер (🟩 +3 / 🟨 +1 / ST-флипы) − 4h ST против. ✅ ДА ≥5 · ⚠️ МОЖНО 2-4 · ⛔ НЕТ <2. Реплей 30д (13.7k сделок): ДА WR 43.1% (+9.8пп к БУ) · НЕТ 37.3%. Наведи на ячейку — слагаемые; клик по 🚦 у монеты — полный разбор. Клик — сортировка." style="text-align:center;padding:14px 6px;">🚦</th>
+        <th id="jSortTrend" title="Тренд по EMA20 vs EMA50 на close per TF. ▲ зелёный = UP, ▼ красный = DOWN, ◆ серый = FLAT" style="text-align:center;padding:14px 6px;">Тренд</th>
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry" style="text-align:center;padding:14px 8px;">Entry</th>
         <th class="sortable" onclick="jSort('score')" id="jSortScore" style="text-align:left;padding:14px 14px;">Паттерн</th>
         <th id="jSortRsi" style="text-align:center;padding:14px 6px;position:relative;">
@@ -8047,7 +8048,6 @@ async function _pollDeltaBackfill() {
           <span onclick="event.stopPropagation();window._toggleRsiHelp(event)" style="display:inline-block;margin-left:4px;width:14px;height:14px;line-height:14px;text-align:center;background:rgba(178,139,255,0.2);border:1px solid #b28bff;border-radius:50%;color:#b28bff;font-size:9px;font-weight:700;cursor:pointer;vertical-align:middle;" title="Backtest best RSI buckets">ⓘ</span>
         </th>
         <th id="jSortSma" title="SMA(14) of RSI per TF. 🟢 = RSI выше SMA (bullish momentum), 🔴 = ниже (bearish)" style="text-align:center;padding:14px 6px;">SMA</th>
-        <th id="jSortTrend" title="Тренд по EMA20 vs EMA50 на close per TF. ▲ зелёный = UP, ▼ красный = DOWN, ◆ серый = FLAT" style="text-align:center;padding:14px 6px;">Тренд</th>
         <th title="Фьючерсная тайкер-дельта за 24ч СЕЙЧАС (z-норм.): агрессивные покупки минус продажи. 🟢 >+1 покупатель · 🔴 <-1 продавец. Источник fapi, обновление 30 мин" style="text-align:center;padding:14px 6px;">Δ24ч</th>
         <th class="sortable" onclick="jSort('rsi4h_match')" id="jSort4h" title="RSI/SMA(RSI) на 4h: ✓ = state в направлении сделки. Faster reaction than 12h." style="text-align:center;padding:14px 6px;">4h</th>
         <th class="sortable" onclick="jSort('rsi12h_match')" id="jSort12h" title="RSI/SMA(RSI) на 12h: ✓ = RSI>SMA для LONG или RSI<SMA для SHORT (state в направлении сделки). По backtest 14d: +14-17 WR пп. Click для sort." style="text-align:center;padding:14px 6px;">12h</th>
@@ -10693,6 +10693,7 @@ function renderJournal(items, startIdx) {
       <td>${dir}</td>
       ${gradeCell}
       ${proCell}
+      ${trendCell}
       <td class="mono">${s.entry || '—'}</td>
       <td class="mono pattern-cell" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(s.pattern || '').replace(/"/g,'&quot;')}">${s.pattern || ''} ${s.score ? '<span style=\"color:var(--muted);font-size:11px;\">('+s.score+')</span>' : ''}${window._stBadge ? window._stBadge(s._stFlags) : ''}</td>
       ${rsiCell}
