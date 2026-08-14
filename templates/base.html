@@ -4015,6 +4015,7 @@ window.openPairChart = function(symbol, tf) {
   const tfCur = tf || localStorage.getItem('kc_qm_tf') || '1h';
   localStorage.setItem('kc_qm_tf', tfCur);
   window._kcQmSym = sym;
+  if (window._kcQmRevPaint) window._kcQmRevPaint();
   // ◀▶ листание по списку вкладки (Тренды кладут порядок в _kcQmList)
   const navList = window._kcQmList || [];
   const navIx = navList.indexOf(sym);
@@ -4295,9 +4296,19 @@ window._kcSetupModal = async function(sym, sigCtx) {
     все пороги из год-бэктестов (116k касаний, 13.9k живых исходов) · вход от края зоны лимиткой — по рынку после отскока эдж умирает</div>`;
 };
 // 🕯 — тумблер меток разворотных свечей у зоны (только 4h/12h/1d)
+window._kcQmRevPaint = function() {
+  const b = document.getElementById('kcQmRevBtn');
+  if (!b) return;
+  const on = localStorage.getItem('kc_rev_candles') !== '0';
+  b.style.color = on ? '#ffd23e' : 'var(--muted,#8892a4)';
+  b.style.borderColor = on ? 'rgba(255,210,62,0.6)' : 'var(--border,#334)';
+  b.style.background = on ? 'rgba(255,210,62,0.10)' : 'none';
+  b.textContent = on ? '🕯Свечи ✓' : '🕯Свечи';
+};
 window._kcQmRev = function() {
   const off = localStorage.getItem('kc_rev_candles') === '0';
   localStorage.setItem('kc_rev_candles', off ? '1' : '0');
+  window._kcQmRevPaint();
   if (window._kcQmSym) {
     openPairChart(window._kcQmSym, localStorage.getItem('kc_qm_tf') || '1h');
   }
