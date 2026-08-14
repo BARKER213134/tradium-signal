@@ -552,6 +552,35 @@ function fpRender() {
       g.font = '10px monospace';
     }
   }
+  // 📈 метки смены тренда (ST-флипы текущего ТФ) — как на свечных
+  // графиках; тумблер общий kc_trend_flips (13.08: «в кластерах
+  // свечные тренды не работают» — их тут и не было)
+  if (window._stFlipMarks && bw >= 4
+      && localStorage.getItem('kc_trend_flips') !== '0') {
+    try {
+      const fl = window._stFlipMarks(d.bars) || [];
+      g.textAlign = 'center';
+      const FS = Math.max(10, Math.min(13, bw * 0.6));
+      g.font = `bold ${FS}px monospace`;
+      fl.forEach(f => {
+        const i = f.i - i0;
+        if (i < 0 || i >= n) return;
+        const b = bars[i];
+        const xc = i * bw + bw / 2;
+        const up = f.dir > 0;
+        const txt = bw >= 16 ? (up ? '▲тренд' : '▼тренд') : (up ? '▲' : '▼');
+        const off = up ? (usedBot[i] = (usedBot[i] || 0) + 1)
+                       : (usedTop[i] = (usedTop[i] || 0) + 1);
+        const yy = up
+          ? Math.min(chartH - 4, y(b.l) + 13 + (off - 1) * 15)
+          : Math.max(10, y(b.h) - 5 - (off - 1) * 15);
+        g.fillStyle = up ? 'rgba(0,229,160,0.95)' : 'rgba(255,94,140,0.95)';
+        g.fillText(txt, xc, yy);
+      });
+      g.textAlign = 'left';
+      g.font = '10px monospace';
+    } catch (e) {}
+  }
   // 🪧 эмодзи сигналов журнала: SHORT — над баром, LONG — под баром,
   // в продолжение стека аномалий (не закрывают ни ячейки, ни значки)
   _fpSigNotes = {};

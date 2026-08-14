@@ -4105,7 +4105,7 @@ button,input,select{outline:none}
   <div id="fpTip" style="display:none;position:absolute;pointer-events:none;background:rgba(10,14,22,0.95);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:10.5px;line-height:1.55;z-index:5;white-space:nowrap;"></div>
 </div>
 <script src="/static/levels.js?v=5"></script>
-<script src="/static/footprint.js?v=13"></script>
+<script src="/static/footprint.js?v=14"></script>
 </body></html>""")
 
 
