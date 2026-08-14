@@ -7807,7 +7807,14 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     if (typeof filterJournal === 'function') filterJournal();
   };
   </script>
-  <button id="jEnterNowBtn" onclick="_toggleEnterNow()" title="⚡ Монеты, в которые МОЖНО ВОЙТИ СЕЙЧАС по сегодняшним сигналам: сигнал ≤24ч, сделка ещё в пути (TP/SL не сработали), источник класса S/A (живой EV ≥ +0.6%/сделку) или бейджи 💪 поглощение / 🪂 откат / 🪤 ловушка. Рядом появится выбор LONG/SHORT." style="background:linear-gradient(135deg, rgba(255,210,62,0.20), rgba(0,229,160,0.12));border:1.5px solid rgba(255,210,62,0.65);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ffd23e;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:800;">⚡ Войти сейчас · OFF</button>
+  <style>
+  @keyframes enterNowGlow {
+    0%, 100% { box-shadow: 0 0 10px rgba(255,210,62,0.45), 0 0 22px rgba(0,229,160,0.15); }
+    50% { box-shadow: 0 0 18px rgba(255,210,62,0.85), 0 0 34px rgba(0,229,160,0.35); }
+  }
+  #jEnterNowBtn { animation: enterNowGlow 2.2s ease-in-out infinite; }
+  </style>
+  <button id="jEnterNowBtn" onclick="_toggleEnterNow()" title="⚡ Монеты, в которые МОЖНО ВОЙТИ СЕЙЧАС: сигнал ≤24ч, сделка ещё в пути, источник S/A или 💪/🪂/🪤, и ЦЕНА ЕЩЁ У ВХОДА (серверная сверка). Рядом появится выбор LONG/SHORT." style="background:linear-gradient(135deg, #ffd23e, #00e5a0);border:2px solid rgba(255,210,62,0.9);border-radius:8px;padding:7px 18px;font-size:13px;font-family:var(--font-mono);color:#0a0e14;cursor:pointer;min-width:190px;text-align:center;box-sizing:border-box;font-weight:900;letter-spacing:0.02em;">⚡ ВОЙТИ СЕЙЧАС · OFF</button>
   <select id="jEnterNowDir" onchange="filterJournal()" style="display:none;background:var(--dark);color:var(--text);border:1.5px solid rgba(255,210,62,0.5);border-radius:6px;padding:4px 8px;font-size:11px;font-family:var(--font-mono);">
     <option value="">🟢+🔴 обе стороны</option>
     <option value="LONG">🟢 только LONG</option>
@@ -7821,9 +7828,9 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     const b = document.getElementById('jEnterNowBtn');
     const sel = document.getElementById('jEnterNowDir');
     if (window._enterNowOn) {
-      b.textContent = '⚡ Войти сейчас · …';
-      b.style.background = 'linear-gradient(135deg, rgba(255,210,62,0.55), rgba(0,229,160,0.30))';
-      b.style.color = '#0a0e14';
+      b.textContent = '⚡ ВОЙТИ СЕЙЧАС · …';
+      b.style.background = 'linear-gradient(135deg, #00e5a0, #ffd23e)';
+      b.style.borderColor = '#00e5a0';
       if (sel) sel.style.display = '';
       // 14.08: сервер проверяет АКТУАЛЬНОСТЬ ЦЕНЫ (|цена−entry|≤1.5%
       // или <35% пути к TP) — иначе фильтр показывал уехавшие сигналы,
@@ -7832,15 +7839,15 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
         const r = await fetch('/api/enter-now');
         const d = await r.json();
         window._enterNowKeys = new Set(d.keys || []);
-        b.textContent = '⚡ Войти сейчас · ON';
+        b.textContent = `⚡ ВОЙТИ СЕЙЧАС · ${(d.keys || []).length}`;
       } catch (e) {
         window._enterNowKeys = null;
-        b.textContent = '⚡ Войти сейчас · ON';
+        b.textContent = '⚡ ВОЙТИ СЕЙЧАС · ON';
       }
     } else {
-      b.textContent = '⚡ Войти сейчас · OFF';
-      b.style.background = 'linear-gradient(135deg, rgba(255,210,62,0.20), rgba(0,229,160,0.12))';
-      b.style.color = '#ffd23e';
+      b.textContent = '⚡ ВОЙТИ СЕЙЧАС · OFF';
+      b.style.background = 'linear-gradient(135deg, #ffd23e, #00e5a0)';
+      b.style.borderColor = 'rgba(255,210,62,0.9)';
       window._enterNowKeys = null;
       if (sel) sel.style.display = 'none';
     }
