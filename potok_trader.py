@@ -28,9 +28,17 @@ logger = logging.getLogger(__name__)
 
 # конфлюенсы убраны из LONG (бэктест 26.07: 90д score5 LONG −0.67,
 # с ДА −0.48 — устаревший EDGE давал им незаслуженный 🟩)
-LONG_SRC = {"whale", "triple_confluence", "st_mtf", "st_vip", "floor_buy"}
-SHORT_SRC = {"shark", "triple_confluence", "second_flip", "thin_pump",
-             "st_mtf", "st_vip", "confluence_5plus", "confluence_lo"}
+# ✂ 13.08: whale/shark/second_flip выключены аудитом 180д (детекторы
+# больше не генерят) — канал остался бы без главных входов. Добавлены
+# источники с живым эджем: level_touch (LONG +0.74% WR64 / SHORT +1.17%
+# WR69 на живых исходах, лучший источник платформы), corridor LONG
+# (+0.51%), blowoff SHORT (+0.64%, стабилен по третям). Гейты канала
+# (светофор ДА + поток/фандинг) остаются поверх без изменений.
+LONG_SRC = {"triple_confluence", "st_mtf", "st_vip", "floor_buy",
+            "level_touch", "corridor"}
+SHORT_SRC = {"triple_confluence", "thin_pump",
+             "st_mtf", "st_vip", "confluence_5plus", "confluence_lo",
+             "level_touch", "blowoff"}
 SLOTS = 10
 # 💵 макс-загрузка (03.08, запрос юзера): позиция = депо/СЛОТЫ × mult —
 # 10 сделок по 10% депо = 100% без плеча (риск 0.5% депо/сделку при SL −5)
