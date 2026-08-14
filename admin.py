@@ -9260,7 +9260,32 @@ async def api_setup_check(pair: str):
     """🎰 Paste-and-evaluate setup checker.
     Возвращает ENTER_LONG / ENTER_SHORT / WAIT verdict с breakdown."""
     import setup_checker as sc
-    return await asyncio.to_thread(sc.check_setup, pair)
+    res = await asyncio.to_thread(sc.check_setup, pair)
+    # 📓 14.08: лог вердиктов — чтобы через месяц ЗНАТЬ WR вердикта
+    # «ДА» (сейчас это эвристика без измеренной точности). Кулдаун 1ч
+    # на пару, планы обеих сторон сохраняются для трекинга исходов.
+    try:
+        def _log():
+            from database import _get_db, utcnow
+            from datetime import timedelta
+            col = _get_db().verdict_log
+            if col.find_one({"symbol": res.get("symbol"),
+                             "at": {"$gte": utcnow() - timedelta(hours=1)}}):
+                return
+            col.insert_one({
+                "symbol": res.get("symbol"), "pair": res.get("pair"),
+                "verdict": res.get("verdict"),
+                "confidence": res.get("confidence"),
+                "long_grade": (res.get("long") or {}).get("grade"),
+                "short_grade": (res.get("short") or {}).get("grade"),
+                "long_plan": (res.get("long") or {}).get("plan"),
+                "short_plan": (res.get("short") or {}).get("plan"),
+                "price": (res.get("metrics") or {}).get("price"),
+                "at": utcnow(), "state": "OPEN"})
+        await asyncio.to_thread(_log)
+    except Exception:
+        pass
+    return res
 
 
 @app.get("/api/entry-watch")

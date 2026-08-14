@@ -4129,16 +4129,25 @@ window._kcSetupModal = async function(sym, sigCtx) {
   m.style.display = 'flex';
   body.innerHTML = '<div style="padding:30px;text-align:center;color:#8892a4;">🎰 Разбираю ' +
     sym.replace('USDT', '') + ' — зоны · тренды · дельта · поток…</div>';
-  let d, trd = null, pulse = null;
+  let d, trd = null, pulse = null, btc = null;
   try {
-    const [r, rt, rp] = await Promise.all([
+    const [r, rt, rp, rb] = await Promise.all([
       fetch('/api/setup-check?pair=' + encodeURIComponent(sym)),
       fetch('/api/trends').catch(() => null),
       fetch('/api/source-pulse').catch(() => null),
+      fetch('/api/journal-candles?symbol=BTCUSDT&tf=1h&limit=26').catch(() => null),
     ]);
     d = await r.json();
     if (rt) trd = await rt.json().catch(() => null);
     if (rp) pulse = await rp.json().catch(() => null);
+    if (rb) {
+      const bd = await rb.json().catch(() => null);
+      const cs = (bd && bd.candles) || [];
+      if (cs.length >= 25) {
+        const last = +cs[cs.length - 1].close, prev = +cs[cs.length - 25].close;
+        btc = { chg24: (last / prev - 1) * 100 };
+      }
+    }
   } catch (e) {
     body.innerHTML = '<div style="padding:30px;color:#ff5e9c;">⛔ сеть/сервер недоступны</div>';
     return;
@@ -4203,8 +4212,14 @@ window._kcSetupModal = async function(sym, sigCtx) {
         const c = p == null ? '#8892a4' : p >= 55 ? '#00e5a0' : p <= 45 ? '#ff5e9c' : '#8892a4';
         return `<span style="color:${c};font-family:monospace;">${tf} ${p == null ? '—' : p + '%▲'}</span>`;
       }).join(' · ');
+      const btcTxt = !btc ? '' : (() => {
+        const bc = btc.chg24;
+        const bcc = bc >= 0.5 ? '#00e5a0' : bc <= -0.5 ? '#ff5e9c' : '#8892a4';
+        const warn = bc <= -2 ? ' · <b style="color:#ff5e9c;">BTC валится — лонги альтов под давлением</b>' : '';
+        return ` · BTC 24ч <b style="color:${bcc};">${bc > 0 ? '+' : ''}${bc.toFixed(1)}%</b>${warn}`;
+      })();
       return `<div style="background:#10151f;border:1px solid #232b3a;border-radius:8px;padding:8px 12px;margin-bottom:10px;">
-        🌍 рынок сейчас: <b style="color:${gc};">широта ${g > 0 ? '+' : ''}${g}</b> · ${pcts}
+        🌍 рынок сейчас: <b style="color:${gc};">широта ${g > 0 ? '+' : ''}${g}</b> · ${pcts}${btcTxt}
         <span style="color:#8892a4;"> — ${hint}</span></div>`;
     })()}
     ${(() => {
