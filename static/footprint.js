@@ -388,24 +388,78 @@ function fpRender() {
         a[0] += c[1]; a[1] += c[2];
         grp.set(gi, a);
       });
-      let vMax = 0;
-      grp.forEach(a => { if (a[0] > vMax) vMax = a[0]; });
+      let vMax = 0, dMaxG = 0;
+      grp.forEach(a => {
+        if (a[0] > vMax) vMax = a[0];
+        if (Math.abs(a[1]) > dMaxG) dMaxG = Math.abs(a[1]);
+      });
       grp.forEach((a, gi) => {
         const yTop = y(gMin + (gi * k + k) * tick);
         const yBot = y(gMin + gi * k * tick);
         if (yTop > chartH || yBot < 0) return;
-        const inten = 0.30 + 0.62 * Math.pow(vMax ? a[0] / vMax : 0, 0.55);
+        const hh = Math.max(2, yBot - yTop - 1);
+        // 🎨 13.08: фон приглушён — рельеф даёт ДЕЛЬТА-ПРОФИЛЬ поверх
+        const inten = 0.14 + 0.30 * Math.pow(vMax ? a[0] / vMax : 0, 0.55);
         g.fillStyle = a[1] >= 0 ? `rgba(0,200,140,${inten})` : `rgba(255,70,100,${inten})`;
-        g.fillRect(x0, yTop + 0.5, cw, Math.max(2, yBot - yTop - 1));
+        g.fillRect(x0, yTop + 0.5, cw, hh);
+        // дельта-полоса от центра: покупки → вправо, продажи → влево;
+        // длина = |дельта блока| / max по свече, крупные — со свечением
+        const adg = Math.abs(a[1]);
+        if (dMaxG > 0 && adg > 0) {
+          const half = cw / 2;
+          const len = Math.max(2, adg / dMaxG * (half - 1));
+          const alpha = 0.5 + 0.45 * (adg / dMaxG);
+          if (a[1] >= 0) {
+            g.fillStyle = `rgba(0,240,170,${alpha})`;
+            g.fillRect(xc, yTop + 0.5, len, hh);
+          } else {
+            g.fillStyle = `rgba(255,95,125,${alpha})`;
+            g.fillRect(xc - len, yTop + 0.5, len, hh);
+          }
+          if (adg / dMaxG > 0.65 && hh >= 4) {
+            g.strokeStyle = a[1] >= 0 ? 'rgba(140,255,215,0.85)'
+                                      : 'rgba(255,170,190,0.85)';
+            g.lineWidth = 1;
+            g.strokeRect((a[1] >= 0 ? xc : xc - len) + 0.5, yTop + 1,
+                         Math.max(1, len - 1), Math.max(1, hh - 1));
+          }
+        }
       });
     } else {
+    // 🎨 13.08: фон тусклый (общая картина), поверх — дельта-профиль:
+    // полоса от центральной оси, покупки вправо / продажи влево,
+    // длина = |дельта ячейки| / max по свече — видно, ГДЕ в свече
+    // сидел покупатель или продавец
+    let dMaxC = 0;
+    b.cells.forEach(c => { const ad = Math.abs(c[2]); if (ad > dMaxC) dMaxC = ad; });
     b.cells.forEach(c => {
       const [lvl, vol, dd] = c;
       const yy = y(gMin + (lvl + 1) * tick);
       if (yy > chartH + cellH || yy < -cellH) return;
-      const inten = 0.12 + 0.72 * Math.pow(vLoc ? vol / vLoc : 0, 0.6);
+      const hh = Math.max(1.5, cellH - 1);
+      const inten = 0.10 + 0.32 * Math.pow(vLoc ? vol / vLoc : 0, 0.6);
       g.fillStyle = dd >= 0 ? `rgba(0,200,140,${inten})` : `rgba(255,70,100,${inten})`;
-      g.fillRect(x0, yy + 0.5, cw, Math.max(1.5, cellH - 1));
+      g.fillRect(x0, yy + 0.5, cw, hh);
+      const ad = Math.abs(dd);
+      if (dMaxC > 0 && ad > 0 && cw >= 5) {
+        const half = cw / 2;
+        const len = Math.max(1.5, ad / dMaxC * (half - 1));
+        const alpha = 0.5 + 0.45 * (ad / dMaxC);
+        if (dd >= 0) {
+          g.fillStyle = `rgba(0,240,170,${alpha})`;
+          g.fillRect(xc, yy + 0.5, len, hh);
+        } else {
+          g.fillStyle = `rgba(255,95,125,${alpha})`;
+          g.fillRect(xc - len, yy + 0.5, len, hh);
+        }
+        if (ad / dMaxC > 0.65 && hh >= 4) {
+          g.strokeStyle = dd >= 0 ? 'rgba(140,255,215,0.85)'
+                                  : 'rgba(255,170,190,0.85)';
+          g.lineWidth = 1;
+          g.strokeRect((dd >= 0 ? xc : xc - len) + 0.5, yy + 1,
+                       Math.max(1, len - 1), Math.max(1, hh - 1));
+        }
+      }
     });
     if (pocLvl >= 0 && bw > 5) {
       const yy = y(gMin + (pocLvl + 1) * tick);
