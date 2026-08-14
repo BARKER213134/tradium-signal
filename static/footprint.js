@@ -560,7 +560,7 @@ function fpRender() {
     try {
       const fl = window._stFlipMarks(d.bars) || [];
       g.textAlign = 'center';
-      const FS = Math.max(10, Math.min(13, bw * 0.6));
+      const FS = 10;
       g.font = `bold ${FS}px monospace`;
       fl.forEach(f => {
         const i = f.i - i0;
@@ -568,17 +568,27 @@ function fpRender() {
         const b = bars[i];
         const xc = i * bw + bw / 2;
         const up = f.dir > 0;
-        const txt = bw >= 16 ? (up ? '▲тренд' : '▼тренд') : (up ? '▲' : '▼');
+        const txt = bw >= 15 ? (up ? '▲тренд' : '▼тренд') : (up ? '▲' : '▼');
+        const col = up ? '#00e5a0' : '#ff5e9c';
+        const tw = g.measureText(txt).width;
+        const bwd = tw + 8, bh = 15;
         const off = up ? (usedBot[i] = (usedBot[i] || 0) + 1)
                        : (usedTop[i] = (usedTop[i] || 0) + 1);
-        const yy = up
-          ? Math.min(chartH - 4, y(b.l) + 13 + (off - 1) * 15)
-          : Math.max(10, y(b.h) - 5 - (off - 1) * 15);
-        g.fillStyle = up ? 'rgba(0,229,160,0.95)' : 'rgba(255,94,140,0.95)';
-        g.fillText(txt, xc, yy);
+        const yc = up
+          ? Math.min(chartH - bh / 2 - 2, y(b.l) + 12 + (off - 1) * 17)
+          : Math.max(bh / 2 + 2, y(b.h) - 10 - (off - 1) * 17);
+        // контрастная плашка — мелкий цветной текст терялся на ячейках
+        g.fillStyle = 'rgba(8,11,17,0.94)';
+        g.strokeStyle = col;
+        g.lineWidth = 1.2;
+        g.fillRect(xc - bwd / 2, yc - bh / 2, bwd, bh);
+        g.strokeRect(xc - bwd / 2, yc - bh / 2, bwd, bh);
+        g.fillStyle = col;
+        g.fillText(txt, xc, yc + 3.5);
       });
       g.textAlign = 'left';
       g.font = '10px monospace';
+      g.lineWidth = 1;
     } catch (e) {}
   }
   // 🪧 эмодзи сигналов журнала: SHORT — над баром, LONG — под баром,
