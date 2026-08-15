@@ -27,7 +27,7 @@ _JOURNAL_LAST_GOOD = {"data": None, "refreshing": False}
 # 🧮 кластеры: параллельная догрузка страниц + кэш готовых футпринтов
 _EX_FP = _TPE_shared(max_workers=6, thread_name_prefix="fp-pages")
 _FP_CACHE: dict = {}   # (sym, tf, bars) -> (ts, payload); TTL 120с
-from typing import Set
+from typing import Optional, Set
 
 from fastapi import FastAPI, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, Response, JSONResponse
