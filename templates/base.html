@@ -3987,7 +3987,7 @@ window.openPairChart = function(symbol, tf) {
       'color:var(--muted,#8892a4);font-size:11px;cursor:pointer;padding:3px 10px;' +
       'font-family:var(--font-mono,monospace);">🕯Свечи</button>' +
       '<button onclick="window._kcSetupModal(window._kcQmSym)" ' +
-      'title="🎰 Полный разбор: можно ли входить сейчас — вердикт, зоны, тренды, дельта, план входа" ' +
+      'title="🎰 Полный разбор: можно ли входить сейчас — вердикт, зоны, тренды, дельта, план входа. ⏳ Даблклик по любой свече графика — тот же разбор на момент ТОЙ свечи (машина времени)" ' +
       'style="background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.5);border-radius:6px;' +
       'color:#ffd23e;font-size:11px;font-weight:800;cursor:pointer;padding:3px 10px;' +
       'font-family:var(--font-mono,monospace);">🎰 Вход?</button>' +
@@ -4110,7 +4110,10 @@ window._kcQmFlips = function() {
 // 🎰 «Вход сейчас?» — модал полного разбора Setup Checker v3 (13.08):
 // вердикт, зоны, тренды, дельта, за/против, план входа. Общий для
 // всех графиков платформы.
-window._kcSetupModal = async function(sym, sigCtx) {
+window._kcSetupModal = async function(sym, sigCtx, atTs) {
+  // atTs (unix сек) — «машина времени» 15.08: даблклик по свече на
+  // графике → разбор на момент закрытия ТОЙ свечи (сервер считает всё
+  // из свечей до неё; живые блоки funding/фаза/пульс скрываются)
   sym = (sym || '').replace('/', '');
   if (!sym) return;
   let m = document.getElementById('kcSetupModal');
@@ -4131,14 +4134,15 @@ window._kcSetupModal = async function(sym, sigCtx) {
   const body = m.querySelector('#kcSetupBody');
   m.style.display = 'flex';
   body.innerHTML = '<div style="padding:30px;text-align:center;color:#8892a4;">🎰 Разбираю ' +
-    sym.replace('USDT', '') + ' — зоны · тренды · дельта · поток…</div>';
+    sym.replace('USDT', '') + (atTs ? ' на момент ' + new Date(atTs * 1000).toLocaleString('ru-RU') : '') +
+    ' — зоны · тренды · дельта · поток…</div>';
   let d, trd = null, pulse = null, btc = null;
   try {
     const [r, rt, rp, rb] = await Promise.all([
-      fetch('/api/setup-check?pair=' + encodeURIComponent(sym)),
-      fetch('/api/trends').catch(() => null),
-      fetch('/api/source-pulse').catch(() => null),
-      fetch('/api/journal-candles?symbol=BTCUSDT&tf=1h&limit=26').catch(() => null),
+      fetch('/api/setup-check?pair=' + encodeURIComponent(sym) + (atTs ? '&at=' + atTs : '')),
+      atTs ? null : fetch('/api/trends').catch(() => null),
+      atTs ? null : fetch('/api/source-pulse').catch(() => null),
+      atTs ? null : fetch('/api/journal-candles?symbol=BTCUSDT&tf=1h&limit=26').catch(() => null),
     ]);
     d = await r.json();
     if (rt) trd = await rt.json().catch(() => null);
@@ -4204,9 +4208,13 @@ window._kcSetupModal = async function(sym, sigCtx) {
   const act = (d.active_trades || []).map(t =>
     `<span style="color:#aab3c2;">${t.strategy} ${t.direction} @ ${fmtP(t.entry)} (${t.age_h}ч, ` +
     `<b style="color:${(t.pnl_now || 0) >= 0 ? '#00e5a0' : '#ff5e9c'};">${t.pnl_now != null ? (t.pnl_now > 0 ? '+' : '') + t.pnl_now + '%' : '—'}</b>)</span>`).join(' · ');
-  body.innerHTML = `
+  const histBanner = !atTs ? '' :
+    `<div style="background:rgba(76,201,240,0.10);border:1px solid #4cc9f0;border-radius:8px;padding:7px 12px;margin-bottom:10px;color:#4cc9f0;font-size:12px;">
+      ⏳ <b>МАШИНА ВРЕМЕНИ</b>: разбор на момент закрытия свечи <b>${new Date(atTs * 1000).toLocaleString('ru-RU')}</b> —
+      все зоны/тренды/RSI/дельта посчитаны только из данных ДО неё. Живые блоки (фандинг, фаза, пульс, BTC-сейчас) скрыты — их истории нет.</div>`;
+  body.innerHTML = histBanner + `
     <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
-      <b style="font-size:17px;">🎰 ${sym.replace('USDT', '')} — вход сейчас?</b>
+      <b style="font-size:17px;">🎰 ${sym.replace('USDT', '')} — ${atTs ? 'вход в тот момент?' : 'вход сейчас?'}</b>
       <span style="background:${vCol}22;border:1.5px solid ${vCol};border-radius:8px;padding:5px 14px;font-weight:800;color:${vCol};">${vTxt}</span>
       ${sigSideTxt}
       ${d.confidence ? chip('уверенность', d.confidence + '%') : ''}
@@ -4619,6 +4627,23 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     }, 70);
   });
   container.addEventListener('mouseleave', () => { if (container._kcTip) container._kcTip.style.display = 'none'; });
+
+  // ⏳ МАШИНА ВРЕМЕНИ (15.08): даблклик по свече → 🎰-разбор на момент
+  // закрытия ТОЙ свечи (сервер строит зоны/тренды/RSI/дельту только из
+  // данных до неё — честный ретро-чек «стоило ли входить там»)
+  container.addEventListener('dblclick', (ev) => {
+    try {
+      if (!container._kChart || container._kcAlarmMode) return;
+      if (ev.target.closest('button')) return;
+      const rc = container.getBoundingClientRect();
+      const pt = container._kChart.convertFromPixel(
+        { x: ev.clientX - rc.left, y: ev.clientY - rc.top },
+        { paneId: 'candle_pane' });
+      const ts = pt && pt.timestamp;
+      if (!ts) return;
+      window._kcSetupModal(sym, null, Math.floor(ts / 1000));
+    } catch (e) {}
+  });
 
   // плавающая панель рисования
   const tb = document.createElement('div');

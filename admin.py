@@ -9257,11 +9257,18 @@ async def api_gap_signals():
 
 
 @app.get("/api/setup-check")
-async def api_setup_check(pair: str):
+async def api_setup_check(pair: str, at: Optional[int] = None):
     """🎰 Paste-and-evaluate setup checker.
-    Возвращает ENTER_LONG / ENTER_SHORT / WAIT verdict с breakdown."""
+    Возвращает ENTER_LONG / ENTER_SHORT / WAIT verdict с breakdown.
+    at (unix сек или мс) — исторический разбор на момент той свечи
+    (даблклик по свече на графике, 15.08); в verdict_log не пишется."""
     import setup_checker as sc
-    res = await asyncio.to_thread(sc.check_setup, pair)
+    at_ms = None
+    if at:
+        at_ms = int(at) * 1000 if int(at) < 10**12 else int(at)
+    res = await asyncio.to_thread(sc.check_setup, pair, at_ms)
+    if at_ms:
+        return res
     # 📓 14.08: лог вердиктов — чтобы через месяц ЗНАТЬ WR вердикта
     # «ДА» (сейчас это эвристика без измеренной точности). Кулдаун 1ч
     # на пару, планы обеих сторон сохраняются для трекинга исходов.

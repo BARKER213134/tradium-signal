@@ -72,8 +72,30 @@ def _fmt_price(v) -> str:
     return f"{v:.6g}"
 
 
-def check_setup(pair_input: str) -> dict:
-    """Направленный разбор пары: metrics + LONG/SHORT (за/против/план)."""
+def _fetch_hist_klines(symbol: str, at_ms: int, n: int = 400):
+    """Спот-свечи 1h, кончающиеся ВЫБРАННОЙ свечой (машина времени 15.08:
+    даблклик по свече на графике → разбор на момент её закрытия).
+    endTime = конец часа выбранной свечи → kd[-1] = эта свеча."""
+    import json as _json
+    import urllib.request as _ur
+    end = int(at_ms) - int(at_ms) % 3600_000 + 3599_999
+    url = ("https://data-api.binance.vision/api/v3/klines?symbol="
+           f"{symbol}&interval=1h&endTime={end}&limit={n}")
+    try:
+        with _ur.urlopen(url, timeout=15) as r:
+            rows = _json.loads(r.read())
+        return [{"t": int(x[0]), "o": float(x[1]), "h": float(x[2]),
+                 "l": float(x[3]), "c": float(x[4]), "v": float(x[5]),
+                 "tb": float(x[9])} for x in rows]
+    except Exception:
+        return None
+
+
+def check_setup(pair_input: str, at_ms: int | None = None) -> dict:
+    """Направленный разбор пары: metrics + LONG/SHORT (за/против/план).
+    at_ms — исторический режим: разбор на момент закрытия свечи at_ms
+    (все метрики из свечей до неё; живой контекст funding/фаза/дельта-кэш
+    и активные сделки пропускаются — их истории нет)."""
     pair = _normalize_pair(pair_input)
     symbol = pair.replace("/", "").upper()
     result = {
@@ -82,14 +104,24 @@ def check_setup(pair_input: str) -> dict:
         "metrics": {}, "long": {}, "short": {},
         "active_trades": [], "recent_signals": [], "reasons": [],
     }
+    if at_ms:
+        result["historical"] = True
+        result["as_of_ts"] = int(at_ms // 1000)
     try:
         # ── 1. Свечи 1h с тайкер-дельтой (400 баров) ─────────────────
         kd = None
-        try:
-            from accum_detector import _fetch_klines_delta
-            kd = _fetch_klines_delta(pair, 400)
-        except Exception:
-            pass
+        if at_ms:
+            kd = _fetch_hist_klines(symbol, at_ms)
+        if not kd and at_ms:
+            result["verdict"] = "NO_DATA"
+            result["reasons"].append(f"Нет исторических свечей {pair}")
+            return result
+        if not kd:
+            try:
+                from accum_detector import _fetch_klines_delta
+                kd = _fetch_klines_delta(pair, 400)
+            except Exception:
+                pass
         has_delta = bool(kd)
         if not kd:
             from exchange import get_klines_any
@@ -128,36 +160,37 @@ def check_setup(pair_input: str) -> dict:
         lb_rng = (h[-2] - l[-2]) or 1e-12
         lb_pos = (c[-2] - l[-2]) / lb_rng * 100
 
-        # ── 2. Контекст платформы ────────────────────────────────────
+        # ── 2. Контекст платформы (живой — в историческом режиме нет) ─
         from database import _get_db
         db = _get_db()
         funding_pct = None
-        try:
-            fn = db.market_state.find_one({"_id": "funding_now"}) or {}
-            fr = (fn.get("rates") or {}).get(pair)
-            if fr is None:
-                fr = (fn.get("rates") or {}).get(symbol)
-            if fr is not None:
-                funding_pct = float(fr) * 100
-        except Exception:
-            pass
         phase = clim = None
-        try:
-            from supertrend_tracker import _market_phase_now
-            phase = _market_phase_now()
-        except Exception:
-            pass
-        try:
-            from trade_grade import climate12
-            clim = climate12()
-        except Exception:
-            pass
         dz24 = None
-        try:
-            pc = db.pair_context.find_one({"_id": pair}) or {}
-            dz24 = pc.get("dz24")
-        except Exception:
-            pass
+        if at_ms is None:
+            try:
+                fn = db.market_state.find_one({"_id": "funding_now"}) or {}
+                fr = (fn.get("rates") or {}).get(pair)
+                if fr is None:
+                    fr = (fn.get("rates") or {}).get(symbol)
+                if fr is not None:
+                    funding_pct = float(fr) * 100
+            except Exception:
+                pass
+            try:
+                from supertrend_tracker import _market_phase_now
+                phase = _market_phase_now()
+            except Exception:
+                pass
+            try:
+                from trade_grade import climate12
+                clim = climate12()
+            except Exception:
+                pass
+            try:
+                pc = db.pair_context.find_one({"_id": pair}) or {}
+                dz24 = pc.get("dz24")
+            except Exception:
+                pass
 
         # ── 2b. Зоны уровней + тренды + дельта бара (v3, 13.08) ──────
         sup_z = res_z = None
@@ -231,13 +264,15 @@ def check_setup(pair_input: str) -> dict:
         }
 
         # ── 3. Свежие сетапы платформы (≤24ч) + активные сделки ──────
-        now_dt = datetime.now(timezone.utc)
+        now_dt = (datetime.fromtimestamp(at_ms / 1000, tz=timezone.utc)
+                  if at_ms else datetime.now(timezone.utc))
         naive_now = now_dt.replace(tzinfo=None)
         fresh = {}
         try:
             cut24 = naive_now - timedelta(hours=24)
             for d in db.new_strategy_signals.find(
-                    {"pair": pair, "created_at": {"$gte": cut24},
+                    {"pair": pair,
+                     "created_at": {"$gte": cut24, "$lte": naive_now},
                      "strategy": {"$in": ["blowoff", "thin_pump",
                                           "floor_buy", "level_touch",
                                           "flip_retest", "corridor",
@@ -259,17 +294,18 @@ def check_setup(pair_input: str) -> dict:
                     fresh[key] = d
         except Exception:
             pass
-        # активные сделки-сигналы в пути (WAITING, ≤7д)
+        # активные сделки-сигналы в пути (WAITING, ≤7д; live-only —
+        # исторического state нет)
         try:
             cut7 = naive_now - timedelta(days=7)
-            for d in db.new_strategy_signals.find(
+            for d in ([] if at_ms else db.new_strategy_signals.find(
                     {"pair": pair, "state": "WAITING",
                      "created_at": {"$gte": cut7},
                      "strategy": {"$in": ["blowoff", "thin_pump",
                                           "floor_buy", "level_touch",
                                           "flip_retest", "corridor"]}},
                     {"strategy": 1, "direction": 1, "entry": 1, "tp": 1,
-                     "sl": 1, "created_at": 1}).sort("created_at", -1).limit(6):
+                     "sl": 1, "created_at": 1}).sort("created_at", -1).limit(6)):
                 e = d.get("entry")
                 prog = None
                 if e:
@@ -612,7 +648,7 @@ def check_setup(pair_input: str) -> dict:
         all_sigs: list = []
         try:
             for d in db.new_strategy_signals.find({
-                **pair_or, "created_at": {"$gte": since},
+                **pair_or, "created_at": {"$gte": since, "$lte": naive_now},
             }, {
                 "strategy": 1, "created_at": 1, "direction": 1, "entry": 1,
                 "whale_tier": 1, "shark_tier": 1, "whale_score": 1,
@@ -639,7 +675,7 @@ def check_setup(pair_input: str) -> dict:
             pass
         try:
             for s in db.supertrend_signals.find({
-                "pair": pair, "flip_at": {"$gte": since},
+                "pair": pair, "flip_at": {"$gte": since, "$lte": naive_now},
                 "tier": {"$in": ["vip", "mtf"]},
             }, {"tier": 1, "direction": 1, "entry_price": 1,
                 "flip_at": 1}).sort("flip_at", -1).limit(20):
@@ -658,7 +694,7 @@ def check_setup(pair_input: str) -> dict:
             pass
         try:
             for cf in db.confluence.find({
-                **pair_or, "detected_at": {"$gte": since},
+                **pair_or, "detected_at": {"$gte": since, "$lte": naive_now},
             }, {"direction": 1, "price": 1, "detected_at": 1, "score": 1,
                 "strength": 1}).sort("detected_at", -1).limit(20):
                 dt = cf.get("detected_at")
