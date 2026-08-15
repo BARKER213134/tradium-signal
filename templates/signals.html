@@ -10533,7 +10533,27 @@ function renderJournalPage() {
   const totalPages = Math.ceil(items.length / _jPerPage) || 1;
   if (_jPage > totalPages) _jPage = totalPages;
   const start = (_jPage - 1) * _jPerPage;
-  const pageItems = items.slice(start, start + _jPerPage);
+  let pageItems = items.slice(start, start + _jPerPage);
+  // 🧗 редкие боевые источники не тонут в потоке (15.08: NOM full_stack
+  // 08:03 «пропал» — первые 100 строк покрывали 6ч ST-пингов). На 1-й
+  // странице без фильтра источника и при дефолтной сортировке по времени
+  // подмешиваем их свежие (<24ч) строки из глубины, хронология сохраняется.
+  try {
+    const selSrc = (document.getElementById('jFilterSrc') || {}).value;
+    const timeSort = (typeof _jSortField === 'undefined') || _jSortField === 'at_ts';
+    if (_jPage === 1 && !selSrc && timeSort && items.length > _jPerPage) {
+      const RARE = new Set(['level_touch', 'flip_retest', 'full_stack',
+        'rev_candle', 'corridor', 'channel_top', 'support_defense',
+        'rocket_pullback', 'floor_buy']);
+      const cut = Date.now() / 1000 - 86400;
+      const extra = items.slice(start + _jPerPage)
+        .filter(x => RARE.has(x.source) && (x.at_ts || 0) >= cut)
+        .slice(0, 25);
+      if (extra.length)
+        pageItems = pageItems.concat(extra)
+          .sort((a, b) => (b.at_ts || 0) - (a.at_ts || 0));
+    }
+  } catch (e) {}
 
   // Pagination controls
   const pagDiv = document.getElementById('jPagination');
