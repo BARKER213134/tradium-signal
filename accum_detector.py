@@ -511,7 +511,7 @@ def _floor_buy_sig(pair: str, kd: list[dict]):
         return None
 
 
-def _full_stack_sig(pair: str, kd: list[dict]):
+def _full_stack_sig(pair: str, kd: list[dict], structure_only: bool = False):
     """🧗 ПОЛНЫЙ СТЕК → LONG: закрытый 1h-бар собирает полный аптренд
     (ST(10,3) 1h/2h/4h/12h все UP; час назад — ещё не все). Бэктест
     полгода 15.02–14.08 (3645 переходов, сетка +10/−5/96ч): все подряд
@@ -522,7 +522,12 @@ def _full_stack_sig(pair: str, kd: list[dict]):
       — ход за 24ч 0..+12% (догон >25% → EV −1.90)
       — RSI1h 55..75 (импульс есть, перегрева нет; <55 → −0.98, >75 → −0.69)
       — 12h-тренд зрелый: UP ≥8 закрытых 12h-баров (~96ч; свежий
-        12h-флип <24ч, стек «снизу вверх» → −0.52)"""
+        12h-флип <24ч, стек «снизу вверх» → −0.52)
+    structure_only=True — только структурная часть (переход + зрелость
+    12h) без дельты/mom24/RSI: длинная перепроверка 1000-бар историей
+    (15.08: 400-бар окно давало 2.6× больше переходов — 12h ST на 33
+    барах прогрева флипает чаще; бэкфилл −0.73% против +0.69% у длинной
+    логики на тех же 60д)."""
     try:
         if len(kd) < 300:
             return None
@@ -535,16 +540,17 @@ def _full_stack_sig(pair: str, kd: list[dict]):
         prev = _trend_dirs(kd[:-1])
         if prev and all(prev.get(tf, 0) > 0 for tf in ("1h", "2h", "4h", "12h")):
             return None  # стек был полным и час назад — не переход
-        dsh = (2 * b.get("tb", b["v"] / 2) - b["v"]) / b["v"]
-        if not (0.2 <= dsh < 0.5):
-            return None
-        c24 = kd[-26]["c"]
-        mom24 = (b["c"] / c24 - 1) * 100 if c24 else 0.0
-        if not (0 <= mom24 < 12):
-            return None
-        rv = _rsi4h_value(kd[:-1], 1)  # RSI14 на закрытых 1h-барах
-        if not rv or not (55 <= rv[0] < 75):
-            return None
+        if not structure_only:
+            dsh = (2 * b.get("tb", b["v"] / 2) - b["v"]) / b["v"]
+            if not (0.2 <= dsh < 0.5):
+                return None
+            c24 = kd[-26]["c"]
+            mom24 = (b["c"] / c24 - 1) * 100 if c24 else 0.0
+            if not (0 <= mom24 < 12):
+                return None
+            rv = _rsi4h_value(kd[:-1], 1)  # RSI14 на закрытых 1h-барах
+            if not rv or not (55 <= rv[0] < 75):
+                return None
         # зрелость 12h: последние 8 ЗАКРЫТЫХ 12h-баров все в UP
         from backtest_supertrend import compute_st_series
         grp = {}
@@ -561,6 +567,8 @@ def _full_stack_sig(pair: str, kd: list[dict]):
         if len(s12) < 8 or any((x.get("trend") or 0) <= 0 for x in s12[-8:]):
             return None
         price = b["c"]
+        if structure_only:
+            return {"strategy": "full_stack", "ok": True, "entry": price}
         return {"strategy": "full_stack", "direction": "LONG",
                 "pair": pair, "symbol": pair.replace("/", "").upper(),
                 "entry": price, "tp": price * 1.10, "sl": price * 0.95,
@@ -1661,8 +1669,25 @@ def scan_universe(max_pairs: int = 300):
                             ds_fired += 1
                     except Exception:
                         pass
-                # 🧗 полный стек: первая свеча полного аптренда (кулдаун 24ч, TG)
+                # 🧗 полный стек: первая свеча полного аптренда (кулдаун 24ч, TG).
+                # Двухступенчато: фильтры на 400-бар kd, затем структура
+                # (переход + зрелость 12h) перепроверяется 1000-бар историей —
+                # короткий прогрев ST давал 2.6× лишних переходов (EV −0.73
+                # против +0.69 у длинной логики, ребэкфилл 15.08)
                 _fs = _full_stack_sig(pair, kd)
+                if _fs is not None:
+                    try:
+                        from exchange import get_klines_any
+                        _kdl = get_klines_any(pair, "1h", 1000)
+                        if (_kdl and len(_kdl) >= 700
+                                and _kdl[-1]["t"] >= kd[-1]["t"]
+                                and _full_stack_sig(pair, _kdl,
+                                                    structure_only=True)):
+                            pass  # длинная история подтвердила переход
+                        else:
+                            _fs = None
+                    except Exception:
+                        _fs = None
                 if _fs is not None:
                     try:
                         from impulse_detector import store_signal
