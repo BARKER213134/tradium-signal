@@ -1969,6 +1969,70 @@ def scan_universe(max_pairs: int = 300):
             _get_db().breadth_history.insert_one(
                 {"at": utcnow(), "pct": _pct, "src": "scan"})
             _last_scan["breadth"] = f"{breadth_bull}/{breadth_tot}"
+            # 🌊 режимный инфо-алерт (15.08, запрос юзера «на платформе
+            # разгон, а в TG шорты»): резкий сдвиг ширины рынка → одно
+            # TG-сообщение со сводкой. Не сигнал на вход — режим.
+            # Триггер: |Δpct за 4ч| >= 15пп ИЛИ пересечение 60 (вверх) /
+            # 40 (вниз). Кулдаун 6ч на направление.
+            try:
+                from datetime import timedelta as _td
+                _db = _get_db()
+                _now = utcnow()
+                _h4 = _db.breadth_history.find_one(
+                    {"at": {"$lte": _now - _td(hours=4),
+                            "$gte": _now - _td(hours=6)}, "src": "scan"},
+                    sort=[("at", -1)])
+                _prev = _db.breadth_history.find_one(
+                    {"at": {"$lt": _now - _td(minutes=5)}, "src": "scan"},
+                    sort=[("at", -1)])
+                _p4 = _h4.get("pct") if _h4 else None
+                _pp = _prev.get("pct") if _prev else None
+                _dirn = None
+                if _p4 is not None and _pct - _p4 >= 15:
+                    _dirn = "UP"
+                elif _p4 is not None and _p4 - _pct >= 15:
+                    _dirn = "DOWN"
+                elif _pp is not None and _pp < 60 <= _pct:
+                    _dirn = "UP"
+                elif _pp is not None and _pp > 40 >= _pct:
+                    _dirn = "DOWN"
+                if _dirn:
+                    _ba = _db.market_state.find_one(
+                        {"_id": f"breadth_alert_{_dirn}"}) or {}
+                    _la = _ba.get("at")
+                    if not _la or (_now - _la).total_seconds() > 6 * 3600:
+                        _db.market_state.update_one(
+                            {"_id": f"breadth_alert_{_dirn}"},
+                            {"$set": {"at": _now, "pct": _pct}}, upsert=True)
+                        _hots = []
+                        try:
+                            for _hd in _db.hot_coins.find(
+                                    {"hot_until": {"$gte": _now}},
+                                    {"_id": 1}).limit(8):
+                                _hots.append(_hd["_id"].replace("USDT", ""))
+                        except Exception:
+                            pass
+                        _d4txt = (f" (4ч назад {_p4:.0f}%)"
+                                  if _p4 is not None else "")
+                        if _dirn == "UP":
+                            _tg16(f"🌊 <b>РАЗГОН РЫНКА</b>\n"
+                                  f"{_pct:.0f}% монет в бычьем моментуме"
+                                  f"{_d4txt}\n"
+                                  + (f"🔥 горячие: {', '.join(_hots)}\n"
+                                     if _hots else "")
+                                  + f"<i>это режим-сводка, не сигнал на вход: "
+                                  f"догон-лонги по бэктесту −1.9%/сделку. "
+                                  f"Рабочие входы — 🧗 на старте и 📏/🪂 "
+                                  f"на первом откате в зону</i>")
+                        else:
+                            _tg16(f"🩸 <b>СЛИВ РЫНКА</b>\n"
+                                  f"{_pct:.0f}% монет в бычьем моментуме"
+                                  f"{_d4txt}\n"
+                                  + f"<i>режим-сводка: шорт вдогонку по "
+                                  f"бэктесту −0.4%; рабочее — 💎/🧱 у лоёв "
+                                  f"и 📏 SHORT на отскоке к сопротивлению</i>")
+            except Exception:
+                logger.warning("[accum] breadth alert fail", exc_info=True)
     except Exception:
         logger.exception("[accum] breadth store fail")
     # 🌡 12h-климат (глобальная фаза): та же методика на 12h-барах.

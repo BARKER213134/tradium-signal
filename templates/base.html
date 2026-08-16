@@ -4631,19 +4631,26 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   // ⏳ МАШИНА ВРЕМЕНИ (15.08): даблклик по свече → 🎰-разбор на момент
   // закрытия ТОЙ свечи (сервер строит зоны/тренды/RSI/дельту только из
   // данных до неё — честный ретро-чек «стоило ли входить там»)
-  container.addEventListener('dblclick', (ev) => {
-    try {
-      if (!container._kChart || container._kcAlarmMode) return;
-      if (ev.target.closest('button')) return;
-      const rc = container.getBoundingClientRect();
-      const pt = container._kChart.convertFromPixel(
-        { x: ev.clientX - rc.left, y: ev.clientY - rc.top },
-        { paneId: 'candle_pane' });
-      const ts = pt && pt.timestamp;
-      if (!ts) return;
-      window._kcSetupModal(sym, null, Math.floor(ts / 1000));
-    } catch (e) {}
-  });
+  // символ читаем из container._kcSym (не из замыкания): при переключении
+  // монеты в том же контейнере старый листенер оставался со старым sym —
+  // разбор открывался по прошлой монете (баг 15.08). Листенер вешаем 1 раз.
+  container._kcSym = sym;
+  if (!container._kcDblBound) {
+    container._kcDblBound = true;
+    container.addEventListener('dblclick', (ev) => {
+      try {
+        if (!container._kChart || container._kcAlarmMode) return;
+        if (ev.target.closest('button')) return;
+        const rc = container.getBoundingClientRect();
+        const pt = container._kChart.convertFromPixel(
+          { x: ev.clientX - rc.left, y: ev.clientY - rc.top },
+          { paneId: 'candle_pane' });
+        const ts = pt && pt.timestamp;
+        if (!ts) return;
+        window._kcSetupModal(container._kcSym || sym, null, Math.floor(ts / 1000));
+      } catch (e) {}
+    });
+  }
 
   // плавающая панель рисования
   const tb = document.createElement('div');
