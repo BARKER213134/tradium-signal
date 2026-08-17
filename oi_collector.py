@@ -21,7 +21,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-BOOT_PER_CYCLE = 45      # бутстрапов истории за цикл (бюджет)
+BOOT_PER_CYCLE = 80      # бутстрапов/лечений истории за цикл (пейсинг 0.45с)
 SNAP_PAUSE = 0.12        # пауза между запросами снапшотов
 FRESH_H = 26             # история свежее этого — пара считается забутстрапленной
 
@@ -86,7 +86,7 @@ def fetch_oi_now(sym: str) -> Optional[dict]:
     return None
 
 
-def _nearest(rows: list[dict], t_ms: int, tol_ms: int = 55 * 60_000):
+def _nearest(rows: list[dict], t_ms: int, tol_ms: int = 80 * 60_000):
     best, bd = None, None
     for r in rows:
         d = abs(r["t"] - t_ms)
@@ -112,28 +112,61 @@ def run_once() -> dict:
     syms = [d["_id"] for d in db.pair_context.find({}, {"_id": 1}).limit(330)]
     if not syms:
         return {"ok": False, "err": "нет pair_context"}
-    counts = {d["_id"]: d["n"] for d in col.aggregate([
-        {"$match": {"symbol": {"$in": syms}}},
+    # покрытие за последние 26ч: часовой цикл oi_poll пропускает пары
+    # при бюджет-отказах → дыры в истории ломали d4h/d24h (17.08).
+    # openInterestHist закрывает разом 500ч — лечим им и дыры, и хвосты.
+    win = now - timedelta(hours=26)
+    cov = {d["_id"]: d["n"] for d in col.aggregate([
+        {"$match": {"symbol": {"$in": syms}, "at": {"$gte": win}}},
         {"$group": {"_id": "$symbol", "n": {"$sum": 1}}}])}
-    boot = [s for s in syms if counts.get(s, 0) < 200][:BOOT_PER_CYCLE]
+    # бутстрап истории: openInterestHist отдаёт [] и с Railway (гео) —
+    # держим малый кап на случай разбана, основное лечение — снапшоты ниже
+    boot = [s for s in syms if cov.get(s, 0) < 20][:10]
     booted = 0
     for s in boot:
         rows = fetch_oi_hist(s)
-        if rows:
-            ops = []
-            for r in rows:
-                hs = r["t"] // 1000 // 3600 * 3600
-                at_ = datetime.fromtimestamp(hs, tz=timezone.utc).replace(tzinfo=None)
-                ops.append(UpdateOne(
-                    {"_id": f"{s}:{hs}"},
-                    {"$setOnInsert": {"symbol": s, "at": at_, "oi": r["oi"],
-                                      "oi_usd": r.get("usd")}}, upsert=True))
-            try:
-                col.bulk_write(ops, ordered=False)
-                booted += 1
-            except Exception:
-                logger.warning("[oi] bulk fail %s", s, exc_info=True)
+        if not rows:
+            break   # гео-блок — не жечь попытки
+        ops = []
+        for r in rows:
+            hs = r["t"] // 1000 // 3600 * 3600
+            at_ = datetime.fromtimestamp(hs, tz=timezone.utc).replace(tzinfo=None)
+            ops.append(UpdateOne(
+                {"_id": f"{s}:{hs}"},
+                {"$setOnInsert": {"symbol": s, "at": at_, "oi": r["oi"],
+                                  "oi_usd": r.get("usd")}}, upsert=True))
+        try:
+            col.bulk_write(ops, ordered=False)
+            booted += 1
+        except Exception:
+            logger.warning("[oi] bulk fail %s", s, exc_info=True)
         time.sleep(0.45)
+    # 🔧 дозаполнение ТЕКУЩЕГО часа (17.08): часовой oi_poll теряет пары
+    # на бюджет-отказах (у BNB <20 точек/26ч) — добираем пропущенных
+    # fapi→BingX. Вперёд история становится плотной, d4h через 4ч,
+    # d24h через сутки.
+    hour_ts = int(now.timestamp()) // 3600 * 3600
+    at_h = datetime.fromtimestamp(hour_ts, tz=timezone.utc).replace(tzinfo=None)
+    have_now = set(d["symbol"] for d in col.find(
+        {"at": at_h, "symbol": {"$in": syms}}, {"symbol": 1}))
+    snapped = 0
+    for s in syms:
+        if s in have_now:
+            continue
+        if snapped >= BOOT_PER_CYCLE * 3:
+            break
+        d = fetch_oi_now(s)
+        if d and d.get("oi"):
+            try:
+                col.update_one(
+                    {"_id": f"{s}:{hour_ts}"},
+                    {"$setOnInsert": {"symbol": s, "at": at_h,
+                                      "oi": d["oi"],
+                                      "oi_usd": d.get("usd")}}, upsert=True)
+                snapped += 1
+            except Exception:
+                pass
+        time.sleep(SNAP_PAUSE)
     # витрина изменений из oi_hourly
     oi_map = {}
     since = now - timedelta(hours=26)
@@ -157,11 +190,11 @@ def run_once() -> dict:
         db.market_state.update_one(
             {"_id": "oi_now"},
             {"$set": {"map": oi_map, "at": now, "booted": booted,
-                      "snapped": None}}, upsert=True)
+                      "snapped": snapped}}, upsert=True)
     except Exception:
         logger.warning("[oi] oi_now store fail", exc_info=True)
     res = {"ok": True, "universe": len(syms), "booted": booted,
-           "mapped": len(oi_map)}
+           "snapped": snapped, "mapped": len(oi_map)}
     logger.info("[oi] cycle: %s", res)
     return res
 
