@@ -8223,13 +8223,15 @@ async def api_oi_status(sym: str = ""):
                "at": str(doc.get("at")),
                "booted_last": doc.get("booted"),
                "snapped_last": doc.get("snapped"),
-               "hist_pairs": len(db.oi_history.distinct("s")),
-               "hist_docs": db.oi_history.estimated_document_count(),
+               "hist_pairs": len(db.oi_hourly.distinct("symbol")),
+               "hist_docs": db.oi_hourly.estimated_document_count(),
                "sample": dict(list(m.items())[:5])}
         if sym:
-            rows = list(db.oi_history.find({"s": sym.upper()},
-                                           {"_id": 0, "at": 0})
-                        .sort("t", -1).limit(8))
+            rows = list(db.oi_hourly.find({"symbol": sym.upper()},
+                                          {"_id": 0})
+                        .sort("at", -1).limit(8))
+            for r in rows:
+                r["at"] = str(r["at"])
             out["sym_tail"] = rows
         return out
     return await asyncio.to_thread(_q)

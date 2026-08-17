@@ -96,59 +96,52 @@ def _nearest(rows: list[dict], t_ms: int, tol_ms: int = 55 * 60_000):
 
 
 def run_once() -> dict:
-    """Один цикл сбора (sync, зовётся из watcher через to_thread)."""
+    """Один цикл (sync, из watcher через to_thread). 17.08 v2: часовые
+    снапшоты уже делает deriv_collector.oi_poll_loop → oi_hourly
+    ({_id: 'SYM:hour_ts', symbol, at, oi, oi_usd}, история с 01.08).
+    Здесь: (1) бутстрап ГЛУБИНЫ истории openInterestHist для пар, где
+    в oi_hourly <200 точек (новые листинги); (2) витрина
+    market_state.oi_now (d1h/d4h/d24h) из oi_hourly."""
     from database import _get_db, utcnow
-    from datetime import timedelta
+    from datetime import datetime, timedelta, timezone
     from pymongo import UpdateOne
     db = _get_db()
-    col = db.oi_history
-    try:
-        col.create_index([("s", 1), ("t", 1)], unique=True, background=True)
-        col.create_index("at", expireAfterSeconds=45 * 86400, background=True)
-    except Exception:
-        pass
+    col = db.oi_hourly
     now = utcnow()
     now_ms = int(now.timestamp() * 1000)
     syms = [d["_id"] for d in db.pair_context.find({}, {"_id": 1}).limit(330)]
     if not syms:
         return {"ok": False, "err": "нет pair_context"}
-    fresh_cut = now_ms - FRESH_H * 3600_000
-    have = {d["_id"]: d["last_t"] for d in col.aggregate([
-        {"$group": {"_id": "$s", "last_t": {"$max": "$t"}}}])}
-    boot = [s for s in syms if have.get(s, 0) < fresh_cut][:BOOT_PER_CYCLE]
-    booted = snapped = 0
+    counts = {d["_id"]: d["n"] for d in col.aggregate([
+        {"$match": {"symbol": {"$in": syms}}},
+        {"$group": {"_id": "$symbol", "n": {"$sum": 1}}}])}
+    boot = [s for s in syms if counts.get(s, 0) < 200][:BOOT_PER_CYCLE]
+    booted = 0
     for s in boot:
         rows = fetch_oi_hist(s)
         if rows:
-            ops = [UpdateOne({"s": s, "t": r["t"]},
-                             {"$set": {**r, "s": s, "at": now}}, upsert=True)
-                   for r in rows]
+            ops = []
+            for r in rows:
+                hs = r["t"] // 1000 // 3600 * 3600
+                at_ = datetime.fromtimestamp(hs, tz=timezone.utc).replace(tzinfo=None)
+                ops.append(UpdateOne(
+                    {"_id": f"{s}:{hs}"},
+                    {"$setOnInsert": {"symbol": s, "at": at_, "oi": r["oi"],
+                                      "oi_usd": r.get("usd")}}, upsert=True))
             try:
                 col.bulk_write(ops, ordered=False)
                 booted += 1
             except Exception:
                 logger.warning("[oi] bulk fail %s", s, exc_info=True)
-        time.sleep(SNAP_PAUSE)
-    # снапшоты для уже забутстрапленных (свежих) пар
-    for s in syms:
-        if s in boot or have.get(s, 0) < fresh_cut - 24 * 3600_000:
-            continue
-        d = fetch_oi_now(s)
-        if d:
-            try:
-                col.update_one({"s": s, "t": d["t"] // 600_000 * 600_000},
-                               {"$set": {**d, "s": s, "at": now}}, upsert=True)
-                snapped += 1
-            except Exception:
-                pass
-        time.sleep(SNAP_PAUSE)
-    # витрина изменений
+        time.sleep(0.45)
+    # витрина изменений из oi_hourly
     oi_map = {}
-    since = now_ms - 26 * 3600_000
-    cur = col.find({"t": {"$gte": since}}, {"s": 1, "t": 1, "oi": 1})
+    since = now - timedelta(hours=26)
     by_s: dict = {}
-    for r in cur:
-        by_s.setdefault(r["s"], []).append(r)
+    for r in col.find({"at": {"$gte": since}},
+                      {"symbol": 1, "at": 1, "oi": 1}):
+        by_s.setdefault(r["symbol"], []).append(
+            {"t": int(r["at"].timestamp() * 1000), "oi": r["oi"]})
     for s, rows in by_s.items():
         rows.sort(key=lambda x: x["t"])
         last = rows[-1]
@@ -163,13 +156,12 @@ def run_once() -> dict:
     try:
         db.market_state.update_one(
             {"_id": "oi_now"},
-            {"$set": {"map": oi_map, "at": now,
-                      "n_hist": len(have), "booted": booted,
-                      "snapped": snapped}}, upsert=True)
+            {"$set": {"map": oi_map, "at": now, "booted": booted,
+                      "snapped": None}}, upsert=True)
     except Exception:
         logger.warning("[oi] oi_now store fail", exc_info=True)
     res = {"ok": True, "universe": len(syms), "booted": booted,
-           "snapped": snapped, "mapped": len(oi_map)}
+           "mapped": len(oi_map)}
     logger.info("[oi] cycle: %s", res)
     return res
 
