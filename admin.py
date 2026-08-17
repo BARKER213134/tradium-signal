@@ -8200,6 +8200,16 @@ async def api_market_phase(force: int = 0):
     return await asyncio.to_thread(mp.get_market_phase, bool(force))
 
 
+@app.get("/api/oi-map")
+async def api_oi_map():
+    """📊 Карта изменений OI по монетам (для колонки OI в журнале)."""
+    def _q():
+        from database import _get_db
+        doc = _get_db().market_state.find_one({"_id": "oi_now"}) or {}
+        return {"ok": True, "at": str(doc.get("at")), "map": doc.get("map") or {}}
+    return await asyncio.to_thread(_q)
+
+
 @app.get("/api/oi-status")
 async def api_oi_status(sym: str = ""):
     """📊 Диагностика OI-слоя (15.08): свежесть oi_now, размер карты,
