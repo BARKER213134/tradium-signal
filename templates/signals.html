@@ -10585,7 +10585,7 @@ function renderJournal(items, startIdx) {
   startIdx = startIdx || 0;
   const tbody = document.getElementById('jBody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="16" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="17" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
     return;
   }
   tbody.innerHTML = items.map((s, i) => {
