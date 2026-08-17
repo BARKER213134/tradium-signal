@@ -8200,6 +8200,31 @@ async def api_market_phase(force: int = 0):
     return await asyncio.to_thread(mp.get_market_phase, bool(force))
 
 
+@app.get("/api/oi-status")
+async def api_oi_status(sym: str = ""):
+    """📊 Диагностика OI-слоя (15.08): свежесть oi_now, размер карты,
+    покрытие истории; sym=BTCUSDT — последние точки истории пары."""
+    def _q():
+        from database import _get_db, utcnow
+        db = _get_db()
+        doc = db.market_state.find_one({"_id": "oi_now"}) or {}
+        m = doc.get("map") or {}
+        out = {"ok": True, "mapped": len(m),
+               "at": str(doc.get("at")),
+               "booted_last": doc.get("booted"),
+               "snapped_last": doc.get("snapped"),
+               "hist_pairs": len(db.oi_history.distinct("s")),
+               "hist_docs": db.oi_history.estimated_document_count(),
+               "sample": dict(list(m.items())[:5])}
+        if sym:
+            rows = list(db.oi_history.find({"s": sym.upper()},
+                                           {"_id": 0, "at": 0})
+                        .sort("t", -1).limit(8))
+            out["sym_tail"] = rows
+        return out
+    return await asyncio.to_thread(_q)
+
+
 @app.get("/api/market-phase/history")
 async def api_market_phase_history(hours: int = 72):
     """История смен фазы за последние N часов."""

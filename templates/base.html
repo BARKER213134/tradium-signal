@@ -4284,9 +4284,12 @@ window._kcSetupModal = async function(sym, sigCtx, atTs) {
       ${mt.bar_dz != null ? chip('Δ бара', (mt.bar_dz > 0 ? '+' : '') + mt.bar_dz, mt.bar_dz >= 1 ? '#00e5a0' : mt.bar_dz <= -1 ? '#ff5e9c' : '#8892a4') : ''}
       ${mt.cvd24 != null ? chip('CVD24', (mt.cvd24 >= 0 ? '+' : '') + (Math.abs(mt.cvd24) >= 1e6 ? (mt.cvd24 / 1e6).toFixed(1) + 'M' : Math.round(mt.cvd24)), mt.cvd24 >= 0 ? '#00e5a0' : '#ff5e9c') : ''}
       ${mt.funding_pct != null ? chip('funding', mt.funding_pct + '%', mt.funding_pct >= 0 ? '#00e5a0' : '#ff5e9c') : ''}
+      ${mt.oi_d4h != null ? chip('OI 4ч', (mt.oi_d4h > 0 ? '+' : '') + mt.oi_d4h + '%', mt.oi_d4h >= 1.5 ? '#00e5a0' : mt.oi_d4h <= -1.5 ? '#ff5e9c' : '#8892a4') : ''}
+      ${mt.oi_d24h != null ? chip('OI 24ч', (mt.oi_d24h > 0 ? '+' : '') + mt.oi_d24h + '%', mt.oi_d24h >= 1.5 ? '#00e5a0' : mt.oi_d24h <= -1.5 ? '#ff5e9c' : '#8892a4') : ''}
       ${chip('фаза 4h', mt.phase_emoji)}${chip('климат 12h', mt.climate12_emoji)}
       ${chip('объём', '×' + (mt.vol24_x ?? '—'))}
     </div>
+    ${mt.oi_quad ? `<div style="background:#10151f;border:1px solid #232b3a;border-radius:8px;padding:6px 12px;margin-bottom:10px;font-size:11.5px;">📊 ${mt.oi_quad}</div>` : ''}
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
       ${mt.support ? chip('🟢 поддержка', zoneTxt(mt.support)) : chip('🟢 поддержка', 'не найдена рядом')}
       ${mt.resistance ? chip('🔴 сопротивление', zoneTxt(mt.resistance)) : chip('🔴 сопротивление', 'не найдено рядом')}

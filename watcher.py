@@ -101,6 +101,24 @@ async def _st_tracker_loop():
         await _asyncio.sleep(300)
 
 
+async def _oi_loop():
+    """📊 OI-коллектор (15.08): раз в 30 мин собирает открытый интерес
+    (бутстрап истории fapi openInterestHist + снапшоты fapi/BingX) и
+    обновляет market_state.oi_now. Сигналы не трогает — сбор и витрина."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(240)   # дать скану наполнить pair_context
+    while True:
+        try:
+            await _asyncio.to_thread(_hb, "oi")
+            from oi_collector import run_once
+            res = await _asyncio.to_thread(run_once)
+            if not res.get("ok"):
+                logger.warning("[oi] цикл без результата: %s", res)
+        except Exception:
+            logger.exception("[oi] loop crashed, retry in 30 min")
+        await _asyncio.sleep(1800)
+
+
 async def _st_break4h_loop():
     """💣 ST-пробой 4h: скан всех пар через ~7 мин после закрытия каждого
     4h-бара (00/04/08/12/16/20 UTC). На старте — один догоняющий скан
@@ -3771,6 +3789,7 @@ async def start_watcher():
     # 💣 ST-пробой 4h — скан после закрытия каждого 4h-бара
     try:
         asyncio.create_task(_st_break4h_loop())
+        asyncio.create_task(_oi_loop())
         logger.info("[st-break4h] background loop started")
     except Exception:
         logger.exception("[st-break4h] failed to start loop")

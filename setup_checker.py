@@ -191,6 +191,20 @@ def check_setup(pair_input: str, at_ms: int | None = None) -> dict:
                 dz24 = pc.get("dz24")
             except Exception:
                 pass
+        # 📊 OI (15.08): изменение открытого интереса + квадрант цена×OI
+        oi_d4h = oi_d24h = oi_quad = None
+        if at_ms is None:
+            try:
+                _oin = (db.market_state.find_one({"_id": "oi_now"}, {"map": 1})
+                        or {}).get("map") or {}
+                _o = _oin.get(symbol) or _oin.get(pair.replace("/", ""))
+                if _o:
+                    oi_d4h = _o.get("d4h")
+                    oi_d24h = _o.get("d24h")
+                    from oi_collector import oi_quadrant
+                    oi_quad = oi_quadrant(oi_d24h, mom24)
+            except Exception:
+                pass
 
         # ── 2b. Зоны уровней + тренды + дельта бара (v3, 13.08) ──────
         sup_z = res_z = None
@@ -248,6 +262,7 @@ def check_setup(pair_input: str, at_ms: int | None = None) -> dict:
             "cvd72": round(cvd72) if cvd72 is not None else None,
             "dz24": dz24, "vol24_x": round(vol24_x, 1),
             "funding_pct": round(funding_pct, 4) if funding_pct is not None else None,
+            "oi_d4h": oi_d4h, "oi_d24h": oi_d24h, "oi_quad": oi_quad,
             "phase": phase, "phase_emoji": PH.get(phase, "?"),
             "climate12": clim, "climate12_emoji": PH.get(clim, "?"),
             "last_bar": {"green": lb_green, "close_pos": round(lb_pos)},

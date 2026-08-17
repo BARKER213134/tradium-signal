@@ -350,6 +350,20 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
             sig["hot"] = bool(is_hot(sig.get("symbol") or sig.get("pair")))
         except Exception:
             sig["hot"] = False
+        # 📊 OI-штамп (15.08): изменение открытого интереса на момент
+        # сигнала — только данные для будущих бэктестов, поведение не меняет
+        try:
+            _oin = (db.market_state.find_one({"_id": "oi_now"}, {"map": 1})
+                    or {}).get("map") or {}
+            _o = _oin.get((sig.get("symbol") or "").upper())
+            if _o:
+                sig.setdefault("indicators", {})
+                if _o.get("d4h") is not None:
+                    sig["indicators"]["oi4"] = _o["d4h"]
+                if _o.get("d24h") is not None:
+                    sig["indicators"]["oi24"] = _o["d24h"]
+        except Exception:
+            pass
         doc = {**sig, "created_at": utcnow(), "state": "WAITING"}
         col.insert_one(doc)
         try:
