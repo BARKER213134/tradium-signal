@@ -4869,7 +4869,10 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       let g = null;
       if (c.l > a.h) g = { bull: true, lo: a.h, hi: c.l, t: bars[i - 1].t, i };
       else if (c.h < a.l) g = { bull: false, lo: c.h, hi: a.l, t: bars[i - 1].t, i };
-      if (g && g.hi - g.lo >= avg * 0.15) out.push(g);
+      // порог ширины: 0.15×avg ИЛИ 0.12% цены (что мягче) — на монетах
+      // после пампа avg раздут и относительный фильтр резал нормальные гэпы
+      const wMin = Math.min(avg * 0.15, bars[bars.length - 1].c * 0.0012);
+      if (g && g.hi - g.lo >= wMin) out.push(g);
     }
     // «лучший вариант» (17.08 v3): живые — до 8 БЛИЖАЙШИХ к цене
     // (ранжирование по дистанции, яркость по близости), закрытые — только
@@ -4888,10 +4891,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           if (b.h > lo) lo = b.h;
         }
       }
+      const pxl = bars[bars.length - 1].c;
       if (endT) {
-        if (g.hi - g.lo >= avg * 0.35)
+        if (g.hi - g.lo >= Math.min(avg * 0.35, pxl * 0.003))
           res.push({ bull: g.bull, lo: g.lo, hi: g.hi, t: g.t, endT });
-      } else if (hi - lo >= avg * 0.15) {
+      } else if (hi - lo >= Math.min(avg * 0.15, pxl * 0.0012)) {
         res.push({ bull: g.bull, lo, hi, t: g.t, endT: null });
       }
     }
@@ -4913,8 +4917,8 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         // яркость живого гэпа по близости к цене: рядом (<2%) — светится,
         // дальше — фон; закрытые еле заметны
         const near = live && g.dist != null && g.dist < 0.02;
-        const fa = live ? (near ? 0.42 : 0.18) : 0.07;
-        const ba = live ? (near ? 0.75 : 0.32) : 0.12;
+        const fa = live ? (near ? 0.42 : 0.18) : 0.13;
+        const ba = live ? (near ? 0.75 : 0.32) : 0.24;
         chart.createOverlay({
           name: 'lvlZone', groupId: 'fvg', lock: true,
           points: [{ timestamp: Math.max(g.t, bars[0].t), value: g.lo },
