@@ -355,6 +355,11 @@ async def _setup_verdict_loop():
                     'pair', {'created_at': {
                         '$gte': datetime.now(timezone.utc) - timedelta(minutes=15)},
                         'backfill': {'$exists': False}})
+                fresh_sig_pairs += db.supertrend_signals.distinct(
+                    'pair', {'created_at': {
+                        '$gte': datetime.now(timezone.utc) - timedelta(minutes=15)},
+                        'tier': {'$in': ['vip', 'mtf']}})
+                fresh_sig_pairs = list(dict.fromkeys(fresh_sig_pairs))
                 for p in fresh_sig_pairs:
                     if p and p in need_refresh:
                         need_refresh.remove(p)

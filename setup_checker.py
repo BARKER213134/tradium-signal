@@ -814,6 +814,17 @@ def maybe_auto_entry_alarm(pair: str) -> int:
             {"symbol": sym, "backfill": {"$exists": False},
              "created_at": {"$gte": utcnow() - timedelta(hours=3)}},
             {"strategy": 1, "direction": 1, "vitality": 1}))
+        # 18.08: 🔱/🌀 супертренд-пинги тоже порождают будильники (ZAMA:
+        # st_mtf SHORT шёл, постановка его не видела)
+        try:
+            sigs += [{"strategy": "st_" + (d.get("tier") or "st"),
+                      "direction": d.get("direction")}
+                     for d in db.supertrend_signals.find(
+                         {"pair_norm": sym, "tier": {"$in": ["vip", "mtf"]},
+                          "created_at": {"$gte": utcnow() - timedelta(hours=3)}},
+                         {"tier": 1, "direction": 1})]
+        except Exception:
+            pass
         if not sigs:
             return 0
         c = get_compact_verdict(pair)
