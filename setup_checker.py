@@ -798,21 +798,25 @@ def get_compact_verdict(pair_input: str) -> dict:
     return compact
 
 
-def maybe_auto_entry_alarm(pair: str) -> int:
+def maybe_auto_entry_alarm(pair: str, window_h: float = 3) -> int:
     """🎯 АВТО-ВХОД (18.08, запрос юзера «система анализирует и ставит
-    будильник там, где нужно войти»): для пар со свежими (≤3ч) сигналами —
-    если разбор даёт край зоны на стороне сигнала в 0.6–8% от цены и
-    грейд стороны не НЕТ, ставим авто-будильник на цену края. Дедуп:
-    один ARMED-авто на (пара, сторона); не чаще раза в 12ч; мёртвые
-    монеты пропускаются. Возвращает число поставленных."""
+    будильник там, где нужно войти»): для пар со свежими (≤window_h,
+    дефолт 3ч) сигналами — если разбор даёт край зоны на стороне сигнала
+    в 0.6–8% от цены и грейд стороны не НЕТ, ставим авто-будильник на
+    цену края. Дедуп: один ARMED-авто на (пара, сторона); не чаще раза
+    в 12ч; мёртвые монеты пропускаются. Возвращает число поставленных.
+    window_h>3 используют бэкфиллы (18.08: «поставь на сигналы за
+    сегодня»)."""
     try:
         from database import _get_db, utcnow
         from datetime import timedelta
         db = _get_db()
         sym = _normalize_pair(pair).replace("/", "")
+        since = utcnow() - timedelta(hours=window_h)
         sigs = list(db.new_strategy_signals.find(
             {"symbol": sym, "backfill": {"$exists": False},
-             "created_at": {"$gte": utcnow() - timedelta(hours=3)}},
+             "strategy": {"$ne": "potok"},
+             "created_at": {"$gte": since}},
             {"strategy": 1, "direction": 1, "vitality": 1}))
         # 18.08: 🔱/🌀 супертренд-пинги тоже порождают будильники (ZAMA:
         # st_mtf SHORT шёл, постановка его не видела)
@@ -821,7 +825,7 @@ def maybe_auto_entry_alarm(pair: str) -> int:
                       "direction": d.get("direction")}
                      for d in db.supertrend_signals.find(
                          {"pair_norm": sym, "tier": {"$in": ["vip", "mtf"]},
-                          "created_at": {"$gte": utcnow() - timedelta(hours=3)}},
+                          "created_at": {"$gte": since}},
                          {"tier": 1, "direction": 1})]
         except Exception:
             pass
