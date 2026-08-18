@@ -362,6 +362,17 @@ async def _setup_verdict_loop():
                         upsert=True,
                     )
                     processed += 1
+                    # 🎯 авто-вход (18.08): свежий сигнал + край зоны на
+                    # стороне → авто-будильник на цену входа
+                    try:
+                        from setup_checker import maybe_auto_entry_alarm
+                        n_auto = await _asyncio.to_thread(
+                            maybe_auto_entry_alarm, pair)
+                        if n_auto:
+                            logger.info('[auto-entry] %s: %s будильник(ов)',
+                                        pair, n_auto)
+                    except Exception:
+                        pass
                 except Exception as _e:
                     logger.debug(f'[verdict-loop] {pair}: {_e}')
             logger.info(f'[verdict-loop] processed {processed} verdicts')

@@ -788,11 +788,77 @@ def get_compact_verdict(pair_input: str) -> dict:
         # 18.08: ключевые факты для TG-карточек («сигнал приходит разобранным»)
         "res_dist": _res.get("dist_pct"), "res_str": _res.get("strength"),
         "sup_dist": _sup.get("dist_pct"), "sup_str": _sup.get("strength"),
+        # края зон для 🎯 авто-входов (18.08)
+        "sup_edge": _sup.get("hi"), "sup_far": _sup.get("lo"),
+        "res_edge": _res.get("lo"), "res_far": _res.get("hi"),
         "trend_pat": _mt.get("trend_pat"), "cvd24": _mt.get("cvd24"),
         "computed_at": now,
     }
     _verdict_cache[pair] = (now, compact)
     return compact
+
+
+def maybe_auto_entry_alarm(pair: str) -> int:
+    """🎯 АВТО-ВХОД (18.08, запрос юзера «система анализирует и ставит
+    будильник там, где нужно войти»): для пар со свежими (≤3ч) сигналами —
+    если разбор даёт край зоны на стороне сигнала в 0.6–8% от цены и
+    грейд стороны не НЕТ, ставим авто-будильник на цену края. Дедуп:
+    один ARMED-авто на (пара, сторона); не чаще раза в 12ч; мёртвые
+    монеты пропускаются. Возвращает число поставленных."""
+    try:
+        from database import _get_db, utcnow
+        from datetime import timedelta
+        db = _get_db()
+        sym = _normalize_pair(pair).replace("/", "")
+        sigs = list(db.new_strategy_signals.find(
+            {"symbol": sym, "backfill": {"$exists": False},
+             "created_at": {"$gte": utcnow() - timedelta(hours=3)}},
+            {"strategy": 1, "direction": 1, "vitality": 1}))
+        if not sigs:
+            return 0
+        c = get_compact_verdict(pair)
+        placed = 0
+        for side in ("LONG", "SHORT"):
+            ss = [s for s in sigs if s.get("direction") == side]
+            if not ss:
+                continue
+            if any(s.get("vitality") == "dead" for s in ss):
+                continue
+            grade = c.get("long_grade" if side == "LONG" else "short_grade")
+            if grade == "НЕТ":
+                continue
+            if side == "LONG":
+                edge, far, dist = c.get("sup_edge"), c.get("sup_far"), c.get("sup_dist")
+            else:
+                edge, far, dist = c.get("res_edge"), c.get("res_far"), c.get("res_dist")
+            if not edge or dist is None or not (0.6 <= dist <= 8):
+                continue
+            # дедуп: ARMED-авто по паре+стороне / ставился <12ч назад
+            dup = db.alarms.find_one({
+                "symbol": sym, "auto": "entry", "sig_dir": side,
+                "$or": [{"state": "ARMED"},
+                        {"created_at": {"$gte": utcnow() - timedelta(hours=12)}}]})
+            if dup:
+                continue
+            sg = 1 if side == "LONG" else -1
+            stop = far * (1 - sg * 0.004) if far else edge * (1 - sg * 0.012)
+            risk = abs(edge - stop)
+            target = edge + sg * risk * 1.5
+            src = ss[0].get("strategy")
+            note = (f"🎯 авто-вход по сигналу {src} {side}: лимитка от края "
+                    f"зоны {edge:.6g} · стоп за зону {stop:.6g} "
+                    f"({abs(stop / edge - 1) * 100:.1f}%) · цель 1.5R {target:.6g}")
+            db.alarms.insert_one({
+                "symbol": sym, "kind": "price", "price": float(edge),
+                "side": "below" if side == "LONG" else "above",
+                "state": "ARMED", "price_hit": False,
+                "auto": "entry", "sig_src": src, "sig_dir": side,
+                "note": note, "created_at": utcnow()})
+            placed += 1
+        return placed
+    except Exception:
+        logger.debug("[auto-entry] %s fail", pair, exc_info=True)
+        return 0
 
 
 def signal_tg_context(pair: str, direction: str | None = None) -> str:

@@ -132,9 +132,24 @@ def _tick_sync(last_sig_ts: dict) -> None:
             if not hit:
                 continue
             if a["kind"] == "price":
-                _tg(f"⏰ <b>БУДИЛЬНИК · {base}</b>\n"
-                    f"цена дошла до {_fmt(a['price'])} "
-                    f"(сейчас {_fmt(cur)})")
+                if a.get("auto") == "entry":
+                    # 🎯 авто-вход: цена пришла в точку, где разбор велел
+                    # входить — карточка с планом + свежий 🎰-контекст
+                    txt = (f"🎯 <b>АВТО-ВХОД · {base}</b>\n"
+                           f"цена дошла до края зоны {_fmt(a['price'])} "
+                           f"(сейчас {_fmt(cur)})\n"
+                           f"{a.get('note') or ''}")
+                    try:
+                        from setup_checker import signal_tg_context
+                        txt += signal_tg_context(
+                            base + "/USDT", a.get("sig_dir"))
+                    except Exception:
+                        pass
+                    _tg(txt)
+                else:
+                    _tg(f"⏰ <b>БУДИЛЬНИК · {base}</b>\n"
+                        f"цена дошла до {_fmt(a['price'])} "
+                        f"(сейчас {_fmt(cur)})")
                 _log_event(db, a, cur)
                 db.alarms.update_one({"_id": a["_id"]},
                                      {"$set": {"state": "FIRED",
