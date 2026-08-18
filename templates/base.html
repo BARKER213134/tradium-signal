@@ -4869,24 +4869,29 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       let g = null;
       if (c.l > a.h) g = { bull: true, lo: a.h, hi: c.l, t: bars[i - 1].t, i };
       else if (c.h < a.l) g = { bull: false, lo: c.h, hi: a.l, t: bars[i - 1].t, i };
-      if (g && g.hi - g.lo >= avg * 0.25) out.push(g);
+      if (g && g.hi - g.lo >= avg * 0.15) out.push(g);
     }
-    const alive = [];
+    // как на TV (17.08): рисуем и ЗАКРЫТЫЕ (бокс от образования до бара
+    // закрытия, приглушённо), и живые (усечённый остаток, ярко, до края)
+    const res = [];
     for (const g of out) {
-      let lo = g.lo, hi = g.hi, dead = false;
+      let lo = g.lo, hi = g.hi, endT = null;
       for (let j = g.i + 1; j < bars.length; j++) {
         const b = bars[j];
         if (g.bull) {
-          if (b.l <= g.lo) { dead = true; break; }
+          if (b.l <= g.lo) { endT = b.t; break; }
           if (b.l < hi) hi = b.l;
         } else {
-          if (b.h >= g.hi) { dead = true; break; }
+          if (b.h >= g.hi) { endT = b.t; break; }
           if (b.h > lo) lo = b.h;
         }
       }
-      if (!dead && hi - lo >= avg * 0.15) alive.push({ bull: g.bull, lo, hi, t: g.t });
+      if (endT) res.push({ bull: g.bull, lo: g.lo, hi: g.hi, t: g.t, endT });
+      else if (hi - lo >= avg * 0.1) res.push({ bull: g.bull, lo, hi, t: g.t, endT: null });
     }
-    return alive.slice(-12);
+    const alive = res.filter(g => !g.endT).slice(-20);
+    const closed = res.filter(g => g.endT).slice(-40);
+    return closed.concat(alive);
   };
   window._kcDrawFvg = function(chart, bars) {
     const gaps = window._kcFvgFind(bars);
@@ -4895,15 +4900,16 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     const iv = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
     gaps.forEach(g => {
       try {
+        const live = !g.endT;
         chart.createOverlay({
           name: 'lvlZone', groupId: 'fvg', lock: true,
           points: [{ timestamp: Math.max(g.t, bars[0].t), value: g.lo },
-                   { timestamp: lastT + iv * 30, value: g.hi }],
-          // вид как на TV (17.08): насыщенные зелёные/красные боксы без
-          // лейблов; от 📏-зон отличаются плотностью заливки
+                   { timestamp: live ? lastT + iv * 30 : g.endT, value: g.hi }],
           extendData: {
-            fill: g.bull ? 'rgba(16,185,129,0.38)' : 'rgba(244,63,94,0.38)',
-            border: g.bull ? 'rgba(16,185,129,0.65)' : 'rgba(244,63,94,0.65)',
+            fill: g.bull ? `rgba(16,185,129,${live ? 0.38 : 0.14})`
+                         : `rgba(244,63,94,${live ? 0.38 : 0.14})`,
+            border: g.bull ? `rgba(16,185,129,${live ? 0.65 : 0.22})`
+                           : `rgba(244,63,94,${live ? 0.65 : 0.22})`,
             label: '',
           },
         });
