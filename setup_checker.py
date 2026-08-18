@@ -827,6 +827,14 @@ def maybe_auto_entry_alarm(pair: str) -> int:
             pass
         if not sigs:
             return 0
+        # 💀-гейт по pair_context (18.08): st-пинги не несут штамп
+        # живости — статус монеты надёжнее брать из контекста
+        try:
+            _pcv = db.pair_context.find_one({"_id": sym}, {"vitality": 1})
+            if _pcv and _pcv.get("vitality") == "dead":
+                return 0
+        except Exception:
+            pass
         c = get_compact_verdict(pair)
         placed = 0
         for side in ("LONG", "SHORT"):

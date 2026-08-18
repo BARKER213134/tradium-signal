@@ -6739,6 +6739,7 @@ safeInterval(tdLoadTop, 120000); safeInterval(tdLoad, 120000); safeInterval(tdFr
     <input type="checkbox" id="alFired" onchange="alLoad()"> показать сработавшие
   </label>
   <button onclick="alLoad()" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;cursor:pointer;padding:4px 10px;">⟳ обновить</button>
+  <span id="alUpd" style="font-size:10px;color:var(--muted);"></span>
 </div>
 <div style="border:1px solid var(--border);border-radius:8px;overflow:auto;">
   <table style="width:100%;border-collapse:collapse;font-size:12px;">
@@ -6792,6 +6793,8 @@ async function alLoad() {
         <td style="font-size:11px;">${st}</td>
         <td>${del}</td></tr>`;
     }).join('');
+    const u = document.getElementById('alUpd');
+    if (u) u.textContent = '· авто-обновление 15с · обновлено ' + new Date().toLocaleTimeString('ru-RU');
   } catch (e) {
     body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:#ff6b6b;">ошибка загрузки</td></tr>';
   }
@@ -6801,7 +6804,7 @@ async function alDel(id) {
   alLoad();
 }
 alLoad();
-setInterval(alLoad, 30000);
+setInterval(alLoad, 15000);
 </script>
 {% elif bot == 'trends' %}
 <!-- ════════════ 📈 Тренды — своя замена CryptoVizor (07.08.26) ════════════ -->
