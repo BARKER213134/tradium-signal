@@ -7790,6 +7790,17 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     if (typeof filterJournal === 'function') filterJournal();
   };
   </script>
+  <button id="jTrendOkBtn" onclick="_toggleTrendOk()" title="✓ Показать только сигналы ПО рабочему ТФ тренда: LONG сверяется с 2h-стрелкой монеты, SHORT — с 12h (бэктест 13.9k живых исходов: спред +0.28/+0.26пп к EV; 4h для лонгов — инверсия). Класс EGLD-серий: шорты падающих у сопротивлений, лонги растущих у поддержек." style="background:none;border:1px solid rgba(0,229,160,0.45);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:120px;text-align:center;box-sizing:border-box;font-weight:700;">✓ Тренд · OFF</button>
+  <script>
+  window._trendOkOn = false;
+  window._toggleTrendOk = function() {
+    window._trendOkOn = !window._trendOkOn;
+    const b = document.getElementById('jTrendOkBtn');
+    b.textContent = window._trendOkOn ? '✓ Тренд · ON' : '✓ Тренд · OFF';
+    b.style.background = window._trendOkOn ? 'rgba(0,229,160,0.25)' : 'none';
+    if (typeof filterJournal === 'function') filterJournal();
+  };
+  </script>
   <button id="jGradeOnlyBtn" onclick="_toggleGradeOnly()" title="🎓 Показать только сигналы с оценкой 🟩 ВХОД: комбинация источник × направление × фаза исторически даёт EV ≥ +0.75%/сделку на сетке под цель +10% (TP+10/SL−5, 96ч, бэктест 3 мес всех сигналов базы). Самый простой режим: жми, бери верхние строки (сортировка по EV кликом на «Вход?»), уровни — в подсказке ячейки." style="background:linear-gradient(135deg, rgba(0,229,160,0.18), rgba(255,210,62,0.10));border:1.5px solid rgba(0,229,160,0.6);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#00e5a0;cursor:pointer;min-width:150px;text-align:center;box-sizing:border-box;font-weight:700;">🟩 Только ВХОД · OFF</button>
   <script>
   window._gradeOnlyOn = false;
@@ -9969,6 +9980,7 @@ function filterJournal() {
     }
     // ⭐ Отборные — профиль победителей (live pro_star или зафиксированный)
     if (window._starOnlyOn && !(s.pro_star || s.svetofor_star)) return false;
+    if (window._trendOkOn && s.trend_ok !== true) return false;
     if (dir && s.direction !== dir) return false;
     // ── Отбор по тренду монеты (EMA20/50 per TF на момент сигнала) ──
     const trendF = (document.getElementById('jFilterTrend') || {}).value || '';
@@ -10589,7 +10601,13 @@ function renderJournal(items, startIdx) {
     return;
   }
   tbody.innerHTML = items.map((s, i) => {
-    const dir = s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>';
+    // ✓/✗ согласие со «своим» ТФ тренда (бэктест 13.9k исходов: LONG↔2h
+    // спред +0.28пп, SHORT↔12h +0.26пп; 4h для лонгов — инверсия)
+    const _tok = s.trend_ok === true
+      ? ' <span title="по рабочему ТФ тренда (LONG сверён с 2h, SHORT с 12h): +0.28/+0.26пп к EV" style="color:#00e5a0;font-weight:800;">✓</span>'
+      : s.trend_ok === false
+      ? ' <span title="против рабочего ТФ тренда (LONG сверён с 2h, SHORT с 12h)" style="color:#ff5e9c;font-weight:800;">✗</span>' : '';
+    const dir = (s.direction === 'LONG' ? '<span class="badge badge-buy">LONG</span>' : '<span class="badge badge-sell">SHORT</span>') + _tok;
     const pair = (s.pair || s.symbol || '').replace('/USDT', '');
     const time = s.at ? new Date(s.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
     const isStrong = window.isStrongSignal ? window.isStrongSignal(s) : false;
@@ -10715,6 +10733,7 @@ function renderJournal(items, startIdx) {
         proCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:800;color:${pm[1]};${s.pro_star ? 'text-shadow:0 0 8px rgba(255,210,62,0.7);' : ''}" title="${tipP.replace(/"/g, '&quot;')}">${starP}${pm[0]} ${s.pro_verdict}</td>`;
       }
     }
+    if (s.trend_ok === false) rowStyle += 'opacity:0.55;';
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
       <td class="mono text-muted" style="font-size:11px;">${time}</td>
       <td style="font-size:11px;">${srcBadge} ${srcName}</td>

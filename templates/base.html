@@ -4289,8 +4289,19 @@ window._kcSetupModal = async function(sym, sigCtx, atTs) {
           (sigCtx.svetofor ? `<b style="color:${svC};">${sigCtx.svetofor}</b>` : '—') +
           ` · разбор выше — состояние СЕЙЧАС: если цена уехала от входа, вердикт честно станет хуже</span>`;
       }
+      // ✓/✗ по «своему» ТФ тренда СЕЙЧАС: LONG↔2h, SHORT↔12h
+      // (13.9k исходов: спред +0.28/+0.26пп; 4h лонгам — инверсия)
+      let tokLine = '';
+      const _pat = mt.trend_pat;
+      if (_pat && _pat.length === 4) {
+        const ok = dir === 'LONG' ? _pat[1] === '▲' : _pat[3] === '▼';
+        const tfN = dir === 'LONG' ? '2h' : '12h';
+        tokLine = `<br>` + (ok
+          ? `<b style="color:#00e5a0;">✓ по рабочему ТФ тренда (${tfN}) — класс EGLD-серий (+0.28/+0.26пп)</b>`
+          : `<b style="color:#ff5e9c;">✗ против рабочего ТФ тренда (${tfN})</b>`);
+      }
       return `<div style="background:#10151f;border:1px solid #232b3a;border-radius:8px;padding:8px 12px;margin-bottom:10px;">
-        🧾 сигнал: <b>${src} ${dir}</b> · ${evTxt}<br>${vs}${then}</div>`;
+        🧾 сигнал: <b>${src} ${dir}</b> · ${evTxt}<br>${vs}${tokLine}${then}</div>`;
     })()}
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
       ${chip('цена', fmtP(mt.price))}

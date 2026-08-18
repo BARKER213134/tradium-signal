@@ -11042,6 +11042,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "hot": bool(n.get("hot")),
                 # 💀/😴 живость монеты НА МОМЕНТ сигнала (штамп/бэкфилл)
                 "vitality": n.get("vitality"),
+                # ✓/✗ по «своему» ТФ тренда (LONG↔2h, SHORT↔12h)
+                "trend_ok": n.get("trend_ok"),
                 "prio": round(_prio, 2) if _prio is not None else None,
                 "ns_vol_ratio": n.get("vol_ratio"),
                 "ns_sources": n.get("sources"),

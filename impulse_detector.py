@@ -350,6 +350,21 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
             sig["hot"] = bool(is_hot(sig.get("symbol") or sig.get("pair")))
         except Exception:
             sig["hot"] = False
+        # ✓/✗-штамп «по своему ТФ тренда» (17.08): LONG↔2h, SHORT↔12h
+        # (бэктест 13.9k исходов: спред +0.28/+0.26пп; 4h лонгам — инверсия)
+        try:
+            _tm = (db.market_state.find_one({"_id": "trend_matrix"},
+                                            {"rows": 1}) or {}).get("rows") or []
+            _sym_u = (sig.get("symbol") or "").upper()
+            _row = next((r for r in _tm if r.get("s") == _sym_u), None)
+            _dirs = (_row or {}).get("d") or {}
+            _side = sig.get("direction")
+            if _side == "LONG" and _dirs.get("2h") in (1, -1):
+                sig["trend_ok"] = _dirs["2h"] > 0
+            elif _side == "SHORT" and _dirs.get("12h") in (1, -1):
+                sig["trend_ok"] = _dirs["12h"] < 0
+        except Exception:
+            pass
         # 💀/😴-штамп живости монеты (17.08): из pair_context (скан 30 мин)
         try:
             _pcv = db.pair_context.find_one(
