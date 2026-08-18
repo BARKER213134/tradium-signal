@@ -858,11 +858,18 @@ def _vol_anomaly_sig(pair: str, kd: list[dict]):
         if not sma24 or b["v"] < 8 * sma24:
             return None
         hist = kd[-242:-2]
-        d_hist = sorted(abs(2 * x["tb"] - x["v"]) for x in hist)
-        q90 = d_hist[int(len(d_hist) * 0.90)]
         d_bar = 2 * b["tb"] - b["v"]
-        if abs(d_bar) <= q90:
-            return None
+        # 18.08: объёмный фолбэк — BingX-бары без тейкерской дельты
+        # (tb=v/2, дельта≡0 у всех баров). Раньше дельта-гейт глушил ⚡
+        # на беспотовых монетах (CLO 18.08 03:00: 22.5× пропущен) —
+        # теперь сигналим по чистому объёму, направление по телу свечи,
+        # пометка delta_na в карточке.
+        delta_na = all(abs(2 * x["tb"] - x["v"]) < 1e-9 for x in kd[-30:-2])
+        if not delta_na:
+            d_hist = sorted(abs(2 * x["tb"] - x["v"]) for x in hist)
+            q90 = d_hist[int(len(d_hist) * 0.90)]
+            if abs(d_bar) <= q90:
+                return None
         hi48 = max(x["h"] for x in kd[-50:-2])
         lo48 = min(x["l"] for x in kd[-50:-2])
         loc = ("TOP" if b["h"] >= hi48 else
@@ -874,14 +881,18 @@ def _vol_anomaly_sig(pair: str, kd: list[dict]):
         except Exception:
             pass
         price = b["c"]
-        want = 1 if d_bar >= 0 else -1
+        want = ((1 if b["c"] >= b["o"] else -1) if delta_na
+                else (1 if d_bar >= 0 else -1))
         return {"strategy": "vol_anomaly", "direction": "LONG" if want > 0 else "SHORT",
                 "pair": pair, "symbol": pair.replace("/", "").upper(),
                 "entry": price, "tp": price * (1 + want * 0.10),
                 "sl": price * (1 - want * 0.05), "horizon_h": 96,
                 "indicators": {"vol_x": round(b["v"] / sma24, 1),
-                               "delta": round(d_bar, 0), "loc": loc,
-                               "imb": round(d_bar / b["v"], 2) if b["v"] else None,
+                               "delta": None if delta_na else round(d_bar, 0),
+                               "delta_na": bool(delta_na) or None,
+                               "loc": loc,
+                               "imb": (round(d_bar / b["v"], 2)
+                                       if b["v"] and not delta_na else None),
                                "phase": phase}}
     except Exception:
         return None
@@ -916,10 +927,13 @@ def _vol_anomaly4h_sig(pair: str, kd: list[dict]):
         ma24 = sum(prev24) / len(prev24) if prev24 else 0
         if not ma24 or b["v"] < 6 * ma24:
             return None
-        d_hist = sorted(abs(a["d"]) for a in arr[-61:-1])
-        q75 = d_hist[int(len(d_hist) * 0.75)]
-        if abs(b["d"]) <= q75:
-            return None
+        # 18.08: тот же объёмный фолбэк, что у ⚡ (BingX без дельты)
+        delta_na4 = all(abs(a["d"]) < 1e-9 for a in arr[-20:])
+        if not delta_na4:
+            d_hist = sorted(abs(a["d"]) for a in arr[-61:-1])
+            q75 = d_hist[int(len(d_hist) * 0.75)]
+            if abs(b["d"]) <= q75:
+                return None
         phase = None
         try:
             from supertrend_tracker import _market_phase_now
@@ -927,14 +941,17 @@ def _vol_anomaly4h_sig(pair: str, kd: list[dict]):
         except Exception:
             pass
         price = b["c"]
-        want = 1 if b["d"] >= 0 else -1
+        want = ((1 if b["c"] >= b["o"] else -1) if delta_na4
+                else (1 if b["d"] >= 0 else -1))
         return {"strategy": "vol_anomaly4h", "direction": "LONG" if want > 0 else "SHORT",
                 "pair": pair, "symbol": pair.replace("/", "").upper(),
                 "entry": price, "tp": price * (1 + want * 0.10),
                 "sl": price * (1 - want * 0.05), "horizon_h": 96,
                 "indicators": {"vol_x": round(b["v"] / ma24, 1),
-                               "delta": round(b["d"], 0),
-                               "imb": round(b["d"] / b["v"], 2) if b["v"] else None,
+                               "delta": None if delta_na4 else round(b["d"], 0),
+                               "delta_na": bool(delta_na4) or None,
+                               "imb": (round(b["d"] / b["v"], 2)
+                                       if b["v"] and not delta_na4 else None),
                                "phase": phase}}
     except Exception:
         return None
