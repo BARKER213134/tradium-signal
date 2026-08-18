@@ -773,6 +773,9 @@ def get_compact_verdict(pair_input: str) -> dict:
         tier_label, emoji, color = "SHORT", "🔴", "#ff4d6d"
     else:
         tier_label, emoji, color = "WAIT", "⏳", "#ffd23e"
+    _mt = full.get("metrics") or {}
+    _res = _mt.get("resistance") or {}
+    _sup = _mt.get("support") or {}
     compact = {
         "verdict": verdict,
         "tier": tier_label,
@@ -782,7 +785,48 @@ def get_compact_verdict(pair_input: str) -> dict:
         "long_grade": (full.get("long") or {}).get("grade"),
         "short_grade": (full.get("short") or {}).get("grade"),
         "note": full.get("verdict_note") or "",
+        # 18.08: ключевые факты для TG-карточек («сигнал приходит разобранным»)
+        "res_dist": _res.get("dist_pct"), "res_str": _res.get("strength"),
+        "sup_dist": _sup.get("dist_pct"), "sup_str": _sup.get("strength"),
+        "trend_pat": _mt.get("trend_pat"), "cvd24": _mt.get("cvd24"),
         "computed_at": now,
     }
     _verdict_cache[pair] = (now, compact)
     return compact
+
+
+def signal_tg_context(pair: str, direction: str | None = None) -> str:
+    """🎰-контекст для TG-карточки сигнала (18.08, запрос юзера «сигнал
+    должен подаваться уже разобранным»): вердикты сторон, ближайшая зона
+    на пути сделки с ⚠-предупреждением, тренды со ✓/✗ по рабочему ТФ
+    (LONG↔2h, SHORT↔12h), CVD24. Пусто при любой ошибке — карточка не
+    ломается. get_compact_verdict кэширован (5 мин + фоновый цикл)."""
+    try:
+        c = get_compact_verdict(pair)
+    except Exception:
+        return ""
+    try:
+        lines = []
+        lg, sg = c.get("long_grade") or "?", c.get("short_grade") or "?"
+        lines.append(f"🎰 разбор: LONG={lg} · SHORT={sg} · общий {c.get('tier')}")
+        f2 = []
+        if direction == "LONG" and c.get("res_dist") is not None:
+            warn = " ⚠️ путь к цели через зону" if c["res_dist"] < 2 else ""
+            f2.append(f"🔴 сопротивление ⚡{c.get('res_str')}% в +{c['res_dist']}%{warn}")
+        if direction == "SHORT" and c.get("sup_dist") is not None:
+            warn = " ⚠️ путь к цели через зону" if c["sup_dist"] < 2 else ""
+            f2.append(f"🟢 поддержка ⚡{c.get('sup_str')}% в −{c['sup_dist']}%{warn}")
+        tp_ = c.get("trend_pat")
+        if tp_ and len(tp_) == 4:
+            ok = (tp_[1] == "▲") if direction == "LONG" else \
+                 (tp_[3] == "▼") if direction == "SHORT" else None
+            f2.append(f"тренды {tp_}"
+                      + (" ✓" if ok else " ✗" if ok is False else ""))
+        cv = c.get("cvd24")
+        if cv is not None:
+            f2.append(f"CVD24 {'+' if cv >= 0 else ''}{cv / 1e6:.1f}M")
+        if f2:
+            lines.append(" · ".join(f2))
+        return "\n" + "\n".join(lines)
+    except Exception:
+        return ""

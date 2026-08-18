@@ -983,6 +983,15 @@ async def _send_strategy_alert(sig: dict) -> None:
         f"{extra}\n\n"
         f"<i>Backtest validated · observation-only</i>"
     )
+    # 🎰 18.08: карточка приходит РАЗОБРАННОЙ — вердикты сторон, зона на
+    # пути сделки, тренды ✓/✗, CVD (запрос юзера)
+    try:
+        from setup_checker import signal_tg_context
+        ctx = await asyncio.to_thread(signal_tg_context, pair, direction)
+        if ctx:
+            text = text + ctx
+    except Exception:
+        pass
     try:
         import httpx
         url = f'https://api.telegram.org/bot{BOT13_BOT_TOKEN}/sendMessage'

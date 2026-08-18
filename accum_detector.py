@@ -360,7 +360,27 @@ def _blowoff_sig(pair: str, kd: list[dict]):
 
 
 def _tg16(txt: str) -> None:
-    """TG в BOT16 (whale-канал) из sync-треда скана — прямой REST."""
+    """TG в BOT16 (whale-канал) из sync-треда скана — прямой REST.
+    18.08: карточка приходит РАЗОБРАННОЙ — авто-приклейка 🎰-контекста
+    (вердикты сторон, зона на пути сделки, тренды ✓/✗, CVD): пара
+    берётся из заголовка «· SYMBOL</b>», сторона — по первому слову
+    LONG/ЛОНГ vs SHORT/ШОРТ. Кэш вердиктов 5 мин + фоновый цикл."""
+    try:
+        import re as _re
+        _m = _re.search(r"·\s*([A-Z0-9]{2,15})</b>", txt)
+        if _m:
+            _pl = min([p for p in (txt.find("LONG"), txt.find("ЛОНГ"))
+                       if p >= 0] or [10**9])
+            _ps = min([p for p in (txt.find("SHORT"), txt.find("ШОРТ"))
+                       if p >= 0] or [10**9])
+            _dir = ("LONG" if _pl < _ps else
+                    "SHORT" if _ps < _pl else None)
+            from setup_checker import signal_tg_context
+            _ctx = signal_tg_context(_m.group(1) + "/USDT", _dir)
+            if _ctx:
+                txt = txt + _ctx
+    except Exception:
+        pass
     try:
         from config import BOT16_BOT_TOKEN, WHALE_CHAT_ID
         if BOT16_BOT_TOKEN and WHALE_CHAT_ID:
