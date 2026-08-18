@@ -166,6 +166,7 @@ def check_setup(pair_input: str, at_ms: int | None = None) -> dict:
         funding_pct = None
         phase = clim = None
         dz24 = None
+        vitality = None
         if at_ms is None:
             try:
                 fn = db.market_state.find_one({"_id": "funding_now"}) or {}
@@ -189,6 +190,7 @@ def check_setup(pair_input: str, at_ms: int | None = None) -> dict:
             try:
                 pc = db.pair_context.find_one({"_id": pair}) or {}
                 dz24 = pc.get("dz24")
+                vitality = pc.get("vitality")
             except Exception:
                 pass
         # 📊 OI (15.08): изменение открытого интереса + квадрант цена×OI
@@ -263,6 +265,7 @@ def check_setup(pair_input: str, at_ms: int | None = None) -> dict:
             "dz24": dz24, "vol24_x": round(vol24_x, 1),
             "funding_pct": round(funding_pct, 4) if funding_pct is not None else None,
             "oi_d4h": oi_d4h, "oi_d24h": oi_d24h, "oi_quad": oi_quad,
+            "vitality": vitality,
             "phase": phase, "phase_emoji": PH.get(phase, "?"),
             "climate12": clim, "climate12_emoji": PH.get(clim, "?"),
             "last_bar": {"green": lb_green, "close_pos": round(lb_pos)},

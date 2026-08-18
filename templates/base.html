@@ -830,6 +830,21 @@
         })[src] || '•';
         return hotPfx + tenPfx + prefix + base;
       };
+      // 💀/😴 живость монеты (17.08): карта из /api/oi-map (vit),
+      // метка у монеты по всей платформе. 💀 труп (ATR<0.8 + просадка
+      // >25% / затухший объём), 😴 спячка (сжатие у цены).
+      window._vitMark = function(sym) {
+        const k = (sym || '').toUpperCase().replace('/', '').replace(/USDT$/, '') + 'USDT';
+        const v = (window._vitMap || {})[k];
+        return v === 'dead' ? '💀' : v === 'sleep' ? '😴' : '';
+      };
+      setTimeout(async () => {
+        try {
+          const d = await (await fetch('/api/oi-map')).json();
+          if (!window._oiMap) window._oiMap = d.map || {};
+          window._vitMap = d.vit || {};
+        } catch (e) {}
+      }, 1500);
       window.sigIcon._version = 'v16-purge-cv-tradium';
       console.log('[sigIcon] loaded', window.sigIcon._version);
 
@@ -4027,7 +4042,8 @@ window.openPairChart = function(symbol, tf) {
     const cnt = document.getElementById('kcQmNavCnt');
     if (cnt && navIx >= 0) cnt.textContent = (navIx + 1) + '/' + navList.length;
   }
-  document.getElementById('kcQmTitle').textContent = sym.replace('USDT', '') + ' · USDT';
+  document.getElementById('kcQmTitle').textContent =
+    (window._vitMark ? window._vitMark(sym) : '') + ' ' + sym.replace('USDT', '') + ' · USDT';
   document.getElementById('kcQmTFs').innerHTML = ['5m', '15m', '30m', '1h', '4h', '12h', '1d'].map(t =>
     `<button onclick="openPairChart(window._kcQmSym,'${t}')" style="background:${t === tfCur ? 'rgba(76,201,240,0.18)' : 'none'};` +
     `border:1px solid ${t === tfCur ? 'rgba(76,201,240,0.5)' : 'var(--border,#334)'};border-radius:6px;` +
@@ -4288,7 +4304,9 @@ window._kcSetupModal = async function(sym, sigCtx, atTs) {
       ${mt.oi_d24h != null ? chip('OI 24ч', (mt.oi_d24h > 0 ? '+' : '') + mt.oi_d24h + '%', mt.oi_d24h >= 1.5 ? '#00e5a0' : mt.oi_d24h <= -1.5 ? '#ff5e9c' : '#8892a4') : ''}
       ${chip('фаза 4h', mt.phase_emoji)}${chip('климат 12h', mt.climate12_emoji)}
       ${chip('объём', '×' + (mt.vol24_x ?? '—'))}
+      ${mt.vitality ? chip('живость', mt.vitality === 'dead' ? '💀 мёртвая' : '😴 спячка', '#ff5e9c') : ''}
     </div>
+    ${mt.vitality === 'dead' ? `<div style="background:#10151f;border:1px solid rgba(255,94,156,0.4);border-radius:8px;padding:6px 12px;margin-bottom:10px;font-size:11.5px;">💀 монета мёртвая: ATR<0.8% + просадка/затухший объём — движения сюда не приходят (до +10% доходит 13% сигналов против 31% у живых). Сетапы по структуре могут выглядеть красиво, но исполнять их некому.</div>` : ''}
     ${mt.oi_quad ? `<div style="background:#10151f;border:1px solid #232b3a;border-radius:8px;padding:6px 12px;margin-bottom:10px;font-size:11.5px;">📊 ${mt.oi_quad}</div>` : ''}
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
       ${mt.support ? chip('🟢 поддержка', zoneTxt(mt.support)) : chip('🟢 поддержка', 'не найдена рядом')}

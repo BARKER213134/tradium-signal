@@ -8202,11 +8202,16 @@ async def api_market_phase(force: int = 0):
 
 @app.get("/api/oi-map")
 async def api_oi_map():
-    """📊 Карта изменений OI по монетам (для колонки OI в журнале)."""
+    """📊 Карта изменений OI по монетам (колонка OI) + 💀/😴 живость
+    (vit, из pair_context) — одним запросом для журнала."""
     def _q():
         from database import _get_db
-        doc = _get_db().market_state.find_one({"_id": "oi_now"}) or {}
-        return {"ok": True, "at": str(doc.get("at")), "map": doc.get("map") or {}}
+        db = _get_db()
+        doc = db.market_state.find_one({"_id": "oi_now"}) or {}
+        vit = {d["_id"]: d["vitality"] for d in db.pair_context.find(
+            {"vitality": {"$in": ["dead", "sleep"]}}, {"vitality": 1})}
+        return {"ok": True, "at": str(doc.get("at")),
+                "map": doc.get("map") or {}, "vit": vit}
     return await asyncio.to_thread(_q)
 
 

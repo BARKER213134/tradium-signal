@@ -6681,7 +6681,7 @@ function tdRender() {
       const badges = (isReady(r) ? '<span style="background:rgba(0,229,160,0.15);border:1px solid rgba(0,229,160,0.5);border-radius:5px;padding:2px 7px;color:#00e5a0;font-weight:800;font-size:10.5px;">ГОТОВ</span> ' : '')
         + (isPb(r) ? '🪂 ' : '') + (isBt(r) ? '🪤 ' : '') + (r.hot ? '🔥' : '');
       return `<tr onclick="openPairChart('${r.s}','1h')" style="border-top:1px solid var(--border);cursor:pointer;">
-        <td style="padding:7px 10px;font-weight:800;font-family:var(--font-mono);">${r.s.replace('USDT','')}</td>
+        <td style="padding:7px 10px;font-weight:800;font-family:var(--font-mono);">${window._vitMark ? window._vitMark(r.s) : ''}${r.s.replace('USDT','')}</td>
         <td>${sd}</td>
         <td style="font-family:var(--font-mono);font-weight:700;">${r.dist}%</td>
         <td style="font-family:var(--font-mono);color:var(--muted);">${tdFmt(r.edge)}</td>
@@ -10648,7 +10648,8 @@ function renderJournal(items, startIdx) {
     if (stackD >= 6) moonPrefix = '<span title="MOONSHOT: stack ' + stackD + '+ sources align" style="margin-right:3px;">💎</span>';
     else if (stackD >= 4) moonPrefix = '<span title="Moonshot candidate: stack ' + stackD + ' sources align" style="margin-right:3px;">🚀</span>';
     if (s.is_top_mover) moonPrefix += '<span title="Top 24h gainer (+' + (s.change_24h ? s.change_24h.toFixed(1) : '?') + '%)" style="margin-right:3px;">🔥</span>';
-    const pairCell = moonPrefix + `<span class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.4);">${pair}</span>` +
+    const _vm = window._vitMark ? window._vitMark(s.symbol || s.pair) : '';
+    const pairCell = moonPrefix + (_vm ? `<span title="${_vm === '💀' ? 'мёртвая: ATR<0.8% + просадка/затухший объём — движения не приходят (до +10% доходит 13% против 31%)' : 'спячка: сжатие на сухом объёме — ждать выхода из диапазона'}">${_vm}</span>` : '') + `<span class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.4);">${pair}</span>` +
       `<span onclick="showEntryCheck('${pair}USDT', '${s.direction === 'SHORT' ? 'SHORT' : 'LONG'}');event.stopPropagation()" title="🚦 Проверка входа: входить или нет (фаза · догон · RS · RSI · сигналы · уровни)" style="display:inline-block;cursor:pointer;margin-left:6px;font-size:16px;line-height:1;padding:4px 8px;border-radius:7px;background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.35);vertical-align:middle;">🚦</span>`;
     // Highlight row если moonshot
     if (stackD >= 4 && !stFail) {
@@ -12044,7 +12045,7 @@ async function openJournalChart(idx, forceTF) {
   const patternInfo = s.pattern ? ` · ${s.pattern}` : '';
   const scoreInfo = s.score ? ` · ${s.score}` : '';
   // Pair кликабельна — копирует "<PAIR>USDT" в clipboard.
-  const pairClick = `<b class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.45);">${pair}</b>`;
+  const pairClick = (window._vitMark ? window._vitMark(sym) : '') + `<b class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.45);">${pair}</b>`;
   const dirInfo = s.direction ? ` · ${dirE} ${s.direction}` : '';
   const entryInfo = s.entry ? ` · <code>${s.entry}</code>` : '';
   window._jModalSym = sym.toUpperCase();
@@ -12389,6 +12390,7 @@ async function loadOiMap() {
     const r = await fetch('/api/oi-map');
     const d = await r.json();
     window._oiMap = d.map || {};
+    window._vitMap = d.vit || {};
     if (typeof renderJournalPage === 'function') renderJournalPage();
   } catch (e) { /* тихо */ }
 }

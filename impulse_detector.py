@@ -350,6 +350,14 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
             sig["hot"] = bool(is_hot(sig.get("symbol") or sig.get("pair")))
         except Exception:
             sig["hot"] = False
+        # 💀/😴-штамп живости монеты (17.08): из pair_context (скан 30 мин)
+        try:
+            _pcv = db.pair_context.find_one(
+                {"_id": (sig.get("symbol") or "").upper()}, {"vitality": 1})
+            if _pcv and _pcv.get("vitality"):
+                sig["vitality"] = _pcv["vitality"]
+        except Exception:
+            pass
         # 📊 OI-штамп (15.08): изменение открытого интереса на момент
         # сигнала — только данные для будущих бэктестов, поведение не меняет
         try:

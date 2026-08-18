@@ -1865,11 +1865,27 @@ def scan_universe(max_pairs: int = 300):
                                     _as_ts = int(kd[_j]["t"]) + 3600_000
                     except Exception:
                         pass
+                    # 💀/😴 живость (17.08): ATR<0.8% + затухший объём.
+                    # 💀 труп = ещё и просадка >25% от 16д-хая (SAGA-профиль);
+                    # 😴 спячка = сжатие у цены (мейджоры). Бэктест: на
+                    # мёртвых до +10% доходит 13% против 31% у живых.
+                    _vit = None
+                    try:
+                        _vs_ = [x["v"] for x in kd[:-1]]
+                        _fade = (sum(_vs_[-120:]) / 120) / max(
+                            sum(_vs_) / len(_vs_), 1e-12)
+                        _hi16 = max(x["h"] for x in kd[:-1])
+                        _drop = (1 - kd[-2]["c"] / _hi16) * 100 if _hi16 else 0
+                        if _atrp < 0.8 and (_fade < 0.75 or _drop > 35):
+                            _vit = "dead" if _drop > 25 else "sleep"
+                    except Exception:
+                        pass
                     cand_rows.append({"pair": pair,
                                       "symbol": pair.replace("/", "").upper(),
                                       "cvd24": round(_cvd24, 0),
                                       "anom_buy_ts": _ab_ts,
                                       "anom_sell_ts": _as_ts,
+                                      "vitality": _vit,
                                       "atr_pct": round(_atrp, 2),
                                       "mom24": round(_mom, 2),
                                       "vol_ratio": round(_vr, 2),
@@ -1950,6 +1966,7 @@ def scan_universe(max_pairs: int = 300):
                  "st1_trend": c.get("st1_trend"), "st1_flip": c.get("st1_flip"),
                  "st4_trend": c.get("st4_trend"), "st4_flip": c.get("st4_flip"),
                  "vol_ratio": c.get("vol_ratio"),
+                 "vitality": c.get("vitality"),
                  "atr_pct": c["atr_pct"], "updated_at": now},
                 upsert=True) for i, c in enumerate(ctx_rows)]
             _get_db().pair_context.bulk_write(ops, ordered=False)
