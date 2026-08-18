@@ -3856,6 +3856,7 @@ window._kcToolbarHtml = `
     <button data-kc="fibonacciLine" title="Фибоначчи">🔢</button>
     <button data-kc="priceLine" title="Ценовая метка">💲</button>
     <button data-kc="__alarm" title="Будильник: включи и кликни по уровню на графике">⏰</button>
+    <button data-kc="__fvg" title="▦ FVG-гэпы (имбалансы) текущего ТФ: 🔵 бычий (спрос ниже) / 🟠 медвежий (предложение выше). Живут, пока цена не закрыла зону; частично съеденные усечены">▦</button>
     <button data-kc="__clear" title="Удалить построения" style="color:#ff6b6b;">🗑</button>
   </div>
   <style>.kc-toolbar button{background:none;border:none;color:#aab3c2;font-size:14px;cursor:pointer;padding:2px 5px;border-radius:5px;}
@@ -4688,6 +4689,12 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   const tb = document.createElement('div');
   tb.innerHTML = window._kcToolbarHtml;
   container.appendChild(tb);
+  // индикация тумблера ▦ FVG (вкл по умолчанию)
+  try {
+    const fb = tb.querySelector('button[data-kc="__fvg"]');
+    if (fb && localStorage.getItem('kc_fvg') !== '0')
+      fb.style.background = 'rgba(80,150,255,0.35)';
+  } catch (e) {}
   tb.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-kc]');
     if (!b) return;
@@ -4698,6 +4705,15 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       container._kcAlarmMode = !container._kcAlarmMode;
       b.style.background = container._kcAlarmMode ? 'rgba(255,210,62,0.35)' : 'none';
       container.style.cursor = container._kcAlarmMode ? 'crosshair' : '';
+    }
+    else if (name === '__fvg') {
+      const wasOn = localStorage.getItem('kc_fvg') !== '0';
+      localStorage.setItem('kc_fvg', wasOn ? '0' : '1');
+      b.style.background = wasOn ? 'none' : 'rgba(80,150,255,0.35)';
+      if (wasOn) chart.removeOverlay({ groupId: 'fvg' });
+      else if (window._kcDrawFvg) {
+        try { window._kcDrawFvg(chart, container._kcBars || []); } catch (e) {}
+      }
     }
     else chart.createOverlay({ name, groupId: 'draw' });
   });
@@ -4837,6 +4853,59 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       } catch (e) {}
     })();
   }
+  // ▦ FVG-гэпы (имбалансы, 17.08): трёхсвечный разрыв l[i]>h[i-2] (бычий)
+  // / h[i]<l[i-2] (медвежий). Живут, пока цена не закрыла зону полностью;
+  // частично съеденные усечены. Считаются из баров ТЕКУЩЕГО ТФ — работает
+  // на всех ТФ автоматически. Фильтр шума: ширина ≥0.25×среднего диапазона.
+  window._kcFvgFind = function(bars) {
+    if (!bars || bars.length < 30) return [];
+    const seg = bars.slice(-120);
+    const avg = seg.reduce((s, b) => s + (b.h - b.l), 0) / seg.length;
+    const out = [];
+    for (let i = 2; i < bars.length; i++) {
+      const a = bars[i - 2], c = bars[i];
+      let g = null;
+      if (c.l > a.h) g = { bull: true, lo: a.h, hi: c.l, t: bars[i - 1].t, i };
+      else if (c.h < a.l) g = { bull: false, lo: c.h, hi: a.l, t: bars[i - 1].t, i };
+      if (g && g.hi - g.lo >= avg * 0.25) out.push(g);
+    }
+    const alive = [];
+    for (const g of out) {
+      let lo = g.lo, hi = g.hi, dead = false;
+      for (let j = g.i + 1; j < bars.length; j++) {
+        const b = bars[j];
+        if (g.bull) {
+          if (b.l <= g.lo) { dead = true; break; }
+          if (b.l < hi) hi = b.l;
+        } else {
+          if (b.h >= g.hi) { dead = true; break; }
+          if (b.h > lo) lo = b.h;
+        }
+      }
+      if (!dead && hi - lo >= avg * 0.15) alive.push({ bull: g.bull, lo, hi, t: g.t });
+    }
+    return alive.slice(-12);
+  };
+  window._kcDrawFvg = function(chart, bars) {
+    const gaps = window._kcFvgFind(bars);
+    if (!gaps.length) return;
+    const lastT = bars[bars.length - 1].t;
+    const iv = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
+    gaps.forEach(g => {
+      try {
+        chart.createOverlay({
+          name: 'lvlZone', groupId: 'fvg', lock: true,
+          points: [{ timestamp: Math.max(g.t, bars[0].t), value: g.lo },
+                   { timestamp: lastT + iv * 30, value: g.hi }],
+          extendData: {
+            fill: g.bull ? 'rgba(80,150,255,0.10)' : 'rgba(255,150,60,0.10)',
+            border: g.bull ? 'rgba(80,150,255,0.45)' : 'rgba(255,150,60,0.45)',
+            label: g.bull ? '▦ FVG↑' : '▦ FVG↓',
+          },
+        });
+      } catch (e) {}
+    });
+  };
   // 📏 уровни-зоны: билдер вынесен в /static/levels.js (общий с
   // кластерным графиком footprint-view) — здесь только отрисовка
   window._kcDrawZones = function(chart, bars, sym, tf) {
@@ -4939,6 +5008,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   };
   if (opts.levels !== false) {
     try { window._kcDrawZones(chart, bars, sym, tf); } catch (e) {}
+  }
+  // ▦ FVG-гэпы всех ТФ — тумблер в тулбаре, localStorage kc_fvg
+  container._kcBars = bars;
+  if (localStorage.getItem('kc_fvg') !== '0') {
+    try { window._kcDrawFvg(chart, bars); } catch (e) {}
   }
   // 📈 метки смены тренда (ST-флипы текущего ТФ) — тумблер «⚡Тренд» в
   // модале, выключается localStorage kc_trend_flips='0'
