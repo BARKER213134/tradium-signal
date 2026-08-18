@@ -28,12 +28,14 @@ TF_WARMUP_HOURS = {
     '15m': 96,            # 4 дня = 384 баров
     '1h':  144,           # 6 дней = 144 баров
     '4h':  25 * 24,       # 25 дней = 150 баров (50 EMA + warmup)
+    '12h': 45 * 24,       # 45 дней = 90 баров (12h в журнал, 17.08)
     '1d':  90 * 24,       # 90 дней (для EMA50 на дневке)
 }
 TF_BUCKET_MS = {
     '15m': 15 * 60 * 1000,
     '1h':  60 * 60 * 1000,
     '4h':  4 * 60 * 60 * 1000,
+    '12h': 12 * 60 * 60 * 1000,
     '1d':  24 * 60 * 60 * 1000,
 }
 
@@ -99,7 +101,7 @@ def _fetch_klines_fapi(sym: str, tf: str, limit: int = 1500) -> list:
     return []
 
 
-def fill_pair_trend(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> dict:
+def fill_pair_trend(pair: str, tfs: tuple = ('15m', '1h', '4h', '12h', '1d')) -> dict:
     """Фетчит klines + считает EMA20/EMA50 + Trend + пишет в Mongo.
     Использует FAPI single-call (быстрее CDN в 30x)."""
     from delta_calculator import fetch_klines_cdn, _normalize_symbol
@@ -118,7 +120,7 @@ def fill_pair_trend(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> dict:
     result = {}
     for tf in tfs:
         warmup_h = TF_WARMUP_HOURS.get(tf, 100)
-        tf_min = {'15m': 15, '1h': 60, '4h': 240, '1d': 1440}.get(tf, 60)
+        tf_min = {'15m': 15, '1h': 60, '4h': 240, '12h': 720, '1d': 1440}.get(tf, 60)
         needed_bars = (warmup_h * 60) // tf_min + 50
         limit = min(1500, max(100, needed_bars))
         kl = _fetch_klines_fapi(sym, tf, limit=limit)
@@ -172,7 +174,7 @@ def fill_pair_trend(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> dict:
     return result
 
 
-async def fill_pair_trend_async(pair: str, tfs: tuple = ('15m', '1h', '4h', '1d')) -> None:
+async def fill_pair_trend_async(pair: str, tfs: tuple = ('15m', '1h', '4h', '12h', '1d')) -> None:
     """Fire-and-forget. Используется хуком signal creation."""
     import asyncio
     try:

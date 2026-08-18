@@ -11582,7 +11582,7 @@ window._renderAnomalyCell = function(s) {
 // Trend per TF — EMA20 vs EMA50 на свече сигнала. Возвращает ▲/▼/◆ с цветом.
 // Placeholder сверху матчит emoji header в RSI cell — alignment с RSI/SMA колонками.
 window._renderTrendCell = function(s) {
-  const tfs = ['15m', '1h', '4h', '1d'];
+  const tfs = ['15m', '1h', '4h', '12h', '1d'];
   const placeholder = '<div style="height:18px;line-height:18px;margin-bottom:2px;visibility:hidden;font-size:14px;">·</div>';
   const tfLbl = (lbl) => `<span style="color:#666;font-size:9px;">${lbl}</span>`;
   let anyData = false;
