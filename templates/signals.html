@@ -10677,7 +10677,18 @@ function renderJournal(items, startIdx) {
     if (s.is_top_mover) moonPrefix += '<span title="Top 24h gainer (+' + (s.change_24h ? s.change_24h.toFixed(1) : '?') + '%)" style="margin-right:3px;">🔥</span>';
     // 💀/😴: штамп на момент сигнала приоритетнее текущего статуса монеты
     const _vm = ({dead:'💀', sleep:'😴'})[s.vitality] || (window._vitMark ? window._vitMark(s.symbol || s.pair) : '');
-    const pairCell = moonPrefix + (_vm ? `<span title="${_vm === '💀' ? 'мёртвая: ATR<0.8% + просадка/затухший объём — движения не приходят (до +10% доходит 13% против 31%)' : 'спячка: сжатие на сухом объёме — ждать выхода из диапазона'}">${_vm}</span>` : '') + `<span class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.4);">${pair}</span>` +
+    // 🎰 прошёл/не прошёл разбор (18.08): грейд СТОРОНЫ сигнала из
+    // текущего вердикта пары (pair_verdicts, обновление ~10 мин)
+    let _svb = '';
+    if (s.setup_verdict && s.direction) {
+      const g = s.direction === 'LONG' ? s.setup_verdict.long_grade : s.setup_verdict.short_grade;
+      const tipSV = `🎰 разбор СЕЙЧАС: LONG=${s.setup_verdict.long_grade || '?'} · SHORT=${s.setup_verdict.short_grade || '?'} · общий ${s.setup_verdict.tier || '?'}`;
+      if (g === 'ДА' || g === 'МОЖНО')
+        _svb = `<span title="${tipSV}" style="color:#00e5a0;font-weight:800;font-size:10px;margin-right:2px;">✔</span>`;
+      else if (g === 'НЕТ')
+        _svb = `<span title="${tipSV}" style="color:#ff5e9c;font-weight:800;font-size:10px;margin-right:2px;">✘</span>`;
+    }
+    const pairCell = moonPrefix + _svb + (_vm ? `<span title="${_vm === '💀' ? 'мёртвая: ATR<0.8% + просадка/затухший объём — движения не приходят (до +10% доходит 13% против 31%)' : 'спячка: сжатие на сухом объёме — ждать выхода из диапазона'}">${_vm}</span>` : '') + `<span class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.4);">${pair}</span>` +
       `<span onclick="showEntryCheck('${pair}USDT', '${s.direction === 'SHORT' ? 'SHORT' : 'LONG'}');event.stopPropagation()" title="🚦 Проверка входа: входить или нет (фаза · догон · RS · RSI · сигналы · уровни)" style="display:inline-block;cursor:pointer;margin-left:6px;font-size:16px;line-height:1;padding:4px 8px;border-radius:7px;background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.35);vertical-align:middle;">🚦</span>`;
     // Highlight row если moonshot
     if (stackD >= 4 && !stFail) {
