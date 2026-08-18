@@ -9082,6 +9082,24 @@ async def api_alarms_list(state: str = "armed"):
                     "price_hit": bool(d.get("price_hit"))}
         out = [row(d) for d in db.alarms.find({"state": "ARMED"})
                .sort("created_at", -1).limit(100)]
+        # 🌊⏳ внутренние ордера ПОТОКа (18.08: ST-источники входят от
+        # края зоны) — показываем в той же вкладке, auto='potok'
+        for d in db.potok_pending.find({}).sort("created_at", -1).limit(30):
+            cur = px.get(d.get("symbol"))
+            dist = (round((d["edge"] / cur - 1) * 100, 2)
+                    if cur and d.get("edge") else None)
+            out.append({"id": str(d["_id"]), "symbol": d["symbol"],
+                        "kind": "potok", "price": d.get("edge"),
+                        "side": ("below" if d.get("direction") == "LONG"
+                                 else "above"),
+                        "state": "ARMED", "auto": "potok",
+                        "sig_src": d.get("src"),
+                        "sig_dir": d.get("direction"),
+                        "note": "🌊 ПОТОК · вход от края зоны",
+                        "cur": cur, "dist_pct": dist,
+                        "created_at": (d.get("created_at").isoformat()
+                                       if d.get("created_at") else None),
+                        "fired_at": None, "price_hit": False})
         if state == "all":
             out += [row(d) for d in db.alarms.find({"state": "FIRED"})
                     .sort("fired_at", -1).limit(50)]

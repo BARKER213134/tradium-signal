@@ -6767,7 +6767,9 @@ async function alLoad() {
     window._alarmSyms = [...new Set(items.map(a => a.symbol).filter(Boolean))];
     body.innerHTML = items.map(a => {
       const sym = (a.symbol || '').replace('USDT', '');
-      const typ = a.auto === 'entry'
+      const typ = a.auto === 'potok'
+        ? '<span title="внутренний ордер авто-канала ПОТОК: ST-сигнал ждёт ретеста края зоны (бэктест 18.08)" style="color:#4dd7ff;font-weight:800;">🌊 ПОТОК</span>'
+        : a.auto === 'entry'
         ? '<span title="авто-вход: система сама поставила по сигналу + разбору" style="color:#ffd23e;font-weight:800;">🎯 авто</span>'
         : (a.kind === 'signal' ? '🚨 сигнал' : a.kind === 'price+signal' ? '⏰🚨' : '⏰ цена');
       const dirC = a.sig_dir === 'LONG' ? '#00e5a0' : a.sig_dir === 'SHORT' ? '#ff5e9c' : 'var(--muted)';
@@ -6780,7 +6782,7 @@ async function alLoad() {
         ? '<span style="color:var(--muted);" title="цена не пришла за 48ч — сетап протух, будильник снят автоматически">⌛ истёк</span>'
         : (a.price_hit ? '<span style="color:#ffd23e;">уровень был, жду сигнал</span>' : '<span style="color:var(--muted);">взведён</span>');
       const note = a.note ? `<span title="${(a.note || '').replace(/"/g, '&quot;')}" style="color:var(--muted);">${a.note.length > 60 ? a.note.slice(0, 60) + '…' : a.note}</span>` : '—';
-      const del = a.state === 'ARMED' ? `<button onclick="event.stopPropagation();alDel('${a.id}')" title="Снять будильник" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:13px;">✕</button>` : '';
+      const del = (a.state === 'ARMED' && a.auto !== 'potok') ? `<button onclick="event.stopPropagation();alDel('${a.id}')" title="Снять будильник" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:13px;">✕</button>` : '';
       return `<tr onclick="window._kcQmList=window._alarmSyms||[];openPairChart('${a.symbol}','1h')" style="border-top:1px solid var(--border);cursor:pointer;">
         <td style="padding:8px 10px;">${typ}</td>
         <td style="font-family:var(--font-mono);font-weight:800;">${window._vitMark ? window._vitMark(a.symbol) : ''}${sym}</td>

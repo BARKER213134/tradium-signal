@@ -44,6 +44,17 @@ SLOTS = 10
 # 10 сделок по 10% депо = 100% без плеча (риск 0.5% депо/сделку при SL −5)
 POS_FRAC = 1.0 / SLOTS
 COOLDOWN_H = 24
+# ⏳ 18.08 бэктест «поток через будильники» (90д, 5905 сделок, механика
+# канала в обеих ветках): ST-источники при входе СРАЗУ минусовые
+# (st_mtf −0.26%, st_vip −0.10%), при входе от края зоны — плюс
+# (+0.27% / +0.35%), исполняется ~половина ордеров, остальное отменяется
+# без траты риска. Разворотным/импульсным (thin_pump +2.05, blowoff
+# +0.97, level_touch +1.09, floor_buy +0.63) ретест РЕЖЕТ EV — им вход
+# сразу, как было. Поэтому ST-сигналы не открываются сразу, а ставят
+# внутренний лимит-ордер на край зоны (та же логика, что 🎯-будильники).
+ALARM_SRC = {"st_mtf", "st_vip"}
+PENDING_TTL_H = 48
+PENDING_EDGE_MIN, PENDING_EDGE_MAX = 0.6, 8.0
 # стейблы в канал не берём (аудит 03.08: шорт USDC от thin_pump —
 # болтание у пега, TP недостижим)
 STABLE_SYMS = {"USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "EURUSDT",
@@ -221,7 +232,7 @@ def _fmt(v):
 
 
 def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
-                   price, phase, clim):
+                   price, phase, clim, via_alarm=False, sig_age_h=None):
     from database import utcnow
     want = 1 if d_ == "LONG" else -1
     try:
@@ -251,7 +262,8 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
            "star": bool(star), "funding": rate,
            "cvd24": ctx.get("cvd24"), "phase": phase, "climate": clim,
            "anom_age_h": ctx.get("_anom_age_h"), "hot": _hot,
-           "disq_ref": _disq_ref, "pos_frac": round(POS_FRAC * mult, 4)}
+           "disq_ref": _disq_ref, "pos_frac": round(POS_FRAC * mult, 4),
+           "via_alarm": bool(via_alarm)}
     # 🌊 запись входа в журнал (маркер на графиках); state='OPEN' —
     # generic-трекер её не трогает, исход проставит manage() при закрытии
     try:
@@ -264,7 +276,8 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
                            "kit": bool(kit), "phase": phase,
                            "climate": clim, "funding": rate,
                            "cvd24": ctx.get("cvd24"),
-                           "anom_age_h": ctx.get("_anom_age_h")}})
+                           "anom_age_h": ctx.get("_anom_age_h"),
+                           "via_alarm": bool(via_alarm)}})
         doc["journal_id"] = jr.inserted_id
     except Exception:
         logger.debug("[potok] journal insert fail", exc_info=True)
@@ -277,9 +290,12 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
     PE = {"LONG": "🟢", "SHORT": "🔴", "NEUTRAL": "⚪", None: "?"}
     anom_txt = (f"BUY-аномалия {doc['anom_age_h']:.0f}ч назад · "
                 if d_ == "LONG" and doc.get("anom_age_h") is not None else "")
+    _via = (f"⏳ вход по ордеру от края зоны (сигнал "
+            f"{sig_age_h:.0f}ч назад)\n"
+            if via_alarm and sig_age_h is not None else "")
     _tg(f"🌊 <b>ПОТОК · ОТКРЫТ {E[d_]} · {pair.replace('/USDT', '')}</b>"
         f"{' 🐋КИТ' if kit else ''}{' ⭐' if star else ''}\n"
-        f"источник: {src} · светофор ДА (счёт {score})\n"
+        f"источник: {src} · светофор ДА (счёт {score})\n{_via}"
         f"поток: {anom_txt}CVD24 {'+' if (doc['cvd24'] or 0) >= 0 else ''}"
         f"{_fmt(doc['cvd24'])} · funding {rate * 100:+.3f}%\n"
         f"рынок: фаза {PE.get(phase, '?')}{phase or '?'} · "
@@ -293,6 +309,39 @@ def _open_position(db, sym, pair, d_, src, score, star, ctx, rate, mult, kit,
         f"<i>выходы: тайм-стоп 48ч&lt;+2% · "
         f"{'sell-климакс в плюсе ≥4% · ' if d_ == 'LONG' else ''}"
         f"потолок 96ч · разворот фазы</i>")
+
+
+def _place_pending(db, sym, pair, d_, src, score, star, rate, price, phase,
+                   clim) -> bool:
+    """⏳ ST-сигнал прошёл все гейты канала → вместо входа сразу ставим
+    лимит-ордер на край зоны стороны (0.6–8% от цены). Нет такой зоны —
+    сделки нет вовсе (в бэктесте 18.08 ветка B вела себя так же)."""
+    from database import utcnow
+    want = 1 if d_ == "LONG" else -1
+    try:
+        from setup_checker import get_compact_verdict
+        c = get_compact_verdict(pair) or {}
+    except Exception:
+        logger.debug("[potok] verdict fail", exc_info=True)
+        return False
+    edge = c.get("sup_edge") if d_ == "LONG" else c.get("res_edge")
+    if not edge:
+        return False
+    dist = (price / float(edge) - 1) * 100 * want
+    if not (PENDING_EDGE_MIN <= dist <= PENDING_EDGE_MAX):
+        return False
+    db.potok_pending.insert_one({
+        "symbol": sym, "pair": pair, "direction": d_, "src": src,
+        "edge": float(edge), "sig_price": price, "dist_pct": round(dist, 2),
+        "score": score, "star": bool(star), "funding": rate,
+        "phase": phase, "climate": clim, "created_at": utcnow()})
+    E = {"LONG": "🟢 LONG", "SHORT": "🔴 SHORT"}
+    _tg(f"🌊⏳ <b>ПОТОК · ОРДЕР {E[d_]} · {pair.replace('/USDT', '')}</b>\n"
+        f"источник: {src} · сигнал по {_fmt(price)}\n"
+        f"вход от края зоны: <b>{_fmt(edge)}</b> ({dist:.1f}% от цены)\n"
+        f"<i>ждём ≤{PENDING_TTL_H}ч · не дойдёт — отмена без траты риска "
+        f"(бэктест 90д: ST от края в плюсе, вход сразу — в минусе)</i>")
+    return True
 
 
 def try_open() -> int:
@@ -366,6 +415,8 @@ def try_open() -> int:
                if x[1] == "LONG" else 0)
     open_syms = {p["symbol"] for p in db.potok_positions.find({}, {"symbol": 1})}
     n_open = len(open_syms)
+    pend_keys = {(p["symbol"], p["direction"]) for p in
+                 db.potok_pending.find({}, {"symbol": 1, "direction": 1})}
     st_long = _channel_state("LONG")
     st_short = _channel_state("SHORT")
     phase, clim = _phase_now(), _climate_now()
@@ -420,11 +471,93 @@ def try_open() -> int:
         if not price:
             continue
         pair_slash = pair if "/" in (pair or "") else sym[:-4] + "/USDT"
+        # ⏳ ST-источники: не вход сразу, а лимит-ордер на край зоны
+        if src in ALARM_SRC:
+            if (sym, d_) not in pend_keys and _place_pending(
+                    db, sym, pair_slash, d_, src, score, star, rate,
+                    float(price), phase, clim):
+                pend_keys.add((sym, d_))
+            continue
         _open_position(db, sym, pair_slash, d_, src, score, star, ctx, rate,
                        st["mult"], kit, float(price), phase, clim)
         open_syms.add(sym)
         opened += 1
     return opened
+
+
+def check_pending() -> int:
+    """⏳ Ведение ордеров ST-источников: цена дошла до края зоны →
+    открытие по цене края (гейты слотов/CB/кулдауна перепроверяются на
+    момент исполнения); 48ч не дошла → отмена, риск не тратился."""
+    from database import utcnow
+    db = _db()
+    now = utcnow()
+    pend = list(db.potok_pending.find({}))
+    if not pend:
+        return 0
+    dead = [p for p in pend
+            if (now - p["created_at"]).total_seconds() / 3600 >= PENDING_TTL_H]
+    if dead:
+        db.potok_pending.delete_many(
+            {"_id": {"$in": [p["_id"] for p in dead]}})
+        _tg("⌛ <b>ПОТОК · ордера отменены</b> (48ч, цена не пришла):\n"
+            + "\n".join(f"· {p['pair'].replace('/USDT', '')} {p['direction']}"
+                        f" край {_fmt(p['edge'])}" for p in dead[:10]))
+        dead_ids = {p["_id"] for p in dead}
+        pend = [p for p in pend if p["_id"] not in dead_ids]
+    if not pend:
+        return 0
+    prices = _live_prices()
+    open_syms = {p["symbol"] for p in db.potok_positions.find({}, {"symbol": 1})}
+    n_open = len(open_syms)
+    ctx_all = {d["_id"]: d for d in db.pair_context.find(
+        {"_id": {"$in": [p["symbol"] for p in pend]}})}
+    phase, clim = _phase_now(), _climate_now()
+    filled = 0
+    for p in pend:
+        sym, d_ = p["symbol"], p["direction"]
+        want = 1 if d_ == "LONG" else -1
+        price = prices.get(sym)
+        if not price:
+            continue
+        hit = price <= p["edge"] if want == 1 else price >= p["edge"]
+        if not hit:
+            continue
+        # цена пришла — перепроверка гейтов на момент исполнения
+        cancel = st = None
+        if sym in open_syms:
+            cancel = "позиция уже открыта"
+        elif n_open + filled >= SLOTS:
+            cancel = "нет свободного слота"
+        else:
+            st = _channel_state(d_)
+            if st["mult"] <= 0:
+                cancel = f"канал: {st['status']}"
+            elif db.potok_trades.find_one(
+                    {"symbol": sym, "direction": d_,
+                     "opened_at": {"$gte": now - timedelta(hours=COOLDOWN_H)}},
+                    {"_id": 1}):
+                cancel = "кулдаун 24ч"
+        db.potok_pending.delete_one({"_id": p["_id"]})
+        if cancel:
+            _tg(f"⌛ <b>ПОТОК · ордер отменён · "
+                f"{p['pair'].replace('/USDT', '')} {d_}</b>\n"
+                f"цена дошла до края {_fmt(p['edge'])}, но {cancel}")
+            continue
+        ctx = ctx_all.get(sym) or {}
+        rate = _funding(sym)
+        if rate is None:
+            rate = p.get("funding")
+        kit = bool(d_ == "LONG" and (ctx.get("cvd24") or 0) > 0
+                   and (ctx.get("dz24") or 0) < 0)
+        sig_age_h = (now - p["created_at"]).total_seconds() / 3600
+        _open_position(db, sym, p["pair"], d_, p["src"], p.get("score"),
+                       p.get("star"), ctx, rate, st["mult"], kit,
+                       float(p["edge"]), phase, clim,
+                       via_alarm=True, sig_age_h=sig_age_h)
+        open_syms.add(sym)
+        filled += 1
+    return filled
 
 
 def manage() -> int:
@@ -521,5 +654,6 @@ def tick() -> dict:
     """Один цикл движка (вызывается из watcher каждые ~5 мин)."""
     refresh_funding()
     c = manage()
+    f = check_pending()
     o = try_open()
-    return {"opened": o, "closed": c}
+    return {"opened": o + f, "closed": c}
