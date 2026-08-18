@@ -9056,6 +9056,8 @@ async def api_alarms_list():
             out.append({"id": str(d["_id"]), "symbol": d["symbol"],
                         "kind": d["kind"], "price": d.get("price"),
                         "side": d.get("side"),
+                        "auto": d.get("auto"), "sig_src": d.get("sig_src"),
+                        "sig_dir": d.get("sig_dir"), "note": d.get("note"),
                         "price_hit": bool(d.get("price_hit"))})
         return {"items": out}
     return await asyncio.to_thread(_q)
