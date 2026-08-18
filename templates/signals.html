@@ -3252,7 +3252,7 @@ function _renderSetupResult(d) {
                     st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
                     second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', ten:'💰', accum:'🧊',
                     blowoff:'🌋', capitulation:'🛟', thin_pump:'💨', floor_buy:'💎', st_break:'🧨', st_break4h:'💣',
-                    vol_anomaly:'⚡', vol_anomaly4h:'🌩', delta_series:'🫧', potok:'🌊', rocket_pullback:'🪃', support_defense:'🧱', channel_top:'📐', corridor:'🎈', level_touch:'📏', flip_retest:'🪜', full_stack:'🧗', rev_candle:'🕯', alarm:'⏰'};
+                    vol_anomaly:'⚡', vol_anomaly4h:'🌩', delta_series:'🫧', potok:'🌊', rocket_pullback:'🪃', support_defense:'🧱', channel_top:'📐', corridor:'🎈', level_touch:'📏', flip_retest:'🪜', full_stack:'🧗', struct_top:'🏚', rev_candle:'🕯', alarm:'⏰'};
   const recentHtml = (d.recent_signals || []).slice(0, 30).map(rs => {
     let em = srcEmoji[rs.source] || '•';
     if (rs.source === 'whale' && (rs.whale_seq||1) >= 2) em = '🐳';
@@ -6589,7 +6589,7 @@ setTimeout(() => {
 <div id="tdFresh" style="border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:34vh;"></div>
 <script>
 let _tdRadar = null;
-const _tdEmo = {level_touch:'📏', flip_retest:'🪜', full_stack:'🧗', rev_candle:'🕯', blowoff:'🌋',
+const _tdEmo = {level_touch:'📏', flip_retest:'🪜', full_stack:'🧗', struct_top:'🏚', rev_candle:'🕯', blowoff:'🌋',
   st_break4h:'💣', thin_pump:'💨', floor_buy:'💎', corridor:'🎈', fade:'🎣',
   volcano:'🌋', triple_confluence:'🐉', delta_series:'🫧', vol_anomaly:'⚡',
   vol_anomaly4h:'🌩', support_defense:'🧱', channel_top:'📐',
@@ -7664,6 +7664,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="lt_absorb">💪 Поглощение (📏 + дельта в сторону отскока · LONG +0.93R WR77 / SHORT +0.77R WR71)</option>
     <option value="flip_retest">🪜 Флип-ретест (лонг от пробитого сопротивления · 2R+БУ +0.47R · PF 3.45)</option>
     <option value="full_stack">🧗 Полный стек (первая свеча аптренда всех ТФ + фильтры · EV +0.90)</option>
+    <option value="struct_top">🏚 Слом структуры (перегрев 4h сломался → шорт · EV +0.99 · WR(TP) 39)</option>
     <option value="rev_candle">🕯 Разворот 4h (чёткий пин/поглощение у зоны · тайминг-инфо)</option>
     <option value="vol_anomaly">⚡ Аномалия объёма 1h (&gt;8× нормы, где угодно, инфо)</option>
     <option value="vol_anomaly4h">🌩 Аномалия объёма 4h (&gt;6× нормы, инфо)</option>
@@ -9667,7 +9668,7 @@ async function jPulseLoad() {
   try {
     const r = await fetch('/api/source-pulse');
     const d = await r.json();
-    const emo = {level_touch:'📏', flip_retest:'🪜', full_stack:'🧗', rev_candle:'🕯', blowoff:'🌋',
+    const emo = {level_touch:'📏', flip_retest:'🪜', full_stack:'🧗', struct_top:'🏚', rev_candle:'🕯', blowoff:'🌋',
       st_break4h:'💣', thin_pump:'💨', floor_buy:'💎', corridor:'🎈', fade:'🎣',
       volcano:'🌋', triple_confluence:'🐉', delta_series:'🫧', vol_anomaly:'⚡',
       vol_anomaly4h:'🌩', support_defense:'🧱', channel_top:'📐', rocket_pullback:'🪃'};
@@ -9936,7 +9937,7 @@ function filterJournal() {
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
       // ✂ 13.08: удалённые стратегии вычищены из meta-списка
-      if (!['triple_confluence','volcano','stack','fade','delta_series','st_break4h','blowoff','thin_pump','floor_buy','vol_anomaly','vol_anomaly4h','potok','rocket_pullback','support_defense','channel_top','corridor','level_touch','flip_retest','full_stack','rev_candle'].includes(s.source)) return false;
+      if (!['triple_confluence','volcano','stack','fade','delta_series','st_break4h','blowoff','thin_pump','floor_buy','vol_anomaly','vol_anomaly4h','potok','rocket_pullback','support_defense','channel_top','corridor','level_touch','flip_retest','full_stack','struct_top','rev_candle'].includes(s.source)) return false;
     } else if (src === 'whale2') {
       // 🐳 повторный кит ≤14д (бэктест 28.07: ниже 1-го EV +2.2)
       if (!(s.source === 'whale' && (s.whale_seq || 1) >= 2)) return false;
@@ -12068,7 +12069,7 @@ async function openJournalChart(idx, forceTF) {
     whale:'WHALE', shark:'SHARK', combo:'COMBO', volume_surge:'Volume Surge',
     triple_confluence:'Triple Confluence', vol_accum:'Vol Accum', volcano:'Volcano',
     second_flip:'Second Flip', rsi_cross_12h:'RSI Cross 12h', verified:'Verified',
-    accum:'🧊 Накопление', delta_series:'🫧 Серия дельт', st_break:'🧨 ST-пробой', st_break4h:'💣 ST-пробой 4h', blowoff:'🌋 Blowoff', capitulation:'🛟 Капитуляция', thin_pump:'💨 Тонкий памп', floor_buy:'💎 Дно+покупатель', full_stack:'🧗 Полный стек', vol_anomaly:'⚡ Аномалия объёма', vol_anomaly4h:'🌩 Аномалия 4h', potok:'🌊 ПОТОК·авто'})[s.source]
+    accum:'🧊 Накопление', delta_series:'🫧 Серия дельт', st_break:'🧨 ST-пробой', st_break4h:'💣 ST-пробой 4h', blowoff:'🌋 Blowoff', capitulation:'🛟 Капитуляция', thin_pump:'💨 Тонкий памп', floor_buy:'💎 Дно+покупатель', full_stack:'🧗 Полный стек', struct_top:'🏚 Слом структуры', vol_anomaly:'⚡ Аномалия объёма', vol_anomaly4h:'🌩 Аномалия 4h', potok:'🌊 ПОТОК·авто'})[s.source]
     || (s.source === 'confluence' ? (s.score >= 5 ? 'Confluence ⭐ STRONG' : 'Confluence') : (s.source || 'Signal'));
   const patternInfo = s.pattern ? ` · ${s.pattern}` : '';
   const scoreInfo = s.score ? ` · ${s.score}` : '';

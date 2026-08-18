@@ -101,6 +101,71 @@ async def _st_tracker_loop():
         await _asyncio.sleep(300)
 
 
+async def _struct_top_loop():
+    """🏚 Слом структуры (17.08): на границе каждого 4h-бара (+9 мин)
+    проверяет все пары universe — структурный перегрев вверх (осциллятор
+    ≥0.9 шесть 4h-баров) отступил <0.75 → SHORT. Год-бэктест: EV +0.99%,
+    WR(TP) 39%, половины [+0.34/+1.65]. Данные: get_klines_any 4h×400
+    (длинная история — урок 🧗: короткое окно даёт другое множество)."""
+    import asyncio as _asyncio
+
+    def _scan_once():
+        from database import _get_db
+        from exchange import get_klines_any
+        from structure_osc import struct_top_signal
+        from impulse_detector import store_signal
+        import time as _t
+        syms = [d["_id"] for d in _get_db().pair_context.find(
+            {}, {"_id": 1}).limit(330)]
+        fired = 0
+        for s in syms:
+            pair = s[:-4] + "/USDT" if s.endswith("USDT") else s
+            try:
+                kd4 = get_klines_any(pair, "4h", 400)
+                if not kd4 or len(kd4) < 130:
+                    continue
+                sig = struct_top_signal(pair, kd4[:-1])  # закрытые бары
+                if sig and store_signal(sig, cooldown_h=24):
+                    fired += 1
+                    try:
+                        from accum_detector import _tg16
+                        _i = sig["indicators"]
+                        _tg16(f"🏚 <b>СЛОМ СТРУКТУРЫ · "
+                              f"{pair.replace('/USDT', '')}</b>\n"
+                              f"🔴 SHORT @ {sig['entry']:.6g}\n"
+                              f"структурный перегрев вверх (осц {_i['osc_peak']}"
+                              f" шесть 4h-баров) сломался → {_i['osc']}\n"
+                              f"TP −10% · SL +5% · до 96ч\n"
+                              f"<i>год-бэктест: EV +0.99%/сделку, WR(TP) 39%</i>")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            _t.sleep(0.15)
+        return fired
+
+    await _asyncio.sleep(420)
+    try:
+        await _asyncio.to_thread(_hb, "struct_top")
+        n = await _asyncio.to_thread(_scan_once)
+        logger.info("[struct-top] стартовый скан: %s сигналов", n)
+    except Exception:
+        logger.exception("[struct-top] initial scan crashed")
+    while True:
+        try:
+            from database import utcnow
+            secs = utcnow().timestamp()
+            next_b = (int(secs // 14400) + 1) * 14400 + 540  # граница + 9 мин
+            await _asyncio.sleep(max(60, next_b - secs))
+            await _asyncio.to_thread(_hb, "struct_top")
+            n = await _asyncio.to_thread(_scan_once)
+            if n:
+                logger.info("[struct-top] сигналов: %s", n)
+        except Exception:
+            logger.exception("[struct-top] loop crashed")
+            await _asyncio.sleep(600)
+
+
 async def _oi_loop():
     """📊 OI-коллектор (15.08): раз в 30 мин собирает открытый интерес
     (бутстрап истории fapi openInterestHist + снапшоты fapi/BingX) и
@@ -3790,6 +3855,7 @@ async def start_watcher():
     try:
         asyncio.create_task(_st_break4h_loop())
         asyncio.create_task(_oi_loop())
+        asyncio.create_task(_struct_top_loop())
         logger.info("[st-break4h] background loop started")
     except Exception:
         logger.exception("[st-break4h] failed to start loop")

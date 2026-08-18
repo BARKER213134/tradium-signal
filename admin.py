@@ -8752,7 +8752,7 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
                      "vol_anomaly", "vol_anomaly4h", "rocket_pullback",
                      "support_defense", "channel_top", "corridor",
                      "level_touch", "flip_retest", "full_stack",
-                     "rev_candle"}
+                     "struct_top", "rev_candle"}
         head = items[:limit]
         tail_special = [x for x in items[limit:]
                         if x.get("source") in _DEEP_SRC]
@@ -9352,7 +9352,8 @@ async def api_enter_now():
         col = _get_db().new_strategy_signals
         since = utcnow() - timedelta(hours=24)
         GOOD = {"level_touch", "blowoff", "floor_buy", "corridor",
-                "thin_pump", "st_break4h", "fade", "flip_retest", "full_stack"}
+                "thin_pump", "st_break4h", "fade", "flip_retest", "full_stack",
+                "struct_top"}
         cands = []
         for d in col.find(
                 {"backfill": {"$exists": False}, "state": "WAITING",
@@ -10069,7 +10070,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "rocket_pullback": "🪃", "support_defense": "🧱",
                         "channel_top": "📐", "corridor": "🎈",
                         "level_touch": "📏", "flip_retest": "🪜",
-                        "full_stack": "🧗",
+                        "full_stack": "🧗", "struct_top": "🏚",
                         "rev_candle": "🕯"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
@@ -10091,6 +10092,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "level_touch": "УРОВЕНЬ",
                        "flip_retest": "ФЛИП-РЕТЕСТ",
                        "full_stack": "ПОЛНЫЙ СТЕК",
+                       "struct_top": "СЛОМ СТРУКТУРЫ",
                        "rev_candle": "РАЗВОРОТ 4h"}
         # ✂ 13.08: выключенные стратегии скрыты и с графиков (аудит 180д)
         from config import DISABLED_STRATEGIES as _DIS_BS
@@ -10647,7 +10649,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "rocket_pullback": "🪃", "support_defense": "🧱",
                         "channel_top": "📐", "corridor": "🎈",
                         "level_touch": "📏", "flip_retest": "🪜",
-                        "full_stack": "🧗",
+                        "full_stack": "🧗", "struct_top": "🏚",
                         "rev_candle": "🕯"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
@@ -10668,6 +10670,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "level_touch": "УРОВЕНЬ",
                        "flip_retest": "ФЛИП-РЕТЕСТ",
                        "full_stack": "ПОЛНЫЙ СТЕК",
+                       "struct_top": "СЛОМ СТРУКТУРЫ",
                        "rev_candle": "РАЗВОРОТ 4h"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
         # они для вкладки/графиков/статистики; иначе выдавливают live-сигналы
@@ -10698,7 +10701,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                                   "floor_buy", "support_defense",
                                   "channel_top", "corridor",
                                   "level_touch", "flip_retest",
-                                  "full_stack", "rev_candle"]}})
+                                  "full_stack", "struct_top",
+                                  "rev_candle"]}})
             .sort("created_at", -1).limit(800) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
             at_dt = n.get("created_at")
@@ -10999,6 +11003,9 @@ def _compute_journal_sync(_fast_only: bool = False):
                 # 🧗 full_stack — сид из бэктеста полгода (n=285, +0.90);
                 # заменить честным EV трекера при n>=40
                 "full_stack": (0.90, None),
+                # 🏚 struct_top — сид из год-бэктеста (n=453, +0.99);
+                # заменить честным EV трекера при n>=40
+                "struct_top": (0.99, None),
                 "floor_buy": (1.54, None), "blowoff": (1.04, 1.57),
                 "potok": (3.86, None),
                 "volcano": (0.48, 0.74), "st_break4h": (0.44, 0.82),
