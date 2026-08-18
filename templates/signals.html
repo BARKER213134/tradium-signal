@@ -6730,6 +6730,75 @@ async function tdFresh() {
 tdLoadTop(); tdLoad(); tdFresh();
 safeInterval(tdLoadTop, 120000); safeInterval(tdLoad, 120000); safeInterval(tdFresh, 60000);
 </script>
+{% elif bot == 'alarms' %}
+<!-- ════════════ 🎯 Будильники: авто-входы + ручные (18.08) ════════════ -->
+<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+  <h3 style="margin:0;font-size:15px;">🎯 Будильники</h3>
+  <span style="font-size:11px;color:var(--muted);">логика: пришёл сигнал → система делает 🎰-разбор → если на стороне сигнала есть край зоны в 0.6–8% — авто-будильник на цену входа → TG зовёт, когда цена пришла. Ручные ⏰ ставятся кликом на графике.</span>
+  <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer;margin-left:auto;">
+    <input type="checkbox" id="alFired" onchange="alLoad()"> показать сработавшие
+  </label>
+  <button onclick="alLoad()" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;cursor:pointer;padding:4px 10px;">⟳ обновить</button>
+</div>
+<div style="border:1px solid var(--border);border-radius:8px;overflow:auto;">
+  <table style="width:100%;border-collapse:collapse;font-size:12px;">
+    <thead><tr style="background:var(--dark-2);text-align:left;">
+      <th style="padding:9px 10px;">Тип</th><th>Монета</th><th>Сторона</th>
+      <th>Уровень</th><th>Цена сейчас</th><th>До уровня</th>
+      <th>План</th><th>Поставлен</th><th>Статус</th><th></th>
+    </tr></thead>
+    <tbody id="alBody"><tr><td colspan="10" style="text-align:center;padding:40px;" class="text-muted">Загрузка…</td></tr></tbody>
+  </table>
+</div>
+<script>
+async function alLoad() {
+  const body = document.getElementById('alBody');
+  try {
+    const all = document.getElementById('alFired').checked;
+    const r = await fetch('/api/alarms' + (all ? '?state=all' : ''));
+    const d = await r.json();
+    const items = d.items || [];
+    if (!items.length) {
+      body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;" class="text-muted">Будильников нет — авто появятся сами при свежих сигналах у зон, ручные ставятся ⏰ на графике</td></tr>';
+      return;
+    }
+    body.innerHTML = items.map(a => {
+      const sym = (a.symbol || '').replace('USDT', '');
+      const typ = a.auto === 'entry'
+        ? '<span title="авто-вход: система сама поставила по сигналу + разбору" style="color:#ffd23e;font-weight:800;">🎯 авто</span>'
+        : (a.kind === 'signal' ? '🚨 сигнал' : a.kind === 'price+signal' ? '⏰🚨' : '⏰ цена');
+      const dirC = a.sig_dir === 'LONG' ? '#00e5a0' : a.sig_dir === 'SHORT' ? '#ff5e9c' : 'var(--muted)';
+      const dir = a.sig_dir ? `<span style="color:${dirC};font-weight:700;">${a.sig_dir}</span>${a.sig_src ? ' <span style="color:var(--muted);font-size:10px;">' + a.sig_src + '</span>' : ''}` : '—';
+      const dist = a.dist_pct == null ? '—'
+        : `<span style="color:${Math.abs(a.dist_pct) <= 1 ? '#ffd23e' : 'var(--muted)'};font-weight:${Math.abs(a.dist_pct) <= 1 ? 800 : 400};">${a.dist_pct > 0 ? '+' : ''}${a.dist_pct}%</span>`;
+      const st = a.state === 'FIRED'
+        ? `<span style="color:#00e5a0;">✓ сработал</span>${a.fired_at ? ' <span style="color:var(--muted);font-size:10px;">' + new Date(a.fired_at + 'Z').toLocaleString('ru-RU') + '</span>' : ''}`
+        : (a.price_hit ? '<span style="color:#ffd23e;">уровень был, жду сигнал</span>' : '<span style="color:var(--muted);">взведён</span>');
+      const note = a.note ? `<span title="${(a.note || '').replace(/"/g, '&quot;')}" style="color:var(--muted);">${a.note.length > 60 ? a.note.slice(0, 60) + '…' : a.note}</span>` : '—';
+      const del = a.state === 'ARMED' ? `<button onclick="event.stopPropagation();alDel('${a.id}')" title="Снять будильник" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:13px;">✕</button>` : '';
+      return `<tr onclick="openPairChart('${a.symbol}','1h')" style="border-top:1px solid var(--border);cursor:pointer;">
+        <td style="padding:8px 10px;">${typ}</td>
+        <td style="font-family:var(--font-mono);font-weight:800;">${window._vitMark ? window._vitMark(a.symbol) : ''}${sym}</td>
+        <td>${dir}</td>
+        <td style="font-family:var(--font-mono);">${a.price ?? '—'}</td>
+        <td style="font-family:var(--font-mono);color:var(--muted);">${a.cur ?? '—'}</td>
+        <td style="font-family:var(--font-mono);">${dist}</td>
+        <td style="max-width:340px;font-size:11px;">${note}</td>
+        <td style="color:var(--muted);font-size:10.5px;">${a.created_at ? new Date(a.created_at + 'Z').toLocaleString('ru-RU') : '—'}</td>
+        <td style="font-size:11px;">${st}</td>
+        <td>${del}</td></tr>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:#ff6b6b;">ошибка загрузки</td></tr>';
+  }
+}
+async function alDel(id) {
+  try { await fetch('/api/alarms/' + id, {method: 'DELETE'}); } catch (e) {}
+  alLoad();
+}
+alLoad();
+setInterval(alLoad, 30000);
+</script>
 {% elif bot == 'trends' %}
 <!-- ════════════ 📈 Тренды — своя замена CryptoVizor (07.08.26) ════════════ -->
 <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">

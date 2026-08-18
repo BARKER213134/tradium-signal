@@ -9046,19 +9046,45 @@ async def api_hot_coins():
 
 
 @app.get("/api/alarms")
-async def api_alarms_list():
-    """⏰ Взведённые будильники."""
+async def api_alarms_list(state: str = "armed"):
+    """⏰ Будильники: state=armed (дефолт) | all (+ последние 50 FIRED).
+    18.08: текущая цена и дистанция до уровня (кэш цен 30с) — для
+    вкладки 🎯 Будильники."""
     def _q():
         from database import _get_db
-        out = []
-        for d in _get_db().alarms.find({"state": "ARMED"}) \
-                .sort("created_at", -1).limit(100):
-            out.append({"id": str(d["_id"]), "symbol": d["symbol"],
-                        "kind": d["kind"], "price": d.get("price"),
-                        "side": d.get("side"),
-                        "auto": d.get("auto"), "sig_src": d.get("sig_src"),
-                        "sig_dir": d.get("sig_dir"), "note": d.get("note"),
-                        "price_hit": bool(d.get("price_hit"))})
+        import time as _t
+        db = _get_db()
+        px = {}
+        try:
+            c = getattr(api_alarms_list, "_px_cache", None)
+            if c and _t.time() - c[0] < 30:
+                px = c[1]
+            else:
+                from alarm_engine import _prices
+                px = _prices()
+                api_alarms_list._px_cache = (_t.time(), px)
+        except Exception:
+            pass
+        def row(d):
+            cur = px.get(d.get("symbol"))
+            dist = (round((d["price"] / cur - 1) * 100, 2)
+                    if cur and d.get("price") else None)
+            return {"id": str(d["_id"]), "symbol": d["symbol"],
+                    "kind": d["kind"], "price": d.get("price"),
+                    "side": d.get("side"), "state": d.get("state"),
+                    "auto": d.get("auto"), "sig_src": d.get("sig_src"),
+                    "sig_dir": d.get("sig_dir"), "note": d.get("note"),
+                    "cur": cur, "dist_pct": dist,
+                    "created_at": (d.get("created_at").isoformat()
+                                   if d.get("created_at") else None),
+                    "fired_at": (d.get("fired_at").isoformat()
+                                 if d.get("fired_at") else None),
+                    "price_hit": bool(d.get("price_hit"))}
+        out = [row(d) for d in db.alarms.find({"state": "ARMED"})
+               .sort("created_at", -1).limit(100)]
+        if state == "all":
+            out += [row(d) for d in db.alarms.find({"state": "FIRED"})
+                    .sort("fired_at", -1).limit(50)]
         return {"items": out}
     return await asyncio.to_thread(_q)
 
