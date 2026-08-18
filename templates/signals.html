@@ -6773,6 +6773,8 @@ async function alLoad() {
         : `<span style="color:${Math.abs(a.dist_pct) <= 1 ? '#ffd23e' : 'var(--muted)'};font-weight:${Math.abs(a.dist_pct) <= 1 ? 800 : 400};">${a.dist_pct > 0 ? '+' : ''}${a.dist_pct}%</span>`;
       const st = a.state === 'FIRED'
         ? `<span style="color:#00e5a0;">✓ сработал</span>${a.fired_at ? ' <span style="color:var(--muted);font-size:10px;">' + new Date(a.fired_at + 'Z').toLocaleString('ru-RU') + '</span>' : ''}`
+        : a.state === 'EXPIRED'
+        ? '<span style="color:var(--muted);" title="цена не пришла за 48ч — сетап протух, будильник снят автоматически">⌛ истёк</span>'
         : (a.price_hit ? '<span style="color:#ffd23e;">уровень был, жду сигнал</span>' : '<span style="color:var(--muted);">взведён</span>');
       const note = a.note ? `<span title="${(a.note || '').replace(/"/g, '&quot;')}" style="color:var(--muted);">${a.note.length > 60 ? a.note.slice(0, 60) + '…' : a.note}</span>` : '—';
       const del = a.state === 'ARMED' ? `<button onclick="event.stopPropagation();alDel('${a.id}')" title="Снять будильник" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:13px;">✕</button>` : '';

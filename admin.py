@@ -9085,6 +9085,8 @@ async def api_alarms_list(state: str = "armed"):
         if state == "all":
             out += [row(d) for d in db.alarms.find({"state": "FIRED"})
                     .sort("fired_at", -1).limit(50)]
+            out += [row(d) for d in db.alarms.find({"state": "EXPIRED"})
+                    .sort("expired_at", -1).limit(30)]
         return {"items": out}
     return await asyncio.to_thread(_q)
 

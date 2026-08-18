@@ -92,6 +92,16 @@ def _log_event(db, a, cur, sig=None):
 def _tick_sync(last_sig_ts: dict) -> None:
     from database import _get_db
     db = _get_db()
+    # 🎯 18.08: авто-входы живут 48ч — если цена не пришла, сетап протух:
+    # тихо гасим (EXPIRED, без TG), освобождая пару для новых авто-входов.
+    # Ручные ⏰ не трогаем — воля юзера.
+    try:
+        db.alarms.update_many(
+            {"state": "ARMED", "auto": "entry",
+             "created_at": {"$lt": _utcnow() - timedelta(hours=48)}},
+            {"$set": {"state": "EXPIRED", "expired_at": _utcnow()}})
+    except Exception:
+        pass
     alarms = list(db.alarms.find({"state": "ARMED"}))
     try:
         db.heartbeats.update_one({"_id": "alarms"},
