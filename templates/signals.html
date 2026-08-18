@@ -6762,6 +6762,8 @@ async function alLoad() {
       body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;" class="text-muted">Будильников нет — авто появятся сами при свежих сигналах у зон, ручные ставятся ⏰ на графике</td></tr>';
       return;
     }
+    // ◀▶ листание графиков по порядку таблицы (как на Трендах/Сегодня)
+    window._alarmSyms = [...new Set(items.map(a => a.symbol).filter(Boolean))];
     body.innerHTML = items.map(a => {
       const sym = (a.symbol || '').replace('USDT', '');
       const typ = a.auto === 'entry'
@@ -6778,7 +6780,7 @@ async function alLoad() {
         : (a.price_hit ? '<span style="color:#ffd23e;">уровень был, жду сигнал</span>' : '<span style="color:var(--muted);">взведён</span>');
       const note = a.note ? `<span title="${(a.note || '').replace(/"/g, '&quot;')}" style="color:var(--muted);">${a.note.length > 60 ? a.note.slice(0, 60) + '…' : a.note}</span>` : '—';
       const del = a.state === 'ARMED' ? `<button onclick="event.stopPropagation();alDel('${a.id}')" title="Снять будильник" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:13px;">✕</button>` : '';
-      return `<tr onclick="openPairChart('${a.symbol}','1h')" style="border-top:1px solid var(--border);cursor:pointer;">
+      return `<tr onclick="window._kcQmList=window._alarmSyms||[];openPairChart('${a.symbol}','1h')" style="border-top:1px solid var(--border);cursor:pointer;">
         <td style="padding:8px 10px;">${typ}</td>
         <td style="font-family:var(--font-mono);font-weight:800;">${window._vitMark ? window._vitMark(a.symbol) : ''}${sym}</td>
         <td>${dir}</td>
