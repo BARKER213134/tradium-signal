@@ -84,6 +84,10 @@ def _log_event(db, a, cur, sig=None):
             "entry": cur,
             "sig_strategy": (sig or {}).get("strategy"),
             "sig_direction": (sig or {}).get("direction"),
+            # 18.08: план 🎯-входа (вход/стоп/цель) — попап на графике
+            # должен говорить, ЧТО ДЕЛАТЬ, а не только «сработал»
+            "auto": a.get("auto"), "sig_src": a.get("sig_src"),
+            "sig_dir": a.get("sig_dir"), "note": a.get("note"),
             "at": _utcnow()})
     except Exception:
         logger.debug("[alarm] event log fail", exc_info=True)

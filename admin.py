@@ -9999,21 +9999,31 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             ae_at = ae.get("at")
             k = ae.get("kind")
             em = "⏰🚨" if k == "price+signal" else ("🚨" if k == "signal" else "⏰")
-            parts = []
-            if ae.get("level"):
-                parts.append(f"уровень {ae['level']:g}")
-            if ae.get("sig_strategy"):
-                parts.append(f"сигнал: {ae['sig_strategy']} "
-                             f"{ae.get('sig_direction') or ''}".strip())
+            _adir = ae.get("sig_direction") or ae.get("sig_dir") or ""
+            # 18.08: у 🎯-входов показываем ПЛАН (вход/стоп/цель из note),
+            # а не голое «сработал» — попап на графике должен говорить,
+            # что делать
+            if ae.get("auto") == "entry" and ae.get("note"):
+                patt = "🎯 СРАБОТАЛ · " + ae["note"]
+            else:
+                parts = []
+                if ae.get("level"):
+                    parts.append(f"уровень {ae['level']:g}")
+                _asrc = ae.get("sig_strategy") or ae.get("sig_src")
+                if _asrc:
+                    parts.append(f"сигнал: {_asrc} {_adir}".strip())
+                if ae.get("note"):
+                    parts.append(ae["note"])
+                patt = (f"{em} БУДИЛЬНИК СРАБОТАЛ"
+                        + (" · " + " · ".join(parts) if parts else ""))
             items.append({
                 "source": "alarm",
                 "symbol": ae.get("symbol", ""),
                 "pair": pair_slash,
-                "direction": "",
+                "direction": _adir,
                 "entry": ae.get("entry"),
                 "tp1": None, "sl": None,
-                "pattern": f"{em} БУДИЛЬНИК СРАБОТАЛ"
-                           + (" · " + " · ".join(parts) if parts else ""),
+                "pattern": patt,
                 "score": 0, "st_passed": None, "pump_score": 0,
                 "at": ae_at.isoformat() if hasattr(ae_at, "isoformat") else None,
                 "at_ts": int(ae_at.timestamp()) if hasattr(ae_at, "timestamp") else 0,
@@ -10503,21 +10513,29 @@ def _compute_journal_sync(_fast_only: bool = False):
             ae_at = ae.get("at")
             k = ae.get("kind")
             em = "⏰🚨" if k == "price+signal" else ("🚨" if k == "signal" else "⏰")
-            parts = []
-            if ae.get("level"):
-                parts.append(f"уровень {ae['level']:g}")
-            if ae.get("sig_strategy"):
-                parts.append(f"сигнал: {ae['sig_strategy']} "
-                             f"{ae.get('sig_direction') or ''}".strip())
+            _adir = ae.get("sig_direction") or ae.get("sig_dir") or ""
+            # 18.08: у 🎯-входов показываем ПЛАН (вход/стоп/цель из note)
+            if ae.get("auto") == "entry" and ae.get("note"):
+                patt = "🎯 СРАБОТАЛ · " + ae["note"]
+            else:
+                parts = []
+                if ae.get("level"):
+                    parts.append(f"уровень {ae['level']:g}")
+                _asrc = ae.get("sig_strategy") or ae.get("sig_src")
+                if _asrc:
+                    parts.append(f"сигнал: {_asrc} {_adir}".strip())
+                if ae.get("note"):
+                    parts.append(ae["note"])
+                patt = (f"{em} БУДИЛЬНИК СРАБОТАЛ"
+                        + (" · " + " · ".join(parts) if parts else ""))
             items.append({
                 "source": "alarm",
                 "symbol": ae.get("symbol", ""),
                 "pair": (ae.get("symbol", "") or "").replace("USDT", "/USDT"),
-                "direction": "",
+                "direction": _adir,
                 "entry": ae.get("entry"),
                 "tp1": None, "sl": None,
-                "pattern": f"{em} БУДИЛЬНИК СРАБОТАЛ"
-                           + (" · " + " · ".join(parts) if parts else ""),
+                "pattern": patt,
                 "score": 0, "st_passed": None, "pump_score": 0,
                 "at": ae_at.isoformat() if hasattr(ae_at, "isoformat") else None,
                 "at_ts": int(ae_at.timestamp()) if hasattr(ae_at, "timestamp") else 0,
