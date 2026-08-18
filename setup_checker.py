@@ -833,11 +833,28 @@ def maybe_auto_entry_alarm(pair: str) -> int:
                 edge, far, dist = c.get("res_edge"), c.get("res_far"), c.get("res_dist")
             if not edge or dist is None or not (0.6 <= dist <= 8):
                 continue
-            # дедуп: ARMED-авто по паре+стороне / ставился <12ч назад
+            # дедуп: ARMED-авто по паре+стороне / ставился <12ч назад.
+            # 18.08: повторный сигнал той же стороны при ЖИВОМ будильнике —
+            # не спамим новым, но ПЕРЕВЗВОДИМ уровень, если свежая разметка
+            # сдвинула край зоны >0.5% (зоны перестраиваются с рынком)
+            armed = db.alarms.find_one({
+                "symbol": sym, "auto": "entry", "sig_dir": side,
+                "state": "ARMED"})
+            if armed:
+                edge_ = (c.get("sup_edge") if side == "LONG"
+                         else c.get("res_edge"))
+                if (edge_ and armed.get("price")
+                        and abs(edge_ / armed["price"] - 1) > 0.005):
+                    db.alarms.update_one(
+                        {"_id": armed["_id"]},
+                        {"$set": {"price": float(edge_),
+                                  "rearmed_at": utcnow(),
+                                  "note": (armed.get("note") or "")
+                                  + f" · 🔁 уровень обновлён → {edge_:.6g}"}})
+                continue
             dup = db.alarms.find_one({
                 "symbol": sym, "auto": "entry", "sig_dir": side,
-                "$or": [{"state": "ARMED"},
-                        {"created_at": {"$gte": utcnow() - timedelta(hours=12)}}]})
+                "created_at": {"$gte": utcnow() - timedelta(hours=12)}})
             if dup:
                 continue
             sg = 1 if side == "LONG" else -1

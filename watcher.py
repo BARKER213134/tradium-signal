@@ -347,6 +347,20 @@ async def _setup_verdict_loop():
 
             logger.info(f'[verdict-loop] {len(unique_pairs)} unique pairs, '
                          f'{len(need_refresh)} need refresh')
+            # 🎯 18.08: пары с сигналами ≤15 мин — ПРИОРИТЕТ вне очереди
+            # (юзер: «сигналы появились — будильников нет»: свежие пары
+            # ждали общий кап 30/цикл и 10-мин свежесть вердикта)
+            try:
+                fresh_sig_pairs = db.new_strategy_signals.distinct(
+                    'pair', {'created_at': {
+                        '$gte': datetime.now(timezone.utc) - timedelta(minutes=15)},
+                        'backfill': {'$exists': False}})
+                for p in fresh_sig_pairs:
+                    if p and p in need_refresh:
+                        need_refresh.remove(p)
+                need_refresh = [p for p in fresh_sig_pairs if p] + need_refresh
+            except Exception:
+                pass
             # Process max 30 pairs per cycle
             processed = 0
             for pair in need_refresh[:30]:
