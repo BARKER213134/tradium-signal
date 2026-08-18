@@ -11040,6 +11040,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "ns_strategy": strat,
                 "ns_state": n.get("state", "WAITING"),
                 "hot": bool(n.get("hot")),
+                # 💀/😴 живость монеты НА МОМЕНТ сигнала (штамп/бэкфилл)
+                "vitality": n.get("vitality"),
                 "prio": round(_prio, 2) if _prio is not None else None,
                 "ns_vol_ratio": n.get("vol_ratio"),
                 "ns_sources": n.get("sources"),
