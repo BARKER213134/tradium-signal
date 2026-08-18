@@ -193,8 +193,67 @@ def run_once() -> dict:
                       "snapped": snapped}}, upsert=True)
     except Exception:
         logger.warning("[oi] oi_now store fail", exc_info=True)
+    # 💀/😴 живость для монет ВНЕ скан-универсума (17.08): журнал шире
+    # 155 сканируемых пар — считаем тем же критерием по Vision-барам для
+    # монет с сигналами за 7д без свежего статуса. Кап 60/цикл, стемп
+    # vit_ext_at (скан свои пары пишет сам и их не трогаем).
+    vit_done = 0
+    try:
+        import urllib.request as _ur
+        import json as _js
+        scan_set = set(syms)
+        sig_syms = db.new_strategy_signals.distinct(
+            "symbol", {"created_at": {"$gte": now - timedelta(days=7)}})
+        fresh_vit = now - timedelta(hours=2)
+        pc_docs = {d["_id"]: d for d in db.pair_context.find(
+            {"_id": {"$in": sig_syms}},
+            {"updated_at": 1, "vit_ext_at": 1})}
+        todo = []
+        for s in sig_syms:
+            if not s or s in scan_set:
+                continue
+            pd_ = pc_docs.get(s)
+            if pd_ and ((pd_.get("updated_at") and pd_["updated_at"] > fresh_vit)
+                        or (pd_.get("vit_ext_at") and pd_["vit_ext_at"] > fresh_vit)):
+                continue
+            todo.append(s)
+        for s in todo[:60]:
+            try:
+                url = ("https://data-api.binance.vision/api/v3/klines?"
+                       f"symbol={s}&interval=1h&limit=400")
+                with _ur.urlopen(url, timeout=10) as r:
+                    kl = _js.loads(r.read())
+                if not kl or len(kl) < 200:
+                    continue
+                h_ = [float(x[2]) for x in kl[:-1]]
+                l_ = [float(x[3]) for x in kl[:-1]]
+                c_ = [float(x[4]) for x in kl[:-1]]
+                v_ = [float(x[5]) for x in kl[:-1]]
+                px = c_[-1]
+                if px <= 0:
+                    continue
+                trs = [max(h_[i] - l_[i], abs(h_[i] - c_[i - 1]),
+                           abs(l_[i] - c_[i - 1])) for i in range(-14, 0)]
+                atrp = sum(trs) / 14 / px * 100
+                fade = (sum(v_[-120:]) / 120) / max(sum(v_) / len(v_), 1e-12)
+                drop = (1 - px / max(h_)) * 100
+                vit = None
+                if atrp < 0.12:
+                    vit = "dead"
+                elif atrp < 0.8 and (fade < 0.75 or drop > 35):
+                    vit = "dead" if drop > 25 else "sleep"
+                db.pair_context.update_one(
+                    {"_id": s},
+                    {"$set": {"vitality": vit, "vit_ext_at": now}},
+                    upsert=True)
+                vit_done += 1
+            except Exception:
+                pass
+            time.sleep(SNAP_PAUSE)
+    except Exception:
+        logger.warning("[oi] vitality-ext fail", exc_info=True)
     res = {"ok": True, "universe": len(syms), "booted": booted,
-           "snapped": snapped, "mapped": len(oi_map)}
+           "snapped": snapped, "mapped": len(oi_map), "vit_ext": vit_done}
     logger.info("[oi] cycle: %s", res)
     return res
 

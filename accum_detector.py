@@ -1876,7 +1876,9 @@ def scan_universe(max_pairs: int = 300):
                             sum(_vs_) / len(_vs_), 1e-12)
                         _hi16 = max(x["h"] for x in kd[:-1])
                         _drop = (1 - kd[-2]["c"] / _hi16) * 100 if _hi16 else 0
-                        if _atrp < 0.8 and (_fade < 0.75 or _drop > 35):
+                        if _atrp < 0.12:
+                            _vit = "dead"    # пег/заморозка (стейблы, USDC)
+                        elif _atrp < 0.8 and (_fade < 0.75 or _drop > 35):
                             _vit = "dead" if _drop > 25 else "sleep"
                     except Exception:
                         pass
