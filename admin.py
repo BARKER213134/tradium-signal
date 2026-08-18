@@ -10250,6 +10250,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "ns_strategy": strat,
                 "ns_state": n.get("state", "WAITING"),
                 "hot": bool(n.get("hot")),
+                "vitality": n.get("vitality"),
+                "trend_ok": n.get("trend_ok"),
                 "whale_tier": n.get("whale_tier"),
                 "whale_score": n.get("whale_score"),
                 "whale_seq": n.get("whale_seq"),
