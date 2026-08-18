@@ -68,6 +68,23 @@ def _fetch_klines_delta(symbol: str, limit: int = 320,
             if is_fapi:
                 _fapi_down_until = time.time() + 600
             continue
+    # 18.08: третий фолбэк — BingX. Для монет БЕЗ Binance-спота (VVV,
+    # STAR…) отказ fapi-бюджета оставлял пару вовсе без данных на весь
+    # цикл — детекторы слепли (VVV 17.08 15:00 UTC: объём 11.9×, дельта
+    # +70K — ⚡-условия выполнены, сигнала нет). BingX не отдаёт taker
+    # buy: tb=v/2 (дельта нейтральна) — дельта-детекторы честно молчат,
+    # объёмные/структурные/трендовые работают.
+    try:
+        from exchange import get_bingx_klines
+        bx = get_bingx_klines(symbol if "/" in symbol
+                              else symbol.replace("USDT", "/USDT"),
+                              interval, limit)
+        if bx and len(bx) > 60:
+            return [dict(t=int(b["t"]), o=float(b["o"]), h=float(b["h"]),
+                         l=float(b["l"]), c=float(b["c"]), v=float(b["v"]),
+                         tb=float(b["v"]) / 2) for b in bx]
+    except Exception:
+        pass
     return None
 
 
