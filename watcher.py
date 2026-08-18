@@ -3855,7 +3855,13 @@ async def start_watcher():
     try:
         asyncio.create_task(_st_break4h_loop())
         asyncio.create_task(_oi_loop())
-        asyncio.create_task(_struct_top_loop())
+        # 🏚 struct_top ОТКЛЮЧЁН 17.08 через час после внедрения: бэкфилл
+        # той же логикой дал −0.65% против +0.99% бэктеста, причём и в
+        # ПЕРЕКРЫВАЮЩЕМСЯ окне (−0.46 vs +0.72) — состояния структурных
+        # уровней «липкие» (меняются только на пробоях), осциллятор
+        # зависит от старта истории: бэктест/бэкфилл/лайв дают три разных
+        # множества событий. Невоспроизводимо => не торгуем.
+        # asyncio.create_task(_struct_top_loop())
         logger.info("[st-break4h] background loop started")
     except Exception:
         logger.exception("[st-break4h] failed to start loop")

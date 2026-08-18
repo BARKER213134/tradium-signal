@@ -4871,8 +4871,10 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       else if (c.h < a.l) g = { bull: false, lo: c.h, hi: a.l, t: bars[i - 1].t, i };
       if (g && g.hi - g.lo >= avg * 0.15) out.push(g);
     }
-    // как на TV (17.08): рисуем и ЗАКРЫТЫЕ (бокс от образования до бара
-    // закрытия, приглушённо), и живые (усечённый остаток, ярко, до края)
+    // «лучший вариант» (17.08 v3): живые — до 8 БЛИЖАЙШИХ к цене
+    // (ранжирование по дистанции, яркость по близости), закрытые — только
+    // крупные (≥0.35×avg) последние 8, еле заметные. Каша из 60 боксов
+    // читалась хуже, чем ничего.
     const res = [];
     for (const g of out) {
       let lo = g.lo, hi = g.hi, endT = null;
@@ -4886,11 +4888,18 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           if (b.h > lo) lo = b.h;
         }
       }
-      if (endT) res.push({ bull: g.bull, lo: g.lo, hi: g.hi, t: g.t, endT });
-      else if (hi - lo >= avg * 0.1) res.push({ bull: g.bull, lo, hi, t: g.t, endT: null });
+      if (endT) {
+        if (g.hi - g.lo >= avg * 0.35)
+          res.push({ bull: g.bull, lo: g.lo, hi: g.hi, t: g.t, endT });
+      } else if (hi - lo >= avg * 0.15) {
+        res.push({ bull: g.bull, lo, hi, t: g.t, endT: null });
+      }
     }
-    const alive = res.filter(g => !g.endT).slice(-20);
-    const closed = res.filter(g => g.endT).slice(-40);
+    const px = bars[bars.length - 1].c;
+    const alive = res.filter(g => !g.endT)
+      .map(g => ({ ...g, dist: Math.abs((g.lo + g.hi) / 2 - px) / px }))
+      .sort((a, b) => a.dist - b.dist).slice(0, 8);
+    const closed = res.filter(g => g.endT).slice(-8);
     return closed.concat(alive);
   };
   window._kcDrawFvg = function(chart, bars) {
@@ -4901,15 +4910,18 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     gaps.forEach(g => {
       try {
         const live = !g.endT;
+        // яркость живого гэпа по близости к цене: рядом (<2%) — светится,
+        // дальше — фон; закрытые еле заметны
+        const near = live && g.dist != null && g.dist < 0.02;
+        const fa = live ? (near ? 0.42 : 0.18) : 0.07;
+        const ba = live ? (near ? 0.75 : 0.32) : 0.12;
         chart.createOverlay({
           name: 'lvlZone', groupId: 'fvg', lock: true,
           points: [{ timestamp: Math.max(g.t, bars[0].t), value: g.lo },
                    { timestamp: live ? lastT + iv * 30 : g.endT, value: g.hi }],
           extendData: {
-            fill: g.bull ? `rgba(16,185,129,${live ? 0.38 : 0.14})`
-                         : `rgba(244,63,94,${live ? 0.38 : 0.14})`,
-            border: g.bull ? `rgba(16,185,129,${live ? 0.65 : 0.22})`
-                           : `rgba(244,63,94,${live ? 0.65 : 0.22})`,
+            fill: (g.bull ? 'rgba(16,185,129,' : 'rgba(244,63,94,') + fa + ')',
+            border: (g.bull ? 'rgba(16,185,129,' : 'rgba(244,63,94,') + ba + ')',
             label: '',
           },
         });
