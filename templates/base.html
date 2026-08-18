@@ -4897,10 +4897,12 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           name: 'lvlZone', groupId: 'fvg', lock: true,
           points: [{ timestamp: Math.max(g.t, bars[0].t), value: g.lo },
                    { timestamp: lastT + iv * 30, value: g.hi }],
+          // вид как на TV (17.08): насыщенные зелёные/красные боксы без
+          // лейблов; от 📏-зон отличаются плотностью заливки
           extendData: {
-            fill: g.bull ? 'rgba(80,150,255,0.10)' : 'rgba(255,150,60,0.10)',
-            border: g.bull ? 'rgba(80,150,255,0.45)' : 'rgba(255,150,60,0.45)',
-            label: g.bull ? '▦ FVG↑' : '▦ FVG↓',
+            fill: g.bull ? 'rgba(16,185,129,0.38)' : 'rgba(244,63,94,0.38)',
+            border: g.bull ? 'rgba(16,185,129,0.65)' : 'rgba(244,63,94,0.65)',
+            label: '',
           },
         });
       } catch (e) {}
