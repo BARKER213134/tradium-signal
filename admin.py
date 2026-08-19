@@ -9079,7 +9079,12 @@ async def api_alarms_list(state: str = "armed"):
                                    if d.get("created_at") else None),
                     "fired_at": (d.get("fired_at").isoformat()
                                  if d.get("fired_at") else None),
-                    "price_hit": bool(d.get("price_hit"))}
+                    "price_hit": bool(d.get("price_hit")),
+                    "rearmed": bool(d.get("rearmed_at")),
+                    # 🏁 исход отработки плана (трекер 19.08)
+                    "outcome": d.get("outcome"),
+                    "outcome_pnl_pct": d.get("outcome_pnl_pct"),
+                    "outcome_r": d.get("outcome_r")}
         out = [row(d) for d in db.alarms.find({"state": "ARMED"})
                .sort("created_at", -1).limit(100)]
         # 🌊⏳ внутренние ордера ПОТОКа (18.08: ST-источники входят от
@@ -9105,7 +9110,31 @@ async def api_alarms_list(state: str = "armed"):
                     .sort("fired_at", -1).limit(50)]
             out += [row(d) for d in db.alarms.find({"state": "EXPIRED"})
                     .sort("expired_at", -1).limit(30)]
-        return {"items": out}
+        # 🏁 сводка отработки 🎯 (трекер исходов, 19.08)
+        from database import utcnow as _un
+        from datetime import timedelta as _td
+
+        def _ostats(days):
+            rows_ = list(db.alarms.find(
+                {"state": "FIRED", "auto": "entry",
+                 "fired_at": {"$gte": _un() - _td(days=days)},
+                 "outcome": {"$in": ["TP", "SL", "TIMEOUT"]}},
+                {"outcome": 1, "outcome_pnl_pct": 1, "outcome_r": 1}))
+            n = len(rows_)
+            if not n:
+                return {"n": 0}
+            pn = [r_.get("outcome_pnl_pct") or 0 for r_ in rows_]
+            rr = [r_["outcome_r"] for r_ in rows_
+                  if r_.get("outcome_r") is not None]
+            return {"n": n,
+                    "tp": sum(1 for r_ in rows_ if r_["outcome"] == "TP"),
+                    "sl": sum(1 for r_ in rows_ if r_["outcome"] == "SL"),
+                    "timeout": sum(1 for r_ in rows_
+                                   if r_["outcome"] == "TIMEOUT"),
+                    "wr": round(sum(1 for p in pn if p > 0) / n * 100),
+                    "ev_pct": round(sum(pn) / n, 3),
+                    "ev_r": (round(sum(rr) / len(rr), 2) if rr else None)}
+        return {"items": out, "stats": {"d7": _ostats(7), "d30": _ostats(30)}}
     return await asyncio.to_thread(_q)
 
 

@@ -6742,6 +6742,7 @@ safeInterval(tdLoadTop, 120000); safeInterval(tdLoad, 120000); safeInterval(tdFr
   <button onclick="alLoad()" style="background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;cursor:pointer;padding:4px 10px;">⟳ обновить</button>
   <span id="alUpd" style="font-size:10px;color:var(--muted);"></span>
 </div>
+<div id="alStats" style="font-size:11.5px;font-family:var(--font-mono);margin:-4px 0 10px;padding:7px 10px;background:var(--dark-2);border:1px solid var(--border);border-radius:8px;"></div>
 <div style="border:1px solid var(--border);border-radius:8px;overflow:auto;">
   <table style="width:100%;border-collapse:collapse;font-size:12px;">
     <thead><tr style="background:var(--dark-2);text-align:left;">
@@ -6777,11 +6778,20 @@ async function alLoad() {
       const dir = a.sig_dir ? `<span style="color:${dirC};font-weight:700;">${a.sig_dir}</span>${a.sig_src ? ' <span style="color:var(--muted);font-size:10px;">' + a.sig_src + '</span>' : ''}` : '—';
       const dist = a.dist_pct == null ? '—'
         : `<span style="color:${Math.abs(a.dist_pct) <= 1 ? '#ffd23e' : 'var(--muted)'};font-weight:${Math.abs(a.dist_pct) <= 1 ? 800 : 400};">${a.dist_pct > 0 ? '+' : ''}${a.dist_pct}%</span>`;
+      // 🏁 исход отработки плана (трекер 19.08)
+      const oc = a.outcome === 'TP'
+        ? `<b style="color:#00e5a0;">✅ цель ${a.outcome_pnl_pct > 0 ? '+' : ''}${a.outcome_pnl_pct ?? ''}%</b>`
+        : a.outcome === 'SL'
+        ? `<b style="color:#ff5e9c;">⛔ стоп ${a.outcome_pnl_pct ?? ''}%</b>`
+        : a.outcome === 'TIMEOUT'
+        ? `<span style="color:#ffd23e;">⌛ 96ч ${a.outcome_pnl_pct > 0 ? '+' : ''}${a.outcome_pnl_pct ?? ''}%</span>`
+        : a.outcome === 'N/A' ? '<span style="color:var(--muted);">без исхода</span>'
+        : '<span style="color:var(--muted);">в работе…</span>';
       const st = a.state === 'FIRED'
-        ? `<span style="color:#00e5a0;">✓ сработал</span>${a.fired_at ? ' <span style="color:var(--muted);font-size:10px;">' + new Date(a.fired_at + 'Z').toLocaleString('ru-RU') + '</span>' : ''}`
+        ? `<span style="color:#00e5a0;">✓ сработал</span> · ${oc}${a.fired_at ? ' <span style="color:var(--muted);font-size:10px;">' + new Date(a.fired_at + 'Z').toLocaleString('ru-RU') + '</span>' : ''}`
         : a.state === 'EXPIRED'
         ? '<span style="color:var(--muted);" title="цена не пришла за 48ч — сетап протух, будильник снят автоматически">⌛ истёк</span>'
-        : (a.price_hit ? '<span style="color:#ffd23e;">уровень был, жду сигнал</span>' : '<span style="color:var(--muted);">взведён</span>');
+        : (a.price_hit ? '<span style="color:#ffd23e;">уровень был, жду сигнал</span>' : `<span style="color:var(--muted);">взведён${a.rearmed ? ' 🔁' : ''}</span>`);
       const note = a.note ? `<span title="${(a.note || '').replace(/"/g, '&quot;')}" style="color:var(--muted);">${a.note.length > 60 ? a.note.slice(0, 60) + '…' : a.note}</span>` : '—';
       const del = (a.state === 'ARMED' && a.auto !== 'potok') ? `<button onclick="event.stopPropagation();alDel('${a.id}')" title="Снять будильник" style="background:none;border:none;color:#ff6b6b;cursor:pointer;font-size:13px;">✕</button>` : '';
       return `<tr onclick="window._kcQmList=window._alarmSyms||[];openPairChart('${a.symbol}','1h')" style="border-top:1px solid var(--border);cursor:pointer;">
@@ -6798,6 +6808,13 @@ async function alLoad() {
     }).join('');
     const u = document.getElementById('alUpd');
     if (u) u.textContent = '· авто-обновление 15с · обновлено ' + new Date().toLocaleTimeString('ru-RU');
+    // 🏁 сводка отработки сработавших 🎯 (трекер исходов, 19.08)
+    const stEl = document.getElementById('alStats');
+    if (stEl && d.stats) {
+      const f = (s, lb) => !s || !s.n ? `${lb}: нет закрытых`
+        : `${lb}: n=${s.n} · ✅${s.tp} / ⛔${s.sl} / ⌛${s.timeout} · WR ${s.wr}% · EV ${s.ev_pct > 0 ? '+' : ''}${s.ev_pct}%${s.ev_r != null ? ' (' + (s.ev_r > 0 ? '+' : '') + s.ev_r + 'R)' : ''}`;
+      stEl.innerHTML = `<span style="color:var(--muted);">🏁 отработка 🎯:</span> ${f(d.stats.d7, '7д')} <span style="color:var(--muted);">·</span> ${f(d.stats.d30, '30д')}`;
+    }
   } catch (e) {
     body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:#ff6b6b;">ошибка загрузки</td></tr>';
   }

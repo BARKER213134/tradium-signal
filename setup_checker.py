@@ -868,10 +868,17 @@ def maybe_auto_entry_alarm(pair: str, window_h: float = 3) -> int:
                          else c.get("res_edge"))
                 if (edge_ and armed.get("price")
                         and abs(edge_ / armed["price"] - 1) > 0.005):
+                    _sg = 1 if side == "LONG" else -1
+                    _far = (c.get("sup_far") if side == "LONG"
+                            else c.get("res_far"))
+                    _stop = (float(_far) * (1 - _sg * 0.004) if _far
+                             else float(edge_) * (1 - _sg * 0.012))
+                    _tp = float(edge_) + _sg * abs(float(edge_) - _stop) * 1.5
                     db.alarms.update_one(
                         {"_id": armed["_id"]},
                         {"$set": {"price": float(edge_),
                                   "rearmed_at": utcnow(),
+                                  "plan_stop": _stop, "plan_tp": _tp,
                                   "note": (armed.get("note") or "")
                                   + f" · 🔁 уровень обновлён → {edge_:.6g}"}})
                     # 🔁 событие в журнал/на график (19.08)
@@ -904,6 +911,8 @@ def maybe_auto_entry_alarm(pair: str, window_h: float = 3) -> int:
                 "side": "below" if side == "LONG" else "above",
                 "state": "ARMED", "price_hit": False,
                 "auto": "entry", "sig_src": src, "sig_dir": side,
+                # план структурно — для трекера исходов (19.08)
+                "plan_stop": float(stop), "plan_tp": float(target),
                 "note": note, "created_at": utcnow()})
             placed += 1
         return placed

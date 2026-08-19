@@ -252,6 +252,27 @@ async def _potok_loop():
         await _asyncio.sleep(300)
 
 
+async def _alarm_outcome_loop():
+    """🏁 Исходы сработавших 🎯-будильников (19.08, запрос «делай
+    трекер»): каждые 30 мин ведём план до конца (цель 1.5R / стоп /
+    таймаут 96ч) — вкладка Будильники показывает отработку и сводку."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(420)
+    while True:
+        try:
+            await _asyncio.to_thread(_hb, "alarm_outcomes")
+            import alarm_engine as _ae
+            n = await _asyncio.wait_for(
+                _asyncio.to_thread(_ae.track_outcomes), timeout=600.0)
+            if n:
+                logger.info(f"[alarm-outcome] закрыто исходов: {n}")
+        except _asyncio.TimeoutError:
+            logger.warning("[alarm-outcome] tick TIMEOUT 600s")
+        except Exception:
+            logger.exception("[alarm-outcome] loop crashed")
+        await _asyncio.sleep(1800)
+
+
 async def _whale_scanner_loop():
     """🐋 WHALE safety-net scanner — каждые 30 мин. TG dispatch напрямую
     из fired_docs (раньше был баг: query по created_at brought 0 because
@@ -3899,6 +3920,7 @@ async def start_watcher():
     try:
         asyncio.create_task(_svetofor_stamp_loop())
         asyncio.create_task(_potok_loop())
+        asyncio.create_task(_alarm_outcome_loop())
         logger.info("[svetofor] stamp loop started")
     except Exception:
         logger.exception("[svetofor] failed to start loop")

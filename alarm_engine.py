@@ -149,7 +149,15 @@ def _refresh_auto_levels(db, alarms, px):
         edge = float(edge)
         upd = {"level_checked_at": _utcnow()}
         if abs(edge / a["price"] - 1) > 0.005:
+            # план пересчитываем от новой зоны (иначе трекер исходов
+            # посчитает R по старому стопу)
+            _sg = 1 if side == "LONG" else -1
+            far = c.get("sup_far") if side == "LONG" else c.get("res_far")
+            _stop = (float(far) * (1 - _sg * 0.004) if far
+                     else edge * (1 - _sg * 0.012))
+            _tp = edge + _sg * abs(edge - _stop) * 1.5
             upd.update({"price": edge, "rearmed_at": _utcnow(),
+                        "plan_stop": _stop, "plan_tp": _tp,
                         "note": (a.get("note") or "")
                         + f" · 🔁 перевзведён → {edge:.6g} (зона сдвинулась)"})
             _tg(f"🔁 <b>АВТО-ВХОД · {base}</b> — уровень перевзведён к "
@@ -166,6 +174,98 @@ def _refresh_auto_levels(db, alarms, px):
         db.alarms.update_one({"_id": a["_id"]}, {"$set": upd})
         out.append(a)
     return out
+
+
+_PLAN_STOP_RE = None
+_PLAN_TP_RE = None
+
+
+def track_outcomes(batch: int = 80) -> int:
+    """🏁 Исходы сработавших 🎯-авто-входов (19.08, запрос «делай
+    трекер»): после FIRED ведём план до конца на 15m барах — вход =
+    уровень срабатывания, стоп/цель из плана (поля plan_stop/plan_tp,
+    фолбэк — парсинг note), SL первым в баре, потолок 96ч по close.
+    Пишем outcome TP/SL/TIMEOUT + outcome_pnl_pct + outcome_r в сам
+    будильник — вкладка показывает отработку. N/A = нет плана/данных.
+    Вызывается из watcher каждые 30 мин."""
+    global _PLAN_STOP_RE, _PLAN_TP_RE
+    import re
+    if _PLAN_STOP_RE is None:
+        _PLAN_STOP_RE = re.compile(r"стоп за зону ([\d.eE+-]+)")
+        _PLAN_TP_RE = re.compile(r"цель 1\.5R ([\d.eE+-]+)")
+    from database import _get_db
+    db = _get_db()
+    now = _utcnow()
+    fired = list(db.alarms.find(
+        {"state": "FIRED", "auto": "entry",
+         "outcome": {"$exists": False}, "fired_at": {"$ne": None}})
+        .sort("fired_at", 1).limit(batch))
+    if not fired:
+        return 0
+    from exchange import get_klines_any
+    done = 0
+    for a in fired:
+        sym = a.get("symbol") or ""
+        side = a.get("sig_dir")
+        entry = a.get("price")
+        na = {"$set": {"outcome": "N/A", "outcome_at": now}}
+        if not entry or side not in ("LONG", "SHORT") or not sym:
+            db.alarms.update_one({"_id": a["_id"]}, na)
+            continue
+        sg = 1 if side == "LONG" else -1
+        note = a.get("note") or ""
+        stop, tp = a.get("plan_stop"), a.get("plan_tp")
+        if not stop:
+            m = _PLAN_STOP_RE.search(note)
+            stop = float(m.group(1)) if m else None
+        if not tp:
+            m = _PLAN_TP_RE.search(note)
+            tp = float(m.group(1)) if m else None
+        if not stop or not tp:
+            db.alarms.update_one({"_id": a["_id"]}, na)
+            continue
+        age_h = (now - a["fired_at"]).total_seconds() / 3600
+        need = min(int(age_h * 4) + 8, 1000)
+        try:
+            kl = get_klines_any(sym[:-4] + "/USDT", "15m", need)
+        except Exception:
+            kl = None
+        if not kl:
+            if age_h > 100:
+                db.alarms.update_one({"_id": a["_id"]}, na)
+            continue
+        t_f = a["fired_at"].timestamp() * 1000
+        t_end = t_f + 96 * 3600_000
+        outcome = pnl = None
+        last_c = None
+        for b in kl:
+            bt = b.get("t") or 0
+            if bt + 900_000 <= t_f:
+                continue
+            if bt > t_end:
+                break
+            last_c = b["c"]
+            if (b["l"] <= stop) if sg > 0 else (b["h"] >= stop):
+                outcome = "SL"
+                pnl = (stop / entry - 1) * 100 * sg
+                break
+            if (b["h"] >= tp) if sg > 0 else (b["l"] <= tp):
+                outcome = "TP"
+                pnl = (tp / entry - 1) * 100 * sg
+                break
+        if outcome is None:
+            if now.timestamp() * 1000 >= t_end and last_c:
+                outcome = "TIMEOUT"
+                pnl = (last_c / entry - 1) * 100 * sg
+            else:
+                continue   # ещё в работе — проверим в следующем цикле
+        risk = abs(entry - stop) / entry * 100
+        db.alarms.update_one({"_id": a["_id"]}, {"$set": {
+            "outcome": outcome, "outcome_pnl_pct": round(pnl, 2),
+            "outcome_r": round(pnl / risk, 2) if risk else None,
+            "outcome_at": now}})
+        done += 1
+    return done
 
 
 def _tick_sync(last_sig_ts: dict) -> None:
