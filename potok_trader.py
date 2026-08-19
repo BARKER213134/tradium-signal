@@ -523,6 +523,30 @@ def check_pending() -> int:
         hit = price <= p["edge"] if want == 1 else price >= p["edge"]
         if not hit:
             continue
+        # 🔁 19.08 (ZK-кейс у 🎯): разметка могла уехать за время
+        # ожидания — перед исполнением сверяем край с актуальной зоной;
+        # сдвинулся >0.5% → перевзводим ордер и ждём новый уровень
+        # (вердикт кэширован 5 мин; нет зоны в ответе — исполняем по
+        # старому краю, не отменяем из-за возможной дыры данных)
+        try:
+            from setup_checker import get_compact_verdict
+            _c2 = get_compact_verdict(p["pair"]) or {}
+            _e2 = (_c2.get("sup_edge") if d_ == "LONG"
+                   else _c2.get("res_edge"))
+        except Exception:
+            _e2 = None
+        if _e2 and abs(float(_e2) / p["edge"] - 1) > 0.005:
+            _e2 = float(_e2)
+            db.potok_pending.update_one(
+                {"_id": p["_id"]},
+                {"$set": {"edge": _e2, "rearmed_at": now}})
+            if not (price <= _e2 if want == 1 else price >= _e2):
+                _tg(f"🔁 <b>ПОТОК · ордер перевзведён · "
+                    f"{p['pair'].replace('/USDT', '')} {d_}</b>\n"
+                    f"зона сдвинулась: край {_fmt(p['edge'])} → "
+                    f"<b>{_fmt(_e2)}</b>, ждём дальше")
+                continue
+            p = {**p, "edge": _e2}
         # цена пришла — перепроверка гейтов на момент исполнения
         cancel = st = None
         if sym in open_syms:

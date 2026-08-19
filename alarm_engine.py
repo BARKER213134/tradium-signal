@@ -93,6 +93,63 @@ def _log_event(db, a, cur, sig=None):
         logger.debug("[alarm] event log fail", exc_info=True)
 
 
+def _refresh_auto_levels(db, alarms, px):
+    """🔁 19.08 (ZK: 🎯 сработал «в воздухе» — зона уехала за время
+    ожидания): у авто-входов, к которым цена подошла ближе 2%,
+    перепроверяем разметку (get_compact_verdict, кэш 5 мин + лимит раз
+    в 10 мин на будильник) ДО проверки срабатывания:
+      · край зоны сдвинулся >0.5% → перевзводим уровень на новый край;
+      · зоны на стороне сделки нет в пределах 8% → EXPIRED (сетап
+        протух), в пустоте не стреляем.
+    Ручные ⏰ не трогаем. Возвращает обновлённый список."""
+    out = []
+    for a in alarms:
+        if (a.get("auto") != "entry" or a.get("kind") != "price"
+                or not a.get("price")):
+            out.append(a)
+            continue
+        cur = px.get(a["symbol"])
+        if not cur or abs(cur / a["price"] - 1) * 100 > 2.0:
+            out.append(a)
+            continue
+        rc = a.get("level_checked_at")
+        if rc and (_utcnow() - rc).total_seconds() < 600:
+            out.append(a)
+            continue
+        side = a.get("sig_dir")
+        try:
+            from setup_checker import get_compact_verdict
+            c = get_compact_verdict(a["symbol"]) or {}
+        except Exception:
+            logger.debug("[alarm] refresh verdict fail", exc_info=True)
+            out.append(a)
+            continue
+        edge = c.get("sup_edge") if side == "LONG" else c.get("res_edge")
+        base = a["symbol"].replace("USDT", "")
+        if not edge or abs(float(edge) / cur - 1) * 100 > 8:
+            db.alarms.update_one(
+                {"_id": a["_id"]},
+                {"$set": {"state": "EXPIRED", "expired_at": _utcnow(),
+                          "note": (a.get("note") or "")
+                          + " · ⌛ зона ушла — уровень неактуален, снят"}})
+            _tg(f"⌛ <b>АВТО-ВХОД · {base}</b> — снят: цена у уровня "
+                f"{_fmt(a['price'])}, но зоны на стороне сделки там больше "
+                f"нет (разметка уехала)")
+            continue
+        edge = float(edge)
+        upd = {"level_checked_at": _utcnow()}
+        if abs(edge / a["price"] - 1) > 0.005:
+            upd.update({"price": edge, "rearmed_at": _utcnow(),
+                        "note": (a.get("note") or "")
+                        + f" · 🔁 перевзведён → {edge:.6g} (зона сдвинулась)"})
+            _tg(f"🔁 <b>АВТО-ВХОД · {base}</b> — уровень перевзведён к "
+                f"актуальной зоне: {_fmt(a['price'])} → <b>{_fmt(edge)}</b>")
+            a = {**a, "price": edge}
+        db.alarms.update_one({"_id": a["_id"]}, {"$set": upd})
+        out.append(a)
+    return out
+
+
 def _tick_sync(last_sig_ts: dict) -> None:
     from database import _get_db
     db = _get_db()
@@ -115,6 +172,12 @@ def _tick_sync(last_sig_ts: dict) -> None:
     if not alarms:
         return
     px = _prices()
+    # 🔁 перевзвод 🎯-уровней к актуальным зонам — ДО проверки
+    # срабатывания, чтобы не стрелять по устаревшей разметке
+    try:
+        alarms = _refresh_auto_levels(db, alarms, px)
+    except Exception:
+        logger.debug("[alarm] refresh levels fail", exc_info=True)
     # свежие сигналы по символам будильников (для kind signal / price+signal)
     need_sig = {a["symbol"] for a in alarms
                 if a["kind"] == "signal"
