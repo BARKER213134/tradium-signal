@@ -135,6 +135,16 @@ def _refresh_auto_levels(db, alarms, px):
             _tg(f"⌛ <b>АВТО-ВХОД · {base}</b> — снят: цена у уровня "
                 f"{_fmt(a['price'])}, но зоны на стороне сделки там больше "
                 f"нет (разметка уехала)")
+            # событие в журнал/на график (19.08: «чтобы видеть, насколько
+            # правильно оно работает»)
+            try:
+                db.alarm_events.insert_one({
+                    "symbol": a["symbol"], "kind": "unarm",
+                    "level": a.get("price"), "auto": a.get("auto"),
+                    "sig_src": a.get("sig_src"), "sig_dir": a.get("sig_dir"),
+                    "at": _utcnow()})
+            except Exception:
+                pass
             continue
         edge = float(edge)
         upd = {"level_checked_at": _utcnow()}
@@ -144,6 +154,14 @@ def _refresh_auto_levels(db, alarms, px):
                         + f" · 🔁 перевзведён → {edge:.6g} (зона сдвинулась)"})
             _tg(f"🔁 <b>АВТО-ВХОД · {base}</b> — уровень перевзведён к "
                 f"актуальной зоне: {_fmt(a['price'])} → <b>{_fmt(edge)}</b>")
+            try:
+                db.alarm_events.insert_one({
+                    "symbol": a["symbol"], "kind": "rearm",
+                    "level": edge, "old_level": a.get("price"),
+                    "auto": a.get("auto"), "sig_src": a.get("sig_src"),
+                    "sig_dir": a.get("sig_dir"), "at": _utcnow()})
+            except Exception:
+                pass
             a = {**a, "price": edge}
         db.alarms.update_one({"_id": a["_id"]}, {"$set": upd})
         out.append(a)

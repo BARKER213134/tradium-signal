@@ -10001,9 +10001,20 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             em = "⏰🚨" if k == "price+signal" else ("🚨" if k == "signal" else "⏰")
             _adir = ae.get("sig_direction") or ae.get("sig_dir") or ""
             # 18.08: у 🎯-входов показываем ПЛАН (вход/стоп/цель из note),
-            # а не голое «сработал» — попап на графике должен говорить,
-            # что делать
-            if ae.get("auto") == "entry" and ae.get("note"):
+            # а не голое «сработал»; 19.08: 🔁 перевзвод / ⌛ снятие у цены
+            # («зона ушла») — отдельные события, чтобы видеть работу
+            # перевзвода на графике и в журнале
+            if k == "rearm":
+                _o, _l = ae.get("old_level"), ae.get("level")
+                _sh = (f" ({(_l / _o - 1) * 100:+.1f}%)" if _o and _l else "")
+                patt = (f"🔁 ПЕРЕВЗВЕДЁН · {_o:g} → {_l:g}{_sh}"
+                        f" · зона сдвинулась" if _o and _l
+                        else "🔁 ПЕРЕВЗВЕДЁН · зона сдвинулась")
+            elif k == "unarm":
+                patt = (f"⌛ СНЯТ У ЦЕНЫ · уровень {ae['level']:g} — зона "
+                        f"ушла" if ae.get("level")
+                        else "⌛ СНЯТ У ЦЕНЫ — зона ушла")
+            elif ae.get("auto") == "entry" and ae.get("note"):
                 patt = "🎯 СРАБОТАЛ · " + ae["note"].removeprefix("🎯 ")
             else:
                 parts = []
@@ -10021,7 +10032,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "symbol": ae.get("symbol", ""),
                 "pair": pair_slash,
                 "direction": _adir,
-                "entry": ae.get("entry"),
+                "entry": ae.get("entry") or ae.get("level"),
                 "tp1": None, "sl": None,
                 "pattern": patt,
                 "score": 0, "st_passed": None, "pump_score": 0,
@@ -10514,8 +10525,19 @@ def _compute_journal_sync(_fast_only: bool = False):
             k = ae.get("kind")
             em = "⏰🚨" if k == "price+signal" else ("🚨" if k == "signal" else "⏰")
             _adir = ae.get("sig_direction") or ae.get("sig_dir") or ""
-            # 18.08: у 🎯-входов показываем ПЛАН (вход/стоп/цель из note)
-            if ae.get("auto") == "entry" and ae.get("note"):
+            # 18.08: у 🎯-входов показываем ПЛАН (вход/стоп/цель из note);
+            # 19.08: 🔁 перевзвод / ⌛ снятие у цены — отдельные события
+            if k == "rearm":
+                _o, _l = ae.get("old_level"), ae.get("level")
+                _sh = (f" ({(_l / _o - 1) * 100:+.1f}%)" if _o and _l else "")
+                patt = (f"🔁 ПЕРЕВЗВЕДЁН · {_o:g} → {_l:g}{_sh}"
+                        f" · зона сдвинулась" if _o and _l
+                        else "🔁 ПЕРЕВЗВЕДЁН · зона сдвинулась")
+            elif k == "unarm":
+                patt = (f"⌛ СНЯТ У ЦЕНЫ · уровень {ae['level']:g} — зона "
+                        f"ушла" if ae.get("level")
+                        else "⌛ СНЯТ У ЦЕНЫ — зона ушла")
+            elif ae.get("auto") == "entry" and ae.get("note"):
                 patt = "🎯 СРАБОТАЛ · " + ae["note"].removeprefix("🎯 ")
             else:
                 parts = []
@@ -10533,7 +10555,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "symbol": ae.get("symbol", ""),
                 "pair": (ae.get("symbol", "") or "").replace("USDT", "/USDT"),
                 "direction": _adir,
-                "entry": ae.get("entry"),
+                "entry": ae.get("entry") or ae.get("level"),
                 "tp1": None, "sl": None,
                 "pattern": patt,
                 "score": 0, "st_passed": None, "pump_score": 0,

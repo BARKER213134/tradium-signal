@@ -756,6 +756,13 @@
       window.sigIcon = function(src, score, meta) {
         const isTopPick = meta && meta.is_top_pick;
         const isStrong = meta && meta.strong;
+        // ⏰ будильник-события (19.08): свой значок по типу — 🎯 сработал
+        // авто-вход / 🔁 перевзведён / ⌛ снят у цены / ⏰🚨 ручные; тип
+        // зашит первым токеном pattern (передаётся в meta.pattern)
+        if (src === 'alarm') {
+          const _at = ((meta && meta.pattern) || '').split(' ')[0];
+          return ['🎯', '🔁', '⌛', '⏰', '⏰🚨', '🚨'].includes(_at) ? _at : '⏰';
+        }
         // 🏅 ДЕСЯТКА — кандидат +10%/сделку (кит / blowoff-разгон>15)
         const tenPfx = (meta && meta.ten_plus) ? '🏅' : '';
         const hotPfx = (meta && meta.hot) ? '🔥' : '';  // 🔥 горячая монета
@@ -4818,7 +4825,10 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           return bars[idx];
         };
         (d.items || []).filter(s => s.at_ts && s.at_ts * 1000 >= t0).slice(0, 300).forEach(s => {
-          const emoji0 = window.sigIconCompact ? (s.hot ? '🔥' : '') + window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot, s.ten_plus, s.elite_1d, s.pullback, s.bulltrap, s.absorb) : '•';
+          // ⏰ будильник-события: значок по типу из первого токена pattern
+          // (🎯 сработал / 🔁 перевзведён / ⌛ снят) — 19.08
+          const _alTok = s.source === 'alarm' ? ((s.pattern || '').split(' ')[0] || '⏰') : null;
+          const emoji0 = _alTok ? _alTok : (window.sigIconCompact ? (s.hot ? '🔥' : '') + window.sigIconCompact(s.source, s.score, s.whale_tier || s.shark_tier, s.whale_seq, s.rep_hot, s.ten_plus, s.elite_1d, s.pullback, s.bulltrap, s.absorb) : '•');
           // ✅ галочка — светофор на момент сигнала говорил ДА; ⭐ — отборный
           // вход (профиль победителей, бэкфилл 60д + live-штамп)
           const sv = s.svetofor || s.pro_verdict;
@@ -5363,6 +5373,7 @@ function _sigTooltipHTML(o) {
     pullback: o.pullback || meta.pullback,
     bulltrap: o.bulltrap || meta.bulltrap,
     absorb: o.absorb || meta.absorb,
+    pattern: o.pattern || meta.pattern,
   });
   const srcIcon = window.sigIcon ? window.sigIcon(o.source, score, _tipMeta) : '';
   const titleStr = (srcIcon ? srcIcon + ' ' : '') + (o.title || o.symbol || '');

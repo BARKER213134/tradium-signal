@@ -874,6 +874,17 @@ def maybe_auto_entry_alarm(pair: str, window_h: float = 3) -> int:
                                   "rearmed_at": utcnow(),
                                   "note": (armed.get("note") or "")
                                   + f" · 🔁 уровень обновлён → {edge_:.6g}"}})
+                    # 🔁 событие в журнал/на график (19.08)
+                    try:
+                        db.alarm_events.insert_one({
+                            "symbol": sym, "kind": "rearm",
+                            "level": float(edge_),
+                            "old_level": armed.get("price"),
+                            "auto": "entry",
+                            "sig_src": armed.get("sig_src"),
+                            "sig_dir": side, "at": utcnow()})
+                    except Exception:
+                        pass
                 continue
             dup = db.alarms.find_one({
                 "symbol": sym, "auto": "entry", "sig_dir": side,
