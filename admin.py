@@ -10030,10 +10030,15 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             em = "⏰🚨" if k == "price+signal" else ("🚨" if k == "signal" else "⏰")
             _adir = ae.get("sig_direction") or ae.get("sig_dir") or ""
             # 18.08: у 🎯-входов показываем ПЛАН (вход/стоп/цель из note),
-            # а не голое «сработал»; 19.08: 🔁 перевзвод / ⌛ снятие у цены
-            # («зона ушла») — отдельные события, чтобы видеть работу
-            # перевзвода на графике и в журнале
-            if k == "rearm":
+            # а не голое «сработал»; 19.08: 🛎 взведение / 🔁 перевзвод /
+            # ⌛ снятие у цены — отдельные события, весь жизненный цикл
+            # будильника виден на графике
+            if k == "arm":
+                patt = ("🛎 ВЗВЕДЁН · " + ae["note"].removeprefix("🎯 ")
+                        if ae.get("note") else
+                        (f"🛎 ВЗВЕДЁН · вход {ae['level']:g}"
+                         if ae.get("level") else "🛎 ВЗВЕДЁН"))
+            elif k == "rearm":
                 _o, _l = ae.get("old_level"), ae.get("level")
                 _sh = (f" ({(_l / _o - 1) * 100:+.1f}%)" if _o and _l else "")
                 patt = (f"🔁 ПЕРЕВЗВЕДЁН · {_o:g} → {_l:g}{_sh}"
@@ -10552,6 +10557,10 @@ def _compute_journal_sync(_fast_only: bool = False):
                 {"at": {"$gte": since_14d}}).sort("at", -1).limit(300):
             ae_at = ae.get("at")
             k = ae.get("kind")
+            # 🛎 взведения на графиках есть (by-symbol), в общем журнале
+            # были бы спамом (100+/день) — Будильники и так их показывают
+            if k == "arm":
+                continue
             em = "⏰🚨" if k == "price+signal" else ("🚨" if k == "signal" else "⏰")
             _adir = ae.get("sig_direction") or ae.get("sig_dir") or ""
             # 18.08: у 🎯-входов показываем ПЛАН (вход/стоп/цель из note);

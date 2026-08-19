@@ -761,7 +761,7 @@
         // зашит первым токеном pattern (передаётся в meta.pattern)
         if (src === 'alarm') {
           const _at = ((meta && meta.pattern) || '').split(' ')[0];
-          return ['🎯', '🔁', '⌛', '⏰', '⏰🚨', '🚨'].includes(_at) ? _at : '⏰';
+          return ['🛎', '🎯', '🔁', '⌛', '⏰', '⏰🚨', '🚨'].includes(_at) ? _at : '⏰';
         }
         // 🏅 ДЕСЯТКА — кандидат +10%/сделку (кит / blowoff-разгон>15)
         const tenPfx = (meta && meta.ten_plus) ? '🏅' : '';

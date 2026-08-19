@@ -906,7 +906,7 @@ def maybe_auto_entry_alarm(pair: str, window_h: float = 3) -> int:
             note = (f"🎯 авто-вход по сигналу {src} {side}: лимитка от края "
                     f"зоны {edge:.6g} · стоп за зону {stop:.6g} "
                     f"({abs(stop / edge - 1) * 100:.1f}%) · цель 1.5R {target:.6g}")
-            db.alarms.insert_one({
+            _ins = db.alarms.insert_one({
                 "symbol": sym, "kind": "price", "price": float(edge),
                 "side": "below" if side == "LONG" else "above",
                 "state": "ARMED", "price_hit": False,
@@ -914,6 +914,17 @@ def maybe_auto_entry_alarm(pair: str, window_h: float = 3) -> int:
                 # план структурно — для трекера исходов (19.08)
                 "plan_stop": float(stop), "plan_tp": float(target),
                 "note": note, "created_at": utcnow()})
+            # 🛎 событие взведения — точка постановки видна на графике
+            # (19.08: «нет эмоджи, где был первый сигнал, который
+            # переставился»)
+            try:
+                db.alarm_events.insert_one({
+                    "symbol": sym, "kind": "arm", "level": float(edge),
+                    "auto": "entry", "sig_src": src, "sig_dir": side,
+                    "note": note, "alarm_id": str(_ins.inserted_id),
+                    "at": utcnow()})
+            except Exception:
+                pass
             placed += 1
         return placed
     except Exception:
