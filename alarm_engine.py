@@ -88,6 +88,9 @@ def _log_event(db, a, cur, sig=None):
             # должен говорить, ЧТО ДЕЛАТЬ, а не только «сработал»
             "auto": a.get("auto"), "sig_src": a.get("sig_src"),
             "sig_dir": a.get("sig_dir"), "note": a.get("note"),
+            # 19.08: сработавший ПОСЛЕ перевзвода получает свой значок
+            "rearmed": bool(a.get("rearmed_at")),
+            "alarm_id": str(a.get("_id")),
             "at": _utcnow()})
     except Exception:
         logger.debug("[alarm] event log fail", exc_info=True)

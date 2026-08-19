@@ -10049,7 +10049,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         f"ушла" if ae.get("level")
                         else "⌛ СНЯТ У ЦЕНЫ — зона ушла")
             elif ae.get("auto") == "entry" and ae.get("note"):
-                patt = "🎯 СРАБОТАЛ · " + ae["note"].removeprefix("🎯 ")
+                patt = (("🎯🔁 СРАБОТАЛ (после перевзвода) · " if ae.get("rearmed") else "🎯 СРАБОТАЛ · ")
+                        + ae["note"].removeprefix("🎯 "))
             else:
                 parts = []
                 if ae.get("level"):
@@ -10576,7 +10577,8 @@ def _compute_journal_sync(_fast_only: bool = False):
                         f"ушла" if ae.get("level")
                         else "⌛ СНЯТ У ЦЕНЫ — зона ушла")
             elif ae.get("auto") == "entry" and ae.get("note"):
-                patt = "🎯 СРАБОТАЛ · " + ae["note"].removeprefix("🎯 ")
+                patt = (("🎯🔁 СРАБОТАЛ (после перевзвода) · " if ae.get("rearmed") else "🎯 СРАБОТАЛ · ")
+                        + ae["note"].removeprefix("🎯 "))
             else:
                 parts = []
                 if ae.get("level"):

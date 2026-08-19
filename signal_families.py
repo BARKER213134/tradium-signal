@@ -66,10 +66,13 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
     # 29.07: whale/shark тоже — это ТОП-сигналы с TG-карточками (WR 53.8/60.4),
     # они стреляют на ST-флипе и растворялись в 🧩-эхе того же флипа
     # («в TG есть, в журнале нет» — SYRUP shark 14:44)
+    # 19.08: alarm — события жизненного цикла будильника (🛎 взведён /
+    # 🔁 перевзведён / 🎯 сработал), не сигналы; 🛎 ставится в ту же
+    # минуту, что породивший сигнал, и растворялся в 🧩-стеке
     NO_GROUP = {"paper", "stack", "accum", "st_break", "st_break4h", "blowoff",
                 "capitulation", "thin_pump", "floor_buy", "vol_anomaly", "vol_anomaly4h",
                 "potok", "whale", "shark", "rocket_pullback", "support_defense",
-                "channel_top", "corridor", "full_stack", "struct_top"}
+                "channel_top", "corridor", "full_stack", "struct_top", "alarm"}
     from collections import defaultdict
 
     groupable = [it for it in items
