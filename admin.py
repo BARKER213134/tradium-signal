@@ -10004,7 +10004,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             # а не голое «сработал» — попап на графике должен говорить,
             # что делать
             if ae.get("auto") == "entry" and ae.get("note"):
-                patt = "🎯 СРАБОТАЛ · " + ae["note"]
+                patt = "🎯 СРАБОТАЛ · " + ae["note"].removeprefix("🎯 ")
             else:
                 parts = []
                 if ae.get("level"):
@@ -10516,7 +10516,7 @@ def _compute_journal_sync(_fast_only: bool = False):
             _adir = ae.get("sig_direction") or ae.get("sig_dir") or ""
             # 18.08: у 🎯-входов показываем ПЛАН (вход/стоп/цель из note)
             if ae.get("auto") == "entry" and ae.get("note"):
-                patt = "🎯 СРАБОТАЛ · " + ae["note"]
+                patt = "🎯 СРАБОТАЛ · " + ae["note"].removeprefix("🎯 ")
             else:
                 parts = []
                 if ae.get("level"):
