@@ -3253,7 +3253,7 @@ function _renderSetupResult(d) {
                     st_vip:'🌀', st_mtf:'🔱', confluence:'🎯', volume_surge:'🌊', vol_accum:'🔋', volcano:'🌋',
                     second_flip:'♻️', stack:'🧩', impulse:'🚀', fade:'🎣', ignition:'💥', ten:'💰', accum:'🧊',
                     blowoff:'🌋', capitulation:'🛟', thin_pump:'💨', floor_buy:'💎', st_break:'🧨', st_break4h:'💣',
-                    vol_anomaly:'⚡', vol_anomaly4h:'🌩', delta_series:'🫧', potok:'🌊', rocket_pullback:'🪃', support_defense:'🧱', channel_top:'📐', corridor:'🎈', level_touch:'📏', flip_retest:'🪜', full_stack:'🧗', struct_top:'🏚', rev_candle:'🕯', alarm:'⏰'};
+                    vol_anomaly:'⚡', vol_anomaly4h:'🌩', delta_series:'🫧', potok:'🌊', rocket_pullback:'🪃', support_defense:'🧱', channel_top:'📐', corridor:'🎈', level_touch:'📏', flip_retest:'🪜', full_stack:'🧗', struct_top:'🏚', rev_candle:'🕯', st_touch:'🏓', alarm:'⏰'};
   const recentHtml = (d.recent_signals || []).slice(0, 30).map(rs => {
     let em = srcEmoji[rs.source] || '•';
     if (rs.source === 'whale' && (rs.whale_seq||1) >= 2) em = '🐳';
@@ -7760,6 +7760,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="lt_absorb">💪 Поглощение (📏 + дельта в сторону отскока · LONG +0.93R WR77 / SHORT +0.77R WR71)</option>
     <option value="flip_retest">🪜 Флип-ретест (лонг от пробитого сопротивления · 2R+БУ +0.47R · PF 3.45)</option>
     <option value="full_stack">🧗 Полный стек (первая свеча аптренда всех ТФ + фильтры · EV +0.90)</option>
+    <option value="st_touch">🏓 Касание ST (отбой от линии 4h/12h · WR 61-83% · EV +0.61..0.90)</option>
     <option value="struct_top">🏚 Слом структуры (перегрев 4h сломался → шорт · EV +0.99 · WR(TP) 39)</option>
     <option value="rev_candle">🕯 Разворот 4h (чёткий пин/поглощение у зоны · тайминг-инфо)</option>
     <option value="vol_anomaly">⚡ Аномалия объёма 1h (&gt;8× нормы, где угодно, инфо)</option>
@@ -10033,7 +10034,7 @@ function filterJournal() {
     // 'new_strategies' = meta-value: matches all 5 strategies (vs/tc/va/volcano/second_flip)
     if (src === 'new_strategies') {
       // ✂ 13.08: удалённые стратегии вычищены из meta-списка
-      if (!['triple_confluence','volcano','stack','fade','delta_series','st_break4h','blowoff','thin_pump','floor_buy','vol_anomaly','vol_anomaly4h','potok','rocket_pullback','support_defense','channel_top','corridor','level_touch','flip_retest','full_stack','struct_top','rev_candle'].includes(s.source)) return false;
+      if (!['triple_confluence','volcano','stack','fade','delta_series','st_break4h','blowoff','thin_pump','floor_buy','vol_anomaly','vol_anomaly4h','potok','rocket_pullback','support_defense','channel_top','corridor','level_touch','flip_retest','full_stack','struct_top','rev_candle','st_touch'].includes(s.source)) return false;
     } else if (src === 'whale2') {
       // 🐳 повторный кит ≤14д (бэктест 28.07: ниже 1-го EV +2.2)
       if (!(s.source === 'whale' && (s.whale_seq || 1) >= 2)) return false;

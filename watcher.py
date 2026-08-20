@@ -210,6 +210,38 @@ async def _st_break4h_loop():
             await _asyncio.sleep(600)
 
 
+async def _st_touch_loop():
+    """🏓 Касание линии ST 4h/12h (20.08, бэктест год: отбой в 61-83%,
+    12h сильнейший, шорты лучше лонгов): скан через ~7 мин после закрытия
+    каждого 4h-бара; на границах 00/12 UTC — дополнительно 12h. Один
+    догоняющий скан на старте."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(360)
+    try:
+        import st_touch as _stt
+        await _asyncio.to_thread(_hb, "st_touch")
+        await _stt.check_all("4h")
+        await _stt.check_all("12h")
+    except Exception:
+        logger.exception("[st-touch] initial scan crashed")
+    while True:
+        try:
+            from database import utcnow
+            secs = utcnow().timestamp()
+            next_b = (int(secs // 14400) + 1) * 14400 + 420
+            await _asyncio.sleep(max(60, next_b - secs))
+            await _asyncio.to_thread(_hb, "st_touch")
+            import st_touch as _stt
+            await _stt.check_all("4h")
+            # граница 12h-бара (00/12 UTC) совпадает с каждой третьей 4h
+            bh = int(((utcnow().timestamp() - 420) % 86400) // 3600)
+            if bh % 12 == 0:
+                await _stt.check_all("12h")
+        except Exception:
+            logger.exception("[st-touch] loop crashed")
+            await _asyncio.sleep(600)
+
+
 async def _svetofor_stamp_loop():
     """🚦 Штампует svetofor-вердикт свежим сигналам (4 коллекции, <2ч)
     каждые 10 мин — галочки ✅ на графиках и история для бэктестов."""
@@ -3921,6 +3953,7 @@ async def start_watcher():
         asyncio.create_task(_svetofor_stamp_loop())
         asyncio.create_task(_potok_loop())
         asyncio.create_task(_alarm_outcome_loop())
+        asyncio.create_task(_st_touch_loop())
         logger.info("[svetofor] stamp loop started")
     except Exception:
         logger.exception("[svetofor] failed to start loop")

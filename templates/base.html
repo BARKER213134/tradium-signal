@@ -756,6 +756,7 @@
       window.sigIcon = function(src, score, meta) {
         const isTopPick = meta && meta.is_top_pick;
         const isStrong = meta && meta.strong;
+        if (src === 'st_touch') return hotPfx + tenPfx + '🏓';
         // ⏰ будильник-события (19.08): свой значок по типу — 🎯 сработал
         // авто-вход / 🔁 перевзведён / ⌛ снят у цены / ⏰🚨 ручные; тип
         // зашит первым токеном pattern (передаётся в meta.pattern)
@@ -906,6 +907,7 @@
         if (src === 'full_stack') return '🧗';
         if (src === 'struct_top') return '🏚';
         if (src === 'rev_candle') return '🕯';
+        if (src === 'st_touch') return '🏓';
         if (src === 'alarm') return '⏰';
         if (src === 'st_break4h') return '💣';
         if (src === 'blowoff') return '🌋';
