@@ -756,7 +756,6 @@
       window.sigIcon = function(src, score, meta) {
         const isTopPick = meta && meta.is_top_pick;
         const isStrong = meta && meta.strong;
-        if (src === 'st_touch') return hotPfx + tenPfx + '🏓';
         // ⏰ будильник-события (19.08): свой значок по типу — 🎯 сработал
         // авто-вход / 🔁 перевзведён / ⌛ снят у цены / ⏰🚨 ручные; тип
         // зашит первым токеном pattern (передаётся в meta.pattern)
@@ -767,6 +766,10 @@
         // 🏅 ДЕСЯТКА — кандидат +10%/сделку (кит / blowoff-разгон>15)
         const tenPfx = (meta && meta.ten_plus) ? '🏅' : '';
         const hotPfx = (meta && meta.hot) ? '🔥' : '';  // 🔥 горячая монета
+        // 🏓 касание линии ST 4h/12h (20.08) — ПОСЛЕ объявлений
+        // tenPfx/hotPfx: const в TDZ, ветка выше объявлений роняла
+        // рендер журнала («сигналы не грузятся»)
+        if (src === 'st_touch') return hotPfx + tenPfx + '🏓';
         // 🧿 blowoff ЭЛИТА-1d — гейт + дневной RSI-медведь (WR 69, EV +3.78)
         if (src === 'blowoff' && meta && meta.elite_1d)
           return hotPfx + tenPfx + '🧿🌋';
