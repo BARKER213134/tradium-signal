@@ -227,6 +227,27 @@ def track_outcomes(batch: int = 80) -> int:
         if not stop or not tp:
             db.alarms.update_one({"_id": a["_id"]}, na)
             continue
+        # 🛡 план из note может относиться к СТАРОМУ уровню (перестановка
+        # старым кодом не пересчитывала план): стоп/цель не на своей
+        # стороне от входа → восстанавливаем риск-геометрию первого плана
+        # относительно фактического уровня (19.08: RUNE/ZK «цель −2.7%»)
+        if ((sg > 0 and (stop >= entry or tp <= entry))
+                or (sg < 0 and (stop <= entry or tp >= entry))):
+            risk_pct = abs(stop / entry - 1)
+            m0 = _PLAN_STOP_RE.search(note)
+            m1 = re.search(r"лимитка от края зоны ([\d.eE+-]+)", note)
+            if m0 and m1:
+                try:
+                    risk_pct = abs(float(m0.group(1)) / float(m1.group(1)) - 1)
+                except Exception:
+                    pass
+            if not (0.001 <= risk_pct <= 0.09):
+                risk_pct = 0.012
+            stop = entry * (1 - sg * risk_pct)
+            tp = entry + sg * abs(entry - stop) * 1.5
+            db.alarms.update_one(
+                {"_id": a["_id"]},
+                {"$set": {"plan_stop": float(stop), "plan_tp": float(tp)}})
         age_h = (now - a["fired_at"]).total_seconds() / 3600
         need = min(int(age_h * 4) + 8, 1000)
         try:
