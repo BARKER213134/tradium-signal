@@ -906,6 +906,14 @@ def maybe_auto_entry_alarm(pair: str, window_h: float = 3) -> int:
             note = (f"🎯 авто-вход по сигналу {src} {side}: лимитка от края "
                     f"зоны {edge:.6g} · стоп за зону {stop:.6g} "
                     f"({abs(stop / edge - 1) * 100:.1f}%) · цель 1.5R {target:.6g}")
+            # ⚠ 20.08: сторона против текущей фазы рынка — сквиз-риск
+            try:
+                _ph = (db.system.find_one({"_id": "market_side_state"})
+                       or {}).get("side")
+                if _ph in ("LONG", "SHORT") and _ph != side:
+                    note += f" · ⚠ против фазы ({_ph}) — сквиз-риск"
+            except Exception:
+                pass
             _ins = db.alarms.insert_one({
                 "symbol": sym, "kind": "price", "price": float(edge),
                 "side": "below" if side == "LONG" else "above",

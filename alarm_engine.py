@@ -73,6 +73,16 @@ def _fmt(v):
         return str(v)
 
 
+def _phase():
+    """Фаза рынка (market_side_state.side) для ⚠-пометки против фазы."""
+    try:
+        from database import _get_db
+        ms = _get_db().system.find_one({"_id": "market_side_state"}) or {}
+        return ms.get("side")
+    except Exception:
+        return None
+
+
 def _log_event(db, a, cur, sig=None):
     """Сработавший будильник = отдельное событие-сигнал: пишем в
     alarm_events (журнал подмешивает их источником 'alarm' ⏰,
@@ -90,6 +100,9 @@ def _log_event(db, a, cur, sig=None):
             "sig_dir": a.get("sig_dir"), "note": a.get("note"),
             # 19.08: сработавший ПОСЛЕ перевзвода получает свой значок
             "rearmed": bool(a.get("rearmed_at")),
+            # 20.08: срабатывание против фазы рынка — сквиз-риск (запрос
+            # после ракеты 19.08, где шорты легли под фазой LONG)
+            "against_phase": a.get("against_phase"),
             "alarm_id": str(a.get("_id")),
             "at": _utcnow()})
     except Exception:
@@ -352,11 +365,32 @@ def _tick_sync(last_sig_ts: dict) -> None:
                 continue
             if a["kind"] == "price":
                 if a.get("auto") == "entry":
+                    # ⚠ 20.08: сторона против текущей фазы = сквиз-риск
+                    # (19.08 ракета: 56 шорт-срабатываний под LONG-фазой,
+                    # утренние легли стопами; бэктест: SHORT при 12h ЗА
+                    # +0.24% против минуса ПРОТИВ)
+                    _ph = _phase()
+                    _against = (_ph in ("LONG", "SHORT")
+                                and a.get("sig_dir") in ("LONG", "SHORT")
+                                and _ph != a.get("sig_dir"))
+                    if _against:
+                        a["against_phase"] = _ph
+                        try:
+                            db.alarms.update_one(
+                                {"_id": a["_id"]},
+                                {"$set": {"against_phase": _ph,
+                                          "note": (a.get("note") or "")
+                                          + f" · ⚠ против фазы ({_ph}) — "
+                                          f"сквиз-риск"}})
+                        except Exception:
+                            pass
+                    _warn = (f"\n⚠ <b>ПРОТИВ ФАЗЫ ({_ph})</b> — сквиз-риск"
+                             if _against else "")
                     # 🎯 авто-вход: цена пришла в точку, где разбор велел
                     # входить — карточка с планом + свежий 🎰-контекст
                     txt = (f"🎯 <b>АВТО-ВХОД · {base}</b>\n"
                            f"цена дошла до края зоны {_fmt(a['price'])} "
-                           f"(сейчас {_fmt(cur)})\n"
+                           f"(сейчас {_fmt(cur)}){_warn}\n"
                            f"{a.get('note') or ''}")
                     try:
                         from setup_checker import signal_tg_context
