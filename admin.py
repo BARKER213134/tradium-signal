@@ -10041,15 +10041,15 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             elif k == "rearm":
                 _o, _l = ae.get("old_level"), ae.get("level")
                 _sh = (f" ({(_l / _o - 1) * 100:+.1f}%)" if _o and _l else "")
-                patt = (f"🔁 ПЕРЕВЗВЕДЁН · {_o:g} → {_l:g}{_sh}"
+                patt = (f"📌 ПЕРЕСТАВЛЕН · {_o:g} → {_l:g}{_sh}"
                         f" · зона сдвинулась" if _o and _l
-                        else "🔁 ПЕРЕВЗВЕДЁН · зона сдвинулась")
+                        else "📌 ПЕРЕСТАВЛЕН · зона сдвинулась")
             elif k == "unarm":
                 patt = (f"⌛ СНЯТ У ЦЕНЫ · уровень {ae['level']:g} — зона "
                         f"ушла" if ae.get("level")
                         else "⌛ СНЯТ У ЦЕНЫ — зона ушла")
             elif ae.get("auto") == "entry" and ae.get("note"):
-                patt = (("🎯🔁 СРАБОТАЛ (после перевзвода) · " if ae.get("rearmed") else "🎯 СРАБОТАЛ · ")
+                patt = (("⏰📌 СРАБОТАЛ (после перестановки) · " if ae.get("rearmed") else "⏰ СРАБОТАЛ · ")
                         + ae["note"].removeprefix("🎯 "))
             else:
                 parts = []
@@ -10569,15 +10569,15 @@ def _compute_journal_sync(_fast_only: bool = False):
             if k == "rearm":
                 _o, _l = ae.get("old_level"), ae.get("level")
                 _sh = (f" ({(_l / _o - 1) * 100:+.1f}%)" if _o and _l else "")
-                patt = (f"🔁 ПЕРЕВЗВЕДЁН · {_o:g} → {_l:g}{_sh}"
+                patt = (f"📌 ПЕРЕСТАВЛЕН · {_o:g} → {_l:g}{_sh}"
                         f" · зона сдвинулась" if _o and _l
-                        else "🔁 ПЕРЕВЗВЕДЁН · зона сдвинулась")
+                        else "📌 ПЕРЕСТАВЛЕН · зона сдвинулась")
             elif k == "unarm":
                 patt = (f"⌛ СНЯТ У ЦЕНЫ · уровень {ae['level']:g} — зона "
                         f"ушла" if ae.get("level")
                         else "⌛ СНЯТ У ЦЕНЫ — зона ушла")
             elif ae.get("auto") == "entry" and ae.get("note"):
-                patt = (("🎯🔁 СРАБОТАЛ (после перевзвода) · " if ae.get("rearmed") else "🎯 СРАБОТАЛ · ")
+                patt = (("⏰📌 СРАБОТАЛ (после перестановки) · " if ae.get("rearmed") else "⏰ СРАБОТАЛ · ")
                         + ae["note"].removeprefix("🎯 "))
             else:
                 parts = []
