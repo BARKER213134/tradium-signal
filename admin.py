@@ -9045,6 +9045,32 @@ async def api_hot_coins():
     return await asyncio.to_thread(_q)
 
 
+@app.get("/api/st-lines")
+async def api_st_lines(symbol: str):
+    """📐 Текущие линии SuperTrend по ТФ 1h/2h/4h/12h (20.08: теория
+    «стоп за противоположным супертрендом» — бэктест год: касание линии
+    отбивается в 61-83%, выход по ЗАКРЫТИЮ за линией лучший, тач-стоп
+    вплотную режет EV вдвое). Для горизонтальных линий на графике.
+    supertrend_state кэширован 2 мин на пару+ТФ."""
+    def _q():
+        sym = (symbol or "").upper().replace("/", "").strip()
+        if not sym.endswith("USDT"):
+            sym += "USDT"
+        pair = sym[:-4] + "/USDT"
+        from supertrend import supertrend_state
+        out = {}
+        for tf in ("1h", "2h", "4h", "12h"):
+            try:
+                st = supertrend_state(pair, tf)
+            except Exception:
+                st = None
+            if st and st.get("value"):
+                out[tf] = {"state": st.get("state"),
+                           "value": st.get("value")}
+        return {"symbol": sym, "lines": out}
+    return await asyncio.to_thread(_q)
+
+
 @app.get("/api/alarms")
 async def api_alarms_list(state: str = "armed"):
     """⏰ Будильники: state=armed (дефолт) | all (+ последние 50 FIRED).

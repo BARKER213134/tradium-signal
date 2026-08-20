@@ -4760,6 +4760,33 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       (d.items || []).filter(a => a.symbol === sym && a.price > 0).forEach(a => _almLine(a.price));
     } catch (e) {}
   })();
+  // 📐 линии супертренда остальных ТФ (20.08: теория «цена отбивается
+  // от противоположного ST» подтверждена — WR 61-83% по ТФ; это же
+  // якорь стопа: выходить по ЗАКРЫТИЮ за линией, тач-стоп вплотную
+  // режет EV вдвое). Линия текущего ТФ уже есть (индикатор ST).
+  if (opts.stLines !== false) {
+    (async () => {
+      try {
+        const r = await fetch(`/api/st-lines?symbol=${encodeURIComponent(sym)}`);
+        const d = await r.json();
+        const dl = chart.getDataList ? chart.getDataList() : [];
+        const lastTs = dl.length ? dl[dl.length - 1].timestamp : null;
+        for (const [ltf, v] of Object.entries((d && d.lines) || {})) {
+          if (!v || !v.value || ltf === tf) continue;
+          const up = v.state === 'UP';
+          chart.createOverlay({ name: 'priceLine', points: [{ value: v.value }], groupId: 'stlines', lock: true,
+            styles: { line: { color: up ? 'rgba(0,229,160,0.45)' : 'rgba(255,77,109,0.45)', style: 'dashed', size: 1 },
+                      text: { color: '#0a0e14', backgroundColor: up ? 'rgba(0,229,160,0.8)' : 'rgba(255,77,109,0.8)' } } });
+          if (lastTs) {
+            chart.createOverlay({ name: 'simpleAnnotation', lock: true, groupId: 'stlines',
+              points: [{ timestamp: lastTs, value: v.value }],
+              extendData: `ST ${ltf}${up ? '▲' : '▼'}`,
+              styles: { text: { color: up ? '#00e5a0' : '#ff4d6d', size: 10 } } });
+          }
+        }
+      } catch (e) {}
+    })();
+  }
   container.addEventListener('click', (ev) => {
     if (!container._kcAlarmMode) return;
     if (ev.target.closest('.kc-toolbar') || ev.target.closest('.kc-almpop')) return;
