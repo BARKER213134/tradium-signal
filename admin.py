@@ -9054,21 +9054,67 @@ async def api_st_lines(symbol: str):
     вплотную режет EV вдвое). Для горизонтальных линий на графике.
     supertrend_state кэширован 2 мин на пару+ТФ."""
     def _q():
+        import time as _t
         sym = (symbol or "").upper().replace("/", "").strip()
         if not sym.endswith("USDT"):
             sym += "USDT"
         pair = sym[:-4] + "/USDT"
-        from supertrend import supertrend_state
+        cache = getattr(api_st_lines, "_cache", None)
+        if cache is None:
+            cache = api_st_lines._cache = {}
+        hit = cache.get(sym)
+        if hit and _t.time() - hit[0] < 120:
+            return hit[1]
+        from exchange import get_klines_any
+        from backtest_supertrend import compute_st_series
+        from database import utcnow
+        now_ms = utcnow().timestamp() * 1000
         out = {}
         for tf in ("1h", "2h", "4h", "12h"):
             try:
-                st = supertrend_state(pair, tf)
+                c = get_klines_any(pair, tf, 120)
+                if not c or len(c) < 40:
+                    continue
+                st = compute_st_series(c, 10, 3.0)
+                if not st:
+                    continue
+                tf_ms = {"1h": 1, "2h": 2, "4h": 4,
+                         "12h": 12}[tf] * 3600_000
+                idx = len(st) - 1
+                if st[idx]["t"] + tf_ms > now_ms + 60_000:
+                    idx -= 1
+                if idx < 20 or not st[idx].get("trend"):
+                    continue
+                line = st[idx].get("st")
+                if not line:
+                    continue
+                sg = int(st[idx]["trend"])
+                # 💪/⚠ сила линии (бэктест 21.08: прилипание/объём) —
+                # только когда цена в пределах 2% от линии
+                strength = None
+                px = c[idx]["c"]
+                if abs(px / line - 1) * 100 <= 2.0:
+                    stick = 0
+                    for k in range(max(0, idx - 5), idx):
+                        ref = c[k]["l"] if sg > 0 else c[k]["h"]
+                        if abs(ref / line - 1) <= 0.005:
+                            stick += 1
+                    _vols = [x.get("v") or 0 for x in c[max(0, idx - 20):idx]]
+                    volr = ((c[idx].get("v") or 0)
+                            / max(1e-9, sum(_vols) / max(1, len(_vols))))
+                    strength = ("weak" if (stick >= 3 or volr < 0.8)
+                                else ("strong" if volr >= 1.5 else None))
+                out[tf] = {"state": "UP" if sg > 0 else "DOWN",
+                           "value": float(line), "strength": strength}
             except Exception:
-                st = None
-            if st and st.get("value"):
-                out[tf] = {"state": st.get("state"),
-                           "value": st.get("value")}
-        return {"symbol": sym, "lines": out}
+                continue
+        res = {"symbol": sym, "lines": out}
+        cache[sym] = (_t.time(), res)
+        if len(cache) > 800:
+            for k in [k for k, v in cache.items()
+                      if _t.time() - v[0] > 300]:
+                cache.pop(k, None)
+        return res
     return await asyncio.to_thread(_q)
 
 

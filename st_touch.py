@@ -60,8 +60,24 @@ def detect_touch(candles: list[dict], tf: str, now_ms: float):
     touched = (bar["l"] <= line) if sg > 0 else (bar["h"] >= line)
     if not touched:
         return None
+    # 💪/⚠ сила линии (бэктест 21.08, 12.4k касаний 4h): прилипание
+    # (3+ бара из 5 с экстремумом в 0.5% от линии) → пробой 41% против
+    # базовых 29%; тихий подход (объём <0.8×ср20) → 36%; громкое
+    # касание (≥1.5×) — крепчайшее, пробой 24%. Номер касания/возраст
+    # тренда/глубина прокола НЕ предсказывают — не используем.
+    stick = 0
+    for k in range(max(0, idx - 5), idx):
+        ref = c[k]["l"] if sg > 0 else c[k]["h"]
+        if line and abs(ref / line - 1) <= 0.005:
+            stick += 1
+    _vols = [x.get("v") or 0 for x in c[max(0, idx - 20):idx]]
+    volr = ((bar.get("v") or 0)
+            / max(1e-9, sum(_vols) / max(1, len(_vols))))
+    strength = ("weak" if (stick >= 3 or volr < 0.8)
+                else ("strong" if volr >= 1.5 else None))
     return {"sg": sg, "line": float(line), "bar": bar,
-            "bar_close_ms": st[idx]["t"] + tf_ms}
+            "bar_close_ms": st[idx]["t"] + tf_ms,
+            "stick": stick, "volr": round(volr, 2), "strength": strength}
 
 
 async def _pair(pair_norm: str, tf: str) -> bool:
@@ -109,7 +125,9 @@ async def _pair(pair_norm: str, tf: str) -> bool:
         "horizon_h": 30 * TF_H[tf],
         "indicators": {"tf": tf, "st_line": round(line, 10),
                        "close": bar["c"],
-                       "touch_depth_pct": round(depth, 2)},
+                       "touch_depth_pct": round(depth, 2),
+                       "stick": ev.get("stick"), "volr": ev.get("volr"),
+                       "line_strength": ev.get("strength")},
     }
     from impulse_detector import store_signal
     stored = await asyncio.to_thread(store_signal, sig, 1)
@@ -120,11 +138,24 @@ async def _pair(pair_norm: str, tf: str) -> bool:
         from config import WHALE_CHAT_ID
         if _bot16 and WHALE_CHAT_ID:
             d_e = "🟢 LONG" if sg > 0 else "🔴 SHORT"
+            # 💪/⚠ сила линии (бэктест 21.08)
+            _st_line = ""
+            if ev.get("strength") == "weak":
+                _why = ("цена прилипла к линии "
+                        f"({ev['stick']} из 5 баров)"
+                        if ev.get("stick", 0) >= 3
+                        else f"тихий подход (объём ×{ev.get('volr')})")
+                _st_line = (f"⚠ <b>линия слабая</b>: {_why} — пробой "
+                            f"36-41% против базовых 29%\n")
+            elif ev.get("strength") == "strong":
+                _st_line = (f"💪 <b>линия крепкая</b>: объёмный выкуп "
+                            f"×{ev.get('volr')} — пробой лишь 24%\n")
             txt = (f"🏓 <b>КАСАНИЕ ST {tf} · "
                    f"{pair_slash.replace('/USDT', '')}</b>\n"
                    f"{d_e} — отбой от линии супертренда {tf}\n"
                    f"вход от линии <b>{line:.6g}</b> "
                    f"(закрытие бара {bar['c']:.6g}, прокол {depth:.2f}%)\n"
+                   + _st_line +
                    f"тейк +2% · стоп: ЗАКРЫТИЕ {tf}-бара за линией "
                    f"(тач-стоп вплотную режет EV вдвое)\n"
                    f"<i>бэктест год: {EV_TXT[(tf, direction)]}</i>")

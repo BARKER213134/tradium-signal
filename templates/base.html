@@ -4826,7 +4826,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
             // бейдж в пустой зоне правее последнего бара, сдвиг в px (21.08)
             chart.createOverlay({ name: 'rightBadge', lock: true, groupId: 'stlines',
               points: [{ timestamp: lastTs, value: v.value }],
-              extendData: { text: `ST ${ltf}${up ? '▲' : '▼'}`,
+              extendData: { text: `ST ${ltf}${up ? '▲' : '▼'}${v.strength === 'weak' ? '⚠' : v.strength === 'strong' ? '💪' : ''}`,
                             color: up ? '#00e5a0' : '#ff4d6d', dx: 55 } });
           }
         }
