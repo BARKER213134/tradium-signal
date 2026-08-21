@@ -3714,7 +3714,7 @@ window._kcRegisterIndicators = function() {
         styles: { style: 'stroke_fill',
                   color: d.fill || 'rgba(255,80,80,0.10)',
                   borderColor: d.border || 'rgba(255,80,80,0.35)',
-                  borderSize: 1 },
+                  borderSize: d.borderSize || 1 },
       }];
       // подпись силы уровня внутри полосы, у правого края
       if (d.label) {
@@ -5084,14 +5084,18 @@ window.renderKChart = async function(container, symbol, tf, opts) {
                    { timestamp: lastT + iv * 30, value: z.hi }],
           extendData: {
             fill: (z.res ? 'rgba(255,80,80,' : 'rgba(0,229,160,')
-              + ((0.12 + 0.025 * Math.min(3, (z.touches || 1) - 1)) * dim).toFixed(3) + ')',
-            // ⚠ слабая зона у цены — оранжевая рамка; 🔗 MTF — золотая
+              + (((zstr === 'strong' ? 0.19 : 0.12) + 0.025 * Math.min(3, (z.touches || 1) - 1)) * dim).toFixed(3) + ')',
+            // ⚠ слабая — оранжевая рамка; 💪 крепкая — толстая яркая;
+            // 🔗 MTF — золотая
             border: zstr === 'weak'
               ? 'rgba(255,160,60,0.85)'
+              : zstr === 'strong'
+              ? (z.res ? 'rgba(255,107,107,0.95)' : 'rgba(0,229,160,0.95)')
               : z.mtf
               ? 'rgba(255,210,62,' + (0.85 * dim).toFixed(2) + ')'
               : (z.res ? 'rgba(255,107,107,' : 'rgba(0,229,160,')
                 + ((0.40 + 0.07 * Math.min(3, (z.touches || 1) - 1)) * dim).toFixed(2) + ')',
+            borderSize: zstr === 'strong' ? 2 : 1,
             label: (z.strength
               ? '⚡' + z.strength + '% · ' + z.touches + 'кас'
                 + (z.mtf ? ' · 🔗' + z.mtf : '')
