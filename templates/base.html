@@ -4584,6 +4584,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     timestamp: b.t, open: b.o, high: b.h, low: b.l, close: b.c,
     volume: b.v, turnover: b.v * b.c, delta: b.d,
   })));
+  // 20.08: пустая зона справа от последних свечей — бейджи ST/⏰ там,
+  // а не поверх свечей («не видно последних свечей»)
+  try { chart.setOffsetRightDistance(95); } catch (e) {}
   chart.createIndicator('MA', true, { id: 'candle_pane' });
   chart.overrideIndicator({ name: 'MA', calcParams: [50, 100, 200] }, 'candle_pane');
   if (opts.st !== false) {
@@ -4748,12 +4751,14 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         styles: { line: { color: '#ffd23e', style: 'dashed' },
                   text: { color: '#0a0e14', backgroundColor: '#ffd23e' } } });
     } catch (e) {}
-    // ⏰ значок у линии ждущего будильника (аннотация на последнем баре)
+    // ⏰ значок у линии ждущего будильника — в пустой зоне ПРАВЕЕ
+    // последнего бара (20.08: бейджи закрывали свежие свечи)
     try {
       const dl = chart.getDataList ? chart.getDataList() : [];
       if (dl.length) {
+        const _iv = dl.length > 1 ? dl[dl.length - 1].timestamp - dl[dl.length - 2].timestamp : 3600000;
         chart.createOverlay({ name: 'simpleAnnotation', lock: true, groupId: 'alarms',
-          points: [{ timestamp: dl[dl.length - 1].timestamp, value: price }],
+          points: [{ timestamp: dl[dl.length - 1].timestamp + _iv * 2, value: price }],
           extendData: '⏰ ждёт',
           styles: { text: { color: '#ffd23e', size: 13 } } });
       }
@@ -4776,6 +4781,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         const d = await r.json();
         const dl = chart.getDataList ? chart.getDataList() : [];
         const lastTs = dl.length ? dl[dl.length - 1].timestamp : null;
+        const _iv2 = dl.length > 1 ? dl[dl.length - 1].timestamp - dl[dl.length - 2].timestamp : 3600000;
         for (const [ltf, v] of Object.entries((d && d.lines) || {})) {
           if (!v || !v.value || ltf === tf) continue;
           const up = v.state === 'UP';
@@ -4783,8 +4789,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
             styles: { line: { color: up ? 'rgba(0,229,160,0.45)' : 'rgba(255,77,109,0.45)', style: 'dashed', size: 1 },
                       text: { color: '#0a0e14', backgroundColor: up ? 'rgba(0,229,160,0.8)' : 'rgba(255,77,109,0.8)' } } });
           if (lastTs) {
+            // бейдж в пустой зоне правее последнего бара (20.08)
             chart.createOverlay({ name: 'simpleAnnotation', lock: true, groupId: 'stlines',
-              points: [{ timestamp: lastTs, value: v.value }],
+              points: [{ timestamp: lastTs + _iv2 * 2, value: v.value }],
               extendData: `ST ${ltf}${up ? '▲' : '▼'}`,
               styles: { text: { color: up ? '#00e5a0' : '#ff4d6d', size: 10 } } });
           }
