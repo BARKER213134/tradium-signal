@@ -4586,7 +4586,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   })));
   // 20.08: пустая зона справа от последних свечей — бейджи ST/⏰ там,
   // а не поверх свечей («не видно последних свечей»)
-  try { chart.setOffsetRightDistance(95); } catch (e) {}
+  try { chart.setOffsetRightDistance(120); } catch (e) {}
   chart.createIndicator('MA', true, { id: 'candle_pane' });
   chart.overrideIndicator({ name: 'MA', calcParams: [50, 100, 200] }, 'candle_pane');
   if (opts.st !== false) {
@@ -4758,7 +4758,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       if (dl.length) {
         const _iv = dl.length > 1 ? dl[dl.length - 1].timestamp - dl[dl.length - 2].timestamp : 3600000;
         chart.createOverlay({ name: 'simpleAnnotation', lock: true, groupId: 'alarms',
-          points: [{ timestamp: dl[dl.length - 1].timestamp + _iv * 2, value: price }],
+          points: [{ timestamp: dl[dl.length - 1].timestamp + _iv * 6, value: price }],
           extendData: '⏰ ждёт',
           styles: { text: { color: '#ffd23e', size: 13 } } });
       }
@@ -4791,7 +4791,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           if (lastTs) {
             // бейдж в пустой зоне правее последнего бара (20.08)
             chart.createOverlay({ name: 'simpleAnnotation', lock: true, groupId: 'stlines',
-              points: [{ timestamp: lastTs + _iv2 * 2, value: v.value }],
+              points: [{ timestamp: lastTs + _iv2 * 6, value: v.value }],
               extendData: `ST ${ltf}${up ? '▲' : '▼'}`,
               styles: { text: { color: up ? '#00e5a0' : '#ff4d6d', size: 10 } } });
           }
