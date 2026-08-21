@@ -5056,7 +5056,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     const _zoneStrength = (z) => {
       try {
         const edge = z.res ? z.lo : z.hi;
-        if (!edge || Math.abs(pxNow / edge - 1) > 0.02) return null;
+        if (!edge || Math.abs(pxNow / edge - 1) > 0.04) return null;
         const nb = bars.length;
         if (nb < 30) return null;
         let stick = 0;
