@@ -3734,6 +3734,30 @@ window._kcRegisterIndicators = function() {
       return figs;
     }
   });
+  // 🏷 Бейдж в пустой зоне правее последнего бара: сдвиг в ПИКСЕЛЯХ
+  // (21.08: сдвиг «+6 баров» при отдалённом зуме = единицы пикселей,
+  // бейджи визуально оставались на свечах)
+  klinecharts.registerOverlay({
+    name: 'rightBadge',
+    totalStep: 1,
+    lock: true,
+    needDefaultPointFigure: false,
+    createPointFigures: ({ overlay, coordinates }) => {
+      const c = coordinates[0];
+      if (!c) return [];
+      const d = overlay.extendData || {};
+      return [{
+        type: 'text', ignoreEvent: true,
+        attrs: { x: c.x + (d.dx || 60), y: c.y, text: d.text || '',
+                 align: 'left', baseline: 'middle' },
+        styles: { color: d.color || '#dfe6f0', size: d.size || 10,
+                  family: 'monospace',
+                  backgroundColor: d.bg || 'rgba(10,14,20,0.72)',
+                  paddingLeft: 4, paddingRight: 4,
+                  paddingTop: 2, paddingBottom: 2, borderRadius: 3 },
+      }];
+    }
+  });
   // Сигнальный маркер: LONG — эмодзи ПОД свечой, SHORT — НАД свечой
   klinecharts.registerOverlay({
     name: 'sigMarker',
@@ -4768,11 +4792,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     try {
       const dl = chart.getDataList ? chart.getDataList() : [];
       if (dl.length) {
-        const _iv = dl.length > 1 ? dl[dl.length - 1].timestamp - dl[dl.length - 2].timestamp : 3600000;
-        chart.createOverlay({ name: 'simpleAnnotation', lock: true, groupId: 'alarms',
-          points: [{ timestamp: dl[dl.length - 1].timestamp + _iv * 6, value: price }],
-          extendData: '⏰ ждёт',
-          styles: { text: { color: '#ffd23e', size: 13 } } });
+        chart.createOverlay({ name: 'rightBadge', lock: true, groupId: 'alarms',
+          points: [{ timestamp: dl[dl.length - 1].timestamp, value: price }],
+          extendData: { text: '⏰ ждёт', color: '#ffd23e', size: 12, dx: 55 } });
       }
     } catch (e) {}
   };
@@ -4801,11 +4823,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
             styles: { line: { color: up ? 'rgba(0,229,160,0.45)' : 'rgba(255,77,109,0.45)', style: 'dashed', size: 1 },
                       text: { color: '#0a0e14', backgroundColor: up ? 'rgba(0,229,160,0.8)' : 'rgba(255,77,109,0.8)' } } });
           if (lastTs) {
-            // бейдж в пустой зоне правее последнего бара (20.08)
-            chart.createOverlay({ name: 'simpleAnnotation', lock: true, groupId: 'stlines',
-              points: [{ timestamp: lastTs + _iv2 * 6, value: v.value }],
-              extendData: `ST ${ltf}${up ? '▲' : '▼'}`,
-              styles: { text: { color: up ? '#00e5a0' : '#ff4d6d', size: 10 } } });
+            // бейдж в пустой зоне правее последнего бара, сдвиг в px (21.08)
+            chart.createOverlay({ name: 'rightBadge', lock: true, groupId: 'stlines',
+              points: [{ timestamp: lastTs, value: v.value }],
+              extendData: { text: `ST ${ltf}${up ? '▲' : '▼'}`,
+                            color: up ? '#00e5a0' : '#ff4d6d', dx: 55 } });
           }
         }
       } catch (e) {}
