@@ -4057,8 +4057,20 @@ window.openPairChart = function(symbol, tf) {
     const cnt = document.getElementById('kcQmNavCnt');
     if (cnt && navIx >= 0) cnt.textContent = (navIx + 1) + '/' + navList.length;
   }
-  document.getElementById('kcQmTitle').textContent =
+  const _kcTtl = document.getElementById('kcQmTitle');
+  _kcTtl.textContent =
     (window._vitMark ? window._vitMark(sym) : '') + ' ' + sym.replace('USDT', '') + ' · USDT';
+  // 21.08: клик по тикеру — копирование символа в буфер (запрос юзера)
+  _kcTtl.style.cursor = 'copy';
+  _kcTtl.title = 'клик — скопировать ' + sym;
+  _kcTtl.onclick = () => {
+    try {
+      navigator.clipboard.writeText(sym);
+      const _keep = _kcTtl.textContent;
+      _kcTtl.textContent = '✓ ' + sym + ' скопирован';
+      setTimeout(() => { _kcTtl.textContent = _keep; }, 900);
+    } catch (e) {}
+  };
   document.getElementById('kcQmTFs').innerHTML = ['5m', '15m', '30m', '1h', '4h', '12h', '1d'].map(t =>
     `<button onclick="openPairChart(window._kcQmSym,'${t}')" style="background:${t === tfCur ? 'rgba(76,201,240,0.18)' : 'none'};` +
     `border:1px solid ${t === tfCur ? 'rgba(76,201,240,0.5)' : 'var(--border,#334)'};border-radius:6px;` +
