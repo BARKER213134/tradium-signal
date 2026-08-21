@@ -5067,8 +5067,14 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         let vs = 0, cnt = 0;
         for (let k = Math.max(0, nb - 22); k < nb - 2; k++) { vs += bars[k].v || 0; cnt++; }
         const volr = (bars[nb - 2].v || 0) / Math.max(1e-9, vs / Math.max(1, cnt));
-        if (stick >= 3 || volr < 0.8) return 'weak';
-        if (volr >= 1.5) return 'strong';
+        // зонная формула (бэктест 21.08, 53k касаний/6мес) ОБРАТНА
+        // ST-линиям: громкий подход (≥1.5×ср20) зону ПРОБИВАЕТ
+        // (WR 35-36, EV −0.24; ≥2.5× → −0.4) — слабость; тихий (<0.8×)
+        // зона держит (+0.07..+0.18) — сила; прилипание 3+ — слабость.
+        // Линия ST — динамическая опора тренда, зона — статика против
+        // импульса, поэтому объёмный критерий перевёрнут.
+        if (stick >= 3 || volr >= 1.5) return 'weak';
+        if (volr < 0.8) return 'strong';
         return null;
       } catch (e) { return null; }
     };
