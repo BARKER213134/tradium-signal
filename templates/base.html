@@ -5067,14 +5067,16 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         let vs = 0, cnt = 0;
         for (let k = Math.max(0, nb - 22); k < nb - 2; k++) { vs += bars[k].v || 0; cnt++; }
         const volr = (bars[nb - 2].v || 0) / Math.max(1e-9, vs / Math.max(1, cnt));
-        // зонная формула (бэктест 21.08, 53k касаний/6мес) ОБРАТНА
-        // ST-линиям: громкий подход (≥1.5×ср20) зону ПРОБИВАЕТ
-        // (WR 35-36, EV −0.24; ≥2.5× → −0.4) — слабость; тихий (<0.8×)
-        // зона держит (+0.07..+0.18) — сила; прилипание 3+ — слабость.
-        // Линия ST — динамическая опора тренда, зона — статика против
-        // импульса, поэтому объёмный критерий перевёрнут.
-        if (stick >= 3 || volr >= 1.5) return 'weak';
-        if (volr < 0.8) return 'strong';
+        // вердикт ПРОБОЯ (бэктест 21.08, 53k касаний/6мес, горизонт
+        // 96ч): база — поддержку пробивают в 60%, сопротивление в 58%.
+        // Двигает вероятность только объём подхода: ≥2.5×ср20 → пробой
+        // ~70%, ≥1.5× → ~65%; тихий (<0.8×) — минимум, ~52-55%.
+        // Прилипание P(пробоя) не двигает (56-60% ≈ база) — в вердикте
+        // не участвует. У ST-линий физика обратная — их не трогаем.
+        if (volr >= 2.5) return { tag: 'break', pct: 70 };
+        if (volr >= 1.5) return { tag: 'break', pct: 65 };
+        if (volr < 0.8 && stick < 3)
+          return { tag: 'hold', pct: z.res ? 52 : 55 };
         return null;
       } catch (e) { return null; }
     };
@@ -5091,23 +5093,24 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           extendData: {
             fill: (z.res ? 'rgba(255,80,80,' : 'rgba(0,229,160,')
               + (((zstr === 'strong' ? 0.19 : 0.12) + 0.025 * Math.min(3, (z.touches || 1) - 1)) * dim).toFixed(3) + ')',
-            // ⚠ слабая — оранжевая рамка; 💪 крепкая — толстая яркая;
-            // 🔗 MTF — золотая
-            border: zstr === 'weak'
+            // ⛏ «скорее пробьют» — оранжевая рамка; 🛡 «держит» —
+            // толстая яркая; 🔗 MTF — золотая
+            border: zstr && zstr.tag === 'break'
               ? 'rgba(255,160,60,0.85)'
-              : zstr === 'strong'
+              : zstr && zstr.tag === 'hold'
               ? (z.res ? 'rgba(255,107,107,0.95)' : 'rgba(0,229,160,0.95)')
               : z.mtf
               ? 'rgba(255,210,62,' + (0.85 * dim).toFixed(2) + ')'
               : (z.res ? 'rgba(255,107,107,' : 'rgba(0,229,160,')
                 + ((0.40 + 0.07 * Math.min(3, (z.touches || 1) - 1)) * dim).toFixed(2) + ')',
-            borderSize: zstr === 'strong' ? 2 : 1,
+            borderSize: zstr && zstr.tag === 'hold' ? 2 : 1,
             label: (z.strength
               ? '⚡' + z.strength + '% · ' + z.touches + 'кас'
                 + (z.mtf ? ' · 🔗' + z.mtf : '')
               : '')
-              + (zstr === 'weak' ? ' · ⚠ слабая' : zstr === 'strong' ? ' · 💪' : ''),
-            labelColor: zstr === 'weak' ? 'rgba(255,180,90,0.95)'
+              + (zstr && zstr.tag === 'break' ? ' · ⛏ пробой ~' + zstr.pct + '%'
+                 : zstr && zstr.tag === 'hold' ? ' · 🛡 держит (пробой ~' + zstr.pct + '%)' : ''),
+            labelColor: zstr && zstr.tag === 'break' ? 'rgba(255,180,90,0.95)'
               : z.res ? 'rgba(255,150,150,0.9)' : 'rgba(120,240,200,0.9)',
           },
         });
