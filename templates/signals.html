@@ -6731,6 +6731,76 @@ async function tdFresh() {
 tdLoadTop(); tdLoad(); tdFresh();
 safeInterval(tdLoadTop, 120000); safeInterval(tdLoad, 120000); safeInterval(tdFresh, 60000);
 </script>
+{% elif bot == 'gainers' %}
+<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+  <h3 style="margin:0;font-size:15px;">🚀 Топ роста за 24ч</h3>
+  <span style="font-size:11px;color:var(--muted);">лидеры дня по % (спот+фьюч, объём ≥$300k, стейблы скрыты) · клик по строке — график со всеми функциями и кластерами · ◀▶ листает по списку</span>
+  <button onclick="gnLoad()" style="margin-left:auto;background:var(--dark-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;cursor:pointer;padding:4px 10px;">⟳ обновить</button>
+  <span id="gnUpd" style="font-size:10px;color:var(--muted);"></span>
+</div>
+<div style="border:1px solid var(--border);border-radius:8px;overflow:auto;">
+  <table style="width:100%;border-collapse:collapse;font-size:12px;">
+    <thead><tr style="background:var(--dark-2);text-align:left;">
+      <th style="padding:9px 10px;">#</th><th>Монета</th>
+      <th style="text-align:right;">Цена</th>
+      <th style="text-align:right;">% за 24ч</th>
+      <th style="text-align:right;">Объём 24ч</th>
+      <th>Сигналы 24ч</th>
+    </tr></thead>
+    <tbody id="gnBody"><tr><td colspan="6" style="text-align:center;padding:40px;" class="text-muted">Загрузка…</td></tr></tbody>
+  </table>
+</div>
+<script>
+const _gnFq = (x) => x >= 1e9 ? '$' + (x / 1e9).toFixed(1) + 'B'
+  : x >= 1e6 ? '$' + (x / 1e6).toFixed(1) + 'M' : '$' + (x / 1e3).toFixed(0) + 'K';
+async function gnLoad() {
+  const body = document.getElementById('gnBody');
+  try {
+    const d = await fetch('/api/gainers?limit=100').then(r => r.json());
+    // журнал тяжёлый — колонку «Сигналы» доклеиваем вторым проходом
+    if (!window._gnJournal) {
+      fetch('/api/journal').then(r => r.json())
+        .then(j => { window._gnJournal = j; gnLoad(); }).catch(() => {});
+    }
+    const sj = window._gnJournal || {items: []};
+    const items = d.items || [];
+    if (!items.length) {
+      body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;" class="text-muted">Нет данных</td></tr>';
+      return;
+    }
+    // счётчик сигналов монеты за 24ч из журнала
+    const sigCnt = {};
+    const cut = Date.now() / 1000 - 86400;
+    (sj.items || []).forEach(x => {
+      if ((x.at_ts || 0) < cut || x.source === 'alarm') return;
+      const k = (x.symbol || (x.pair || '').replace('/', '')).toUpperCase();
+      if (!sigCnt[k]) sigCnt[k] = {n: 0, srcs: new Set()};
+      sigCnt[k].n++;
+      if (window.sigIcon) sigCnt[k].srcs.add(window.sigIcon(x.source, x.score, {pattern: x.pattern}));
+    });
+    window._gainerSyms = items.map(x => x.symbol);
+    body.innerHTML = items.map((x, i) => {
+      const base = x.symbol.replace('USDT', '');
+      const sc = sigCnt[x.symbol];
+      const sigs = sc ? `<span title="сигналов за 24ч: ${sc.n}">${[...sc.srcs].slice(0, 6).join('')} <span style="color:var(--muted);font-size:10px;">×${sc.n}</span></span>` : '<span style="color:var(--muted);">—</span>';
+      const thin = x.vol24 < 10e6;
+      return `<tr onclick="window._kcQmList=window._gainerSyms||[];openPairChart('${x.symbol}','1h')" style="border-top:1px solid var(--border);cursor:pointer;">
+        <td style="padding:7px 10px;color:var(--muted);">${i + 1}</td>
+        <td style="font-family:var(--font-mono);font-weight:800;">${window._vitMark ? window._vitMark(x.symbol) : ''}${base}</td>
+        <td style="font-family:var(--font-mono);text-align:right;">${x.price}</td>
+        <td style="font-family:var(--font-mono);text-align:right;font-weight:800;color:${x.pct >= 0 ? 'var(--buy)' : 'var(--sell)'};">${x.pct > 0 ? '+' : ''}${x.pct.toFixed(1)}%</td>
+        <td style="font-family:var(--font-mono);text-align:right;color:${thin ? 'rgba(255,160,60,0.9)' : 'var(--text)'};" title="${thin ? 'тонкая книга (<\$10M/24ч)' : ''}">${_gnFq(x.vol24)}${thin ? ' ⚠' : ''}</td>
+        <td style="font-size:13px;">${sigs}</td></tr>`;
+    }).join('');
+    const u = document.getElementById('gnUpd');
+    if (u) u.textContent = '· авто-обновление 60с · обновлено ' + new Date().toLocaleTimeString('ru-RU');
+  } catch (e) {
+    body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#ff6b6b;">ошибка загрузки</td></tr>';
+  }
+}
+gnLoad();
+setInterval(gnLoad, 60000);
+</script>
 {% elif bot == 'alarms' %}
 <!-- ════════════ 🎯 Будильники: авто-входы + ручные (18.08) ════════════ -->
 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">

@@ -9080,6 +9080,52 @@ async def api_vol24_map():
     return await asyncio.to_thread(_q)
 
 
+@app.get("/api/gainers")
+async def api_gainers(limit: int = 100):
+    """🚀 Топ роста за 24ч (24.08): spot Vision + fapi (спот приоритет),
+    quote-объём и %; стейблы и <$300k объёма отсечены. Кэш 120с."""
+    def _q():
+        import time as _t
+        import requests as _rq
+        c = getattr(api_gainers, "_cache", None)
+        if c and _t.time() - c[0] < 120:
+            return c[1]
+        SKIP = {"USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "EURUSDT",
+                "EURIUSDT", "AEURUSDT", "PAXGUSDT", "XUSDUSDT", "USD1USDT",
+                "USDEUSDT", "BUSDUSDT", "XAUTUSDT", "WBTCUSDT", "WBETHUSDT",
+                "DAIUSDT", "BFUSDUSDT"}
+        best = {}
+        for url in ("https://fapi.binance.com/fapi/v1/ticker/24hr",
+                    "https://data-api.binance.vision/api/v3/ticker/24hr"):
+            try:
+                r = _rq.get(url, timeout=12)
+                if r.status_code != 200:
+                    continue
+                for x in r.json():
+                    sym = x.get("symbol", "")
+                    if not sym.endswith("USDT") or sym in SKIP:
+                        continue
+                    try:
+                        best[sym] = {
+                            "symbol": sym,
+                            "pct": float(x.get("priceChangePercent") or 0),
+                            "vol24": float(x.get("quoteVolume") or 0),
+                            "price": float(x.get("lastPrice") or 0),
+                        }
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+        items = [v for v in best.values() if v["vol24"] >= 300_000]
+        items.sort(key=lambda v: -v["pct"])
+        res = {"items": items[:max(10, min(200, limit))],
+               "total": len(items)}
+        if len(items) > 50:
+            api_gainers._cache = (_t.time(), res)
+        return res
+    return await asyncio.to_thread(_q)
+
+
 @app.get("/api/st-lines")
 async def api_st_lines(symbol: str):
     """📐 Текущие линии SuperTrend по ТФ 1h/2h/4h/12h (20.08: теория

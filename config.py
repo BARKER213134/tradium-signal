@@ -175,6 +175,7 @@ BOTS = [
     # 📈 Тренды — своя замена вкладки CryptoVizor (07.08.26): матрица
     # SuperTrend-направлений по ТФ из скана, спидометр широты рынка
     {"id": "today", "label": "🧭 Сегодня", "category": "crypto"},
+    {"id": "gainers", "label": "🚀 Топ роста", "category": "crypto"},
     {"id": "alarms", "label": "🎯 Будильники", "category": "crypto"},
     {"id": "trends", "label": "📈 Тренды", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
