@@ -219,6 +219,14 @@ function fpAnalyze() {
   const chips = [];
   chips.push(fpChip(`${chg >= 0 ? '📈' : '📉'} окно ${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%`,
                     chg >= 0 ? 'good' : 'bad'));
+  // 💵 объём по ТФ (24.08): последний бар и сумма видимого окна, в $
+  const _fq = (x) => x >= 1e9 ? '$' + (x / 1e9).toFixed(1) + 'B'
+    : x >= 1e6 ? '$' + (x / 1e6).toFixed(1) + 'M'
+    : '$' + (x / 1e3).toFixed(0) + 'K';
+  const qLast = (last.v || 0) * last.c;
+  const qSum = bars.reduce((a, b) => a + (b.v || 0) * b.c, 0);
+  chips.push(fpChip(`💵 объём ${_fpTf}-бар ${_fq(qLast)} · окно ${_fq(qSum)}`,
+                    qLast < 1e4 ? 'warn' : 'mute'));
   const agree = (chg >= 0) === (dSum >= 0);
   if (agree) {
     chips.push(fpChip(chg >= 0

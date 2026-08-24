@@ -4742,6 +4742,27 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   const tb = document.createElement('div');
   tb.innerHTML = window._kcToolbarHtml;
   container.appendChild(tb);
+  // 💵 объём по ТФ (24.08): последний ЗАКРЫТЫЙ бар + сумма за 24ч, в $
+  try {
+    const _fq = (x) => x >= 1e9 ? '$' + (x / 1e9).toFixed(1) + 'B'
+      : x >= 1e6 ? '$' + (x / 1e6).toFixed(1) + 'M'
+      : '$' + (x / 1e3).toFixed(0) + 'K';
+    const _lb = bars.length > 1 ? bars[bars.length - 2] : bars[bars.length - 1];
+    const _qBar = (_lb.v || 0) * _lb.c;
+    const _cut = Date.now() - 24 * 3600_000;
+    let _q24 = 0;
+    for (let i = bars.length - 1; i >= 0 && bars[i].t >= _cut; i--)
+      _q24 += (bars[i].v || 0) * bars[i].c;
+    const vEl = document.createElement('div');
+    vEl.className = 'kc-volinfo';
+    vEl.style.cssText = 'position:absolute;top:46px;left:10px;z-index:18;' +
+      'font-family:var(--font-mono,monospace);font-size:10.5px;' +
+      'color:' + (_q24 < 10e6 ? 'rgba(255,160,60,0.9)' : '#8a94a6') + ';' +
+      'background:rgba(10,14,20,0.75);border-radius:6px;padding:2px 7px;pointer-events:none;';
+    vEl.textContent = `💵 ${tf}-бар ${_fq(_qBar)} · 24ч ${_fq(_q24)}` +
+      (_q24 < 10e6 ? ' · тонкая' : '');
+    container.appendChild(vEl);
+  } catch (e) {}
   // индикация тумблера ▦ FVG (вкл по умолчанию)
   try {
     const fb = tb.querySelector('button[data-kc="__fvg"]');
