@@ -9046,6 +9046,40 @@ async def api_hot_coins():
     return await asyncio.to_thread(_q)
 
 
+@app.get("/api/vol24-map")
+async def api_vol24_map():
+    """💵 Карта 24ч-объёмов (quote $) по всем USDT-парам: спот Vision +
+    fapi для фьюч-онли монет (спот приоритетнее). Кэш 180с. Для колонки
+    «Объём» в журнале (24.08)."""
+    def _q():
+        import time as _t
+        import requests as _rq
+        c = getattr(api_vol24_map, "_cache", None)
+        if c and _t.time() - c[0] < 180:
+            return c[1]
+        out = {}
+        for url in ("https://fapi.binance.com/fapi/v1/ticker/24hr",
+                    "https://data-api.binance.vision/api/v3/ticker/24hr"):
+            try:
+                r = _rq.get(url, timeout=12)
+                if r.status_code != 200:
+                    continue
+                for x in r.json():
+                    sym = x.get("symbol", "")
+                    if sym.endswith("USDT"):
+                        try:
+                            out[sym] = float(x.get("quoteVolume") or 0)
+                        except Exception:
+                            pass
+            except Exception:
+                continue
+        res = {"map": out, "n": len(out)}
+        if len(out) > 100:
+            api_vol24_map._cache = (_t.time(), res)
+        return res
+    return await asyncio.to_thread(_q)
+
+
 @app.get("/api/st-lines")
 async def api_st_lines(symbol: str):
     """📐 Текущие линии SuperTrend по ТФ 1h/2h/4h/12h (20.08: теория
