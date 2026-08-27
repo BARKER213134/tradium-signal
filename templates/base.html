@@ -3206,8 +3206,25 @@
         <div style="display:flex;align-items:center;gap:12px;">
             <!-- 📈 НАПРАВЛЕНИЕ рынка (27.08): BTC/ETH ST4h + ширина.
                  Это не «фаза» — фаза = режим эджа сигналов. -->
-            <div id="mktDirBar" title="НАПРАВЛЕНИЕ рынка: SuperTrend 4h BTC и ETH + ширина (доля растущих монет за 24ч). Не путать с «фазой» — та показывает, у каких СИГНАЛОВ сейчас статистическое преимущество (и при широком росте осознанно даёт NEUTRAL)." style="display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:12px;font-weight:800;padding:7px 14px;border-radius:9px;border:1px solid var(--border);background:rgba(255,255,255,0.03);white-space:nowrap;">
+            <div id="mktDirBar" onclick="window._mktDirHelp && window._mktDirHelp()" title="НАПРАВЛЕНИЕ рынка: SuperTrend 4h BTC и ETH + ширина (доля растущих монет за 24ч). Не путать с «фазой» — та показывает, у каких СИГНАЛОВ сейчас статистическое преимущество. Клик — шпаргалка «как входить»." style="display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:12px;font-weight:800;padding:7px 14px;border-radius:9px;border:1px solid var(--border);background:rgba(255,255,255,0.03);white-space:nowrap;cursor:pointer;position:relative;">
               <span id="mktDirTxt" style="color:var(--muted);">📊 рынок…</span>
+              <span style="color:var(--muted);font-size:10px;">ⓘ</span>
+            </div>
+            <!-- 🧭 шпаргалка фаза×направление (27.08, запрос «как входить») -->
+            <div id="mktDirHelp" style="display:none;position:fixed;top:64px;right:16px;z-index:200;width:min(560px,94vw);background:rgba(10,14,20,0.98);border:1px solid rgba(76,201,240,0.45);border-radius:12px;padding:14px 16px;font-family:var(--font-mono);font-size:11.5px;color:#dfe6f0;box-shadow:0 18px 50px rgba(0,0,0,0.6);">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <b style="font-size:13px;">🧭 Как входить: фаза × направление</b>
+                <span id="mdhNow" style="color:#ffd23e;"></span>
+                <span onclick="document.getElementById('mktDirHelp').style.display='none'" style="margin-left:auto;cursor:pointer;color:var(--muted);font-size:14px;">✕</span>
+              </div>
+              <div style="color:var(--muted);margin-bottom:8px;">Фаза = у каких <b>сигналов</b> эдж (ширина &lt;40% → SHORT даже при росте BTC; &gt;60% → NEUTRAL — «зелёные умирают»). Направление = куда идёт паровоз (BTC/ETH ST4h + ширина). Точку входа всегда даёт структура монеты.</div>
+              <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                <tr style="color:var(--muted);"><td style="padding:4px 6px;">фаза \ направление</td><td style="padding:4px 6px;">📈 растёт</td><td style="padding:4px 6px;">📉 падает</td></tr>
+                <tr data-k="LONG|BULL,LONG|MIXED"><td style="padding:4px 6px;color:var(--buy);font-weight:700;">LONG</td><td style="padding:4px 6px;">лонги по сигналам — лучший режим</td><td style="padding:4px 6px;">отскок: лонг только от опор</td></tr>
+                <tr data-k="SHORT|BULL"><td style="padding:4px 6px;color:var(--sell);font-weight:700;">SHORT</td><td style="padding:4px 6px;"><b>дисперсия</b>: лонг сильных (CVD+, 2h▲) от опор · шорт слабых (CVD−, 12h▼) от крыш · всё с подтверждением закрытием · не шортить BTC/ETH/лидеров</td><td style="padding:4px 6px;">шорты по сигналам, лонги нет</td></tr>
+                <tr data-k="NEUTRAL|BULL,NEUTRAL|MIXED,NEUTRAL|BEAR"><td style="padding:4px 6px;color:var(--muted);font-weight:700;">NEUTRAL</td><td style="padding:4px 6px;">решает структура монеты</td><td style="padding:4px 6px;">структура, размер меньше</td></tr>
+              </table>
+              <div style="color:var(--muted);margin-top:8px;line-height:1.5;">Правила точки (бэктесты): вход от ST-линии/зоны на <b>тихом</b> касании (громкое = пробой 65-70%) · шорт — по <b>закрытию бара</b> за краем (WR 58, +0.51%) · стоп по закрытию за структурой, не тач · лонгу не догонять вертикаль — ждать подтяжку к линии.</div>
             </div>
             <script>
             (function() {
@@ -3243,6 +3260,28 @@
               }
               upd();
               setInterval(upd, 120000);
+              // 🧭 шпаргалка по клику: подсвечивает текущую строку матрицы
+              window._mktDirHelp = async function() {
+                const h = document.getElementById('mktDirHelp');
+                if (!h) return;
+                if (h.style.display !== 'none') { h.style.display = 'none'; return; }
+                h.style.display = 'block';
+                try {
+                  const [md, ms] = await Promise.all([
+                    fetch('/api/market-direction').then(r => r.json()),
+                    fetch('/api/market-side').then(r => r.json()).catch(() => ({})),
+                  ]);
+                  const phase = (ms.side || '?').toUpperCase();
+                  const key = phase + '|' + (md.verdict || '?');
+                  const now = document.getElementById('mdhNow');
+                  if (now) now.textContent = `сейчас: фаза ${phase} · ${md.verdict === 'BULL' ? 'растёт' : md.verdict === 'BEAR' ? 'падает' : 'смешанно'}`;
+                  h.querySelectorAll('tr[data-k]').forEach(tr => {
+                    const hit = (tr.dataset.k || '').split(',').includes(key);
+                    tr.style.background = hit ? 'rgba(76,201,240,0.13)' : 'none';
+                    tr.style.outline = hit ? '1px solid rgba(76,201,240,0.45)' : 'none';
+                  });
+                } catch (e) {}
+              };
             })();
             </script>
             {% if eth_ctx is defined and eth_ctx %}
