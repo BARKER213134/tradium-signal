@@ -3204,6 +3204,47 @@
             {% endif %}
         </div>
         <div style="display:flex;align-items:center;gap:12px;">
+            <!-- 📈 НАПРАВЛЕНИЕ рынка (27.08): BTC/ETH ST4h + ширина.
+                 Это не «фаза» — фаза = режим эджа сигналов. -->
+            <div id="mktDirBar" title="НАПРАВЛЕНИЕ рынка: SuperTrend 4h BTC и ETH + ширина (доля растущих монет за 24ч). Не путать с «фазой» — та показывает, у каких СИГНАЛОВ сейчас статистическое преимущество (и при широком росте осознанно даёт NEUTRAL)." style="display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:12px;font-weight:800;padding:7px 14px;border-radius:9px;border:1px solid var(--border);background:rgba(255,255,255,0.03);white-space:nowrap;">
+              <span id="mktDirTxt" style="color:var(--muted);">📊 рынок…</span>
+            </div>
+            <script>
+            (function() {
+              const el = document.getElementById('mktDirTxt');
+              const bar = document.getElementById('mktDirBar');
+              if (!el) return;
+              const A = (v) => v === 'UP' ? '▲' : v === 'DOWN' ? '▼' : '·';
+              async function upd() {
+                try {
+                  const d = await (await fetch('/api/market-direction')).json();
+                  const w = d.breadth != null ? ` · растёт ${Math.round(d.breadth)}%` : '';
+                  const facts = `BTC${A(d.btc)} ETH${A(d.eth)}${w}`;
+                  if (d.verdict === 'BULL') {
+                    el.textContent = `📈 РЫНОК РАСТЁТ · ${facts}`;
+                    el.style.color = 'var(--buy)';
+                    bar.style.border = '1px solid rgba(0,229,160,0.65)';
+                    bar.style.background = 'rgba(0,229,160,0.10)';
+                    bar.style.boxShadow = '0 0 16px rgba(0,229,160,0.25)';
+                  } else if (d.verdict === 'BEAR') {
+                    el.textContent = `📉 РЫНОК ПАДАЕТ · ${facts}`;
+                    el.style.color = 'var(--sell)';
+                    bar.style.border = '1px solid rgba(255,77,109,0.65)';
+                    bar.style.background = 'rgba(255,77,109,0.10)';
+                    bar.style.boxShadow = '0 0 16px rgba(255,77,109,0.25)';
+                  } else {
+                    el.textContent = `⚖ РЫНОК СМЕШАННЫЙ · ${facts}`;
+                    el.style.color = '#ffd23e';
+                    bar.style.border = '1px solid rgba(255,210,62,0.55)';
+                    bar.style.background = 'rgba(255,210,62,0.08)';
+                    bar.style.boxShadow = '0 0 12px rgba(255,210,62,0.18)';
+                  }
+                } catch (e) {}
+              }
+              upd();
+              setInterval(upd, 120000);
+            })();
+            </script>
             {% if eth_ctx is defined and eth_ctx %}
             <div id="ethBar" style="display:flex;gap:10px;align-items:center;font-family:var(--font-mono);font-size:11px;padding:6px 14px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;">
               <span style="color:var(--muted);">ETH</span>

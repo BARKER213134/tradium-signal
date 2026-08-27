@@ -9080,6 +9080,47 @@ async def api_vol24_map():
     return await asyncio.to_thread(_q)
 
 
+@app.get("/api/market-direction")
+async def api_market_direction():
+    """📈 НАПРАВЛЕНИЕ рынка (27.08, запрос «фаза говорит SHORT, а всё
+    растёт»): три факта без интерпретаций — SuperTrend 4h BTC и ETH +
+    ширина (доля растущих за 24ч). Вердикт: счёт BTC(±1)+ETH(±1)+
+    ширина(≥60 +1 / ≤40 −1); ≥2 BULL, ≤−2 BEAR, иначе MIXED.
+    Это НЕ «фаза» (фаза = режим эджа сигналов). Кэш 120с."""
+    def _q():
+        import time as _t
+        c = getattr(api_market_direction, "_cache", None)
+        if c and _t.time() - c[0] < 120:
+            return c[1]
+        from supertrend import supertrend_state
+        from database import _get_db
+        btc = eth = None
+        try:
+            st = supertrend_state("BTC/USDT", "4h")
+            btc = st and st.get("state")
+        except Exception:
+            pass
+        try:
+            st = supertrend_state("ETH/USDT", "4h")
+            eth = st and st.get("state")
+        except Exception:
+            pass
+        br = (_get_db().market_state.find_one({"_id": "breadth"}) or {})
+        pct = br.get("pct")
+        score = 0
+        for v in (btc, eth):
+            score += 1 if v == "UP" else (-1 if v == "DOWN" else 0)
+        if pct is not None:
+            score += 1 if pct >= 60 else (-1 if pct <= 40 else 0)
+        verdict = "BULL" if score >= 2 else ("BEAR" if score <= -2
+                                             else "MIXED")
+        res = {"btc": btc, "eth": eth, "breadth": pct,
+               "score": score, "verdict": verdict}
+        api_market_direction._cache = (_t.time(), res)
+        return res
+    return await asyncio.to_thread(_q)
+
+
 @app.get("/api/gainers")
 async def api_gainers(limit: int = 100):
     """🚀 Топ роста за 24ч (24.08): spot Vision + fapi (спот приоритет),
