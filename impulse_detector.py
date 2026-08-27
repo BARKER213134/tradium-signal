@@ -365,6 +365,27 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
                 sig["trend_ok"] = _dirs["12h"] < 0
         except Exception:
             pass
+        # 🚫-штамп растянутого пампа для вершинных шортов (28.08, бэктест
+        # 3655 шортов: рост 7д ≥60% — WR 35, −0.70; против 4h-аптренда —
+        # минус). Для журнала и живой сверки; предупреждение в TG строит
+        # signal_tg_context.
+        try:
+            if (sig.get("direction") == "SHORT"
+                    and sig.get("strategy") in ("thin_pump", "blowoff",
+                                                "vol_anomaly",
+                                                "vol_anomaly4h")):
+                from exchange import get_klines_any
+                _p = sig.get("pair") or ((sig.get("symbol") or "")[:-4]
+                                         + "/USDT")
+                _kd = get_klines_any(_p, "1d", 9)
+                if _kd and len(_kd) >= 8 and _kd[-8]["c"]:
+                    _r7 = (_kd[-1]["c"] / _kd[-8]["c"] - 1) * 100
+                    sig.setdefault("indicators", {})
+                    sig["indicators"]["ret7d"] = round(_r7, 1)
+                    if _r7 >= 60:
+                        sig["indicators"]["stretched_pump"] = True
+        except Exception:
+            pass
         # 💀/😴-штамп живости монеты (17.08): из pair_context (скан 30 мин)
         try:
             _pcv = db.pair_context.find_one(

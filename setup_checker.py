@@ -972,6 +972,35 @@ def signal_tg_context(pair: str, direction: str | None = None) -> str:
             f2.append(f"CVD24 {'+' if cv >= 0 else ''}{cv / 1e6:.1f}M")
         if f2:
             lines.append(" · ".join(f2))
+        # ⚠ 28.08 (бэктест 3655 вершинных шортов): шорт против
+        # 4h-аптренда — минус; растянутый памп (+60%/7д) — худший
+        # разрез (WR 35, −0.70) — жирное предупреждение
+        if direction == "SHORT":
+            try:
+                from supertrend import supertrend_state
+                from database import utcnow as _un
+                st4 = supertrend_state(pair, "4h")
+                if st4 and st4.get("state") == "UP":
+                    age_txt = ""
+                    if st4.get("last_flip_at"):
+                        _ah = (_un().timestamp() * 1000
+                               - st4["last_flip_at"]) / 3600_000
+                        age_txt = f" (возраст {_ah / 24:.1f}д)"
+                    lines.append(f"⚠ шорт ПРОТИВ 4h-аптренда{age_txt} — "
+                                 f"такие в минусе (бэктест 90д)")
+            except Exception:
+                pass
+            try:
+                from exchange import get_klines_any
+                kd = get_klines_any(pair, "1d", 9)
+                if kd and len(kd) >= 8 and kd[-8]["c"]:
+                    r7 = (kd[-1]["c"] / kd[-8]["c"] - 1) * 100
+                    if r7 >= 60:
+                        lines.append(f"🚫 РАСТЯНУТЫЙ ПАМП +{r7:.0f}%/7д — "
+                                     f"худший шорт-разрез (WR 35%) — "
+                                     f"лучше пропустить")
+            except Exception:
+                pass
         return "\n" + "\n".join(lines)
     except Exception:
         return ""
