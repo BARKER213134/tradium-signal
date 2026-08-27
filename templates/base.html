@@ -276,9 +276,10 @@
             border-radius: 12px;
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
-            flex-wrap: wrap;            /* 29.07: вкладок стало много —
-                                           переносим на новую строку, ряд
-                                           больше не вылезает за монитор */
+            flex-wrap: nowrap;          /* 28.08: в одну строку (запрос);
+                                           при нехватке ширины — гориз.
+                                           скролл, стили скроллбара ниже */
+            overflow-x: auto;
             max-width: 100%;
         }
         .bot-switcher::-webkit-scrollbar { height: 4px; }
@@ -306,11 +307,11 @@
         }
         .bot-switch {
             position: relative;         /* якорь для absolute .bot-counter */
-            padding: 6px 8px;          /* было 7×12 — ужато, чтобы весь ряд влезал в 1 строку */
+            padding: 5px 6px;          /* 28.08: ужато ещё — одна строка */
             font-family: var(--font-mono);
-            font-size: 10px;            /* было 10.5 */
+            font-size: 9.5px;
             font-weight: 700;
-            letter-spacing: 0.03em;     /* было 0.06 — теснее, экономит ширину */
+            letter-spacing: 0.015em;
             text-transform: uppercase;
             color: var(--muted);
             text-decoration: none;
