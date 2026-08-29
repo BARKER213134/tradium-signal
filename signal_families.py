@@ -73,7 +73,10 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
                 "capitulation", "thin_pump", "floor_buy", "vol_anomaly", "vol_anomaly4h",
                 "potok", "whale", "shark", "rocket_pullback", "support_defense",
                 "channel_top", "corridor", "full_stack", "struct_top", "alarm",
-                "st_touch"}
+                "st_touch",
+                # 29.08: volcano растворялся в 🧩 (100 сигналов/14д → 1 в
+                # журнале) — фильтр по источнику находил пустоту
+                "volcano"}
     from collections import defaultdict
 
     groupable = [it for it in items
