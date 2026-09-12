@@ -1490,6 +1490,63 @@ async def api_backtest_st_signals_status():
     return _st_sigs_backtest_state
 
 
+# ═══ 💼 ТЕРМИНАЛ — ручные сделки юзера (12.09.26) ═══
+
+@app.get("/api/terminal")
+async def api_terminal_view():
+    import terminal_trader as tt
+    try:
+        return await asyncio.to_thread(tt.view)
+    except Exception as e:
+        return {"ok": False, "error": str(e), "open": [], "pending": [],
+                "trades": [], "stats": {}}
+
+
+@app.get("/api/terminal/price")
+async def api_terminal_price(symbol: str):
+    import terminal_trader as tt
+    sym = symbol.upper().replace("/", "").strip()
+    if sym and not sym.endswith("USDT"):
+        sym += "USDT"
+    px = await asyncio.to_thread(tt.get_price, sym)
+    return {"ok": px is not None, "symbol": sym, "price": px}
+
+
+@app.post("/api/terminal/open")
+async def api_terminal_open(payload: dict):
+    import terminal_trader as tt
+    try:
+        return await asyncio.to_thread(tt.open_position, payload or {})
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/terminal/close")
+async def api_terminal_close(payload: dict):
+    import terminal_trader as tt
+    pid = (payload or {}).get("id")
+    if not pid:
+        return {"ok": False, "error": "id required"}
+    try:
+        return await asyncio.to_thread(tt.close_position, str(pid))
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/terminal/update")
+async def api_terminal_update(payload: dict):
+    import terminal_trader as tt
+    p = payload or {}
+    if not p.get("id"):
+        return {"ok": False, "error": "id required"}
+    try:
+        return await asyncio.to_thread(
+            tt.update_position, str(p["id"]), p.get("stop"), p.get("tp"),
+            bool(p.get("breakeven")))
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/api/paper/close")
 async def api_paper_close(payload: dict):
     """Ручное закрытие paper-позиции + INSTANT mirror close на live (если есть).

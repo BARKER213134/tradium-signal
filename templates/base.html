@@ -771,6 +771,7 @@
         // tenPfx/hotPfx: const в TDZ, ветка выше объявлений роняла
         // рендер журнала («сигналы не грузятся»)
         if (src === 'st_touch') return hotPfx + tenPfx + '🏓';
+        if (src === 'terminal') return '💼';
         // 🧿 blowoff ЭЛИТА-1d — гейт + дневной RSI-медведь (WR 69, EV +3.78)
         if (src === 'blowoff' && meta && meta.elite_1d)
           return hotPfx + tenPfx + '🧿🌋';
@@ -912,6 +913,7 @@
         if (src === 'struct_top') return '🏚';
         if (src === 'rev_candle') return '🕯';
         if (src === 'st_touch') return '🏓';
+        if (src === 'terminal') return '💼';
         if (src === 'alarm') return '⏰';
         if (src === 'st_break4h') return '💣';
         if (src === 'blowoff') return '🌋';
@@ -4136,6 +4138,11 @@ window.openPairChart = function(symbol, tf) {
       'style="background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.5);border-radius:6px;' +
       'color:#ffd23e;font-size:11px;font-weight:800;cursor:pointer;padding:3px 10px;' +
       'font-family:var(--font-mono,monospace);">🎰 Вход?</button>' +
+      '<button onclick="window._tmTicket(window._kcQmSym)" ' +
+      'title="💼 Открыть сделку в терминале (paper): маркет/лимит/стоп-вход, SL/TP, плечо" ' +
+      'style="background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.5);border-radius:6px;' +
+      'color:#00e5a0;font-size:11px;font-weight:800;cursor:pointer;padding:3px 10px;' +
+      'font-family:var(--font-mono,monospace);">💼 Сделка</button>' +
       '<span id="kcQmTrend" style="display:flex;gap:6px;align-items:center;margin-left:8px;"></span>' +
       '<span style="flex:1;"></span>' +
       '<span id="kcQmNavBox" style="display:none;align-items:center;gap:6px;">' +
@@ -6153,6 +6160,107 @@ function _toggleSL(containerId, key) {
   }
 }
 
+</script>
+<script>
+/* 💼 ТЕРМИНАЛ — тикет ручной сделки (12.09.26). window._tmTicket(sym) */
+window._tmDirDef = 'LONG';
+window._tmTicket = async function(sym) {
+  sym = (sym || prompt('Тикер (например TIA):') || '').toUpperCase().replace('/', '').trim();
+  if (!sym) return;
+  if (!sym.endsWith('USDT')) sym += 'USDT';
+  let w = document.getElementById('tmTicketWrap');
+  if (!w) {
+    w = document.createElement('div');
+    w.id = 'tmTicketWrap';
+    w.style.cssText = 'position:fixed;inset:0;z-index:500;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);backdrop-filter:blur(3px);';
+    w.innerHTML = '<div id="tmTicketBox" style="background:var(--dark,#0a0e14);border:1px solid rgba(0,229,160,0.45);border-radius:12px;padding:16px 18px;width:350px;max-width:94vw;font-family:var(--font-mono,monospace);box-shadow:0 0 40px rgba(0,229,160,0.15);"></div>';
+    w.addEventListener('click', ev => { if (ev.target === w) w.style.display = 'none'; });
+    document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && w.style.display === 'flex') w.style.display = 'none'; });
+    document.body.appendChild(w);
+  }
+  w.style.display = 'flex';
+  const box = document.getElementById('tmTicketBox');
+  box.innerHTML = '<div style="color:var(--muted,#8892a4);font-size:12px;">💼 ' + sym + ' · тяну цену…</div>';
+  let px = null;
+  try { px = (await fetch('/api/terminal/price?symbol=' + sym).then(r => r.json())).price; } catch (e) {}
+  if (!px) {
+    box.innerHTML = '<div style="color:#ff6b6b;font-size:12px;">нет цены по ' + sym + '</div>';
+    return;
+  }
+  const inp = 'width:100%;background:var(--dark-2,#131a24);border:1px solid var(--border,#334);border-radius:6px;color:var(--text,#e6eef8);padding:6px 8px;font-size:12.5px;font-family:inherit;box-sizing:border-box;';
+  const lab = 'font-size:10px;color:var(--muted,#8892a4);margin:8px 0 3px;';
+  const dbtn = 'flex:1;padding:7px 0;border-radius:8px;cursor:pointer;font-weight:800;font-family:inherit;font-size:12px;';
+  box.innerHTML =
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+    '<b style="font-size:14px;">💼 ' + sym.replace('USDT', '') + '</b>' +
+    '<span style="font-size:11px;color:var(--muted,#8892a4);">' + px + '</span>' +
+    '<span style="flex:1;"></span>' +
+    '<button id="tmX" style="background:none;border:1px solid var(--border,#334);border-radius:6px;color:var(--muted,#8892a4);cursor:pointer;padding:2px 8px;">✕</button></div>' +
+    '<div style="display:flex;gap:6px;">' +
+    '<button id="tmDirL" style="' + dbtn + '">🟢 LONG</button>' +
+    '<button id="tmDirS" style="' + dbtn + '">🔴 SHORT</button></div>' +
+    '<div style="display:flex;gap:8px;">' +
+    '<div style="flex:1;"><div style="' + lab + '">Маржа $</div><input id="tmMargin" style="' + inp + '" value="' + (localStorage.getItem('tm_margin') || '100') + '"></div>' +
+    '<div style="flex:1;"><div style="' + lab + '">Плечо ×</div><input id="tmLev" style="' + inp + '" value="' + (localStorage.getItem('tm_lev') || '5') + '"></div></div>' +
+    '<div style="' + lab + '"><label style="cursor:pointer;"><input type="checkbox" id="tmLim"> вход по своей цене (лимит ниже / стоп-вход выше)</label></div>' +
+    '<input id="tmLimPx" style="' + inp + '" value="' + px + '" disabled>' +
+    '<div style="display:flex;gap:8px;">' +
+    '<div style="flex:1;"><div style="' + lab + '">Стоп</div><input id="tmStop" style="' + inp + '"></div>' +
+    '<div style="flex:1;"><div style="' + lab + '">Цель</div><input id="tmTp" style="' + inp + '"></div></div>' +
+    '<div id="tmRisk" style="font-size:10.5px;color:var(--muted,#8892a4);margin:8px 0;line-height:1.5;"></div>' +
+    '<button id="tmGo" style="width:100%;padding:9px 0;border-radius:8px;border:1px solid rgba(0,229,160,0.6);background:rgba(0,229,160,0.15);color:#00e5a0;font-weight:800;font-size:13px;cursor:pointer;font-family:inherit;">ОТКРЫТЬ (paper)</button>' +
+    '<div id="tmMsg" style="font-size:11px;margin-top:6px;min-height:14px;"></div>';
+  let dir = window._tmDirDef || 'LONG';
+  const $ = id => document.getElementById(id);
+  $('tmX').onclick = () => { w.style.display = 'none'; };
+  const ref = () => { const v = parseFloat($('tmLimPx').value); return ($('tmLim').checked && v > 0) ? v : px; };
+  const paint = () => {
+    $('tmDirL').style.cssText = dbtn + (dir === 'LONG' ? 'background:rgba(0,229,160,0.2);border:1px solid #00e5a0;color:#00e5a0;' : 'background:none;border:1px solid var(--border,#334);color:var(--muted,#8892a4);');
+    $('tmDirS').style.cssText = dbtn + (dir === 'SHORT' ? 'background:rgba(255,77,109,0.2);border:1px solid #ff4d6d;color:#ff4d6d;' : 'background:none;border:1px solid var(--border,#334);color:var(--muted,#8892a4);');
+  };
+  const risk = () => {
+    const r = ref(), s = parseFloat($('tmStop').value), t = parseFloat($('tmTp').value);
+    const m = parseFloat($('tmMargin').value) || 0, l = parseFloat($('tmLev').value) || 1;
+    if (!(r > 0) || !(s > 0)) { $('tmRisk').textContent = ''; return; }
+    const rp = Math.abs(r - s) / r * 100;
+    const tpP = t > 0 ? Math.abs(t - r) / r * 100 : 0;
+    $('tmRisk').innerHTML = 'нотионал $' + (m * l).toFixed(0) + ' · стоп −' + rp.toFixed(1) +
+      '% → риск <b style="color:#ff9d5c;">$' + (rp * l * m / 100).toFixed(2) + '</b> · цель +' +
+      tpP.toFixed(1) + '% (+$' + (tpP * l * m / 100).toFixed(2) + ') · ликв. при −' + (95 / l).toFixed(1) + '%';
+  };
+  const fill = () => {
+    const r = ref(), k = dir === 'LONG' ? 1 : -1;
+    $('tmStop').value = (r * (1 - k * 0.05)).toPrecision(5);
+    $('tmTp').value = (r * (1 + k * 0.10)).toPrecision(5);
+    paint(); risk();
+  };
+  $('tmDirL').onclick = () => { dir = 'LONG'; window._tmDirDef = 'LONG'; fill(); };
+  $('tmDirS').onclick = () => { dir = 'SHORT'; window._tmDirDef = 'SHORT'; fill(); };
+  $('tmLim').onchange = () => { $('tmLimPx').disabled = !$('tmLim').checked; fill(); };
+  $('tmLimPx').oninput = fill;
+  ['tmMargin', 'tmLev', 'tmStop', 'tmTp'].forEach(id => { $(id).oninput = risk; });
+  fill();
+  $('tmGo').onclick = async () => {
+    const body = {symbol: sym, direction: dir,
+      margin_usdt: parseFloat($('tmMargin').value), leverage: parseFloat($('tmLev').value),
+      order_type: $('tmLim').checked ? 'limit' : 'market',
+      limit_price: parseFloat($('tmLimPx').value),
+      stop: parseFloat($('tmStop').value), tp: parseFloat($('tmTp').value), src: 'ticket'};
+    try { localStorage.setItem('tm_margin', $('tmMargin').value); localStorage.setItem('tm_lev', $('tmLev').value); } catch (e) {}
+    $('tmGo').disabled = true; $('tmMsg').textContent = '…';
+    try {
+      const d = await fetch('/api/terminal/open', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}).then(r => r.json());
+      if (d.ok) {
+        $('tmMsg').innerHTML = '<span style="color:#00e5a0;">✓ ' + (d.status === 'OPEN' ? 'открыто по ' + d.entry : 'ордер поставлен') + ' · риск $' + d.risk_usd + '</span>';
+        if (window.tmLoad) window.tmLoad();
+        setTimeout(() => { w.style.display = 'none'; }, 1200);
+      } else {
+        $('tmMsg').innerHTML = '<span style="color:#ff6b6b;">' + (d.error || 'ошибка') + '</span>';
+      }
+    } catch (e) { $('tmMsg').innerHTML = '<span style="color:#ff6b6b;">сеть: ' + e + '</span>'; }
+    $('tmGo').disabled = false;
+  };
+};
 </script>
 </body>
 </html>

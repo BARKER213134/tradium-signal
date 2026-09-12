@@ -284,6 +284,26 @@ async def _potok_loop():
         await _asyncio.sleep(300)
 
 
+async def _terminal_loop():
+    """💼 ТЕРМИНАЛ — ведение ручных позиций (12.09.26): каждые 45с
+    исполнение лимиток/стоп-входов при касании + LIQ/SL/TP."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(120)
+    while True:
+        try:
+            await _asyncio.to_thread(_hb, "terminal")
+            import terminal_trader as tt
+            r = await _asyncio.wait_for(
+                _asyncio.to_thread(tt.tick), timeout=60.0)
+            if r.get("filled") or r.get("closed"):
+                logger.info(f"[terminal] исполнено {r['filled']} · закрыто {r['closed']}")
+        except _asyncio.TimeoutError:
+            logger.warning("[terminal] tick TIMEOUT 60s")
+        except Exception:
+            logger.exception("[terminal] loop crashed")
+        await _asyncio.sleep(45)
+
+
 async def _alarm_outcome_loop():
     """🏁 Исходы сработавших 🎯-будильников (19.08, запрос «делай
     трекер»): каждые 30 мин ведём план до конца (цель 1.5R / стоп /
@@ -3952,6 +3972,7 @@ async def start_watcher():
     try:
         asyncio.create_task(_svetofor_stamp_loop())
         asyncio.create_task(_potok_loop())
+        asyncio.create_task(_terminal_loop())
         asyncio.create_task(_alarm_outcome_loop())
         asyncio.create_task(_st_touch_loop())
         logger.info("[svetofor] stamp loop started")
