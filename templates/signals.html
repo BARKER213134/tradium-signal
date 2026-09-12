@@ -12407,7 +12407,6 @@ async function openJournalChart(idx, forceTF) {
     svetofor: s.svetofor || s.pro_verdict || null, at_ts: s.at_ts || null };
   title.innerHTML = `${srcBadge} ${srcName} · ${pairClick}${dirInfo}${entryInfo}${scoreInfo}` +
     ` <button onclick="window._kcSetupModal(window._jModalSym, window._jModalSig)" title="🎰 Полный разбор: можно ли входить сейчас" style="margin-left:10px;background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.5);border-radius:6px;color:#ffd23e;font-size:11px;font-weight:800;cursor:pointer;padding:3px 10px;font-family:var(--font-mono);">🎰 Вход?</button>` +
-    ` <button onclick="window._tmDirDef=(window._jModalSig&&window._jModalSig.direction)||'LONG';window._tmTicket(window._jModalSym)" title="💼 Открыть сделку в терминале (paper): направление из сигнала, маркет/лимит, SL/TP, плечо" style="margin-left:6px;background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.5);border-radius:6px;color:#00e5a0;font-size:11px;font-weight:800;cursor:pointer;padding:3px 10px;font-family:var(--font-mono);">💼 Сделка</button>` +
     ` <span id="jTrendBadge" style="margin-left:10px;display:inline-flex;gap:6px;align-items:center;"></span>`;
   // 📈 какой сейчас тренд (матрица 1h/2h/4h/12h) — в шапке графика
   if (window._kcTrendBadge) {
