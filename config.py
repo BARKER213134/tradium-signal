@@ -176,7 +176,6 @@ BOTS = [
     # SuperTrend-направлений по ТФ из скана, спидометр широты рынка
     {"id": "today", "label": "🧭 Сегодня", "category": "crypto"},
     {"id": "gainers", "label": "🚀 Топ роста", "category": "crypto"},
-    {"id": "terminal", "label": "💼 Терминал", "category": "crypto"},
     {"id": "alarms", "label": "🎯 Будильники", "category": "crypto"},
     {"id": "trends", "label": "📈 Тренды", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
