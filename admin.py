@@ -3496,10 +3496,12 @@ async def api_entry_picks():
         # свежие сигналы за 12ч по направлению фазы
         since = utcnow() - timedelta(hours=12)
         sig_strats = (("ignition", "ten", "impulse", "st_break", "st_break4h",
-                       "capitulation", "floor_buy", "full_stack", "st_touch")
+                       "capitulation", "floor_buy", "full_stack", "st_touch",
+                       "mso_retest")
                       if side == "LONG"
                       else ("impulse", "shark", "delta_series", "st_touch",
-                            "st_break", "st_break4h", "blowoff", "thin_pump"))
+                            "st_break", "st_break4h", "blowoff", "thin_pump",
+                            "mso_retest"))
         sigs_raw = await asyncio.to_thread(lambda: list(
             db.new_strategy_signals.find(
                 {"created_at": {"$gte": since}, "direction": side,
@@ -3543,7 +3545,7 @@ async def api_entry_picks():
                          "shark": "🦈", "delta_series": "🫧", "st_break": "🧨",
                          "st_break4h": "💣", "blowoff": "🌋", "capitulation": "🛟",
                          "thin_pump": "💨", "floor_buy": "💎", "full_stack": "🧗",
-                         "st_touch": "🏓",
+                         "st_touch": "🏓", "mso_retest": "🧲",
                          }.get(sig["strategy"], "•")
                 score += 3
                 reasons.append(f"{emoji} {sig['strategy']} {ago:.1f}ч назад")
@@ -8753,7 +8755,8 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
                      "vol_anomaly", "vol_anomaly4h", "rocket_pullback",
                      "support_defense", "channel_top", "corridor",
                      "level_touch", "flip_retest", "full_stack",
-                     "struct_top", "rev_candle", "st_touch"}
+                     "struct_top", "rev_candle", "st_touch",
+                     "mso_retest"}
         head = items[:limit]
         tail_special = [x for x in items[limit:]
                         if x.get("source") in _DEEP_SRC]
@@ -9005,7 +9008,7 @@ async def api_hot_coins():
         EM = {"st_break4h": "💣", "second_flip": "♻️", "impulse": "🚀",
               "whale": "🐋", "st_break": "🧨", "vol_anomaly": "⚡",
               "vol_anomaly4h": "🌩", "capitulation": "🛟", "floor_buy": "💎",
-              "full_stack": "🧗", "st_touch": "🏓",
+              "full_stack": "🧗", "st_touch": "🏓", "mso_retest": "🧲",
               "support_defense": "🧱", "rocket_pullback": "🪃", "ten": "💰",
               "ignition": "💥", "delta_series": "🫧", "volume_surge": "🌊",
               "triple_confluence": "🐉", "vol_accum": "🔋", "potok": "🌊"}
@@ -9624,7 +9627,7 @@ async def api_enter_now():
         since = utcnow() - timedelta(hours=24)
         GOOD = {"level_touch", "blowoff", "floor_buy", "corridor",
                 "thin_pump", "st_break4h", "fade", "flip_retest", "full_stack",
-                "struct_top", "st_touch"}
+                "struct_top", "st_touch", "mso_retest"}
         cands = []
         for d in col.find(
                 {"backfill": {"$exists": False}, "state": "WAITING",
@@ -10372,6 +10375,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                         "channel_top": "📐", "corridor": "🎈",
                         "level_touch": "📏", "flip_retest": "🪜",
                         "full_stack": "🧗", "struct_top": "🏚", "st_touch": "🏓",
+                        "mso_retest": "🧲",
                         "rev_candle": "🕯"}
         STRAT_LABEL = {"volume_surge": "Volume Surge",
                        "triple_confluence": "Triple Confluence",
@@ -10393,6 +10397,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                        "level_touch": "УРОВЕНЬ",
                        "flip_retest": "ФЛИП-РЕТЕСТ",
                        "full_stack": "ПОЛНЫЙ СТЕК", "st_touch": "КАСАНИЕ ST",
+                       "mso_retest": "РЕТЕСТ СМЕНЫ",
                        "struct_top": "СЛОМ СТРУКТУРЫ",
                        "rev_candle": "РАЗВОРОТ 4h"}
         # ✂ 13.08: выключенные стратегии скрыты и с графиков (аудит 180д)
@@ -10978,6 +10983,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                         "channel_top": "📐", "corridor": "🎈",
                         "level_touch": "📏", "flip_retest": "🪜",
                         "full_stack": "🧗", "struct_top": "🏚", "st_touch": "🏓",
+                        "mso_retest": "🧲",
                         "rev_candle": "🕯"}
         STRAT_LABEL = {"volume_surge": "Volume Surge", "triple_confluence": "Triple Confluence",
                        "vol_accum": "Vol Accum", "volcano": "Volcano Breakout",
@@ -10998,6 +11004,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                        "level_touch": "УРОВЕНЬ",
                        "flip_retest": "ФЛИП-РЕТЕСТ",
                        "full_stack": "ПОЛНЫЙ СТЕК", "st_touch": "КАСАНИЕ ST",
+                       "mso_retest": "РЕТЕСТ СМЕНЫ",
                        "struct_top": "СЛОМ СТРУКТУРЫ",
                        "rev_candle": "РАЗВОРОТ 4h"}
         # backfill-сигналы (st_break 30д и т.п.) в главную ленту не льём —
@@ -11030,6 +11037,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                                   "channel_top", "corridor",
                                   "level_touch", "flip_retest",
                                   "full_stack", "struct_top", "st_touch",
+                                  "mso_retest",
                                   "rev_candle"]}})
             .sort("created_at", -1).limit(800) if d["_id"] not in _seen_nss]
         for n in _nss_docs:
@@ -11334,6 +11342,9 @@ def _compute_journal_sync(_fast_only: bool = False):
                 # 🏓 st_touch — сид из год-бэктеста (4h/12h, EV +0.61..0.90);
                 # заменить честным EV трекера при n>=40
                 "st_touch": (0.75, None),
+                # 🧲 mso_retest — сид из бэктеста сигнал+структура 13.09
+                # (LONG на кроссе +0.93); заменить честным EV при n>=40
+                "mso_retest": (0.7, None),
                 # 🏚 struct_top — сид из год-бэктеста (n=453, +0.99);
                 # заменить честным EV трекера при n>=40
                 "struct_top": (0.99, None),

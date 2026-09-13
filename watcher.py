@@ -284,6 +284,33 @@ async def _potok_loop():
         await _asyncio.sleep(300)
 
 
+async def _mso_retest_loop():
+    """🧲 Ретест свечи смены структуры MSO 4h (13.09, бэктест: возврат к
+    уровню смены в 83-86% за 7д, вход в сторону свежей смены LONG +0.93):
+    скан через ~9 мин после закрытия каждого 4h-бара (после st_touch,
+    чтобы не толкаться). Один догоняющий скан на старте."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(420)
+    try:
+        import mso_retest as _msr
+        await _asyncio.to_thread(_hb, "mso_retest")
+        await _msr.check_all()
+    except Exception:
+        logger.exception("[mso-retest] initial scan crashed")
+    while True:
+        try:
+            from database import utcnow
+            secs = utcnow().timestamp()
+            next_b = (int(secs // 14400) + 1) * 14400 + 540
+            await _asyncio.sleep(max(60, next_b - secs))
+            await _asyncio.to_thread(_hb, "mso_retest")
+            import mso_retest as _msr
+            await _msr.check_all()
+        except Exception:
+            logger.exception("[mso-retest] loop crashed")
+            await _asyncio.sleep(600)
+
+
 async def _alarm_outcome_loop():
     """🏁 Исходы сработавших 🎯-будильников (19.08, запрос «делай
     трекер»): каждые 30 мин ведём план до конца (цель 1.5R / стоп /
@@ -3954,6 +3981,7 @@ async def start_watcher():
         asyncio.create_task(_potok_loop())
         asyncio.create_task(_alarm_outcome_loop())
         asyncio.create_task(_st_touch_loop())
+        asyncio.create_task(_mso_retest_loop())
         logger.info("[svetofor] stamp loop started")
     except Exception:
         logger.exception("[svetofor] failed to start loop")

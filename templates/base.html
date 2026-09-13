@@ -771,6 +771,7 @@
         // tenPfx/hotPfx: const в TDZ, ветка выше объявлений роняла
         // рендер журнала («сигналы не грузятся»)
         if (src === 'st_touch') return hotPfx + tenPfx + '🏓';
+        if (src === 'mso_retest') return hotPfx + tenPfx + '🧲';
         // 🧿 blowoff ЭЛИТА-1d — гейт + дневной RSI-медведь (WR 69, EV +3.78)
         if (src === 'blowoff' && meta && meta.elite_1d)
           return hotPfx + tenPfx + '🧿🌋';
@@ -912,6 +913,7 @@
         if (src === 'struct_top') return '🏚';
         if (src === 'rev_candle') return '🕯';
         if (src === 'st_touch') return '🏓';
+        if (src === 'mso_retest') return '🧲';
         if (src === 'alarm') return '⏰';
         if (src === 'st_break4h') return '💣';
         if (src === 'blowoff') return '🌋';
