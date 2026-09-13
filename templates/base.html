@@ -3782,6 +3782,88 @@ window._kcRegisterIndicators = function() {
     }],
     calc: (list) => list.map(b => ({ delta: b.delta }))
   });
+  // 🧭 MSO — LuxAlgo Market Structure Oscillator (порт открытого Pine v5,
+  // script/K47z5Kmf; реплика 1:1 с нашим бэктест-скриптом bt_mso_4h.py).
+  // Свинги 3 масштабов (short по high/low, int по short, long по int),
+  // пробой уровня закрытием -> импульс, normalize через min/max-ратчет
+  // + SMA(4), веса 1/3/2 -> 0..100, равновесие 50. Только OHLC — работает
+  // и на парах без фьючерсной дельты. Заменяет Delta-панель (13.09.26).
+  klinecharts.registerIndicator({
+    name: 'MSO', shortName: 'MSO',
+    precision: 1,
+    figures: [{
+      key: 'mso', title: 'MSO: ', type: 'bar', baseValue: 50,
+      styles: (data) => {
+        let v = 50;
+        try { v = (data.current && data.current.indicatorData ? data.current.indicatorData.mso : 50); } catch (e) {}
+        return { color: (v == null ? 50 : v) >= 50 ? 'rgba(0,229,160,0.65)' : 'rgba(255,107,107,0.65)' };
+      }
+    }],
+    calc: (list) => {
+      const SM = 4;
+      const mkSw = () => ({ last: NaN, mid: NaN, prev: NaN, crossed: true });
+      const pat = (s, hi) => {
+        if (isNaN(s.prev) || isNaN(s.mid) || isNaN(s.last)) return false;
+        return hi ? (s.prev < s.mid && s.mid >= s.last) : (s.prev > s.mid && s.mid <= s.last);
+      };
+      const updSw = (s, price) => { s.crossed = false; s.prev = s.mid; s.mid = s.last; s.last = price; };
+      const mkN = () => ({ os: 0, mx: NaN, mn: NaN, difs: [] });
+      const step = (n, buy, sell, close) => {
+        const prev = n.os;
+        if (buy) n.os = 1; else if (sell) n.os = -1;
+        if (n.os > prev) n.mx = close;
+        else if (!(n.os < prev)) n.mx = isNaN(n.mx) ? close : Math.max(close, n.mx);
+        if (n.os < prev) n.mn = close;
+        else if (!(n.os > prev)) n.mn = isNaN(n.mn) ? close : Math.min(close, n.mn);
+        const rng = n.mx - n.mn;
+        const dif = (isNaN(rng) || rng <= 0) ? NaN : (close - n.mn) / rng;
+        n.difs.push(dif);
+        if (n.difs.length > SM) n.difs.shift();
+        const w = n.difs.filter(x => !isNaN(x));
+        if (w.length < SM) return NaN;
+        return w.reduce((a, b) => a + b, 0) / w.length * 100;
+      };
+      const stH = mkSw(), stL = mkSw(), itH = mkSw(), itL = mkSw(), ltH = mkSw(), ltL = mkSw();
+      const n1 = mkN(), n2 = mkN(), n3 = mkN();
+      let pItH = false, pItL = false, pLtH = false, pLtL = false;
+      const out = [];
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i].close, h = list[i].high, l = list[i].low;
+        let bull = false, bear = false;
+        if (i >= 2 && list[i - 2].high < list[i - 1].high && list[i - 1].high >= h) updSw(stH, list[i - 1].high);
+        if (!stH.crossed && !isNaN(stH.last) && c > stH.last) { stH.crossed = true; bull = true; }
+        if (i >= 2 && list[i - 2].low > list[i - 1].low && list[i - 1].low <= l) updSw(stL, list[i - 1].low);
+        if (!stL.crossed && !isNaN(stL.last) && c < stL.last) { stL.crossed = true; bear = true; }
+        const v1 = step(n1, bull, bear, c);
+        bull = false; bear = false;
+        let ph = pat(stH, true);
+        if (ph && !pItH) updSw(itH, stH.mid);
+        pItH = ph;
+        if (!itH.crossed && !isNaN(itH.last) && c > itH.last) { itH.crossed = true; bull = true; }
+        let pl = pat(stL, false);
+        if (pl && !pItL) updSw(itL, stL.mid);
+        pItL = pl;
+        if (!itL.crossed && !isNaN(itL.last) && c < itL.last) { itL.crossed = true; bear = true; }
+        const v2 = step(n2, bull, bear, c);
+        bull = false; bear = false;
+        ph = pat(itH, true);
+        if (ph && !pLtH) updSw(ltH, itH.mid);
+        pLtH = ph;
+        if (!ltH.crossed && !isNaN(ltH.last) && c > ltH.last) { ltH.crossed = true; bull = true; }
+        pl = pat(itL, false);
+        if (pl && !pLtL) updSw(ltL, itL.mid);
+        pLtL = pl;
+        if (!ltL.crossed && !isNaN(ltL.last) && c < ltL.last) { ltL.crossed = true; bear = true; }
+        const v3 = step(n3, bull, bear, c);
+        let num = 0, den = 0;
+        if (!isNaN(v1)) { num += 1 * v1; den += 1; }
+        if (!isNaN(v2)) { num += 3 * v2; den += 3; }
+        if (!isNaN(v3)) { num += 2 * v3; den += 2; }
+        out.push({ mso: den > 0 ? num / den : undefined });
+      }
+      return out;
+    }
+  });
   // 📏 Зона уровня: закрашенная полоса low..high (support/resistance)
   klinecharts.registerOverlay({
     name: 'lvlZone',
@@ -4147,7 +4229,7 @@ window.openPairChart = function(symbol, tf) {
       '</span>' +
       '<button onclick="window._kcQmClose()" style="background:none;border:1px solid var(--border,#334);' +
       'border-radius:6px;color:var(--muted,#8892a4);font-size:14px;cursor:pointer;padding:2px 10px;">✕</button>' +
-      '</div><div id="kcQmBody" style="flex:1;position:relative;"></div></div>';
+      '</div><div id="kcQmBody" style="flex:1;min-height:0;position:relative;"></div></div>';
     m.addEventListener('click', ev => { if (ev.target === m) window._kcQmClose(); });
     document.body.appendChild(m);
     document.addEventListener('keydown', ev => {
@@ -4723,9 +4805,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     chart.overrideIndicator({ name: 'ST', calcParams: stMap[tf] || [10, 3], precision: _prec }, 'candle_pane');
   }
   chart.createIndicator('VOL', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
-  // Delta-панель только если данные фьючерсные (BingX-фолбэк дельту не отдаёт)
   const hasDelta = bars.some(b => b.d != null);
-  if (hasDelta) chart.createIndicator('DELTA', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
+  // 🧭 MSO вместо Delta-панели (запрос 13.09.26: «этот индикатор хочу
+  // видеть на всех графиках вместо дельты»); MSO считается из OHLC,
+  // поэтому рисуется на всех парах, включая BingX-фолбэк без дельты.
+  chart.createIndicator('MSO', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
   if (opts.rsi !== false) chart.createIndicator('RSIS', false, { height: Math.max(50, Math.floor(container.clientHeight * 0.10)) });
 
   // тултип для сигналов (показывается overlay-событиями sigMarker)
@@ -5462,6 +5546,24 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   }
   window._kcInstances = window._kcInstances || new Set();
   window._kcInstances.add(container);
+  // 13.09: контейнер меняет размер и БЕЗ resize-события окна (модалка
+  // доверстается после открытия, переключение вкладок, зум) — KLineChart
+  // фиксирует размер на момент создания, панели индикаторов уезжали за
+  // низ модалки («график уехал, индикаторов не видно»). ResizeObserver
+  // на контейнере подгоняет график под фактический размер.
+  try {
+    if (container._kcRo) { try { container._kcRo.disconnect(); } catch (e) {} }
+    let _roT = null;
+    container._kcRo = new ResizeObserver(() => {
+      clearTimeout(_roT);
+      _roT = setTimeout(() => {
+        try {
+          if (container.isConnected && container.clientHeight > 60 && container._kChart) container._kChart.resize();
+        } catch (e) {}
+      }, 80);
+    });
+    container._kcRo.observe(container);
+  } catch (e) {}
   // 🔴 живое обновление последней свечи (WS -> спот-зеркало -> поллинг)
   if (opts.live !== false) {
     try { window._kcStartLive(container, chart, sym, tf, hasDelta); } catch (e) {}
