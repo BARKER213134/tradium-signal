@@ -250,6 +250,20 @@ async def _save_signal(pair_norm: str, flip_bar: dict, tier: str, extras: dict,
     # Insert через to_thread — в горячем 5-минутном цикле обрабатывается
     # ~486 пар, sync insert вешал event loop пока Atlas отвечает.
     def _do_insert():
+        # ⏳/🧿 16.09: штампы серии MSO и валидатора (как store_signal)
+        try:
+            from mso_retest import green_streak_2h
+            doc["mso_streak2h"] = green_streak_2h(
+                doc.get("pair") or ((doc.get("pair_norm") or "")[:-4]
+                                    + "/USDT"))
+        except Exception:
+            doc["mso_streak2h"] = None
+        try:
+            from signal_validator import validate as _sv
+            _v = _sv(doc.get("pair_norm") or "", doc.get("direction") or "")
+            doc["validator_ok"] = _v.get("ok")
+        except Exception:
+            doc["validator_ok"] = None
         _supertrend_signals().insert_one(doc)
     try:
         await asyncio.wait_for(asyncio.to_thread(_do_insert), timeout=5.0)

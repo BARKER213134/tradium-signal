@@ -144,6 +144,15 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
                 "svetofor": next((v for v in ("ДА", "МОЖНО", "НЕТ")
                                   if any(m.get("svetofor") == v for m in chain)), None),
                 "svetofor_star": any(m.get("svetofor_star") for m in chain),
+                # ⏳/🧿 16.09: наследуем от последнего участника с данными
+                "mso_streak2h": next((m.get("mso_streak2h")
+                                      for m in reversed(chain)
+                                      if m.get("mso_streak2h") is not None),
+                                     None),
+                "validator_ok": next((m.get("validator_ok")
+                                      for m in reversed(chain)
+                                      if m.get("validator_ok") is not None),
+                                     None),
                 # Наследуем максимум полезных полей от участников
                 "whale_tier": next((m.get("whale_tier") for m in chain if m.get("whale_tier")), None),
                 "shark_tier": next((m.get("shark_tier") for m in chain if m.get("shark_tier")), None),
