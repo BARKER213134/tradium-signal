@@ -327,6 +327,20 @@ async def _academy_ai_loop():
         await _asyncio.sleep(300)
 
 
+async def _academy_paper_loop():
+    """📜 Академия: бумажный исполнитель — открывает paper-сделки по
+    одобренным сигналам и закрывает созревшие (TP/SL/96ч)."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(540)
+    while True:
+        try:
+            import learn_paper as _lp
+            await _asyncio.to_thread(_lp.run_cycle)
+        except Exception:
+            logger.exception("[paper] loop crashed")
+        await _asyncio.sleep(300)
+
+
 async def _mso_retest_loop():
     """🧲/🌡 MSO-сигналы (грид 15.09: MSO — шортовый индикатор): 2h
     SHORT-ретест (эдж +0.24) после 2h-границ +9 мин; на границах 12h
@@ -4069,6 +4083,7 @@ async def start_watcher():
         asyncio.create_task(_rsi_deepos_loop())
         asyncio.create_task(_academy_loop())
         asyncio.create_task(_academy_ai_loop())
+        asyncio.create_task(_academy_paper_loop())
         logger.info("[svetofor] stamp loop started")
     except Exception:
         logger.exception("[svetofor] failed to start loop")

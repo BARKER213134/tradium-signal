@@ -9453,6 +9453,9 @@ def _setup_check_batch_sync(hours: int, max_pairs: int):
             "setups": n_setup, "items": items}
 
 
+_ACADEMY_MKT: dict = {"t": 0.0}
+
+
 @app.get("/api/academy")
 async def api_academy():
     """🎓 Академия: активная модель + скоринг ленты 48ч по её правилам."""
@@ -9462,6 +9465,44 @@ async def api_academy():
         import learn_engine as le
         db = _get_db()
         model = db.learn_model.find_one({"_id": "active"})
+        # 🌐 рыночный контекст (кэш 10 мин): фандинг всех перпов + BTC-режим
+        import time as _time
+        mkt = _ACADEMY_MKT
+        if _time.time() - mkt.get("t", 0) > 600:
+            fund = {}
+            try:
+                import requests as _rq
+                rr = _rq.get("https://fapi.binance.com/fapi/v1/premiumIndex",
+                             timeout=10)
+                if rr.status_code == 200:
+                    for it in rr.json():
+                        try:
+                            fund[it["symbol"]] = float(
+                                it.get("lastFundingRate") or 0)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            btc = {}
+            try:
+                from exchange import get_klines_any as _gk
+                c1b = _gk("BTC/USDT", "1h", 1000)
+                if c1b and len(c1b) >= 200:
+                    rngs = [(b["h"] - b["l"]) / b["c"] * 100 for b in c1b]
+                    wins = [sum(rngs[i:i + 24]) / 24
+                            for i in range(0, len(rngs) - 24, 6)]
+                    cur_v = sum(rngs[-24:]) / 24
+                    btc["vol_pct"] = round(
+                        sum(1 for w in wins if w < cur_v)
+                        / max(1, len(wins)) * 100)
+                tmx = (db.market_state.find_one({"_id": "trend_matrix"})
+                       or {}).get("rows") or []
+                brow = next((r for r in tmx if r.get("s") == "BTCUSDT"), None)
+                if brow:
+                    btc["d"] = brow.get("d") or {}
+            except Exception:
+                pass
+            mkt.update({"t": _time.time(), "fund": fund, "btc": btc})
         since = utcnow() - _td(hours=48)
         feed = []
         for d in db.new_strategy_signals.find(
@@ -9471,7 +9512,7 @@ async def api_academy():
                  "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}
                 ).sort("created_at", -1).limit(400):
             feed.append({
-                "key": "ns_" + str(d["_id"]),
+                "key": "ns_" + str(d["_id"]), "_dt": d["created_at"],
                 "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
                 "src": d.get("strategy") or "?", "dir": d["direction"],
                 "at": d["created_at"].isoformat(),
@@ -9483,7 +9524,7 @@ async def api_academy():
                  "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}
                 ).sort("created_at", -1).limit(400):
             feed.append({
-                "key": "st_" + str(d["_id"]),
+                "key": "st_" + str(d["_id"]), "_dt": d["created_at"],
                 "sym": d.get("pair_norm") or (d.get("pair") or "").replace("/", ""),
                 "src": "supertrend_" + (d.get("tier") or "?"),
                 "dir": d["direction"], "at": d["created_at"].isoformat(),
@@ -9510,6 +9551,34 @@ async def api_academy():
             if a:
                 f["ai"] = a.get("text")
                 f["ai_by"] = a.get("provider")
+            if status == "ACTIVE_SHOW":
+                f["size"] = le.size_tier(rule)
+            fr = (mkt.get("fund") or {}).get(f["sym"])
+            if fr is not None:
+                f["fund"] = round(fr * 100, 4)
+                if (f["dir"] == "LONG" and fr <= -0.0005) or \
+                        (f["dir"] == "SHORT" and fr >= 0.0005):
+                    f["squeeze"] = True
+        # 🆕 свежесть: не было сигналов по монете 7д до этого сигнала
+        try:
+            symset = {f["sym"] for f in feed}
+            h_since = utcnow() - _td(days=9)
+            hist = {}
+            for _col, _fld in ((db.new_strategy_signals, "symbol"),
+                               (db.supertrend_signals, "pair_norm")):
+                for d in _col.find({"created_at": {"$gte": h_since}},
+                                   {_fld: 1, "pair": 1, "created_at": 1}):
+                    s = d.get(_fld) or (d.get("pair") or "").replace("/", "")
+                    if s in symset:
+                        hist.setdefault(s, []).append(d["created_at"])
+            for f in feed:
+                dt = f["_dt"]
+                prev = [h for h in hist.get(f["sym"], [])
+                        if h < dt - _td(minutes=1)]
+                f["fresh"] = (not prev) or \
+                    (dt - max(prev)) > _td(days=7)
+        except Exception:
+            pass
         out_rules = []
         if model:
             for r in model.get("rules") or []:
@@ -9519,8 +9588,26 @@ async def api_academy():
             "version", "built_at", "window_days", "rows_n", "syms_n",
             "build_sec", "n_show", "n_hide", "n_shadow", "brief", "degraded")}
             if model else None)
+        if meta is not None:
+            meta["exits"] = model.get("exits")
+            meta["liq"] = model.get("liq")
+        # 💼 портфель за 24ч + 📜 paper-статистика
+        cut24 = utcnow() - _td(hours=24)
+        port = {"l": sum(1 for f in feed if f["verdict"] == "ACTIVE_SHOW"
+                         and f["dir"] == "LONG" and f["_dt"] >= cut24),
+                "s": sum(1 for f in feed if f["verdict"] == "ACTIVE_SHOW"
+                         and f["dir"] == "SHORT" and f["_dt"] >= cut24)}
+        paper = None
+        try:
+            import learn_paper as _lp
+            paper = _lp.stats(db)
+        except Exception:
+            pass
+        for f in feed:
+            f.pop("_dt", None)
         return {"ok": True, "meta": meta,
                 "lgbm": (model or {}).get("lgbm"),
+                "btc": mkt.get("btc"), "port": port, "paper": paper,
                 "rules": out_rules, "feed": feed}
     return await asyncio.to_thread(_q)
 

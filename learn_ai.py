@@ -84,7 +84,8 @@ def analyze(ctx):
         "одобрила сигнал. Дай разбор СТРОГО в 3 строках по-русски, "
         "каждая с префиксом:\nЗА: <главный аргумент входа>\n"
         "РИСК: <главная угроза сделке>\nПЛАН: <вход/выход одной фразой, "
-        "сетка TP+10%/SL-5%/до 96ч>\nБез воды, конкретно.\n\n"
+        f"выход: {ctx.get('exit_plan') or 'TP+10% / SL-5% / до 96ч'}>"
+        "\nБез воды, конкретно.\n\n"
         f"Сигнал: {ctx.get('sym')} {ctx.get('dir')}, источник "
         f"{ctx.get('src')}.\n"
         f"Серия MSO 2h: {ser} ({ms}).\n"
@@ -153,6 +154,13 @@ def run_batch(max_n=BATCH):
         if db.learn_ai.find_one({"_id": key}, {"_id": 1}):
             continue
         c["rule"] = rule
+        _ms = c["ms"]
+        _bk = ("gold" if c["val"] is True and c["dir"] == "LONG"
+               and (_ms is None or _ms < 27)
+               else "heat" if c["dir"] == "SHORT" and _ms is not None
+               and _ms >= 27 else None)
+        c["exit_plan"] = ((model.get("exits") or {}).get(_bk)
+                          or {}).get("best_label")
         c["breadth"] = breadth
         td = (trends_map or {}).get(c["sym"]) or {}
         arrow = {1: "▲", -1: "▼"}

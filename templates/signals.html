@@ -7064,6 +7064,18 @@ setInterval(trLoad, 60000);
     <div style="font-size:22px;font-weight:900;font-family:var(--font-mono);"><span id="acShow" style="color:#00e5a0;">&mdash;</span> / <span id="acHide" style="color:#ff5e9c;">&mdash;</span> / <span id="acShadow" style="color:#ffd23e;">&mdash;</span></div>
     <div style="font-size:10px;color:var(--muted);">правил: показ / скрытие / тень</div>
   </div>
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;" title="Режим BTC: тренды 4h/12h из матрицы + перцентиль 24ч-волатильности за ~40 дней (низкий = сжатие перед движением)">
+    <div id="acBtc" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">₿ BTC режим · вола</div>
+  </div>
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;" title="📜 Бумажный исполнитель: каждый одобренный сигнал автоматически становится paper-сделкой (вход по 1h-закрытию, канон-сетка). Живая проверка модели.">
+    <div id="acPaper" style="font-size:22px;font-weight:900;font-family:var(--font-mono);color:#ffd23e;">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">📜 paper: WR · avgR (откр.)</div>
+  </div>
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;" title="Сколько сигналов модель одобрила за 24ч по направлениям — термометр перекоса портфеля.">
+    <div id="acPort" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">💼 одобрено 24ч L/S</div>
+  </div>
   <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;" title="LightGBM-челленджер работает в тени: обучается ночью на тех же данных, гейтом пока не является. AUC — качество ранжирования на out-of-sample четверти окна.">
     <div id="acLgbm" style="font-size:22px;font-weight:900;font-family:var(--font-mono);color:#b28bff;">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">🤖 LightGBM AUC (тень)</div>
@@ -7085,6 +7097,10 @@ setInterval(trLoad, 60000);
     <div id="acFeed" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:72vh;overflow-y:auto;"></div>
   </div>
   <div>
+    <div id="acExits" style="display:none;margin-bottom:10px;border:1px solid rgba(0,212,255,0.35);border-radius:8px;overflow:hidden;">
+      <div style="background:rgba(0,212,255,0.10);padding:7px 12px;font-weight:800;font-size:12px;color:#00d4ff;">🚪 Выходы — само-обучение по корзинам</div>
+      <div id="acExitsBody" style="font-size:11px;font-family:var(--font-mono);"></div>
+    </div>
     <div style="background:rgba(123,92,255,0.10);border:1px solid rgba(123,92,255,0.4);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#b28bff;">Правила модели</div>
     <div id="acRules" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:76vh;overflow-y:auto;"></div>
   </div>
@@ -7121,10 +7137,13 @@ function acRenderFeed() {
     const tt = t.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
     const dirCol = f.dir === 'LONG' ? '#00e5a0' : '#ff5e9c';
     const rl = f.rule ? `<span style="font-size:10px;color:var(--muted);" title="${f.rule.label}: n=${f.rule.n} WR=${f.rule.wr} avgR=${f.rule.avg}">EV ${f.rule.ev > 0 ? '+' : ''}${f.rule.ev} <i>n${f.rule.n}</i></span>` : '';
-    return `<div onclick="try{openPairChart('${f.sym}','2h')}catch(e){}" style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
+    return `<div onclick="acOpenChart(${fi})" style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
       <span style="color:var(--muted);font-size:10px;white-space:nowrap;">${tt}</span>
       <b style="min-width:72px;">${f.sym.replace('USDT', '')}</b>
-      <span style="color:${dirCol};font-weight:800;">${f.dir === 'LONG' ? '▲L' : '▼S'}</span>
+      <span style="background:${f.dir === 'LONG' ? 'rgba(0,229,160,0.14)' : 'rgba(255,77,109,0.14)'};color:${dirCol};border:1px solid ${f.dir === 'LONG' ? 'rgba(0,229,160,0.4)' : 'rgba(255,77,109,0.4)'};border-radius:4px;padding:0 6px;font-size:10px;font-weight:800;white-space:nowrap;">${f.dir === 'LONG' ? '▲ ЛОНГ' : '▼ ШОРТ'}</span>
+      ${f.size ? `<span style="color:#ffd23e;font-weight:900;font-size:10.5px;" title="размер позиции от силы правила (Kelly-лайт: EV≥3 и WR≥60 → ×2, EV≥1 → ×1, иначе ×0.5)">×${f.size.replace('x', '')}</span>` : ''}
+      ${f.fresh ? `<span title="🆕 первое касание платформой за 7 дней — первый вход исторически сильнее повторных">🆕</span>` : ''}
+      ${f.squeeze ? `<span title="💸 экстремальный фандинг ${f.fund}%/8ч против направления сделки — толпа зажата, топливо сквиза">💸</span>` : ''}
       <span title="${f.src}">${AC_EMO[f.src] || '✨'}</span>
       ${f.val === true ? '<span title="🧿 валидный">🧿</span>' : ''}
       ${acMsSpan(f.ms)}
@@ -7135,6 +7154,12 @@ function acRenderFeed() {
   }).join('');
   document.getElementById('acFeed').innerHTML = html || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">пусто в этой группе за 48ч</div>';
   document.getElementById('acFeedN').textContent = '· ' + rows.length;
+}
+function acOpenChart(i) {
+  const rows = window._acRows || [];
+  window._kcQmList = rows.map(f => f.sym);
+  const f = rows[i];
+  if (f) { try { openPairChart(f.sym, '2h'); } catch (e) {} }
 }
 function acToggleAi(i) {
   const el = document.getElementById('acAi_' + i);
@@ -7183,6 +7208,27 @@ async function acLoad() {
   }
   const lg = _acD.lgbm;
   document.getElementById('acLgbm').textContent = lg && lg.ok ? lg.auc + ' · топ20% ' + (lg.oos_top20_avg > 0 ? '+' : '') + lg.oos_top20_avg : '—';
+  const btc = _acD.btc || {};
+  const bd = btc.d || {};
+  const ar = v => v > 0 ? '<span style="color:#00e5a0;">▲</span>' : v < 0 ? '<span style="color:#ff5e9c;">▼</span>' : '·';
+  document.getElementById('acBtc').innerHTML = (bd['4h'] !== undefined ? '4h' + ar(bd['4h']) + ' 12h' + ar(bd['12h']) : '—') + (btc.vol_pct != null ? ` <span style="font-size:13px;color:${btc.vol_pct <= 30 ? '#4cc9f0' : btc.vol_pct >= 70 ? '#ff9d5c' : 'var(--muted)'};">${btc.vol_pct}%</span>` : '');
+  const pp = _acD.paper;
+  document.getElementById('acPaper').textContent = pp && pp.closed ? pp.wr + ' · ' + (pp.avg > 0 ? '+' : '') + pp.avg + ' (' + pp.open + ')' : pp ? '— (' + (pp.open || 0) + ')' : '—';
+  const po = _acD.port || {};
+  const pel = document.getElementById('acPort');
+  pel.innerHTML = `<span style="color:#00e5a0;">${po.l || 0}L</span> / <span style="color:#ff5e9c;">${po.s || 0}S</span>`;
+  const ex = (m || {}).exits;
+  if (ex && Object.keys(ex).length) {
+    const EB = {gold: '🥇', silver: '🥈', dawn: '🌅', heat: '🌡'};
+    document.getElementById('acExits').style.display = 'block';
+    document.getElementById('acExitsBody').innerHTML = Object.entries(ex).map(([bk, e]) =>
+      `<div style="display:flex;gap:8px;align-items:center;padding:5px 12px;border-top:1px solid rgba(42,49,64,0.4);" title="канон даёт ${e.base_avg}, лучший вариант ${e.best_avg} (n=${e.n})">
+        <span>${EB[bk] || bk}</span>
+        <span style="flex:1;">${e.best_label}</span>
+        <span style="font-weight:800;color:${e.best_avg > e.base_avg ? '#00e5a0' : 'var(--muted)'};">${e.best_avg > 0 ? '+' : ''}${e.best_avg}</span>
+        <span style="color:var(--muted);font-size:10px;">канон ${e.base_avg > 0 ? '+' : ''}${e.base_avg}</span>
+      </div>`).join('') + ((m.liq && m.liq.hi) ? `<div style="padding:5px 12px;border-top:1px solid rgba(42,49,64,0.4);color:var(--muted);" title="эдж портфеля по половинам суточного $-объёма монет">💧 ликвидные ${m.liq.hi.avg > 0 ? '+' : ''}${m.liq.hi.avg} (WR ${m.liq.hi.wr}) · неликвид ${m.liq.lo.avg > 0 ? '+' : ''}${m.liq.lo.avg} (WR ${m.liq.lo.wr})</div>` : '');
+  }
   acRenderFeed();
   acRenderRules();
 }

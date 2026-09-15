@@ -144,6 +144,82 @@ def _outcome(c1, i, sg):
     return (c1[m]["c"] / entry - 1) * 100 * sg - FEE
 
 
+EXIT_VARIANTS = {
+    "base": "TP+10 / SL−5 / 96ч (канон)",
+    "be5": "после +5% стоп в безубыток",
+    "trail4": "после +5% трейл 4% от макс. закрытия",
+    "half5": "на +5% фикс половины, остаток по канону",
+    "sl35": "узкий стоп −3.5%",
+    "tp15": "дальний тейк +15%",
+    "h48": "короткий горизонт 48ч",
+}
+
+
+def _outcome_variants(c1, i, sg):
+    """Исход сделки при 7 вариантах выхода. Внутри бара SL приоритетнее
+    TP (как в каноне); активация BE/трейла применяется со СЛЕДУЮЩЕГО
+    бара (консервативно, без внутрибарного чуда)."""
+    entry = c1[i]["c"]
+    out = {}
+
+    def px(sig, p):
+        return (p / entry - 1) * 100 * sig - FEE
+
+    for name in EXIT_VARIANTS:
+        tp_pct = 0.15 if name == "tp15" else 0.10
+        sl_pct = 0.035 if name == "sl35" else 0.05
+        hor = 48 if name == "h48" else HORIZON_H
+        tp = entry * (1 + sg * tp_pct)
+        sl = entry * (1 - sg * sl_pct)
+        act = entry * (1 + sg * 0.05)          # уровень активации +5%
+        armed = False                          # BE/трейл активирован
+        peak = entry                           # макс. закрытие в сторону сделки
+        half_booked = False
+        r = None
+        for m in range(i + 1, min(i + hor + 1, len(c1))):
+            hi, lo, cl = c1[m]["h"], c1[m]["l"], c1[m]["c"]
+            # текущий стоп
+            cur_sl = sl
+            if name == "be5" and armed:
+                cur_sl = entry
+            elif name == "trail4" and armed:
+                cur_sl = peak * (1 - sg * 0.04)
+                if (cur_sl < sl) if sg > 0 else (cur_sl > sl):
+                    cur_sl = sl
+            hit_sl = (lo <= cur_sl) if sg > 0 else (hi >= cur_sl)
+            hit_tp = (hi >= tp) if sg > 0 else (lo <= tp)
+            if hit_sl:
+                rr = px(sg, cur_sl)
+                if name == "half5" and half_booked:
+                    rr = 0.5 * (5.0 - FEE) + 0.5 * rr
+                r = rr
+                break
+            if name in ("be5", "trail4") and not armed:
+                if (hi >= act) if sg > 0 else (lo <= act):
+                    armed = True
+            if name == "half5" and not half_booked:
+                if (hi >= act) if sg > 0 else (lo <= act):
+                    half_booked = True
+            if hit_tp:
+                rr = tp_pct * 100 - FEE
+                if name == "half5" and half_booked:
+                    rr = 0.5 * (5.0 - FEE) + 0.5 * rr
+                r = rr
+                break
+            if sg > 0:
+                peak = max(peak, cl)
+            else:
+                peak = min(peak, cl)
+        if r is None:
+            m = min(i + hor, len(c1) - 1)
+            rr = px(sg, c1[m]["c"])
+            if name == "half5" and half_booked:
+                rr = 0.5 * (5.0 - FEE) + 0.5 * rr
+            r = rr
+        out[name] = r
+    return out
+
+
 # ────────────────────────── датасет ──────────────────────────
 
 def _load_signals(days):
@@ -198,8 +274,15 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
                    "l": float(l4[i]), "c": float(c4[i])} for i in range(len(t4))]
             b12 = [{"t": int(t12[i]), "o": float(o12[i]), "h": float(h12[i]),
                     "l": float(l12[i]), "c": float(c12[i])} for i in range(len(t12))]
+            dvol = 0.0
+            try:
+                tail = c1[-336:]
+                dvol = float(np.median([b.get("v", 0) * b["c"]
+                                        for b in tail])) * 24
+            except Exception:
+                pass
             packs[pair] = {
-                "c1": c1, "t1": t1,
+                "c1": c1, "t1": t1, "dvol": dvol,
                 "tr1": _ema_trend_series(cl1),
                 "t2": t2, "tr2": _ema_trend_series(c2),
                 "st2": _streak_series(t2, o2, h2, l2, c2) if len(t2) >= 130 else None,
@@ -231,6 +314,11 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         breadth = np.nanmean(mat, axis=0)
+    prev_ts = {}
+    for s in sorted(sigs, key=lambda x: x["ts"]):
+        pr = prev_ts.get(s["pair"])
+        s["_prev"] = pr
+        prev_ts[s["pair"]] = s["ts"]
     rows = []
     for s in sigs:
         p = packs.get(s["pair"])
@@ -273,14 +361,20 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
             val = bool(dmin <= 4.0 and contra)
         bottom = tr1 == "DOWN" and tr2 == "DOWN" and tr4 == "DOWN"
         dawn = tr1 == "UP" and tr4 == "DOWN"
+        gold_f = bool(sg > 0 and val is True and streak < 27)
+        silver_f = bool(sg > 0 and val is not True and bottom and streak <= -27)
+        dawn_f = bool(sg > 0 and val is not True and dawn and streak < 27)
+        heat_f = bool(sg < 0 and streak >= 27)
+        fresh = s.get("_prev") is None or (ts - s["_prev"]) > 7 * 86_400_000
+        vr = (_outcome_variants(p["c1"], i1, sg)
+              if (gold_f or silver_f or dawn_f or heat_f) else None)
         rows.append({
+            "fresh": fresh, "dvol": p.get("dvol") or 0.0, "vr": vr,
             "src": s["src"], "sg": sg, "val": val, "streak": streak,
             "bk": bucket(streak), "tr4": tr4,
             "br": None if math.isnan(br) else float(br),
-            "gold": bool(sg > 0 and val is True and streak < 27),
-            "silver": bool(sg > 0 and val is not True and bottom and streak <= -27),
-            "dawn": bool(sg > 0 and val is not True and dawn and streak < 27),
-            "heat": bool(sg < 0 and streak >= 27),
+            "gold": gold_f, "silver": silver_f,
+            "dawn": dawn_f, "heat": heat_f,
             "r": _outcome(p["c1"], i1, sg), "ts": ts, "sym": s["pair"],
         })
     return rows
@@ -359,6 +453,12 @@ def aggregate(rows, prev_rules=None):
              [x for x in rows if x["dawn"]], "super")
     add_rule("sc_heat", "🌡 SHORT зелёная 27+",
              [x for x in rows if x["heat"]], "super")
+    add_rule("sc_fresh", "🆕 LONG первое касание 7д (лонг-корзины)",
+             [x for x in rows if x["fresh"]
+              and (x["gold"] or x["silver"] or x["dawn"])], "super")
+    add_rule("sc_stale", "LONG повторное касание (лонг-корзины)",
+             [x for x in rows if not x["fresh"]
+              and (x["gold"] or x["silver"] or x["dawn"])], "super")
     # клетки источник × направление × 🧿 × корзина
     combos = {}
     for x in rows:
@@ -380,6 +480,69 @@ def aggregate(rows, prev_rules=None):
     return rules
 
 
+def exits_table(rows):
+    """🚪 Самообучаемые выходы: статистика вариантов по супер-клеткам,
+    рекомендация — лучший стабильный вариант (обе половины одного знака,
+    n>=100), иначе канон."""
+    tmid = float(np.median([x["ts"] for x in rows]))
+    out = {}
+    for bk, label in (("gold", "🥇"), ("silver", "🥈"),
+                      ("dawn", "🌅"), ("heat", "🌡")):
+        sel = [x for x in rows if x[bk] and x["vr"]]
+        if len(sel) < 100:
+            continue
+        tab = {}
+        for v in EXIT_VARIANTS:
+            a = np.array([x["vr"][v] for x in sel])
+            ts = np.array([x["ts"] for x in sel])
+            h1, h2 = a[ts < tmid], a[ts >= tmid]
+            stable = bool(len(h1) > 20 and len(h2) > 20
+                          and (h1.mean() > 0) == (h2.mean() > 0))
+            tab[v] = {"avg": round(float(a.mean()), 3),
+                      "wr": round(float((a > 0).mean() * 100), 1),
+                      "h1": round(float(h1.mean()), 2) if len(h1) else None,
+                      "h2": round(float(h2.mean()), 2) if len(h2) else None,
+                      "stable": stable}
+        best = max((v for v in tab if tab[v]["stable"]),
+                   key=lambda v: tab[v]["avg"], default="base")
+        out[bk] = {"n": len(sel), "table": tab, "best": best,
+                   "best_label": EXIT_VARIANTS[best],
+                   "base_avg": tab["base"]["avg"],
+                   "best_avg": tab[best]["avg"]}
+    return out
+
+
+def liq_split(rows):
+    """💧 Эдж по ликвидности: портфель супер-клеток, верхняя/нижняя
+    половина по суточному $-объёму монеты."""
+    sel = [x for x in rows
+           if (x["gold"] or x["silver"] or x["dawn"] or x["heat"])
+           and x["dvol"] > 0]
+    if len(sel) < 200:
+        return None
+    med = float(np.median([x["dvol"] for x in sel]))
+
+    def st(ss):
+        a = np.array([x["r"] for x in ss])
+        return {"n": int(len(a)), "avg": round(float(a.mean()), 3),
+                "wr": round(float((a > 0).mean() * 100), 1)}
+    return {"median_dvol": int(med),
+            "hi": st([x for x in sel if x["dvol"] >= med]),
+            "lo": st([x for x in sel if x["dvol"] < med])}
+
+
+def size_tier(rule):
+    """Kelly-лайт: размер позиции от силы клетки."""
+    if not rule:
+        return None
+    ev, wr = rule.get("ev") or 0, rule.get("wr") or 0
+    if ev >= 3.0 and wr >= 60:
+        return "2x"
+    if ev >= 1.0:
+        return "1x"
+    return "0.5x"
+
+
 # ────────────────────────── LightGBM-челленджер (shadow) ──────────────────────────
 
 def train_lgbm(rows):
@@ -395,11 +558,15 @@ def train_lgbm(rows):
     s_idx = {s: i for i, s in enumerate(srcs)}
     tr_map = {"UP": 1, "DOWN": -1, "FLAT": 0, "NA": 0}
 
+    import math as _m
+
     def feats(x):
         return [s_idx[x["src"]], x["sg"],
                 1 if x["val"] is True else (-1 if x["val"] is False else 0),
                 x["streak"], tr_map.get(x["tr4"], 0),
-                -1.0 if x["br"] is None else round(x["br"], 3)]
+                -1.0 if x["br"] is None else round(x["br"], 3),
+                1 if x.get("fresh") else 0,
+                round(_m.log10(max(x.get("dvol") or 1, 1)), 2)]
 
     rs = sorted(rows, key=lambda x: x["ts"])
     cut = int(len(rs) * 0.75)
@@ -420,7 +587,8 @@ def train_lgbm(rows):
     n1, n0 = int(yte.sum()), int(len(yte) - yte.sum())
     auc = float((ranks[yte == 1].sum() - n1 * (n1 + 1) / 2) / max(n1 * n0, 1))
     top = p >= np.percentile(p, 80)
-    fi = sorted(zip(["src", "dir", "val", "streak", "tr4", "breadth"],
+    fi = sorted(zip(["src", "dir", "val", "streak", "tr4", "breadth",
+                     "fresh", "liq"],
                     m.feature_importances_.tolist()), key=lambda z: -z[1])
     return {"ok": True, "n_train": cut, "n_test": len(rs) - cut,
             "auc": round(auc, 3),
@@ -506,6 +674,7 @@ def recompute(days=WINDOW_DAYS, progress=None):
         "built_at": utcnow().isoformat(),
         "build_sec": int(time.time() - t0),
         "rules": rules, "lgbm": lgbm,
+        "exits": exits_table(rows), "liq": liq_split(rows),
         "n_show": sum(1 for r in rules if r["status"] == "ACTIVE_SHOW"),
         "n_hide": sum(1 for r in rules if r["status"] == "ACTIVE_HIDE"),
         "n_shadow": sum(1 for r in rules if r["status"] == "SHADOW"),
