@@ -248,6 +248,11 @@ def detect_obexit(candles: list[dict], now_ms: float):
             "trend": ema_trend([x["c"] for x in c[:idx + 1]])}
 
 
+STREAK_WINDOW = 500   # 16.09: у порога 50 MSO чувствителен к старту
+# нормализации — окно 300 рвало длинные серии (AXL: 0 при 300 против 42
+# при 600); 500 = лимит 2h-графика, чтобы штамп сходился с панелью
+
+
 def green_streak_2h(pair_slash: str, candles: list[dict] | None = None):
     """⏳ Число подряд ЗАКРЫТЫХ 2h-баров с MSO>50 (бэктест 16.09,
     9.8k живых лонгов: серия 1-4 +1.61 · 5-9 +1.05 · 10-19 +1.95 (пик)
@@ -256,10 +261,10 @@ def green_streak_2h(pair_slash: str, candles: list[dict] | None = None):
         from database import utcnow
         if candles is None:
             from exchange import get_klines_any
-            candles = get_klines_any(pair_slash, "2h", WINDOW)
+            candles = get_klines_any(pair_slash, "2h", STREAK_WINDOW)
         if not candles or len(candles) < 130:
             return None
-        c = candles[-WINDOW:]
+        c = candles[-STREAK_WINDOW:]
         idx = _closed_idx(c, 2 * 3600_000, utcnow().timestamp() * 1000)
         if idx < 115:
             return None
