@@ -1006,20 +1006,29 @@ def signal_tg_context(pair: str, direction: str | None = None) -> str:
             from mso_retest import green_streak_2h
             _st2 = green_streak_2h(pair)
             if _st2 is not None:
+                _abs2 = abs(_st2)
+                _clr = "зелёных" if _st2 > 0 else "красных"
                 if direction == "LONG":
-                    _note = ("🎯 пик эджа лонгов (10-15: +2.4..2.5/вход)"
-                             if 10 <= _st2 <= 15 else
-                             ("⚠ ОБРЫВ (27+: −2.15, WR 21) — не входить"
-                              if _st2 >= 27 else
-                              ("затухание (16-26: слабый плюс)"
-                               if _st2 >= 16 else
-                               ("серия в плюсе (1-9)" if _st2 >= 1
-                                else "MSO красный — контр-вход (+1.01)"))))
+                    if _st2 > 0:
+                        _note = ("🎯 пик эджа лонгов (10-15: +2.4..2.5)"
+                                 if 10 <= _st2 <= 15 else
+                                 ("⚠ ОБРЫВ (27+: −2.15, WR 21) — не входить"
+                                  if _st2 >= 27 else
+                                  ("затухание (16-26: слабый плюс)"
+                                   if _st2 >= 16 else "серия в плюсе (1-9)")))
+                    else:
+                        _note = ("🎯 ДНО-ЗОНА (красная 27+: +1.81, WR 52)"
+                                 if _st2 <= -27 else
+                                 "красная серия: умеренный плюс лонгам")
                 else:
-                    _note = ("✓ перезрелый рост — шорт-зона (27+: +0.84, "
-                             "WR 47)" if _st2 >= 27 else
-                             "шорты в плюсе только при серии 27+")
-                lines.append(f"⏳ MSO 2h: {_st2} зелёных подряд — {_note}")
+                    if _st2 > 0:
+                        _note = ("✓ перезрелый рост — шорт-зона (27+: "
+                                 "+0.84, WR 47)" if _st2 >= 27 else
+                                 "шорты в плюсе только при зелёной 27+")
+                    else:
+                        _note = ("⚠ шорт в красной серии — минус на любой "
+                                 "длине (−0.9..−1.8)")
+                lines.append(f"⏳ MSO 2h: {_abs2} {_clr} подряд — {_note}")
         except Exception:
             pass
         return "\n" + "\n".join(lines)

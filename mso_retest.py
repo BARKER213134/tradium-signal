@@ -288,14 +288,20 @@ def green_streak_2h(pair_slash: str, candles: list[dict] | None = None):
         if idx < 115:
             return None
         osc = mso_series(c[:idx + 1])
+        # 16.09: знаковая серия — +N зелёных подряд ИЛИ −N красных
+        # (бэктест красных: SHORT минус на любой длине; LONG при
+        # красной 27+ = +1.81 WR 52 — дно перезрелого падения)
+        v0 = osc[idx]
+        if math.isnan(v0):
+            return None
+        green = v0 > 50
         n = 0
         for i in range(idx, -1, -1):
             v = osc[i]
-            if not math.isnan(v) and v > 50:
-                n += 1
-            else:
+            if math.isnan(v) or (v > 50) != green:
                 break
-        return n
+            n += 1
+        return n if green else -n
     except Exception:
         return None
 

@@ -7959,12 +7959,13 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jValidOnlyBtn" onclick="_toggleValidOnly()" title="🧿 Только ВАЛИДНЫЕ по валидатору «у уровня И против режима» (ретро 45д, 12.5k исходов: WR 52.9, +1.43%/вход; остальное 38.7/−0.02; режет ~86% потока). Вердикт есть только у сигналов после 16.09." style="background:rgba(123,92,255,0.12);border:1.5px solid rgba(123,92,255,0.55);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#b28bff;cursor:pointer;min-width:120px;text-align:center;box-sizing:border-box;font-weight:700;">🧿 Валидные · OFF</button>
   <select id="jStreakFilter" onchange="renderJournalPage()" title="⏳ Отбор по серии зелёных 2h-баров MSO (бэктест 16.09: лонги 10-19 — пик +1.95; 20+ — лонги минус, шорт-зона +0.48). Вердикт есть у сигналов после 16.09." style="background:var(--dark);color:var(--text);border:1px solid rgba(0,229,160,0.35);border-radius:6px;padding:4px 8px;font-size:11px;font-family:var(--font-mono);">
     <option value="">⏳ Серия: все</option>
-    <option value="0">0 (MSO красный)</option>
-    <option value="1-4">1-4</option>
-    <option value="5-9">5-9</option>
-    <option value="10-15">10-15 (пик лонгов)</option>
-    <option value="16-26">16-26 (затухание)</option>
-    <option value="27+">27+ (обрыв/шорт-зона)</option>
+    <option value="1-4">🟢 1-4</option>
+    <option value="5-9">🟢 5-9</option>
+    <option value="10-15">🟢 10-15 (пик лонгов)</option>
+    <option value="16-26">🟢 16-26 (затухание)</option>
+    <option value="27+">🟢 27+ (обрыв/шорт-зона)</option>
+    <option value="r1-26">🔴 1-26 (красная)</option>
+    <option value="r27+">🔴 27+ (дно-зона лонгов)</option>
   </select>
   <script>
   window._starOnlyOn = false;
@@ -10201,12 +10202,13 @@ function filterJournal() {
       const _v = s.mso_streak2h;
       if (_v == null) return false;
       const _f = _sfEl.value;
-      if (_f === '0' && _v !== 0) return false;
       if (_f === '1-4' && !(_v >= 1 && _v <= 4)) return false;
       if (_f === '5-9' && !(_v >= 5 && _v <= 9)) return false;
       if (_f === '10-15' && !(_v >= 10 && _v <= 15)) return false;
       if (_f === '16-26' && !(_v >= 16 && _v <= 26)) return false;
       if (_f === '27+' && _v < 27) return false;
+      if (_f === 'r1-26' && !(_v <= -1 && _v >= -26)) return false;
+      if (_f === 'r27+' && _v > -27) return false;
     }
     if (window._trendOkOn && s.trend_ok !== true) return false;
     if (dir && s.direction !== dir) return false;
@@ -10942,22 +10944,30 @@ function renderJournal(items, startIdx) {
     const _ms2 = s.mso_streak2h;
     let streakCell = '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     if (_ms2 != null) {
-      // универсальная окраска корзин (16.09): 0 серый · 1-9 зелёный ·
-      // 10-15 ярко-зелёный (пик лонгов) · 16-26 жёлтый (затухание) ·
-      // 27+ оранжево-красный (обрыв лонгов / шорт-зона)
+      // знаковая серия (16.09): +N зелёных / −N красных подряд.
+      // Зелёная: 10-15 пик лонгов · 27+ обрыв/шорт-зона. Красная:
+      // шорты минус на любой длине; −27+ = дно-зона лонгов (+1.81 WR 52)
+      const _g = _ms2 > 0, _abs = Math.abs(_ms2);
       let _bk, _c, _w = 700, _b = '';
-      if (_ms2 >= 27) { _bk = '27+'; _c = '#ff9d5c'; _w = 800; _b = 'background:rgba(255,120,60,0.16);'; }
-      else if (_ms2 >= 16) { _bk = '16-26'; _c = '#ffd23e'; }
-      else if (_ms2 >= 10) { _bk = '10-15'; _c = '#00e5a0'; _w = 800; _b = 'background:rgba(0,229,160,0.16);'; }
-      else if (_ms2 >= 5) { _bk = '5-9'; _c = '#88d8a3'; }
-      else if (_ms2 >= 1) { _bk = '1-4'; _c = '#88d8a3'; }
+      if (_g && _abs >= 27) { _bk = '27+'; _c = '#ff9d5c'; _w = 800; _b = 'background:rgba(255,120,60,0.16);'; }
+      else if (_g && _abs >= 16) { _bk = '16-26'; _c = '#ffd23e'; }
+      else if (_g && _abs >= 10) { _bk = '10-15'; _c = '#00e5a0'; _w = 800; _b = 'background:rgba(0,229,160,0.16);'; }
+      else if (_g && _abs >= 5) { _bk = '5-9'; _c = '#88d8a3'; }
+      else if (_g) { _bk = '1-4'; _c = '#88d8a3'; }
+      else if (_abs >= 27) { _bk = 'r27+'; _c = '#4cc9f0'; _w = 800; _b = 'background:rgba(76,201,240,0.16);'; }
+      else if (_abs >= 1) { _bk = 'r1-26'; _c = '#ff8fa8'; }
       else { _bk = '0'; _c = 'var(--muted)'; }
       const _isL = s.direction === 'LONG';
-      const _tip = (_isL
-        ? (_ms2 >= 27 ? 'лонги: ОБРЫВ (−2.15, WR 21) — не входить' : _ms2 >= 16 ? 'лонги: затухание (слабый плюс)' : _ms2 >= 10 ? 'лонги: ПИК (+2.4..2.5)' : _ms2 >= 1 ? 'лонги в плюсе' : 'MSO красный — контр-вход (+1.01)')
-        : (_ms2 >= 27 ? 'шорты: ЗОНА (+0.84, WR 47)' : 'шорты в плюсе только при 27+'))
-        + ' · клик — отбор корзины ' + _bk;
-      streakCell = `<td class="mono" onclick="event.stopPropagation();window._streakPick('${_bk}')" style="text-align:center;font-size:12px;font-weight:${_w};color:${_c};${_b}cursor:pointer;" title="⏳ серия ${_ms2} на момент сигнала · ${_tip}">${_ms2}</td>`;
+      const _tip = (_g
+        ? (_isL
+          ? (_abs >= 27 ? 'лонги: ОБРЫВ (−2.15, WR 21) — не входить' : _abs >= 16 ? 'лонги: затухание (слабый плюс)' : _abs >= 10 ? 'лонги: ПИК (+2.4..2.5)' : 'лонги в плюсе')
+          : (_abs >= 27 ? 'шорты: ЗОНА (+0.84, WR 47)' : 'шорты в плюсе только при 27+'))
+        : (_isL
+          ? (_abs >= 27 ? 'лонги: ДНО-ЗОНА (+1.81, WR 52) — перезрелое падение' : 'лонги при красной: умеренный плюс (+0.6..0.75)')
+          : 'шорты в красной серии МИНУС на любой длине (−0.9..−1.8)'))
+        + ' · клик — отбор ' + _bk;
+      const _disp = _g ? _abs : (_abs === 0 ? 0 : '−' + _abs);
+      streakCell = `<td class="mono" onclick="event.stopPropagation();window._streakPick('${_bk}')" style="text-align:center;font-size:12px;font-weight:${_w};color:${_c};${_b}cursor:pointer;" title="⏳ ${_g ? 'зелёная' : 'красная'} серия ${_abs} на момент сигнала · ${_tip}">${_disp}</td>`;
     }
     // 📊 OI — текущее изменение открытого интереса пары (из /api/oi-map)
     const _oiv = (window._oiMap || {})[(s.symbol || (s.pair || '').replace('/', '')).toUpperCase()];
