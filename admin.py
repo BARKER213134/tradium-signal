@@ -9463,6 +9463,15 @@ async def api_trends():
         db = _get_db()
         doc = db.market_state.find_one({"_id": "trend_matrix"}) or {}
         rows = doc.get("rows") or []
+        # ⏳ знаковая серия MSO 2h (карта из 2h-цикла, 17.09)
+        try:
+            _ms = (db.market_state.find_one({"_id": "mso_streak_map"})
+                   or {}).get("rows") or {}
+            for r in rows:
+                if r.get("s") in _ms:
+                    r["ms"] = _ms[r["s"]]
+        except Exception:
+            pass
         tfs = ["1h", "2h", "4h", "12h"]
         pct = {}
         for tf in tfs:

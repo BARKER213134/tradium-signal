@@ -460,6 +460,35 @@ async def _pair_obexit(pair_norm: str) -> bool:
     return True
 
 
+async def update_streak_map() -> int:
+    """⏳ Карта знаковых серий MSO 2h по всем tracked-парам →
+    market_state.mso_streak_map (кормит вкладку Тренды). Вызывается
+    из 2h-цикла после сканов."""
+    from database import _get_db, utcnow
+    from supertrend_tracker import get_tracked_pairs
+    pairs = await asyncio.to_thread(get_tracked_pairs)
+    rows = {}
+    for i, p in enumerate(pairs):
+        try:
+            st = await asyncio.to_thread(
+                green_streak_2h, p[:-4] + "/USDT")
+            if st is not None:
+                rows[p] = int(st)
+        except Exception:
+            pass
+        if i % 20 == 19:
+            await asyncio.sleep(0.3)
+    try:
+        _get_db().market_state.update_one(
+            {"_id": "mso_streak_map"},
+            {"$set": {"rows": rows, "updated": utcnow().isoformat()}},
+            upsert=True)
+    except Exception:
+        logger.debug("[mso] streak map save fail", exc_info=True)
+    logger.info(f"[mso] streak map: {len(rows)} пар")
+    return len(rows)
+
+
 async def check_all(kind: str = "retest") -> int:
     """Скан всех tracked-пар. kind: retest (2h, после 2h-границ) |
     retest4h (после 4h-границ) | obexit (12h, после 12h-границ)."""

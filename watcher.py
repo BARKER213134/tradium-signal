@@ -308,6 +308,10 @@ async def _mso_retest_loop():
             await _asyncio.to_thread(_hb, "mso_retest")
             import mso_retest as _msr
             await _msr.check_all("retest")
+            try:
+                await _msr.update_streak_map()
+            except Exception:
+                logger.debug("[mso] streak map fail", exc_info=True)
             bh = int(((utcnow().timestamp() - 540) % 86400) // 3600)
             if bh % 4 == 0:
                 await _msr.check_all("retest4h")

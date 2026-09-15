@@ -6934,6 +6934,7 @@ setInterval(alLoad, 15000);
 let _trData = null;
 // 🎛 фильтр направлений: на каждый ТФ цикл «любое → ▲ → ▼»
 let _trF = {'1h': 0, '2h': 0, '4h': 0, '12h': 0};
+let _trSer = '';   // '' | 'red27' | 'green27' — фильтр серии MSO
 function trCycle(tf) {
   _trF[tf] = _trF[tf] === 0 ? 1 : _trF[tf] === 1 ? -1 : 0;
   trDirBtns();
@@ -6950,12 +6951,14 @@ function trDirBtns() {
       const bg = v === 0 ? 'none' : v === 1 ? 'rgba(0,229,160,0.12)' : 'rgba(255,77,109,0.12)';
       return `<button onclick="trCycle('${tf}')" style="background:${bg};border:1px solid var(--border);border-radius:6px;color:${col};font-size:11px;font-weight:800;cursor:pointer;padding:4px 8px;font-family:var(--font-mono);">${tf} ${sym}</button>`;
     }).join('') +
-    `<button onclick="_trF={'1h':0,'2h':0,'4h':0,'12h':0};trDirBtns();trRender();" style="background:none;border:none;color:var(--muted);font-size:10px;cursor:pointer;">сброс</button>` +
+    `<button onclick="_trSer='';_trF={'1h':0,'2h':0,'4h':0,'12h':0};trDirBtns();trRender();" style="background:none;border:none;color:var(--muted);font-size:10px;cursor:pointer;">сброс</button>` +
     // 🌅 пресеты по бэктесту комбинаций трендов 17.09 (12.5k исходов)
     `<span style="color:var(--border);margin:0 4px;">|</span>` +
     `<button onclick="_trF={'1h':1,'2h':0,'4h':-1,'12h':0};trDirBtns();trRender();" title="🌅 РАННИЙ РАЗВОРОТ: 1h уже ▲, 4h ещё ▼ — лучшие лонг-комбинации бэктеста (1h▲2h▼4h▼: +1.71/вход WR 50 · 1h▲2h▲4h▼: +1.46 WR 48, обе половины в плюсе). Для сравнения: полный ап (все ▲) даёт лишь +0.24." style="background:linear-gradient(135deg,rgba(0,229,160,0.18),rgba(255,210,62,0.10));border:1.5px solid rgba(0,229,160,0.55);border-radius:6px;color:#00e5a0;font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">🌅 Ранний разворот</button>` +
     `<button onclick="_trF={'1h':-1,'2h':-1,'4h':-1,'12h':0};trDirBtns();trRender();" title="🕳 ДНО: все младшие ▼ (1h▼2h▼4h▼) — контр-лонг от дна: +1.37/вход WR 50, обе половины в плюсе. Сюда же смотрит красная серия MSO 27+ (дно-зона +1.81)." style="background:rgba(76,201,240,0.10);border:1.5px solid rgba(76,201,240,0.5);border-radius:6px;color:#4cc9f0;font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">🕳 Дно</button>` +
-    `<button onclick="_trF={'1h':0,'2h':-1,'4h':-1,'12h':1};trDirBtns();trRender();" title="💧 ОТКАТ В ТРЕНДЕ: 2h▼ 4h▼ при живом 12h▲ — buy-the-dip (+1.68/вход, WR 56 на свежем срезе — набирает историю)." style="background:rgba(123,92,255,0.10);border:1.5px solid rgba(123,92,255,0.5);border-radius:6px;color:#b28bff;font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">💧 Откат в тренде</button>`;
+    `<button onclick="_trF={'1h':0,'2h':-1,'4h':-1,'12h':1};trDirBtns();trRender();" title="💧 ОТКАТ В ТРЕНДЕ: 2h▼ 4h▼ при живом 12h▲ — buy-the-dip (+1.68/вход, WR 56 на свежем срезе — набирает историю)." style="background:rgba(123,92,255,0.10);border:1.5px solid rgba(123,92,255,0.5);border-radius:6px;color:#b28bff;font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">💧 Откат в тренде</button>` +
+    `<button onclick="_trSer=_trSer==='red27'?'':'red27';_trF={'1h':-1,'2h':-1,'4h':-1,'12h':0};trDirBtns();trRender();" title="🥈 СЕРЕБРО: дно (1h▼2h▼4h▼) + красная серия MSO 27+ — лучший вход без валидатора: +1.23/вход, WR 49, половины +1.27/+1.20 (самая устойчивая клетка исследования 17.09)." style="background:rgba(76,201,240,0.12);border:1.5px solid rgba(76,201,240,0.55);border-radius:6px;color:#4cc9f0;font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">🥈 Дно+27</button>` +
+    `<button onclick="_trSer=_trSer==='green27'?'':'green27';_trF={'1h':0,'2h':0,'4h':0,'12h':0};trDirBtns();trRender();" title="🌡 ШОРТ-ЗОНА: зелёная серия MSO 27+ (перезрелый рост) — единственная рабочая шорт-корзина: +0.87/вход WR 46 без фильтров (обе половины в плюсе)." style="background:rgba(255,120,60,0.12);border:1.5px solid rgba(255,120,60,0.55);border-radius:6px;color:#ff9d5c;font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">🌡 Шорт 27+</button>`;
 }
 async function trLoad() {
   try {
@@ -6984,7 +6987,8 @@ function trRender() {
   }
   const q = (document.getElementById('trSearch').value || '').toUpperCase().trim();
   const rows = (d.rows || []).filter(r => !q || r.s.indexOf(q) >= 0)
-    .filter(r => d.tfs.every(tf => !_trF[tf] || ((r.d || {})[tf] || 0) === _trF[tf]));
+    .filter(r => d.tfs.every(tf => !_trF[tf] || ((r.d || {})[tf] || 0) === _trF[tf]))
+    .filter(r => !_trSer || (_trSer === 'red27' ? (r.ms != null && r.ms <= -27) : (r.ms != null && r.ms >= 27)));
   const lastFlip = r => {
     // какой ТФ флипнул ПОСЛЕДНИМ: [tf, iso] | null
     let best = null;
@@ -7019,9 +7023,10 @@ function trRender() {
     const lfTxt = lf
       ? `<span style="color:${((r.d || {})[lf[0]] || 0) > 0 ? '#00e5a0' : '#ff5e9c'};font-weight:800;">${lf[0]}${((r.d || {})[lf[0]] || 0) > 0 ? '▲' : '▼'}</span> <span style="color:var(--muted);">${fmtChg(lf[1])}</span>`
       : '';
-    return `<div onclick="try{openPairChart('${r.s}','1h')}catch(e){}" style="display:grid;grid-template-columns:86px repeat(${d.tfs.length},20px) 1fr;align-items:center;gap:2px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);${bs ? 'background:rgba(255,77,109,0.07);' : ''}">
+    return `<div onclick="try{openPairChart('${r.s}','1h')}catch(e){}" style="display:grid;grid-template-columns:86px 40px repeat(${d.tfs.length},20px) 1fr;align-items:center;gap:2px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);${bs ? 'background:rgba(255,77,109,0.07);' : ''}">
       <b style="overflow:hidden;text-overflow:ellipsis;">${bs ? '🎯' : ''}${r.s.replace('USDT','')}</b>
       ${d.tfs.map(tf => `<span style="text-align:center;">${arrow((r.d || {})[tf])}</span>`).join('')}
+      <span style="text-align:center;font-size:10.5px;font-weight:800;font-family:var(--font-mono);color:${r.ms == null ? 'var(--border)' : r.ms <= -27 ? '#4cc9f0' : r.ms >= 27 ? '#ff9d5c' : r.ms > 0 ? '#88d8a3' : '#ff8fa8'};" title="⏳ серия MSO 2h сейчас: ${r.ms == null ? 'нет данных' : r.ms}">${r.ms == null ? '·' : r.ms}</span>
       <span style="font-size:10.5px;text-align:right;">${lfTxt}</span>
     </div>`;
   };
