@@ -1001,6 +1001,25 @@ def signal_tg_context(pair: str, direction: str | None = None) -> str:
                                      f"лучше пропустить")
             except Exception:
                 pass
+        # ⏳ серия зелёных 2h-баров MSO (16.09)
+        try:
+            from mso_retest import green_streak_2h
+            _st2 = green_streak_2h(pair)
+            if _st2 is not None:
+                if direction == "LONG":
+                    _note = ("🎯 пик эджа лонгов (10-19: +1.95/вход)"
+                             if 10 <= _st2 <= 19 else
+                             ("⚠ ПЕРЕЗРЕЛЫЙ рост (20+: лонги −0.60) — "
+                              "лучше пропустить" if _st2 >= 20 else
+                              ("серия в плюсе (1-9)" if _st2 >= 1
+                               else "MSO красный — контр-вход (+1.01)")))
+                else:
+                    _note = ("✓ перезрелый рост — шорт-зона (20+: +0.48)"
+                             if _st2 >= 20 else
+                             "шорты в плюсе только при серии 20+")
+                lines.append(f"⏳ MSO 2h: {_st2} зелёных подряд — {_note}")
+        except Exception:
+            pass
         return "\n" + "\n".join(lines)
     except Exception:
         return ""

@@ -7957,6 +7957,14 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jHotOnlyBtn" style="display:none;"></button>
   <button id="jStarOnlyBtn" onclick="_toggleStarOnly()" title="⭐ Показать только ОТБОРНЫЕ входы — профиль победителей поверх ✅ ДА: лидер 7д (>±10%) + ATR>1.5% + RSI4h в рабочей зоне + без догона + 3+ подтверждений + счёт светофора >=6. Бэктест 3 мес (1005 сигналов): EV +1.28%/сделку, 34% доходят до +10%; режим позиций: +72%/мес суммарного PnL. Редкая метка (~1% сигналов) — пусто значит рынок не даёт профиль." style="background:linear-gradient(135deg, rgba(255,210,62,0.20), rgba(255,140,80,0.10));border:1.5px solid rgba(255,210,62,0.65);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ffd23e;cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;font-weight:700;">⭐ Отборные · OFF</button>
   <button id="jValidOnlyBtn" onclick="_toggleValidOnly()" title="🧿 Только ВАЛИДНЫЕ по валидатору «у уровня И против режима» (ретро 45д, 12.5k исходов: WR 52.9, +1.43%/вход; остальное 38.7/−0.02; режет ~86% потока). Вердикт есть только у сигналов после 16.09." style="background:rgba(123,92,255,0.12);border:1.5px solid rgba(123,92,255,0.55);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#b28bff;cursor:pointer;min-width:120px;text-align:center;box-sizing:border-box;font-weight:700;">🧿 Валидные · OFF</button>
+  <select id="jStreakFilter" onchange="renderJournalPage()" title="⏳ Отбор по серии зелёных 2h-баров MSO (бэктест 16.09: лонги 10-19 — пик +1.95; 20+ — лонги минус, шорт-зона +0.48). Вердикт есть у сигналов после 16.09." style="background:var(--dark);color:var(--text);border:1px solid rgba(0,229,160,0.35);border-radius:6px;padding:4px 8px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">⏳ Серия: все</option>
+    <option value="0">0 (MSO красный)</option>
+    <option value="1-4">1-4</option>
+    <option value="5-9">5-9</option>
+    <option value="10-19">10-19 (пик лонгов)</option>
+    <option value="20+">20+ (шорт-зона)</option>
+  </select>
   <script>
   window._starOnlyOn = false;
   window._validOnlyOn = false;
@@ -8247,6 +8255,7 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('pro_score')" id="jSortPro" title="🚦 Светофор — «входить или нет» считается сервером для каждого свежего сигнала (<48ч), та же логика что модалка проверки входа. Жёсткие НЕТ: против фазы (кроме 💣-реверсала), догон >20%/24ч. Счёт: фаза + RS-сила 7д + RSI4h-зоны + триггер (🟩 +3 / 🟨 +1 / ST-флипы) − 4h ST против. ✅ ДА ≥5 · ⚠️ МОЖНО 2-4 · ⛔ НЕТ <2. Реплей 30д (13.7k сделок): ДА WR 43.1% (+9.8пп к БУ) · НЕТ 37.3%. Наведи на ячейку — слагаемые; клик по 🚦 у монеты — полный разбор. Клик — сортировка." style="text-align:center;padding:14px 6px;">🚦</th>
         <th id="jSortTrend" title="Тренд по EMA20 vs EMA50 на close per TF. ▲ зелёный = UP, ▼ красный = DOWN, ◆ серый = FLAT" style="text-align:center;padding:14px 6px;">Тренд</th>
         <th title="4h-тренд (EMA20 vs EMA50 на свече сигнала): зелёная = UP, красная = DOWN, серая = FLAT" style="text-align:center;padding:14px 6px;">4h</th>
+        <th class="sortable" onclick="jSort('mso_streak2h')" title="⏳ Серия зелёных 2h-баров MSO подряд на момент сигнала. Бэктест 16.09 (9.8k лонгов): 1-4 +1.61 · 5-9 +1.05 · 10-19 +1.95 (пик) · 20+ −0.60 (лонги запрещены, шорты +0.48). Клик — сортировка." style="text-align:center;padding:14px 6px;">⏳</th>
         <th class="sortable" onclick="jSort('vol24')" id="jSortVol" title="💵 Объём торгов за 24ч (quote $, Binance 24hr ticker, кэш 3 мин). <$10M — тонкая книга (оранжевым). Клик — сортировка." style="text-align:center;padding:14px 6px;">Объём</th>
         <th title="📊 Открытый интерес фьючерсов СЕЙЧАС: изменение за 4ч (в подсказке — 24ч). 🟢 ≥+1.5% растёт (новые деньги) · 🔴 ≤−1.5% сокращается. Коллектор раз в 30 мин (fapi/BingX)" style="text-align:center;padding:14px 6px;">OI</th>
         <th class="sortable" onclick="jSort('entry')" id="jSortEntry" style="text-align:center;padding:14px 8px;">Entry</th>
@@ -8264,7 +8273,7 @@ async function _pollDeltaBackfill() {
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="19" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="20" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -10178,6 +10187,18 @@ function filterJournal() {
     if (window._starOnlyOn && !(s.pro_star || s.svetofor_star)) return false;
     // 🧿 только валидные (вердикт есть у сигналов после 16.09)
     if (window._validOnlyOn && s.validator_ok !== true) return false;
+    // ⏳ отбор по серии зелёных 2h-баров MSO
+    const _sfEl = document.getElementById('jStreakFilter');
+    if (_sfEl && _sfEl.value) {
+      const _v = s.mso_streak2h;
+      if (_v == null) return false;
+      const _f = _sfEl.value;
+      if (_f === '0' && _v !== 0) return false;
+      if (_f === '1-4' && !(_v >= 1 && _v <= 4)) return false;
+      if (_f === '5-9' && !(_v >= 5 && _v <= 9)) return false;
+      if (_f === '10-19' && !(_v >= 10 && _v <= 19)) return false;
+      if (_f === '20+' && _v < 20) return false;
+    }
     if (window._trendOkOn && s.trend_ok !== true) return false;
     if (dir && s.direction !== dir) return false;
     // ── Отбор по тренду монеты (EMA20/50 per TF на момент сигнала) ──
@@ -10361,7 +10382,7 @@ function filterJournal() {
     return true;
   });
   // Apply current sort
-  const _numFields = new Set(['at_ts','score','entry','pump_score','vol24']);
+  const _numFields = new Set(['at_ts','score','entry','pump_score','vol24','mso_streak2h']);
   filtered.sort((a, b) => {
     let va = a[_jSortField], vb = b[_jSortField];
     if (va == null || va === '') va = _numFields.has(_jSortField) ? -Infinity : '';
@@ -10795,7 +10816,7 @@ function renderJournal(items, startIdx) {
   startIdx = startIdx || 0;
   const tbody = document.getElementById('jBody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="19" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="20" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
     return;
   }
   tbody.innerHTML = items.map((s, i) => {
@@ -10908,6 +10929,21 @@ function renderJournal(items, startIdx) {
         : _t4 === 'DOWN'
           ? '<td class="mono" style="text-align:center;font-size:15px;font-weight:800;color:#ff4d6d;background:rgba(255,77,109,0.14);" title="4h: DOWN — EMA20 < EMA50">▼</td>'
           : '<td class="mono" style="text-align:center;font-size:13px;color:#aaa;" title="4h: FLAT — EMA20 ≈ EMA50">◆</td>';
+    // ⏳ серия зелёных 2h-баров MSO (16.09)
+    const _ms2 = s.mso_streak2h;
+    let streakCell = '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    if (_ms2 != null) {
+      const _isL = s.direction === 'LONG';
+      let _c = 'var(--muted)', _w = 400, _b = '';
+      if (_isL && _ms2 >= 10 && _ms2 <= 19) { _c = '#00e5a0'; _w = 800; _b = 'background:rgba(0,229,160,0.14);'; }
+      else if (_isL && _ms2 >= 20) { _c = '#ff4d6d'; _w = 800; _b = 'background:rgba(255,77,109,0.12);'; }
+      else if (_isL && _ms2 >= 1) { _c = '#88d8a3'; _w = 700; }
+      else if (!_isL && _ms2 >= 20) { _c = '#00e5a0'; _w = 800; _b = 'background:rgba(0,229,160,0.14);'; }
+      const _tip = _isL
+        ? (_ms2 >= 20 ? '20+ зелёных — лонги −0.60, перезрело' : _ms2 >= 10 ? '10-19 — пик лонгов (+1.95)' : _ms2 >= 1 ? '1-9 — лонги в плюсе' : 'MSO красный — контр-вход (+1.01)')
+        : (_ms2 >= 20 ? '20+ зелёных — шорт-зона (+0.48)' : 'шорты в плюсе только при 20+');
+      streakCell = `<td class="mono" style="text-align:center;font-size:12px;font-weight:${_w};color:${_c};${_b}" title="⏳ ${_tip}">${_ms2}</td>`;
+    }
     // 📊 OI — текущее изменение открытого интереса пары (из /api/oi-map)
     const _oiv = (window._oiMap || {})[(s.symbol || (s.pair || '').replace('/', '')).toUpperCase()];
     const oiCell = (_oiv == null || _oiv.d4h == null)
@@ -10966,6 +11002,7 @@ function renderJournal(items, startIdx) {
       ${proCell}
       ${trendCell}
       ${t4Cell}
+      ${streakCell}
       ${volCell}
       ${oiCell}
       <td class="mono">${s.entry || '—'}</td>

@@ -362,6 +362,15 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
                                 "reasons": _v.get("reasons")}
         except Exception:
             sig["validator_ok"] = None
+        # ⏳ серия зелёных 2h-баров MSO — штамп для журнала/фильтра
+        # (бэктест 16.09: лонги 1-19 плюс, пик 10-19; 20+ — шорт-зона)
+        try:
+            from mso_retest import green_streak_2h
+            _pp = sig.get("pair") or ((sig.get("symbol") or "")[:-4]
+                                      + "/USDT")
+            sig["mso_streak2h"] = green_streak_2h(_pp)
+        except Exception:
+            sig["mso_streak2h"] = None
         # ✓/✗-штамп «по своему ТФ тренда» (17.08): LONG↔2h, SHORT↔12h
         # (бэктест 13.9k исходов: спред +0.28/+0.26пп; 4h лонгам — инверсия)
         try:

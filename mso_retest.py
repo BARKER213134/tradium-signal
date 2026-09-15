@@ -248,6 +248,34 @@ def detect_obexit(candles: list[dict], now_ms: float):
             "trend": ema_trend([x["c"] for x in c[:idx + 1]])}
 
 
+def green_streak_2h(pair_slash: str, candles: list[dict] | None = None):
+    """⏳ Число подряд ЗАКРЫТЫХ 2h-баров с MSO>50 (бэктест 16.09,
+    9.8k живых лонгов: серия 1-4 +1.61 · 5-9 +1.05 · 10-19 +1.95 (пик)
+    · 20+ −0.60 — лонги запрещены, зато шорты +0.48). None — нет данных."""
+    try:
+        from database import utcnow
+        if candles is None:
+            from exchange import get_klines_any
+            candles = get_klines_any(pair_slash, "2h", WINDOW)
+        if not candles or len(candles) < 130:
+            return None
+        c = candles[-WINDOW:]
+        idx = _closed_idx(c, 2 * 3600_000, utcnow().timestamp() * 1000)
+        if idx < 115:
+            return None
+        osc = mso_series(c[:idx + 1])
+        n = 0
+        for i in range(idx, -1, -1):
+            v = osc[i]
+            if not math.isnan(v) and v > 50:
+                n += 1
+            else:
+                break
+        return n
+    except Exception:
+        return None
+
+
 async def _pair_gate(pair_norm: str, db) -> bool:
     if pair_norm[:-4] in STABLE_BASES:
         return False
