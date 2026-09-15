@@ -7957,7 +7957,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jHotOnlyBtn" style="display:none;"></button>
   <button id="jStarOnlyBtn" onclick="_toggleStarOnly()" title="⭐ Показать только ОТБОРНЫЕ входы — профиль победителей поверх ✅ ДА: лидер 7д (>±10%) + ATR>1.5% + RSI4h в рабочей зоне + без догона + 3+ подтверждений + счёт светофора >=6. Бэктест 3 мес (1005 сигналов): EV +1.28%/сделку, 34% доходят до +10%; режим позиций: +72%/мес суммарного PnL. Редкая метка (~1% сигналов) — пусто значит рынок не даёт профиль." style="background:linear-gradient(135deg, rgba(255,210,62,0.20), rgba(255,140,80,0.10));border:1.5px solid rgba(255,210,62,0.65);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ffd23e;cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;font-weight:700;">⭐ Отборные · OFF</button>
   <button id="jValidOnlyBtn" onclick="_toggleValidOnly()" title="🧿 Только ВАЛИДНЫЕ по валидатору «у уровня И против режима» (ретро 45д, 12.5k исходов: WR 52.9, +1.43%/вход; остальное 38.7/−0.02; режет ~86% потока). Вердикт есть только у сигналов после 16.09." style="background:rgba(123,92,255,0.12);border:1.5px solid rgba(123,92,255,0.55);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#b28bff;cursor:pointer;min-width:120px;text-align:center;box-sizing:border-box;font-weight:700;">🧿 Валидные · OFF</button>
-  <select id="jStreakFilter" onchange="renderJournalPage()" title="⏳ Отбор по серии зелёных 2h-баров MSO (бэктест 16.09: лонги 10-19 — пик +1.95; 20+ — лонги минус, шорт-зона +0.48). Вердикт есть у сигналов после 16.09." style="background:var(--dark);color:var(--text);border:1px solid rgba(0,229,160,0.35);border-radius:6px;padding:4px 8px;font-size:11px;font-family:var(--font-mono);">
+  <select id="jStreakFilter" onchange="window._streakSave(this.value)" title="⏳ Отбор по серии зелёных 2h-баров MSO (бэктест 16.09: лонги 10-19 — пик +1.95; 20+ — лонги минус, шорт-зона +0.48). Вердикт есть у сигналов после 16.09." style="background:var(--dark);color:var(--text);border:1px solid rgba(0,229,160,0.35);border-radius:6px;padding:4px 8px;font-size:11px;font-family:var(--font-mono);">
     <option value="">⏳ Серия: все</option>
     <option value="1-4">🟢 1-4</option>
     <option value="5-9">🟢 5-9</option>
@@ -7971,14 +7971,28 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   window._starOnlyOn = false;
   window._validOnlyOn = false;
   // ⏳ клик по ячейке серии — быстрый отбор корзины (повтор — сброс)
+  window._streakSave = function(v) {
+    try { localStorage.setItem('j_streak_filter', v || ''); } catch (e) {}
+    renderJournalPage();
+  };
   window._streakPick = function(bk) {
     const sel = document.getElementById('jStreakFilter');
     if (!sel) return;
     sel.value = (sel.value === bk) ? '' : bk;
-    renderJournalPage();
+    window._streakSave(sel.value);
   };
+  // 17.09: липкие фильтры — переход на график перезагружает страницу
+  // и сбрасывал отбор; восстанавливаем из localStorage
+  try {
+    const _sv = localStorage.getItem('j_streak_filter') || '';
+    const _se = document.getElementById('jStreakFilter');
+    if (_se && _sv) _se.value = _sv;
+    if (localStorage.getItem('j_valid_only') === '1'
+        && !window._validOnlyOn) window._toggleValidOnly();
+  } catch (e) {}
   window._toggleValidOnly = function() {
     window._validOnlyOn = !window._validOnlyOn;
+    try { localStorage.setItem('j_valid_only', window._validOnlyOn ? '1' : ''); } catch (e) {}
     const b = document.getElementById('jValidOnlyBtn');
     b.textContent = window._validOnlyOn ? '🧿 Валидные · ON' : '🧿 Валидные · OFF';
     b.style.background = window._validOnlyOn ? 'rgba(123,92,255,0.45)' : 'rgba(123,92,255,0.12)';
