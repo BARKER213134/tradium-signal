@@ -6950,7 +6950,12 @@ function trDirBtns() {
       const bg = v === 0 ? 'none' : v === 1 ? 'rgba(0,229,160,0.12)' : 'rgba(255,77,109,0.12)';
       return `<button onclick="trCycle('${tf}')" style="background:${bg};border:1px solid var(--border);border-radius:6px;color:${col};font-size:11px;font-weight:800;cursor:pointer;padding:4px 8px;font-family:var(--font-mono);">${tf} ${sym}</button>`;
     }).join('') +
-    `<button onclick="_trF={'1h':0,'2h':0,'4h':0,'12h':0};trDirBtns();trRender();" style="background:none;border:none;color:var(--muted);font-size:10px;cursor:pointer;">сброс</button>`;
+    `<button onclick="_trF={'1h':0,'2h':0,'4h':0,'12h':0};trDirBtns();trRender();" style="background:none;border:none;color:var(--muted);font-size:10px;cursor:pointer;">сброс</button>` +
+    // 🌅 пресеты по бэктесту комбинаций трендов 17.09 (12.5k исходов)
+    `<span style="color:var(--border);margin:0 4px;">|</span>` +
+    `<button onclick="_trF={'1h':1,'2h':0,'4h':-1,'12h':0};trDirBtns();trRender();" title="🌅 РАННИЙ РАЗВОРОТ: 1h уже ▲, 4h ещё ▼ — лучшие лонг-комбинации бэктеста (1h▲2h▼4h▼: +1.71/вход WR 50 · 1h▲2h▲4h▼: +1.46 WR 48, обе половины в плюсе). Для сравнения: полный ап (все ▲) даёт лишь +0.24." style="background:linear-gradient(135deg,rgba(0,229,160,0.18),rgba(255,210,62,0.10));border:1.5px solid rgba(0,229,160,0.55);border-radius:6px;color:#00e5a0;font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">🌅 Ранний разворот</button>` +
+    `<button onclick="_trF={'1h':-1,'2h':-1,'4h':-1,'12h':0};trDirBtns();trRender();" title="🕳 ДНО: все младшие ▼ (1h▼2h▼4h▼) — контр-лонг от дна: +1.37/вход WR 50, обе половины в плюсе. Сюда же смотрит красная серия MSO 27+ (дно-зона +1.81)." style="background:rgba(76,201,240,0.10);border:1.5px solid rgba(76,201,240,0.5);border-radius:6px;color:#4cc9f0;font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">🕳 Дно</button>` +
+    `<button onclick="_trF={'1h':0,'2h':-1,'4h':-1,'12h':1};trDirBtns();trRender();" title="💧 ОТКАТ В ТРЕНДЕ: 2h▼ 4h▼ при живом 12h▲ — buy-the-dip (+1.68/вход, WR 56 на свежем срезе — набирает историю)." style="background:rgba(123,92,255,0.10);border:1.5px solid rgba(123,92,255,0.5);border-radius:6px;color:#b28bff;font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">💧 Откат в тренде</button>`;
 }
 async function trLoad() {
   try {
