@@ -285,29 +285,34 @@ async def _potok_loop():
 
 
 async def _mso_retest_loop():
-    """🧲 Ретест свечи смены структуры MSO 4h (13.09, бэктест: возврат к
-    уровню смены в 83-86% за 7д, вход в сторону свежей смены LONG +0.93):
-    скан через ~9 мин после закрытия каждого 4h-бара (после st_touch,
-    чтобы не толкаться). Один догоняющий скан на старте."""
+    """🧲/🌡 MSO-сигналы (грид 15.09: MSO — шортовый индикатор): 2h
+    SHORT-ретест (эдж +0.24) после 2h-границ +9 мин; на границах 12h
+    (00/12 UTC) — 🌡 снятие перегрева 12h SHORT (эдж +0.32, лучшее
+    правило грида). 4h-версия удалена (эдж +0.11). Догоняющий скан на
+    старте."""
     import asyncio as _asyncio
     await _asyncio.sleep(420)
     try:
         import mso_retest as _msr
         await _asyncio.to_thread(_hb, "mso_retest")
-        await _msr.check_all()
+        await _msr.check_all("retest")
+        await _msr.check_all("obexit")
     except Exception:
-        logger.exception("[mso-retest] initial scan crashed")
+        logger.exception("[mso] initial scan crashed")
     while True:
         try:
             from database import utcnow
             secs = utcnow().timestamp()
-            next_b = (int(secs // 14400) + 1) * 14400 + 540
+            next_b = (int(secs // 7200) + 1) * 7200 + 540
             await _asyncio.sleep(max(60, next_b - secs))
             await _asyncio.to_thread(_hb, "mso_retest")
             import mso_retest as _msr
-            await _msr.check_all()
+            await _msr.check_all("retest")
+            bh = int(((utcnow().timestamp() - 540) % 86400) // 3600)
+            if bh % 12 == 0:
+                await _msr.check_all("obexit")
         except Exception:
-            logger.exception("[mso-retest] loop crashed")
+            logger.exception("[mso] loop crashed")
             await _asyncio.sleep(600)
 
 
