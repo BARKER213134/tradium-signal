@@ -7106,8 +7106,14 @@ function dpMsSpan(ms) {
   const col = ms == null ? 'var(--border)' : ms <= -27 ? '#4cc9f0' : ms >= 27 ? '#ff9d5c' : ms > 0 ? '#88d8a3' : '#ff8fa8';
   return `<span style="font-weight:800;color:${col};" title="⏳ серия MSO 2h сейчас">${ms == null ? '·' : ms}</span>`;
 }
-function dpCoinRow(r, tfs) {
-  return `<div onclick="try{openPairChart('${r.s}','2h')}catch(e){}" style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
+function dpOpen(sym, bk) {
+  // ◀▶ в модале ходит по колонке, из которой открыли монету
+  window._dpCurBk = bk;
+  if (window._dpLists && window._dpLists[bk]) window._kcQmList = window._dpLists[bk];
+  try { openPairChart(sym, '2h'); } catch (e) {}
+}
+function dpCoinRow(r, tfs, bk) {
+  return `<div onclick="dpOpen('${r.s}','${bk}')" style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
     <b style="width:82px;overflow:hidden;text-overflow:ellipsis;">${r.s.replace('USDT','')}</b>
     <span style="letter-spacing:2px;">${dpArrows(r, tfs)}</span>
     ${dpMsSpan(r.ms != null ? r.ms : null)}
@@ -7137,9 +7143,9 @@ function dpRender() {
     .sort((a, b) => ((((b.chg || {})['1h']) || '')).localeCompare((((a.chg || {})['1h']) || '')));
   const heat = rows.filter(r => r.ms != null && r.ms >= 27).sort((a, b) => b.ms - a.ms);
   const empty = t => `<div style="padding:14px;color:var(--muted);font-size:11.5px;line-height:1.5;">${t}</div>`;
-  document.getElementById('dpSilver').innerHTML = silver.map(r => dpCoinRow(r, tfs)).join('') || empty('пусто — сейчас нет монет с дном и красной серией 27+ (экстремальная корзина, это нормально)');
-  document.getElementById('dpDawn').innerHTML = dawn.map(r => dpCoinRow(r, tfs)).join('') || empty('пусто — нет монет 1h▲ при 4h▼');
-  document.getElementById('dpHeat').innerHTML = heat.map(r => dpCoinRow(r, tfs)).join('') || empty('пусто — нет перезрелых монет с зелёной серией 27+');
+  document.getElementById('dpSilver').innerHTML = silver.map(r => dpCoinRow(r, tfs, 'silver')).join('') || empty('пусто — сейчас нет монет с дном и красной серией 27+ (экстремальная корзина, это нормально)');
+  document.getElementById('dpDawn').innerHTML = dawn.map(r => dpCoinRow(r, tfs, 'dawn')).join('') || empty('пусто — нет монет 1h▲ при 4h▼');
+  document.getElementById('dpHeat').innerHTML = heat.map(r => dpCoinRow(r, tfs, 'heat')).join('') || empty('пусто — нет перезрелых монет с зелёной серией 27+');
   document.getElementById('dpSilverN').textContent = silver.length ? '· ' + silver.length : '';
   document.getElementById('dpDawnN').textContent = dawn.length ? '· ' + dawn.length : '';
   document.getElementById('dpHeatN').textContent = heat.length ? '· ' + heat.length : '';
@@ -7162,7 +7168,7 @@ function dpRender() {
     else if (it.direction === 'LONG' && ms != null && ms >= 16) warn = '<span style="color:#ffd23e;" title="⚠️ серия 16-26 — затухание роста, осторожно">⚠️</span>';
     else if (it.direction === 'SHORT' && ms != null && ms < 27) warn = '<span style="color:#ff5e9c;font-weight:800;" title="⛔ шорт вне 🌡-зоны: валидный шорт при серии <27 даёт −0.66 (WR 37), красная серия ещё хуже — бэктест 45д/9.8k. Шортить только при зелёной 27+">⛔&lt;27</span>';
     else if (it.direction === 'SHORT' && ms != null && ms >= 27) warn = '<span style="color:#ff9d5c;font-weight:800;" title="🌡 шорт в зоне 27+: единственный рабочий валидный шорт — +0.62/вход WR 53, обе половины в плюсе">🌡✓</span>';
-    return `<div onclick="try{openPairChart('${it.symbol}','2h')}catch(e){}" style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
+    return `<div onclick="dpOpen('${it.symbol}','gold')" style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
       <span style="color:var(--muted);font-size:10.5px;">${t}</span>
       <b style="min-width:72px;">${(it.symbol || '').replace('USDT', '')}</b>
       <span style="color:${dirCol};font-weight:800;">${it.direction === 'LONG' ? '▲L' : '▼S'}</span>
@@ -7172,8 +7178,12 @@ function dpRender() {
   }).join('');
   document.getElementById('dpGold').innerHTML = goldHtml || empty('за 24ч валидных 🧿 сигналов не было — валидатор пропускает лишь ~15% потока, тишина это нормально');
   document.getElementById('dpGoldN').textContent = gold.length ? '· ' + gold.length : '';
-  // ◀▶ листание в модале графика — по порядку корзин
-  window._kcQmList = gold.map(g => g.it.symbol).concat(silver.map(r => r.s), dawn.map(r => r.s), heat.map(r => r.s));
+  // ◀▶ листание в модале графика — внутри колонки кликнутой монеты
+  window._dpLists = {gold: gold.map(g => g.it.symbol), silver: silver.map(r => r.s),
+    dawn: dawn.map(r => r.s), heat: heat.map(r => r.s)};
+  window._kcQmList = (window._dpCurBk && window._dpLists[window._dpCurBk])
+    ? window._dpLists[window._dpCurBk]
+    : window._dpLists.gold.concat(window._dpLists.silver, window._dpLists.dawn, window._dpLists.heat);
 }
 async function dpLoad() {
   try {
