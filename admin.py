@@ -9468,12 +9468,14 @@ async def api_academy():
         # 🌐 рыночный контекст (кэш 10 мин): фандинг всех перпов + BTC-режим
         import time as _time
         mkt = _ACADEMY_MKT
-        if _time.time() - mkt.get("t", 0) > 600:
+        # пустая карта фандинга не кэшируется надолго (ретрай 2 мин)
+        if _time.time() - mkt.get("t", 0) > (600 if mkt.get("fund") else 120):
             fund = {}
+            fund_err = None
             try:
                 import requests as _rq
                 rr = _rq.get("https://fapi.binance.com/fapi/v1/premiumIndex",
-                             timeout=10)
+                             timeout=25)
                 if rr.status_code == 200:
                     for it in rr.json():
                         try:
@@ -9481,8 +9483,10 @@ async def api_academy():
                                 it.get("lastFundingRate") or 0)
                         except Exception:
                             pass
-            except Exception:
-                pass
+                else:
+                    fund_err = f"http {rr.status_code}"
+            except Exception as e:
+                fund_err = str(e)[:120]
             btc = {}
             try:
                 from exchange import get_klines_any as _gk
@@ -9502,7 +9506,9 @@ async def api_academy():
                     btc["d"] = brow.get("d") or {}
             except Exception:
                 pass
-            mkt.update({"t": _time.time(), "fund": fund, "btc": btc})
+            mkt.update({"t": _time.time(),
+                        "fund": fund or mkt.get("fund") or {},
+                        "fund_err": fund_err, "btc": btc})
         since = utcnow() - _td(hours=48)
         feed = []
         for d in db.new_strategy_signals.find(
@@ -9608,6 +9614,8 @@ async def api_academy():
         return {"ok": True, "meta": meta,
                 "lgbm": (model or {}).get("lgbm"),
                 "btc": mkt.get("btc"), "port": port, "paper": paper,
+                "fund_n": len(mkt.get("fund") or {}),
+                "fund_err": mkt.get("fund_err"),
                 "rules": out_rules, "feed": feed}
     return await asyncio.to_thread(_q)
 
