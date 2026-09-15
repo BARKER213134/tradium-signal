@@ -78,7 +78,9 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
                 # журнале) — фильтр по источнику находил пустоту
                 "volcano",
                 # 13.09: mso_retest — вход от уровня, растворять нельзя
-                "mso_retest", "mso_obexit"}
+                "mso_retest", "mso_obexit",
+                # 16.09: rsi_deepos — точечный лонг-вход, в 🧩 не растворять
+                "rsi_deepos"}
     from collections import defaultdict
 
     groupable = [it for it in items

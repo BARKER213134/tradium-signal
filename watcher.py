@@ -316,6 +316,36 @@ async def _mso_retest_loop():
             await _asyncio.sleep(600)
 
 
+async def _rsi_deepos_loop():
+    """🤿 RSI-дно (грид 16.09: 2h эдж +0.89 — лучший лонг исследования,
+    4h +0.69): скан через ~10.5 мин после закрытия 2h-бара; на границах
+    4h — дополнительно 4h. Догоняющий скан на старте."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(480)
+    try:
+        import rsi_deepos as _rd
+        await _asyncio.to_thread(_hb, "rsi_deepos")
+        await _rd.check_all("2h")
+        await _rd.check_all("4h")
+    except Exception:
+        logger.exception("[rsi-deepos] initial scan crashed")
+    while True:
+        try:
+            from database import utcnow
+            secs = utcnow().timestamp()
+            next_b = (int(secs // 7200) + 1) * 7200 + 630
+            await _asyncio.sleep(max(60, next_b - secs))
+            await _asyncio.to_thread(_hb, "rsi_deepos")
+            import rsi_deepos as _rd
+            await _rd.check_all("2h")
+            bh = int(((utcnow().timestamp() - 630) % 86400) // 3600)
+            if bh % 4 == 0:
+                await _rd.check_all("4h")
+        except Exception:
+            logger.exception("[rsi-deepos] loop crashed")
+            await _asyncio.sleep(600)
+
+
 async def _alarm_outcome_loop():
     """🏁 Исходы сработавших 🎯-будильников (19.08, запрос «делай
     трекер»): каждые 30 мин ведём план до конца (цель 1.5R / стоп /
@@ -3987,6 +4017,7 @@ async def start_watcher():
         asyncio.create_task(_alarm_outcome_loop())
         asyncio.create_task(_st_touch_loop())
         asyncio.create_task(_mso_retest_loop())
+        asyncio.create_task(_rsi_deepos_loop())
         logger.info("[svetofor] stamp loop started")
     except Exception:
         logger.exception("[svetofor] failed to start loop")
