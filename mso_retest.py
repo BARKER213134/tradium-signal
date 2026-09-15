@@ -318,6 +318,10 @@ async def _pair_retest(pair_norm: str, tf: str = "2h") -> bool:
     stored = await asyncio.to_thread(store_signal, sig, 1)
     if not stored:
         return False
+    # 🧿-гейт 16.09: невалидный (не у уровня / по режиму) — в журнале
+    # остаётся, TG молчит; None (нет данных) — fail-open, шлём
+    if sig.get("validator_ok") is False:
+        return True
     age_h = ev["bars_since"] * RETEST_TF_H[tf]
     gate_txt = " · тренд 4h DOWN ✓" if tf == "4h" else ""
     txt = (f"🧲 <b>РЕТЕСТ СМЕНЫ {tf} · {pair_slash.replace('/USDT', '')}</b>\n"
@@ -378,6 +382,10 @@ async def _pair_obexit(pair_norm: str) -> bool:
     stored = await asyncio.to_thread(store_signal, sig, 1)
     if not stored:
         return False
+    # 🧿-гейт 16.09: невалидный (не у уровня / по режиму) — в журнале
+    # остаётся, TG молчит; None (нет данных) — fail-open, шлём
+    if sig.get("validator_ok") is False:
+        return True
     txt = (f"🌡 <b>ПЕРЕГРЕВ СНЯТ 12h · {pair_slash.replace('/USDT', '')}</b>\n"
            f"🔴 SHORT — MSO вышел из перекупленности "
            f"({ev['mso_prev']} → {ev['mso_now']}, порог {OB_LEVEL:.0f}) · "

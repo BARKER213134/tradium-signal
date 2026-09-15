@@ -10432,6 +10432,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
             "indicators.dz": 1, "indicators.absorb": 1,  # 💪
             "indicators.push_against": 1,
             "hot": 1,  # 🔥 горячая монета на момент сигнала
+            "validator_ok": 1,  # 🧿 у уровня И против режима
         }).sort("created_at", -1).limit(400):
             at_dt = n.get("created_at")
             strat = n.get("strategy", "?")
@@ -10567,6 +10568,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 "hot": bool(n.get("hot")),
                 "vitality": n.get("vitality"),
                 "trend_ok": n.get("trend_ok"),
+                "validator_ok": n.get("validator_ok"),
                 "whale_tier": n.get("whale_tier"),
                 "whale_score": n.get("whale_score"),
                 "whale_seq": n.get("whale_seq"),
@@ -11407,6 +11409,7 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "ns_strategy": strat,
                 "ns_state": n.get("state", "WAITING"),
                 "hot": bool(n.get("hot")),
+                "validator_ok": n.get("validator_ok"),
                 # 💀/😴 живость монеты НА МОМЕНТ сигнала (штамп/бэкфилл)
                 "vitality": n.get("vitality"),
                 # ✓/✗ по «своему» ТФ тренда (LONG↔2h, SHORT↔12h)

@@ -133,6 +133,10 @@ async def _pair(pair_norm: str, tf: str) -> bool:
     stored = await asyncio.to_thread(store_signal, sig, 1)
     if not stored:
         return False
+    # 🧿-гейт 16.09: невалидный (не у уровня / по режиму) — в журнале
+    # остаётся, TG молчит; None (нет данных) — fail-open, шлём
+    if sig.get("validator_ok") is False:
+        return True
     try:
         from watcher import _bot16
         from config import WHALE_CHAT_ID

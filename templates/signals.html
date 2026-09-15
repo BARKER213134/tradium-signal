@@ -7956,8 +7956,18 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <button id="jNearLevelBtn" style="display:none;"></button>
   <button id="jHotOnlyBtn" style="display:none;"></button>
   <button id="jStarOnlyBtn" onclick="_toggleStarOnly()" title="⭐ Показать только ОТБОРНЫЕ входы — профиль победителей поверх ✅ ДА: лидер 7д (>±10%) + ATR>1.5% + RSI4h в рабочей зоне + без догона + 3+ подтверждений + счёт светофора >=6. Бэктест 3 мес (1005 сигналов): EV +1.28%/сделку, 34% доходят до +10%; режим позиций: +72%/мес суммарного PnL. Редкая метка (~1% сигналов) — пусто значит рынок не даёт профиль." style="background:linear-gradient(135deg, rgba(255,210,62,0.20), rgba(255,140,80,0.10));border:1.5px solid rgba(255,210,62,0.65);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#ffd23e;cursor:pointer;min-width:130px;text-align:center;box-sizing:border-box;font-weight:700;">⭐ Отборные · OFF</button>
+  <button id="jValidOnlyBtn" onclick="_toggleValidOnly()" title="🧿 Только ВАЛИДНЫЕ по валидатору «у уровня И против режима» (ретро 45д, 12.5k исходов: WR 52.9, +1.43%/вход; остальное 38.7/−0.02; режет ~86% потока). Вердикт есть только у сигналов после 16.09." style="background:rgba(123,92,255,0.12);border:1.5px solid rgba(123,92,255,0.55);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);color:#b28bff;cursor:pointer;min-width:120px;text-align:center;box-sizing:border-box;font-weight:700;">🧿 Валидные · OFF</button>
   <script>
   window._starOnlyOn = false;
+  window._validOnlyOn = false;
+  window._toggleValidOnly = function() {
+    window._validOnlyOn = !window._validOnlyOn;
+    const b = document.getElementById('jValidOnlyBtn');
+    b.textContent = window._validOnlyOn ? '🧿 Валидные · ON' : '🧿 Валидные · OFF';
+    b.style.background = window._validOnlyOn ? 'rgba(123,92,255,0.45)' : 'rgba(123,92,255,0.12)';
+    b.style.color = window._validOnlyOn ? '#fff' : '#b28bff';
+    renderJournalPage();
+  };
   window._toggleStarOnly = function() {
     window._starOnlyOn = !window._starOnlyOn;
     const b = document.getElementById('jStarOnlyBtn');
@@ -10166,6 +10176,8 @@ function filterJournal() {
     }
     // ⭐ Отборные — профиль победителей (live pro_star или зафиксированный)
     if (window._starOnlyOn && !(s.pro_star || s.svetofor_star)) return false;
+    // 🧿 только валидные (вердикт есть у сигналов после 16.09)
+    if (window._validOnlyOn && s.validator_ok !== true) return false;
     if (window._trendOkOn && s.trend_ok !== true) return false;
     if (dir && s.direction !== dir) return false;
     // ── Отбор по тренду монеты (EMA20/50 per TF на момент сигнала) ──
@@ -10865,7 +10877,7 @@ function renderJournal(items, startIdx) {
       else if (g === 'НЕТ')
         _svb = `<span title="${tipSV}" style="color:#ff5e9c;font-weight:800;font-size:10px;margin-right:2px;">✘</span>`;
     }
-    const pairCell = moonPrefix + _svb + (_vm ? `<span title="${_vm === '💀' ? 'мёртвая: ATR<0.8% + просадка/затухший объём — движения не приходят (до +10% доходит 13% против 31%)' : 'спячка: сжатие на сухом объёме — ждать выхода из диапазона'}">${_vm}</span>` : '') + `<span class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.4);">${pair}</span>` +
+    const pairCell = moonPrefix + _svb + (s.validator_ok === true ? '<span title="🧿 ВАЛИДНЫЙ: у ST-уровня (≤4%) и против режима рынка — ретро 45д: WR 53, +1.43%/вход против −0.02 у остального">🧿</span>' : '') + (_vm ? `<span title="${_vm === '💀' ? 'мёртвая: ATR<0.8% + просадка/затухший объём — движения не приходят (до +10% доходит 13% против 31%)' : 'спячка: сжатие на сухом объёме — ждать выхода из диапазона'}">${_vm}</span>` : '') + `<span class="copyable-pair" onclick="window._copyPair('${pair}', event)" title="Кликни чтобы скопировать ${pair}USDT" style="cursor:copy;border-bottom:1px dashed rgba(0,229,160,0.4);">${pair}</span>` +
       `<span onclick="showEntryCheck('${pair}USDT', '${s.direction === 'SHORT' ? 'SHORT' : 'LONG'}');event.stopPropagation()" title="🚦 Проверка входа: входить или нет (фаза · догон · RS · RSI · сигналы · уровни)" style="display:inline-block;cursor:pointer;margin-left:6px;font-size:16px;line-height:1;padding:4px 8px;border-radius:7px;background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.35);vertical-align:middle;">🚦</span>`;
     // Highlight row если moonshot
     if (stackD >= 4 && !stFail) {

@@ -151,6 +151,9 @@ async def send_hot_alert(sig: dict, ctx: Optional[dict] = None,
     if score < HOT_MIN_SCORE and not force:
         return None
 
+    # 🧿-гейт 16.09: невалидные не шлём и в HOT-канал
+    if sig.get('validator_ok') is False:
+        return None
     # Rate / dedup key
     pair = sig.get('pair') or sig.get('symbol', '')
     direction = (sig.get('direction') or '').upper()

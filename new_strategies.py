@@ -939,6 +939,9 @@ def _bot13_token_sync():
 
 async def _send_strategy_alert(sig: dict) -> None:
     """Send Telegram alert via BOT13. Strategy emoji + pair + dir + entry/sl/tp."""
+    # 🧿-гейт 16.09: невалидный сигнал в TG не шлём (журнал полный)
+    if sig.get("validator_ok") is False:
+        return
     try:
         from config import NEW_STRATEGY_CHAT_ID
         BOT13_BOT_TOKEN = await asyncio.to_thread(_bot13_token_sync)

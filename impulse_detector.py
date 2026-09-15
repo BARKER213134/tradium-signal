@@ -350,6 +350,18 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
             sig["hot"] = bool(is_hot(sig.get("symbol") or sig.get("pair")))
         except Exception:
             sig["hot"] = False
+        # 🧿 валидатор «у уровня И против режима» (ретро 16.09: ✅ WR 53
+        # +1.43 против 39/−0.02 у остального). Штамп для журнала и
+        # TG-гейтов отправителей; fail-open (None) при нехватке данных.
+        try:
+            from signal_validator import validate as _sv
+            _v = _sv(sig.get("symbol") or "", sig.get("direction") or "")
+            sig["validator_ok"] = _v.get("ok")
+            sig["validator"] = {"dist_pct": _v.get("dist_pct"),
+                                "breadth_pct": _v.get("breadth_pct"),
+                                "reasons": _v.get("reasons")}
+        except Exception:
+            sig["validator_ok"] = None
         # ✓/✗-штамп «по своему ТФ тренда» (17.08): LONG↔2h, SHORT↔12h
         # (бэктест 13.9k исходов: спред +0.28/+0.26пп; 4h лонгам — инверсия)
         try:
