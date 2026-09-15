@@ -7969,6 +7969,13 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   <script>
   window._starOnlyOn = false;
   window._validOnlyOn = false;
+  // ⏳ клик по ячейке серии — быстрый отбор корзины (повтор — сброс)
+  window._streakPick = function(bk) {
+    const sel = document.getElementById('jStreakFilter');
+    if (!sel) return;
+    sel.value = (sel.value === bk) ? '' : bk;
+    renderJournalPage();
+  };
   window._toggleValidOnly = function() {
     window._validOnlyOn = !window._validOnlyOn;
     const b = document.getElementById('jValidOnlyBtn');
@@ -10935,17 +10942,22 @@ function renderJournal(items, startIdx) {
     const _ms2 = s.mso_streak2h;
     let streakCell = '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
     if (_ms2 != null) {
+      // универсальная окраска корзин (16.09): 0 серый · 1-9 зелёный ·
+      // 10-15 ярко-зелёный (пик лонгов) · 16-26 жёлтый (затухание) ·
+      // 27+ оранжево-красный (обрыв лонгов / шорт-зона)
+      let _bk, _c, _w = 700, _b = '';
+      if (_ms2 >= 27) { _bk = '27+'; _c = '#ff9d5c'; _w = 800; _b = 'background:rgba(255,120,60,0.16);'; }
+      else if (_ms2 >= 16) { _bk = '16-26'; _c = '#ffd23e'; }
+      else if (_ms2 >= 10) { _bk = '10-15'; _c = '#00e5a0'; _w = 800; _b = 'background:rgba(0,229,160,0.16);'; }
+      else if (_ms2 >= 5) { _bk = '5-9'; _c = '#88d8a3'; }
+      else if (_ms2 >= 1) { _bk = '1-4'; _c = '#88d8a3'; }
+      else { _bk = '0'; _c = 'var(--muted)'; }
       const _isL = s.direction === 'LONG';
-      let _c = 'var(--muted)', _w = 400, _b = '';
-      if (_isL && _ms2 >= 10 && _ms2 <= 15) { _c = '#00e5a0'; _w = 800; _b = 'background:rgba(0,229,160,0.14);'; }
-      else if (_isL && _ms2 >= 27) { _c = '#ff4d6d'; _w = 800; _b = 'background:rgba(255,77,109,0.12);'; }
-      else if (_isL && _ms2 >= 16) { _c = '#c9d67a'; _w = 700; }
-      else if (_isL && _ms2 >= 1) { _c = '#88d8a3'; _w = 700; }
-      else if (!_isL && _ms2 >= 27) { _c = '#00e5a0'; _w = 800; _b = 'background:rgba(0,229,160,0.14);'; }
-      const _tip = _isL
-        ? (_ms2 >= 27 ? '27+ зелёных — ОБРЫВ (−2.15, WR 21), не входить' : _ms2 >= 16 ? '16-26 — затухание, слабый плюс' : _ms2 >= 10 ? '10-15 — пик лонгов (+2.4..2.5)' : _ms2 >= 1 ? '1-9 — лонги в плюсе' : 'MSO красный — контр-вход (+1.01)')
-        : (_ms2 >= 27 ? '27+ зелёных — шорт-зона (+0.84, WR 47)' : 'шорты в плюсе только при 27+');
-      streakCell = `<td class="mono" style="text-align:center;font-size:12px;font-weight:${_w};color:${_c};${_b}" title="⏳ ${_tip}">${_ms2}</td>`;
+      const _tip = (_isL
+        ? (_ms2 >= 27 ? 'лонги: ОБРЫВ (−2.15, WR 21) — не входить' : _ms2 >= 16 ? 'лонги: затухание (слабый плюс)' : _ms2 >= 10 ? 'лонги: ПИК (+2.4..2.5)' : _ms2 >= 1 ? 'лонги в плюсе' : 'MSO красный — контр-вход (+1.01)')
+        : (_ms2 >= 27 ? 'шорты: ЗОНА (+0.84, WR 47)' : 'шорты в плюсе только при 27+'))
+        + ' · клик — отбор корзины ' + _bk;
+      streakCell = `<td class="mono" onclick="event.stopPropagation();window._streakPick('${_bk}')" style="text-align:center;font-size:12px;font-weight:${_w};color:${_c};${_b}cursor:pointer;" title="⏳ серия ${_ms2} на момент сигнала · ${_tip}">${_ms2}</td>`;
     }
     // 📊 OI — текущее изменение открытого интереса пары (из /api/oi-map)
     const _oiv = (window._oiMap || {})[(s.symbol || (s.pair || '').replace('/', '')).toUpperCase()];

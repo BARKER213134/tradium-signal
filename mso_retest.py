@@ -260,8 +260,27 @@ def green_streak_2h(pair_slash: str, candles: list[dict] | None = None):
     try:
         from database import utcnow
         if candles is None:
-            from exchange import get_klines_any
-            candles = get_klines_any(pair_slash, "2h", STREAK_WINDOW)
+            # 16.09: график (klines-delta) рисует ФЬЮЧЕРСНЫЕ свечи —
+            # серия должна считаться из того же источника, иначе у
+            # порога 50 возможны расхождения. fapi → спот-фолбэк.
+            candles = None
+            try:
+                import requests as _rq
+                _r = _rq.get("https://fapi.binance.com/fapi/v1/klines",
+                             params={"symbol": pair_slash.replace("/", ""),
+                                     "interval": "2h",
+                                     "limit": STREAK_WINDOW},
+                             timeout=8)
+                if _r.status_code == 200:
+                    candles = [{"t": int(x[0]), "o": float(x[1]),
+                                "h": float(x[2]), "l": float(x[3]),
+                                "c": float(x[4]), "v": float(x[5])}
+                               for x in _r.json()]
+            except Exception:
+                candles = None
+            if not candles:
+                from exchange import get_klines_any
+                candles = get_klines_any(pair_slash, "2h", STREAK_WINDOW)
         if not candles or len(candles) < 130:
             return None
         c = candles[-STREAK_WINDOW:]
