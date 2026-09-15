@@ -284,6 +284,49 @@ async def _potok_loop():
         await _asyncio.sleep(300)
 
 
+async def _academy_loop():
+    """🎓 Академия: ночной самопересчёт модели (окно 04:xx UTC),
+    bootstrap если модели нет. Пересбор ~10-20 мин — целиком в to_thread,
+    event loop не трогаем."""
+    import asyncio as _asyncio
+    from database import utcnow
+    await _asyncio.sleep(240)
+    while True:
+        try:
+            import learn_engine as _le
+            from database import _get_db
+            m = await _asyncio.to_thread(
+                lambda: _get_db().learn_model.find_one(
+                    {"_id": "active"}, {"built_at": 1}))
+            now = utcnow()
+            need = m is None
+            if m is not None and now.hour == 4:
+                need = (m.get("built_at") or "")[:10] != now.strftime("%Y-%m-%d")
+            if need:
+                logger.info("[academy] пересчёт модели запускается")
+                model = await _asyncio.to_thread(_le.recompute)
+                if model:
+                    logger.info(f"[academy] готово: v{model.get('version')} "
+                                f"({model.get('rows_n')} строк)")
+        except Exception:
+            logger.exception("[academy] loop crashed")
+        await _asyncio.sleep(1800)
+
+
+async def _academy_ai_loop():
+    """🧠 Академия: AI-разбор одобренных позиций (Gemini→Groq), батч
+    раз в 5 мин, кэш в learn_ai — каждая позиция анализируется один раз."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(420)
+    while True:
+        try:
+            import learn_ai as _lai
+            await _asyncio.to_thread(_lai.run_batch)
+        except Exception:
+            logger.exception("[ai] loop crashed")
+        await _asyncio.sleep(300)
+
+
 async def _mso_retest_loop():
     """🧲/🌡 MSO-сигналы (грид 15.09: MSO — шортовый индикатор): 2h
     SHORT-ретест (эдж +0.24) после 2h-границ +9 мин; на границах 12h
@@ -4024,6 +4067,8 @@ async def start_watcher():
         asyncio.create_task(_st_touch_loop())
         asyncio.create_task(_mso_retest_loop())
         asyncio.create_task(_rsi_deepos_loop())
+        asyncio.create_task(_academy_loop())
+        asyncio.create_task(_academy_ai_loop())
         logger.info("[svetofor] stamp loop started")
     except Exception:
         logger.exception("[svetofor] failed to start loop")

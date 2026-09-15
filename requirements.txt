@@ -17,3 +17,4 @@ yfinance==0.2.50
 slowapi==0.1.9
 sentry-sdk[fastapi]==2.18.0
 ccxt==4.4.49
+lightgbm==4.7.0

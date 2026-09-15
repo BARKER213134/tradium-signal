@@ -7049,6 +7049,147 @@ trLoad();
 setInterval(trLoad, 60000);
 </script>
 
+{% elif bot == 'academy' %}
+<!-- ════════════ 🎓 Академия — самообучаемая модель платформы (17.09.26) ════════════ -->
+<div style="display:flex;gap:12px;align-items:stretch;flex-wrap:wrap;margin-bottom:12px;">
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;">
+    <div id="acVer" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">версия модели</div>
+  </div>
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;">
+    <div id="acData" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">сигналов в обучении</div>
+  </div>
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;">
+    <div style="font-size:22px;font-weight:900;font-family:var(--font-mono);"><span id="acShow" style="color:#00e5a0;">&mdash;</span> / <span id="acHide" style="color:#ff5e9c;">&mdash;</span> / <span id="acShadow" style="color:#ffd23e;">&mdash;</span></div>
+    <div style="font-size:10px;color:var(--muted);">правил: показ / скрытие / тень</div>
+  </div>
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;" title="LightGBM-челленджер работает в тени: обучается ночью на тех же данных, гейтом пока не является. AUC — качество ранжирования на out-of-sample четверти окна.">
+    <div id="acLgbm" style="font-size:22px;font-weight:900;font-family:var(--font-mono);color:#b28bff;">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">🤖 LightGBM AUC (тень)</div>
+  </div>
+  <span id="acUpd" style="font-size:10.5px;color:var(--muted);align-self:center;"></span>
+</div>
+<div id="acBrief" style="display:none;background:linear-gradient(135deg,rgba(123,92,255,0.08),rgba(0,212,255,0.05));border:1px solid rgba(123,92,255,0.35);border-radius:10px;padding:12px 16px;margin-bottom:12px;font-size:12.5px;line-height:1.6;color:var(--text);white-space:pre-wrap;"></div>
+<div style="font-size:10.5px;color:var(--muted);margin:0 0 12px;line-height:1.6;">
+  Модель каждую ночь (04:xx UTC) пересобирает себя из свечей и всех сигналов за окно: пересчитывает исход каждого сигнала (TP+10/SL−5/96ч), обновляет EV-таблицу правил, включает только стабильное (n≥40, обе половины окна одного знака, подтверждение пересчётами), разжалует деградировавшее. Журнал и TG она не трогает — вся её жизнь на этой вкладке.
+</div>
+<div style="display:grid;grid-template-columns:minmax(340px,1fr) minmax(380px,1.25fr);gap:12px;align-items:start;">
+  <div>
+    <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
+      <button id="acFsh" onclick="_acF='show';acRenderFeed();" style="border-radius:6px;border:1.5px solid rgba(0,229,160,0.5);background:rgba(0,229,160,0.12);color:#00e5a0;font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">🎓 Одобрено</button>
+      <button id="acFhd" onclick="_acF='hide';acRenderFeed();" style="border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">🚫 Скрыто</button>
+      <button id="acFnt" onclick="_acF='none';acRenderFeed();" style="border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">⚪ Без вердикта</button>
+    </div>
+    <div style="background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.4);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#00e5a0;">Лента 48ч <span id="acFeedN" style="opacity:0.8;"></span></div>
+    <div id="acFeed" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:72vh;overflow-y:auto;"></div>
+  </div>
+  <div>
+    <div style="background:rgba(123,92,255,0.10);border:1px solid rgba(123,92,255,0.4);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#b28bff;">Правила модели</div>
+    <div id="acRules" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:76vh;overflow-y:auto;"></div>
+  </div>
+</div>
+<script>
+let _acD = null, _acF = 'show';
+const AC_EMO = {supertrend_vip: '🌀', supertrend_mtf: '🌀', supertrend_daily: '🌀',
+  volume_surge: '🌊', combo: '🧠', impulse: '🚀', fade: '🎣', ignition: '💥',
+  ten: '💰', delta_series: '🫧', st_break: '🧨', st_break4h: '💣', blowoff: '🌋',
+  thin_pump: '💨', floor_buy: '💎', vol_anomaly: '⚡', vol_anomaly4h: '🌩',
+  potok: '🌊', rocket_pullback: '🪃', support_defense: '🧱', channel_top: '📐',
+  corridor: '🎈', level_touch: '📏', flip_retest: '🪜', full_stack: '🧗',
+  struct_top: '🏚', st_touch: '🏓', mso_retest: '🧲', mso_obexit: '🌡',
+  rsi_deepos: '🤿', rev_candle: '🕯'};
+function acMsSpan(ms) {
+  const col = ms == null ? 'var(--border)' : ms <= -27 ? '#4cc9f0' : ms >= 27 ? '#ff9d5c' : ms > 0 ? '#88d8a3' : '#ff8fa8';
+  return `<span style="font-weight:800;color:${col};font-family:var(--font-mono);">${ms == null ? '·' : ms}</span>`;
+}
+function acRenderFeed() {
+  const d = _acD;
+  if (!d) return;
+  const map = {show: 'ACTIVE_SHOW', hide: 'ACTIVE_HIDE', none: null};
+  ['acFsh', 'acFhd', 'acFnt'].forEach((id, i) => {
+    const on = ['show', 'hide', 'none'][i] === _acF;
+    const el = document.getElementById(id);
+    el.style.background = on ? ['rgba(0,229,160,0.12)', 'rgba(255,77,109,0.12)', 'rgba(148,163,184,0.12)'][i] : 'none';
+    el.style.color = on ? ['#00e5a0', '#ff5e9c', 'var(--text-2)'][i] : 'var(--muted)';
+    el.style.borderColor = on ? ['rgba(0,229,160,0.5)', 'rgba(255,77,109,0.5)', 'var(--border)'][i] : 'var(--border)';
+  });
+  const rows = (d.feed || []).filter(f => f.verdict === map[_acF] || (map[_acF] === null && !f.verdict));
+  window._acRows = rows;
+  const html = rows.slice(0, 250).map((f, fi) => {
+    const t = new Date(f.at + (f.at.endsWith('Z') ? '' : 'Z'));
+    const tt = t.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+    const dirCol = f.dir === 'LONG' ? '#00e5a0' : '#ff5e9c';
+    const rl = f.rule ? `<span style="font-size:10px;color:var(--muted);" title="${f.rule.label}: n=${f.rule.n} WR=${f.rule.wr} avgR=${f.rule.avg}">EV ${f.rule.ev > 0 ? '+' : ''}${f.rule.ev} <i>n${f.rule.n}</i></span>` : '';
+    return `<div onclick="try{openPairChart('${f.sym}','2h')}catch(e){}" style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
+      <span style="color:var(--muted);font-size:10px;white-space:nowrap;">${tt}</span>
+      <b style="min-width:72px;">${f.sym.replace('USDT', '')}</b>
+      <span style="color:${dirCol};font-weight:800;">${f.dir === 'LONG' ? '▲L' : '▼S'}</span>
+      <span title="${f.src}">${AC_EMO[f.src] || '✨'}</span>
+      ${f.val === true ? '<span title="🧿 валидный">🧿</span>' : ''}
+      ${acMsSpan(f.ms)}
+      ${rl}
+      ${f.ai ? `<span onclick="event.stopPropagation();acToggleAi(${fi});" title="🧠 AI-разбор позиции (${f.ai_by || ''}) — клик" style="cursor:pointer;margin-left:auto;">🧠</span>` : ''}
+    </div>
+    ${f.ai ? `<div id="acAi_${fi}" style="display:none;padding:8px 14px 10px 34px;border-bottom:1px solid rgba(42,49,64,0.5);background:rgba(123,92,255,0.06);font-size:11.5px;line-height:1.55;white-space:pre-wrap;">${f.ai.replace(/</g, '&lt;')}</div>` : ''}`;
+  }).join('');
+  document.getElementById('acFeed').innerHTML = html || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">пусто в этой группе за 48ч</div>';
+  document.getElementById('acFeedN').textContent = '· ' + rows.length;
+}
+function acToggleAi(i) {
+  const el = document.getElementById('acAi_' + i);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+function acRenderRules() {
+  const d = _acD;
+  if (!d) return;
+  const grp = [['ACTIVE_SHOW', '🎓 Показывать', '#00e5a0'],
+               ['ACTIVE_HIDE', '🚫 Скрывать', '#ff5e9c'],
+               ['SHADOW', '👁 Тень (кандидаты и разжалованные)', '#ffd23e']];
+  let html = '';
+  grp.forEach(([st, title, col]) => {
+    const rs = (d.rules || []).filter(r => r.status === st);
+    if (!rs.length) return;
+    html += `<div style="padding:7px 12px;font-size:10.5px;font-weight:800;color:${col};background:rgba(255,255,255,0.03);border-bottom:1px solid var(--border);">${title} · ${rs.length}</div>`;
+    html += rs.map(r => `<div style="display:grid;grid-template-columns:1fr 44px 46px 60px 84px;gap:4px;align-items:center;padding:5px 12px;border-bottom:1px solid rgba(42,49,64,0.4);font-size:11px;font-family:var(--font-mono);" title="стаж подтверждений: ${r.runs} · свежих 14д: ${r.recent_n}${r.degraded != null ? ' · ⚠️ ДЕГРАДАЦИЯ: свежие 14д avgR ' + r.degraded : ''}">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.degraded != null ? '⚠️ ' : ''}${r.label}</span>
+      <span style="color:var(--muted);text-align:right;">${r.n}</span>
+      <span style="text-align:right;">${r.wr}</span>
+      <span style="text-align:right;font-weight:800;color:${r.avg > 0 ? '#00e5a0' : '#ff5e9c'};">${r.avg > 0 ? '+' : ''}${r.avg}</span>
+      <span style="color:var(--muted);text-align:right;font-size:10px;">${r.h1 == null ? '' : (r.h1 > 0 ? '+' : '') + r.h1 + ' / ' + (r.h2 > 0 ? '+' : '') + r.h2}</span>
+    </div>`).join('');
+  });
+  document.getElementById('acRules').innerHTML = html || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">модель ещё не построена — первый ночной пересчёт заполнит таблицу</div>';
+}
+async function acLoad() {
+  try {
+    const r = await fetch('/api/academy');
+    _acD = await r.json();
+  } catch (e) { return; }
+  const m = _acD.meta;
+  if (m) {
+    document.getElementById('acVer').textContent = 'v' + m.version;
+    document.getElementById('acData').textContent = (m.rows_n || 0).toLocaleString('ru') + ' · ' + (m.syms_n || 0) + ' пар';
+    document.getElementById('acShow').textContent = m.n_show;
+    document.getElementById('acHide').textContent = m.n_hide;
+    document.getElementById('acShadow').textContent = m.n_shadow;
+    const dt = new Date(m.built_at + (String(m.built_at).endsWith('Z') ? '' : 'Z'));
+    document.getElementById('acUpd').textContent = 'пересчёт: ' + dt.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}) + ' · окно ' + m.window_days + 'д · сборка ' + m.build_sec + 'с · следующий ~04:10 UTC';
+    if (m.brief) {
+      const b = document.getElementById('acBrief');
+      b.textContent = '🤖 ' + m.brief;
+      b.style.display = 'block';
+    }
+  }
+  const lg = _acD.lgbm;
+  document.getElementById('acLgbm').textContent = lg && lg.ok ? lg.auc + ' · топ20% ' + (lg.oos_top20_avg > 0 ? '+' : '') + lg.oos_top20_avg : '—';
+  acRenderFeed();
+  acRenderRules();
+}
+acLoad();
+setInterval(acLoad, 90000);
+</script>
+
 {% elif bot == 'daypick' %}
 <!-- ════════════ 🥇 Отбор — дневной скринер по пирамиде входов (17.09.26) ════════════ -->
 <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">

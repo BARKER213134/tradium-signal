@@ -4742,7 +4742,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
     query = db.query(Signal).filter(Signal.source == bot)
 
     # Cryptovizor имеет свои вкладки
-    if bot in ("confluence", "journal", "autotrading", "fundingpips", "daypick"):
+    if bot in ("confluence", "journal", "autotrading", "fundingpips", "daypick", "academy"):
         return templates.TemplateResponse(request, "signals.html", {
             "signals": [],
             "total": 0,
@@ -9451,6 +9451,78 @@ def _setup_check_batch_sync(hours: int, max_pairs: int):
                   if x.get("verdict") in ("ENTER_LONG", "ENTER_SHORT"))
     return {"ok": True, "hours": hours, "checked": len(items),
             "setups": n_setup, "items": items}
+
+
+@app.get("/api/academy")
+async def api_academy():
+    """🎓 Академия: активная модель + скоринг ленты 48ч по её правилам."""
+    def _q():
+        from datetime import timedelta as _td
+        from database import _get_db, utcnow
+        import learn_engine as le
+        db = _get_db()
+        model = db.learn_model.find_one({"_id": "active"})
+        since = utcnow() - _td(hours=48)
+        feed = []
+        for d in db.new_strategy_signals.find(
+                {"created_at": {"$gte": since},
+                 "direction": {"$in": ["LONG", "SHORT"]}},
+                {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
+                 "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}
+                ).sort("created_at", -1).limit(400):
+            feed.append({
+                "key": "ns_" + str(d["_id"]),
+                "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
+                "src": d.get("strategy") or "?", "dir": d["direction"],
+                "at": d["created_at"].isoformat(),
+                "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
+        for d in db.supertrend_signals.find(
+                {"created_at": {"$gte": since},
+                 "direction": {"$in": ["LONG", "SHORT"]}},
+                {"pair": 1, "pair_norm": 1, "direction": 1, "tier": 1,
+                 "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}
+                ).sort("created_at", -1).limit(400):
+            feed.append({
+                "key": "st_" + str(d["_id"]),
+                "sym": d.get("pair_norm") or (d.get("pair") or "").replace("/", ""),
+                "src": "supertrend_" + (d.get("tier") or "?"),
+                "dir": d["direction"], "at": d["created_at"].isoformat(),
+                "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
+        feed.sort(key=lambda x: x["at"], reverse=True)
+        feed = feed[:400]
+        # 🧠 кэш AI-разборов одобренных позиций (learn_ai, цикл watcher)
+        ai_map = {}
+        try:
+            for a in db.learn_ai.find(
+                    {"sig_at": {"$gte": since}},
+                    {"text": 1, "provider": 1}):
+                ai_map[a["_id"]] = a
+        except Exception:
+            pass
+        for f in feed:
+            status, rule = le.score_signal(
+                model, f["src"], f["dir"], f["val"], f["ms"])
+            f["verdict"] = status
+            if rule:
+                f["rule"] = {"label": rule["label"], "ev": rule.get("ev"),
+                             "n": rule["n"], "wr": rule["wr"], "avg": rule["avg"]}
+            a = ai_map.get(f.get("key"))
+            if a:
+                f["ai"] = a.get("text")
+                f["ai_by"] = a.get("provider")
+        out_rules = []
+        if model:
+            for r in model.get("rules") or []:
+                if r["status"] != "NEUTRAL" or r.get("degraded") is not None:
+                    out_rules.append(r)
+        meta = ({k: model.get(k) for k in (
+            "version", "built_at", "window_days", "rows_n", "syms_n",
+            "build_sec", "n_show", "n_hide", "n_shadow", "brief", "degraded")}
+            if model else None)
+        return {"ok": True, "meta": meta,
+                "lgbm": (model or {}).get("lgbm"),
+                "rules": out_rules, "feed": feed}
+    return await asyncio.to_thread(_q)
 
 
 @app.get("/api/trends")
