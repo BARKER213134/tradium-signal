@@ -148,11 +148,8 @@ def _refresh_auto_levels(db, alarms, px):
                 {"$set": {"state": "EXPIRED", "expired_at": _utcnow(),
                           "note": (a.get("note") or "")
                           + " · ⌛ зона ушла — уровень неактуален, снят"}})
-            _tg(f"⌛ <b>АВТО-ВХОД · {base}</b> — снят: цена у уровня "
-                f"{_fmt(a['price'])}, но зоны на стороне сделки там больше "
-                f"нет (разметка уехала)")
-            # событие в журнал/на график (19.08: «чтобы видеть, насколько
-            # правильно оно работает»)
+            # 16.09: TG о снятии убран («не сигналь когда переставляется,
+            # только когда сработал») — событие пишем молча для статистики
             try:
                 db.alarm_events.insert_one({
                     "symbol": a["symbol"], "kind": "unarm",
@@ -176,8 +173,7 @@ def _refresh_auto_levels(db, alarms, px):
                         "plan_stop": _stop, "plan_tp": _tp,
                         "note": (a.get("note") or "")
                         + f" · 🔁 перевзведён → {edge:.6g} (зона сдвинулась)"})
-            _tg(f"🔁 <b>АВТО-ВХОД · {base}</b> — уровень перевзведён к "
-                f"актуальной зоне: {_fmt(a['price'])} → <b>{_fmt(edge)}</b>")
+            # 16.09: TG о перевзводе убран — событие пишем молча
             try:
                 db.alarm_events.insert_one({
                     "symbol": a["symbol"], "kind": "rearm",

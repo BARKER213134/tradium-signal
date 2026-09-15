@@ -10224,12 +10224,13 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                 {"symbol": sym_clean, "at": {"$gte": since}}).sort("at", -1):
             ae_at = ae.get("at")
             k = ae.get("kind")
+            # 16.09: 📌 перестановки и ⌛ снятия убраны с графика (запрос
+            # «только когда будильник сработал»); 🛎 точка постановки
+            # остаётся (запрос 19.08)
+            if k in ("rearm", "unarm"):
+                continue
             em = "⏰🚨" if k == "price+signal" else ("🚨" if k == "signal" else "⏰")
             _adir = ae.get("sig_direction") or ae.get("sig_dir") or ""
-            # 18.08: у 🎯-входов показываем ПЛАН (вход/стоп/цель из note),
-            # а не голое «сработал»; 19.08: 🛎 взведение / 🔁 перевзвод /
-            # ⌛ снятие у цены — отдельные события, весь жизненный цикл
-            # будильника виден на графике
             if k == "arm":
                 patt = ("🛎 ВЗВЕДЁН · " + ae["note"].removeprefix("🎯 ")
                         if ae.get("note") else
@@ -10762,8 +10763,9 @@ def _compute_journal_sync(_fast_only: bool = False):
             ae_at = ae.get("at")
             k = ae.get("kind")
             # 🛎 взведения на графиках есть (by-symbol), в общем журнале
-            # были бы спамом (100+/день) — Будильники и так их показывают
-            if k == "arm":
+            # были бы спамом (100+/день) — Будильники и так их показывают;
+            # 16.09: 📌 перестановки и ⌛ снятия тоже не сигналим — только ⏰
+            if k in ("arm", "rearm", "unarm"):
                 continue
             em = "⏰🚨" if k == "price+signal" else ("🚨" if k == "signal" else "⏰")
             _adir = ae.get("sig_direction") or ae.get("sig_dir") or ""
