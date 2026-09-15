@@ -23,6 +23,33 @@ _recent_sent: dict = {}
 _global_rate: list = []  # timestamps of recent sends
 
 
+_bot15_cache = {"tok": None, "ts": 0.0}
+
+
+def _bot15_token_sync():
+    """Токен BOT15: env → Mongo (system_config._id='bot15_token').
+    Захардкоженный токен убран после угона 15.09.26 (репо публичный);
+    Railway-переменной нет — прод берёт токен из общей базы. Кэш 10 мин.
+    Вызывать только через to_thread (sync Mongo в event loop вешает
+    watcher)."""
+    from config import BOT15_BOT_TOKEN
+    if BOT15_BOT_TOKEN:
+        return BOT15_BOT_TOKEN
+    now = time.time()
+    if _bot15_cache["tok"] and now - _bot15_cache["ts"] < 600:
+        return _bot15_cache["tok"]
+    try:
+        from database import _get_db
+        doc = _get_db().system_config.find_one({"_id": "bot15_token"}) or {}
+        tok = (doc.get("value") or "").strip()
+        if tok:
+            _bot15_cache["tok"] = tok
+            _bot15_cache["ts"] = now
+        return tok or None
+    except Exception:
+        return _bot15_cache["tok"]
+
+
 def _can_send(key: str, now_ts: float) -> bool:
     """Rate limiting + per-pair dedup."""
     # Global: max 10/hour
@@ -136,7 +163,8 @@ async def send_hot_alert(sig: dict, ctx: Optional[dict] = None,
 
     # Send
     try:
-        from config import BOT15_BOT_TOKEN, ADMIN_CHAT_ID, HOT_SIGNALS_CHAT_ID
+        from config import ADMIN_CHAT_ID, HOT_SIGNALS_CHAT_ID
+        BOT15_BOT_TOKEN = await asyncio.to_thread(_bot15_token_sync)
         chat_id = HOT_SIGNALS_CHAT_ID or ADMIN_CHAT_ID
     except Exception:
         try:
