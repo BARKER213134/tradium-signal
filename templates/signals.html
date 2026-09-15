@@ -7160,7 +7160,8 @@ function dpRender() {
     let warn = '';
     if (it.direction === 'LONG' && ms != null && ms >= 27) warn = '<span style="color:#ff5e9c;font-weight:800;" title="⛔ зелёная серия 27+ — зона обрыва (−2.15, WR 21): лонг запрещён">⛔27+</span>';
     else if (it.direction === 'LONG' && ms != null && ms >= 16) warn = '<span style="color:#ffd23e;" title="⚠️ серия 16-26 — затухание роста, осторожно">⚠️</span>';
-    else if (it.direction === 'SHORT' && ms != null && ms < 0) warn = '<span style="color:#ff5e9c;font-weight:800;" title="⛔ красная серия — шорт в минус во всех корзинах">⛔🔴</span>';
+    else if (it.direction === 'SHORT' && ms != null && ms < 27) warn = '<span style="color:#ff5e9c;font-weight:800;" title="⛔ шорт вне 🌡-зоны: валидный шорт при серии <27 даёт −0.66 (WR 37), красная серия ещё хуже — бэктест 45д/9.8k. Шортить только при зелёной 27+">⛔&lt;27</span>';
+    else if (it.direction === 'SHORT' && ms != null && ms >= 27) warn = '<span style="color:#ff9d5c;font-weight:800;" title="🌡 шорт в зоне 27+: единственный рабочий валидный шорт — +0.62/вход WR 53, обе половины в плюсе">🌡✓</span>';
     return `<div onclick="try{openPairChart('${it.symbol}','2h')}catch(e){}" style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
       <span style="color:var(--muted);font-size:10.5px;">${t}</span>
       <b style="min-width:72px;">${(it.symbol || '').replace('USDT', '')}</b>
