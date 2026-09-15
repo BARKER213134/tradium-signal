@@ -7049,6 +7049,146 @@ trLoad();
 setInterval(trLoad, 60000);
 </script>
 
+{% elif bot == 'daypick' %}
+<!-- ════════════ 🥇 Отбор — дневной скринер по пирамиде входов (17.09.26) ════════════ -->
+<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:14px;">
+    <div id="dpBreadth" style="font-size:30px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.5;">пар в аптренде 4h<br>(широта рынка)</div>
+  </div>
+  <div id="dpVerdict" style="border-radius:10px;padding:12px 18px;font-size:13px;font-weight:800;border:1px solid var(--border);background:var(--dark);">&hellip;</div>
+  <span id="dpUpd" style="font-size:10.5px;color:var(--muted);"></span>
+</div>
+<div style="font-size:10.5px;color:var(--muted);margin:-6px 0 12px;line-height:1.6;">
+  Приоритет входов: <b>🥇 валидный лонг → 🥈 дно+красная 27+ → 🌅 ранний разворот</b> · шорт только 🌡 зелёная 27+ ·
+  ⛔ запреты: не лонговать 🟢 27+ (обрыв −2.15) · не шортить красную серию · сетка бэктестов: TP +10% / SL −5% / до 96ч · клик по монете — график
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px;align-items:start;">
+  <div>
+    <div style="background:linear-gradient(135deg,rgba(255,210,62,0.16),rgba(255,179,71,0.08));border:1px solid rgba(255,210,62,0.5);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#ffd23e;" title="🧿 сигнал у ST-уровня И против режима — золото платформы: WR 64, +3.85/вход (ретро 45д). Любой свежий валидный лонг — первоочередной вход, дробление по корзинам ничего не добавляет.">🥇 Валидные 🧿 за 24ч <span id="dpGoldN" style="opacity:0.8;"></span></div>
+    <div id="dpGold" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:64vh;overflow-y:auto;"></div>
+  </div>
+  <div>
+    <div style="background:rgba(76,201,240,0.12);border:1px solid rgba(76,201,240,0.5);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#4cc9f0;" title="дно (1h▼2h▼4h▼) + красная серия MSO 27+: +1.23/вход WR 49 — самая устойчивая корзина без валидатора. Ватчлист: ждём лонг-сигнал по этим монетам.">🥈 Дно + красная 27+ <span id="dpSilverN" style="opacity:0.8;"></span></div>
+    <div id="dpSilver" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:64vh;overflow-y:auto;"></div>
+  </div>
+  <div>
+    <div style="background:linear-gradient(135deg,rgba(0,229,160,0.14),rgba(255,210,62,0.08));border:1px solid rgba(0,229,160,0.45);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#00e5a0;" title="1h уже ▲ при 4h ещё ▼ — ранний разворот: +1.71/вход (при 2h▼) и +1.46 (при 2h▲). Бронза пирамиды, работает и без валидатора (+0.81).">🌅 Ранний разворот <span id="dpDawnN" style="opacity:0.8;"></span></div>
+    <div id="dpDawn" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:64vh;overflow-y:auto;"></div>
+  </div>
+  <div>
+    <div style="background:rgba(255,120,60,0.12);border:1px solid rgba(255,120,60,0.5);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#ff9d5c;" title="зелёная серия MSO 27+ — перезрелый рост, единственная рабочая шорт-корзина: +0.87/вход WR 46 (обе половины в плюсе).">🌡 Шорт-зона 27+ <span id="dpHeatN" style="opacity:0.8;"></span></div>
+    <div id="dpHeat" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:64vh;overflow-y:auto;"></div>
+  </div>
+</div>
+<script>
+let _dpTr = null, _dpJr = null;
+// эмодзи источников (сжатая копия серверной STRAT_EMOJI + журнальные)
+const DP_EMO = {supertrend: '🌀', stack: '🧗', volume_surge: '🌊', combo: '🧠',
+  impulse: '🚀', fade: '🎣', ignition: '💥', ten: '💰', delta_series: '🫧',
+  st_break: '🧨', st_break4h: '💣', blowoff: '🌋', thin_pump: '💨',
+  floor_buy: '💎', vol_anomaly: '⚡', vol_anomaly4h: '🌩', potok: '🌊',
+  rocket_pullback: '🪃', support_defense: '🧱', channel_top: '📐',
+  corridor: '🎈', level_touch: '📏', flip_retest: '🪜', full_stack: '🧗',
+  struct_top: '🏚', st_touch: '🏓', mso_retest: '🧲', mso_obexit: '🌡',
+  rsi_deepos: '🤿', rev_candle: '🕯', hot_now: '🔥'};
+function dpMs(sym) {
+  const row = ((_dpTr || {}).rows || []).find(x => x.s === sym);
+  return row && row.ms != null ? row.ms : null;
+}
+function dpArrows(r, tfs) {
+  return tfs.map(tf => {
+    const v = (r.d || {})[tf] || 0;
+    return v > 0 ? '<span style="color:#00e5a0;">▲</span>' : v < 0 ? '<span style="color:#ff5e9c;">▼</span>' : '<span style="color:var(--muted);">·</span>';
+  }).join('');
+}
+function dpMsSpan(ms) {
+  const col = ms == null ? 'var(--border)' : ms <= -27 ? '#4cc9f0' : ms >= 27 ? '#ff9d5c' : ms > 0 ? '#88d8a3' : '#ff8fa8';
+  return `<span style="font-weight:800;color:${col};" title="⏳ серия MSO 2h сейчас">${ms == null ? '·' : ms}</span>`;
+}
+function dpCoinRow(r, tfs) {
+  return `<div onclick="try{openPairChart('${r.s}','2h')}catch(e){}" style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
+    <b style="width:82px;overflow:hidden;text-overflow:ellipsis;">${r.s.replace('USDT','')}</b>
+    <span style="letter-spacing:2px;">${dpArrows(r, tfs)}</span>
+    ${dpMsSpan(r.ms != null ? r.ms : null)}
+  </div>`;
+}
+function dpRender() {
+  if (!_dpTr || !_dpTr.ok) return;
+  const d = _dpTr, tfs = d.tfs || ['1h', '2h', '4h', '12h'];
+  const p4 = (d.pct || {})['4h'];
+  const bEl = document.getElementById('dpBreadth');
+  bEl.textContent = p4 == null ? '—' : p4 + '%';
+  bEl.style.color = p4 == null ? 'var(--muted)' : p4 >= 55 ? '#00e5a0' : p4 <= 45 ? '#ff5e9c' : '#ffd23e';
+  const v = document.getElementById('dpVerdict');
+  if (p4 == null) { v.textContent = 'нет данных широты'; }
+  else if (p4 <= 45) { v.innerHTML = '🟢 <b>Режим лонгов от дна</b> — рынок придавлен, 🧿-валидатор пропускает лонги'; v.style.color = '#00e5a0'; v.style.borderColor = 'rgba(0,229,160,0.45)'; }
+  else if (p4 >= 55) { v.innerHTML = '🔴 <b>Перегрев</b> — лонг-🧿 закрыт (широта &gt;55%), смотри 🌡 шорт-зону'; v.style.color = '#ff9d5c'; v.style.borderColor = 'rgba(255,120,60,0.5)'; }
+  else { v.innerHTML = '🟡 <b>Нейтрально</b> — широта 45-55%: 🧿 режет обе стороны, жди края'; v.style.color = '#ffd23e'; v.style.borderColor = 'rgba(255,210,62,0.4)'; }
+  if (d.updated) {
+    const dt = new Date(d.updated);
+    document.getElementById('dpUpd').textContent = 'скан трендов: ' + dt.toLocaleTimeString('ru', {hour: '2-digit', minute: '2-digit'}) + ' · автообновление 60с';
+  }
+  const rows = d.rows || [];
+  const dd = (r, tf) => ((r.d || {})[tf] || 0);
+  const silver = rows.filter(r => dd(r, '1h') === -1 && dd(r, '2h') === -1 && dd(r, '4h') === -1 && r.ms != null && r.ms <= -27)
+    .sort((a, b) => a.ms - b.ms);
+  const dawn = rows.filter(r => dd(r, '1h') === 1 && dd(r, '4h') === -1 && !(r.ms != null && r.ms >= 27))
+    .sort((a, b) => ((((b.chg || {})['1h']) || '')).localeCompare((((a.chg || {})['1h']) || '')));
+  const heat = rows.filter(r => r.ms != null && r.ms >= 27).sort((a, b) => b.ms - a.ms);
+  const empty = t => `<div style="padding:14px;color:var(--muted);font-size:11.5px;line-height:1.5;">${t}</div>`;
+  document.getElementById('dpSilver').innerHTML = silver.map(r => dpCoinRow(r, tfs)).join('') || empty('пусто — сейчас нет монет с дном и красной серией 27+ (экстремальная корзина, это нормально)');
+  document.getElementById('dpDawn').innerHTML = dawn.map(r => dpCoinRow(r, tfs)).join('') || empty('пусто — нет монет 1h▲ при 4h▼');
+  document.getElementById('dpHeat').innerHTML = heat.map(r => dpCoinRow(r, tfs)).join('') || empty('пусто — нет перезрелых монет с зелёной серией 27+');
+  document.getElementById('dpSilverN').textContent = silver.length ? '· ' + silver.length : '';
+  document.getElementById('dpDawnN').textContent = dawn.length ? '· ' + dawn.length : '';
+  document.getElementById('dpHeatN').textContent = heat.length ? '· ' + heat.length : '';
+  // 🥇 свежие валидные из журнала (дедуп по монете+направлению, счётчик ×N)
+  const cut = Date.now() / 1000 - 86400;
+  const seen = {}; const gold = [];
+  (_dpJr || []).filter(it => it.validator_ok === true && (it.at_ts || 0) >= cut)
+    .sort((a, b) => (b.at_ts || 0) - (a.at_ts || 0))
+    .forEach(it => {
+      const k = it.symbol + '|' + it.direction;
+      if (seen[k]) { seen[k].n++; return; }
+      seen[k] = {it: it, n: 1}; gold.push(seen[k]);
+    });
+  const goldHtml = gold.map(g => {
+    const it = g.it, ms = dpMs(it.symbol);
+    const t = new Date((it.at_ts || 0) * 1000).toLocaleTimeString('ru', {hour: '2-digit', minute: '2-digit'});
+    const dirCol = it.direction === 'LONG' ? '#00e5a0' : '#ff5e9c';
+    let warn = '';
+    if (it.direction === 'LONG' && ms != null && ms >= 27) warn = '<span style="color:#ff5e9c;font-weight:800;" title="⛔ зелёная серия 27+ — зона обрыва (−2.15, WR 21): лонг запрещён">⛔27+</span>';
+    else if (it.direction === 'LONG' && ms != null && ms >= 16) warn = '<span style="color:#ffd23e;" title="⚠️ серия 16-26 — затухание роста, осторожно">⚠️</span>';
+    else if (it.direction === 'SHORT' && ms != null && ms < 0) warn = '<span style="color:#ff5e9c;font-weight:800;" title="⛔ красная серия — шорт в минус во всех корзинах">⛔🔴</span>';
+    return `<div onclick="try{openPairChart('${it.symbol}','2h')}catch(e){}" style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
+      <span style="color:var(--muted);font-size:10.5px;">${t}</span>
+      <b style="min-width:72px;">${(it.symbol || '').replace('USDT', '')}</b>
+      <span style="color:${dirCol};font-weight:800;">${it.direction === 'LONG' ? '▲L' : '▼S'}</span>
+      <span style="font-size:11px;" title="${it.source || ''}">${DP_EMO[it.source] || '✨'}${g.n > 1 ? '<span style="color:var(--muted);font-size:10px;">×' + g.n + '</span>' : ''}</span>
+      ${dpMsSpan(ms)} ${warn}
+    </div>`;
+  }).join('');
+  document.getElementById('dpGold').innerHTML = goldHtml || empty('за 24ч валидных 🧿 сигналов не было — валидатор пропускает лишь ~15% потока, тишина это нормально');
+  document.getElementById('dpGoldN').textContent = gold.length ? '· ' + gold.length : '';
+  // ◀▶ листание в модале графика — по порядку корзин
+  window._kcQmList = gold.map(g => g.it.symbol).concat(silver.map(r => r.s), dawn.map(r => r.s), heat.map(r => r.s));
+}
+async function dpLoad() {
+  try {
+    const [rt, rj] = await Promise.all([
+      fetch('/api/trends'),
+      fetch('/api/journal?limit=800').catch(() => null),
+    ]);
+    _dpTr = await rt.json();
+    if (rj) { const j = await rj.json(); _dpJr = j.items || []; }
+  } catch (e) {}
+  dpRender();
+}
+dpLoad();
+setInterval(dpLoad, 60000);
+</script>
+
 {% elif bot == 'fundingpips' %}
 <!-- ════════════ 💱 FundingPips — уикенд-гэп на кроссах (M1-стенд Dukascopy 03.08.26) ════════════ -->
 <div class="strategy-box" style="border-color:rgba(0,212,255,0.4);">

@@ -177,6 +177,8 @@ BOTS = [
     {"id": "gainers", "label": "🚀 Топ роста", "category": "crypto"},
     {"id": "alarms", "label": "🎯 Будильники", "category": "crypto"},
     {"id": "trends", "label": "📈 Тренды", "category": "crypto"},
+    # 🥇 Отбор — дневной скринер по пирамиде входов (бэктесты 17.09)
+    {"id": "daypick", "label": "🥇 Отбор", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     # 💱 FOREX: проп FundingPips — уикенд-гэп на кроссах (единственная
     # модель, пережившая стенды M1 Dukascopy 03.08.26). Сканер gap_scanner.

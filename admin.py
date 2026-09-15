@@ -4742,7 +4742,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
     query = db.query(Signal).filter(Signal.source == bot)
 
     # Cryptovizor имеет свои вкладки
-    if bot in ("confluence", "journal", "autotrading", "fundingpips"):
+    if bot in ("confluence", "journal", "autotrading", "fundingpips", "daypick"):
         return templates.TemplateResponse(request, "signals.html", {
             "signals": [],
             "total": 0,
