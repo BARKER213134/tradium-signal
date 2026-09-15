@@ -1,24 +1,25 @@
 # -*- coding: utf-8 -*-
-"""🧲/🌡 MSO-сигналы: ретест свечи смены (2h SHORT) и снятие перегрева
-(12h SHORT).
+"""🧲/🌡 MSO-сигналы: ретест свечи смены (2h/4h SHORT) и снятие перегрева
+(12h SHORT), с трендовыми гейтами.
 
 MSO = LuxAlgo Market Structure Oscillator (реплика открытого Pine v5,
 та же математика, что панель MSO на графиках и bt_mso_4h.py).
+Тренд = EMA20 vs EMA50 на close (как колонка Тренд, полоса 0.05%).
 
-Грид-бэктест 15.09.26 (год, 308 пар, 6 ТФ × 8 правил, эдж = avgR минус
-бейзлайн случайного входа того же ТФ, исходы TP+10/SL−5/96ч):
-  · MSO — шортовый индикатор: все LONG-правила на всех ТФ минусовые
-    или в шуме → лонги не сигналим вовсе;
-  · 🧲 retest_S 2h: avgR +0.38 · WR 43 · эдж +0.24 · половины +0.60/+0.15
-    (первая версия на 4h имела эдж лишь +0.11 — удалена 15.09);
-  · 🌡 obexit_S 12h (MSO был >=85 и кроссит вниз — перегрев кончился):
-    avgR +0.49 · WR 41.7 · эдж +0.32 (лучшее правило грида) ·
-    половины +0.10/+0.87.
+Грид 15.09 (год, 308 пар, 6 ТФ × 8 правил) + тройной бэктест
+тренд×MSO×RSI 16.09 (bt_trend_mso_rsi.py):
+  · 🧲 retest_S 2h (без гейта): avgR +0.42 · WR 43 · половины +0.67/+0.18
+  · 🧲 retest_S 4h + свой тренд DOWN: avgR +0.70 · WR 46 · n=4262 ·
+    половины +1.17/+0.23 — сильнейший ретест (без гейта 4h был +0.11
+    эджа и не внедрялся; корзина UP всего +0.11 — отрезана гейтом)
+  · 🌡 obexit_S 12h + свой тренд UP: avgR +0.61 · WR 44 · n=1022 ·
+    половины +0.22/+0.99 (корзина DOWN −0.39 — гейт отрезает; теряется
+    ~3% событий)
+Лонги по MSO минусовые на всех ТФ — не сигналим.
 
-Механика ретеста: на последнем ЗАКРЫТОМ 2h-баре цена коснулась close
-свечи ПОСЛЕДНЕГО кросса MSO вниз (low<=level<=high) ПОСЛЕ ухода вниз
->=2%. Окно цикла 96 баров 2h (8д, как в гриде), MSO по окну 300 баров —
-бэкфилл обязан использовать те же параметры (урок 🧗)."""
+Окно MSO 300 баров (оконного смещения нет — проверено 15.09: 300-срез
+vs полная серия 153 vs 156 событий). Бэкфилл обязан использовать те же
+окна и гейты (урок 🧗)."""
 from __future__ import annotations
 
 import asyncio
@@ -30,18 +31,19 @@ logger = logging.getLogger(__name__)
 STABLE_BASES = {"USDC", "FDUSD", "TUSD", "DAI", "USD1", "USDP", "EURI",
                 "AEUR", "XUSD", "PAXG", "XAUT", "WBTC", "BFUSD", "USDE",
                 "BUSD", "EUR"}
-# 🧲 ретест: 2h
-TF = "2h"
-TF_MS = 2 * 3600_000
+# 🧲 ретест: 2h (без гейта) и 4h (гейт: тренд 4h DOWN) — 16.09
+RETEST_TF_H = {"2h": 2, "4h": 4}
 WINDOW = 300
-CYCLE_BARS = 96       # окно цикла смена→уход→ретест (8д на 2h, как в гриде)
 ESC = 0.02
-# 🌡 перегрев: 12h
+# 🌡 перегрев: 12h, гейт: свой тренд UP
 OB_TF = "12h"
 OB_TF_MS = 12 * 3600_000
 OB_LEVEL = 85.0
 NSMOOTH = 4
 W1, W2, W3 = 1.0, 3.0, 2.0
+RETEST_EV = {"2h": "+0.42%/вход · WR 43 · обе половины в плюсе",
+             "4h": "+0.70%/вход · WR 46 · гейт «тренд 4h DOWN» · "
+                   "сильнейший ретест (EV +0.70)"}
 
 
 def mso_series(candles: list[dict]) -> list[float]:
@@ -150,6 +152,24 @@ def mso_series(candles: list[dict]) -> list[float]:
     return out
 
 
+def ema_trend(closes: list[float]) -> str:
+    """Тренд последнего бара: EMA20 vs EMA50, полоса 0.05% (= trend_cache).
+    UP / DOWN / FLAT / NA (мало истории)."""
+    n = len(closes)
+    if n < 50:
+        return "NA"
+    def _ema(period):
+        e = sum(closes[:period]) / period
+        k = 2 / (period + 1)
+        for i in range(period, n):
+            e = closes[i] * k + e * (1 - k)
+        return e
+    e20, e50 = _ema(20), _ema(50)
+    if abs(e20 - e50) / max(closes[-1], 1e-12) * 100 < 0.05:
+        return "FLAT"
+    return "UP" if e20 > e50 else "DOWN"
+
+
 def _closed_idx(c: list[dict], tf_ms: int, now_ms: float) -> int:
     idx = len(c) - 1
     if c[idx]["t"] + tf_ms > now_ms + 60_000:
@@ -157,19 +177,23 @@ def _closed_idx(c: list[dict], tf_ms: int, now_ms: float) -> int:
     return idx
 
 
-def detect_retest(candles: list[dict], now_ms: float):
-    """🧲 SHORT-ретест на последнем ЗАКРЫТОМ 2h-баре (только кросс ВНИЗ;
-    более свежий кросс любой стороны отменяет старый уровень)."""
+def detect_retest(candles: list[dict], now_ms: float, tf: str = "2h"):
+    """🧲 SHORT-ретест на последнем ЗАКРЫТОМ баре ТФ (только кросс ВНИЗ;
+    более свежий кросс любой стороны отменяет старый уровень).
+    Возвращает dict с own-трендом ТФ на ретест-баре (гейт — у вызывающего)."""
+    tf_h = RETEST_TF_H[tf]
+    tf_ms = tf_h * 3600_000
+    cycle = 2 * int(96 / tf_h)      # как в гриде: win*2
     if not candles or len(candles) < 120:
         return None
     c = candles[-WINDOW:]
-    idx = _closed_idx(c, TF_MS, now_ms)
+    idx = _closed_idx(c, tf_ms, now_ms)
     if idx < 110:
         return None
     osc = mso_series(c[:idx + 1])
     cross_k = None
     sg = 0
-    for k in range(idx, max(idx - CYCLE_BARS, 1), -1):
+    for k in range(idx, max(idx - cycle, 1), -1):
         p, q = osc[k - 1], osc[k]
         if math.isnan(p) or math.isnan(q):
             continue
@@ -199,14 +223,16 @@ def detect_retest(candles: list[dict], now_ms: float):
                         "bars_since": idx - cross_k,
                         "esc_max": round(esc_max, 2),
                         "mso_now": round(osc[idx], 1) if not math.isnan(osc[idx]) else None,
+                        "trend": ema_trend([x["c"] for x in c[:idx + 1]]),
                         "bar": c[idx],
-                        "bar_close_ms": c[idx]["t"] + TF_MS}
+                        "bar_close_ms": c[idx]["t"] + tf_ms}
             return None
     return None
 
 
 def detect_obexit(candles: list[dict], now_ms: float):
-    """🌡 12h: MSO был >=85 и на последнем ЗАКРЫТОМ баре кроссит вниз."""
+    """🌡 12h: MSO был >=85 и на последнем ЗАКРЫТОМ баре кроссит вниз.
+    Возвращает dict с own-трендом (гейт UP — у вызывающего)."""
     if not candles or len(candles) < 120:
         return None
     c = candles[-WINDOW:]
@@ -218,7 +244,8 @@ def detect_obexit(candles: list[dict], now_ms: float):
     if math.isnan(p) or math.isnan(q) or not (p >= OB_LEVEL > q):
         return None
     return {"bar": c[idx], "bar_close_ms": c[idx]["t"] + OB_TF_MS,
-            "mso_prev": round(p, 1), "mso_now": round(q, 1)}
+            "mso_prev": round(p, 1), "mso_now": round(q, 1),
+            "trend": ema_trend([x["c"] for x in c[:idx + 1]])}
 
 
 async def _pair_gate(pair_norm: str, db) -> bool:
@@ -243,7 +270,7 @@ async def _tg(txt: str) -> None:
         logger.debug("[mso] tg fail", exc_info=True)
 
 
-async def _pair_retest(pair_norm: str) -> bool:
+async def _pair_retest(pair_norm: str, tf: str = "2h") -> bool:
     from database import _get_db, utcnow
     db = _get_db()
     if not await _pair_gate(pair_norm, db):
@@ -251,20 +278,25 @@ async def _pair_retest(pair_norm: str) -> bool:
     from exchange import get_klines_any
     pair_slash = pair_norm[:-4] + "/USDT"
     try:
-        c = await asyncio.to_thread(get_klines_any, pair_slash, TF, WINDOW)
+        c = await asyncio.to_thread(get_klines_any, pair_slash, tf, WINDOW)
     except Exception:
         return False
     now = utcnow()
-    ev = detect_retest(c, now.timestamp() * 1000)
+    ev = detect_retest(c, now.timestamp() * 1000, tf)
     if not ev:
         return False
-    if now.timestamp() * 1000 - ev["bar_close_ms"] > 1.25 * TF_MS:
+    tf_ms = RETEST_TF_H[tf] * 3600_000
+    if now.timestamp() * 1000 - ev["bar_close_ms"] > 1.25 * tf_ms:
+        return False
+    # 🚧 гейт 16.09 (тройной бэктест): 4h-ретест только при тренде 4h DOWN
+    # (корзина DOWN +0.70, UP лишь +0.11)
+    if tf == "4h" and ev["trend"] != "DOWN":
         return False
     level = ev["level"]
-    entry = ev["bar"]["c"]      # вход по close ретест-бара (как в гриде)
+    entry = ev["bar"]["c"]
     dup = db.new_strategy_signals.find_one({
         "strategy": "mso_retest", "symbol": pair_norm,
-        "indicators.cross_t": ev["cross_t"]})
+        "indicators.tf": tf, "indicators.cross_t": ev["cross_t"]})
     if dup:
         return False
     sig = {
@@ -274,25 +306,26 @@ async def _pair_retest(pair_norm: str) -> bool:
         "tp": entry * 0.90,
         "sl": entry * 1.05,
         "horizon_h": 96,
-        "indicators": {"tf": TF, "level": round(level, 10),
+        "indicators": {"tf": tf, "level": round(level, 10),
                        "cross_t": ev["cross_t"],
                        "bars_since_cross": ev["bars_since"],
                        "esc_max_pct": ev["esc_max"],
                        "mso_now": ev["mso_now"],
+                       "trend_own": ev["trend"],
                        "close": entry},
     }
     from impulse_detector import store_signal
     stored = await asyncio.to_thread(store_signal, sig, 1)
     if not stored:
         return False
-    age_h = ev["bars_since"] * 2
-    txt = (f"🧲 <b>РЕТЕСТ СМЕНЫ 2h · {pair_slash.replace('/USDT', '')}</b>\n"
-           f"🔴 SHORT — возврат к свече смены структуры вниз\n"
+    age_h = ev["bars_since"] * RETEST_TF_H[tf]
+    gate_txt = " · тренд 4h DOWN ✓" if tf == "4h" else ""
+    txt = (f"🧲 <b>РЕТЕСТ СМЕНЫ {tf} · {pair_slash.replace('/USDT', '')}</b>\n"
+           f"🔴 SHORT — возврат к свече смены структуры вниз{gate_txt}\n"
            f"смена (кросс MSO 50 вниз) {age_h}ч назад · "
            f"уходила на {ev['esc_max']:.1f}% вниз · MSO {ev['mso_now']}\n"
            f"уровень смены <b>{level:.6g}</b> · вход {entry:.6g}\n"
-           f"<i>грид-бэктест год: +0.38%/вход · WR 43 · эдж +0.24 над "
-           f"рынком · обе половины в плюсе (лонг-ретесты минус — не шлём)</i>")
+           f"<i>бэктест год: {RETEST_EV[tf]}</i>")
     try:
         from setup_checker import signal_tg_context
         txt += await asyncio.to_thread(signal_tg_context, pair_slash, "SHORT")
@@ -319,6 +352,10 @@ async def _pair_obexit(pair_norm: str) -> bool:
         return False
     if now.timestamp() * 1000 - ev["bar_close_ms"] > 1.25 * OB_TF_MS:
         return False
+    # 🚧 гейт 16.09 (тройной бэктест): только при своём тренде UP
+    # (UP +0.61, DOWN −0.39; отрезается ~3% событий)
+    if ev["trend"] != "UP":
+        return False
     entry = ev["bar"]["c"]
     bar_t = int(ev["bar"]["t"])
     dup = db.new_strategy_signals.find_one({
@@ -335,7 +372,7 @@ async def _pair_obexit(pair_norm: str) -> bool:
         "horizon_h": 96,
         "indicators": {"tf": OB_TF, "bar_t": bar_t,
                        "mso_prev": ev["mso_prev"], "mso_now": ev["mso_now"],
-                       "close": entry},
+                       "trend_own": ev["trend"], "close": entry},
     }
     from impulse_detector import store_signal
     stored = await asyncio.to_thread(store_signal, sig, 1)
@@ -343,10 +380,11 @@ async def _pair_obexit(pair_norm: str) -> bool:
         return False
     txt = (f"🌡 <b>ПЕРЕГРЕВ СНЯТ 12h · {pair_slash.replace('/USDT', '')}</b>\n"
            f"🔴 SHORT — MSO вышел из перекупленности "
-           f"({ev['mso_prev']} → {ev['mso_now']}, порог {OB_LEVEL:.0f})\n"
+           f"({ev['mso_prev']} → {ev['mso_now']}, порог {OB_LEVEL:.0f}) · "
+           f"тренд 12h UP ✓\n"
            f"вход {entry:.6g} по закрытию 12h-бара\n"
-           f"<i>грид-бэктест год: +0.49%/вход · WR 42 · эдж +0.32 — "
-           f"лучшее правило MSO · обе половины в плюсе</i>")
+           f"<i>бэктест год с гейтом «тренд UP»: +0.61%/вход · WR 44 · "
+           f"обе половины в плюсе (EV +0.61)</i>")
     try:
         from setup_checker import signal_tg_context
         txt += await asyncio.to_thread(signal_tg_context, pair_slash, "SHORT")
@@ -357,11 +395,17 @@ async def _pair_obexit(pair_norm: str) -> bool:
 
 
 async def check_all(kind: str = "retest") -> int:
-    """Скан всех tracked-пар. kind: retest (после 2h-границ) |
-    obexit (после 12h-границ)."""
+    """Скан всех tracked-пар. kind: retest (2h, после 2h-границ) |
+    retest4h (после 4h-границ) | obexit (12h, после 12h-границ)."""
     from supertrend_tracker import get_tracked_pairs
     pairs = await asyncio.to_thread(get_tracked_pairs)
-    fn = _pair_retest if kind == "retest" else _pair_obexit
+    if kind == "retest":
+        fn = _pair_retest
+    elif kind == "retest4h":
+        async def fn(p):
+            return await _pair_retest(p, "4h")
+    else:
+        fn = _pair_obexit
     fired = 0
     for i, p in enumerate(pairs):
         try:

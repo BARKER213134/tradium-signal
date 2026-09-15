@@ -29,8 +29,27 @@ TF_H = {"2h": 2, "4h": 4}
 WINDOW = 300
 LEVEL = 20.0
 PERIOD = 14
-EV_TXT = {"2h": "+0.31%/вход · WR 39 · эдж +0.89 (лучший лонг исследования)",
-          "4h": "+0.23%/вход · WR 39 · эдж +0.69"}
+EV_TXT = {"2h": "+0.50%/вход с гейтом «1d не UP» · WR 40 (лучший лонг)",
+          "4h": "+0.26%/вход с гейтом «1d не UP» · WR 39"}
+
+
+def ema_trend(closes: list[float]) -> str:
+    """Тренд последнего бара: EMA20 vs EMA50, полоса 0.05% (= trend_cache)."""
+    n = len(closes)
+    if n < 50:
+        return "NA"
+
+    def _ema(period):
+        e = sum(closes[:period]) / period
+        k = 2 / (period + 1)
+        for i in range(period, n):
+            e = closes[i] * k + e * (1 - k)
+        return e
+
+    e20, e50 = _ema(20), _ema(50)
+    if abs(e20 - e50) / max(closes[-1], 1e-12) * 100 < 0.05:
+        return "FLAT"
+    return "UP" if e20 > e50 else "DOWN"
 
 
 def rsi_series(closes: list[float], period: int = PERIOD) -> list[float]:
@@ -103,6 +122,18 @@ async def _pair(pair_norm: str, tf: str) -> bool:
     tf_ms = TF_H[tf] * 3600_000
     if now.timestamp() * 1000 - ev["bar_close_ms"] > 1.25 * tf_ms:
         return False
+    # 🚧 гейт 16.09 (тройной бэктест тренд×MSO×RSI): при дневном UP
+    # RSI-дно УБЫТОЧНО (−0.81: перепроданность в дневном апе = слом, не
+    # отскок); при 1d DOWN +0.50, NA +0.30 — сигналим только «1d не UP»
+    try:
+        d1 = await asyncio.to_thread(get_klines_any, pair_slash, "1d", 120)
+        if d1 and d1[-1]["t"] + 86_400_000 > now.timestamp() * 1000 + 60_000:
+            d1 = d1[:-1]
+        d1_trend = ema_trend([x["c"] for x in (d1 or [])])
+    except Exception:
+        d1_trend = "NA"
+    if d1_trend == "UP":
+        return False
     entry = ev["bar"]["c"]
     bar_t = int(ev["bar"]["t"])
     dup = db.new_strategy_signals.find_one({
@@ -119,7 +150,7 @@ async def _pair(pair_norm: str, tf: str) -> bool:
         "horizon_h": 96,
         "indicators": {"tf": tf, "bar_t": bar_t,
                        "rsi_prev": ev["rsi_prev"], "rsi_now": ev["rsi_now"],
-                       "close": entry},
+                       "trend_1d": d1_trend, "close": entry},
     }
     from impulse_detector import store_signal
     stored = await asyncio.to_thread(store_signal, sig, 1)
@@ -131,11 +162,11 @@ async def _pair(pair_norm: str, tf: str) -> bool:
         if _bot16 and WHALE_CHAT_ID:
             txt = (f"🤿 <b>RSI-ДНО {tf} · {pair_slash.replace('/USDT', '')}</b>\n"
                    f"🟢 LONG — выход из глубокой перепроданности "
-                   f"(RSI {ev['rsi_prev']} → {ev['rsi_now']}, порог {LEVEL:.0f})\n"
+                   f"(RSI {ev['rsi_prev']} → {ev['rsi_now']}, порог {LEVEL:.0f}) · "
+                   f"тренд 1d {d1_trend} ✓\n"
                    f"вход {entry:.6g} по закрытию {tf}-бара\n"
-                   f"<i>грид-бэктест год: {EV_TXT[tf]} · обе половины в "
-                   f"плюсе · MSO при этом всегда уже на дне — фильтр не "
-                   f"нужен</i>")
+                   f"<i>бэктест год: {EV_TXT[tf]} · обе половины в плюсе · "
+                   f"дно при дневном UP убыточно (−0.81) — такие отрезаны</i>")
             try:
                 from setup_checker import signal_tg_context
                 txt += await asyncio.to_thread(
