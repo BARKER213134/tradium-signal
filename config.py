@@ -99,10 +99,9 @@ NEW_STRATEGY_CHAT_ID = (int(_new_strat_chat) if _new_strat_chat.lstrip("-").isdi
 
 # BOT15 — 🔥 HOT signals (только score >= 60).
 # Дедуп: 1 alert/час на (pair, direction). Глобальный rate-limit: 10/час.
-BOT15_BOT_TOKEN = os.getenv(
-    "BOT15_BOT_TOKEN",
-    "8559565442:AAG4WdjTE0T7XLNuuZMZe_77McsycLbEFj4",
-)
+# ⚠ 15.09.26: захардкоженный дефолт-токен УДАЛЁН — репозиторий публичный,
+# токен утёк и бот был угнан (спам-имя/аватарка). Токены ТОЛЬКО из env.
+BOT15_BOT_TOKEN = os.getenv("BOT15_BOT_TOKEN", "")
 _hot_chat = os.getenv("HOT_SIGNALS_CHAT_ID", "").strip()
 HOT_SIGNALS_CHAT_ID = (int(_hot_chat) if _hot_chat.lstrip("-").isdigit()
                        else ADMIN_CHAT_ID)
