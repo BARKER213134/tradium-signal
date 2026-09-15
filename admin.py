@@ -4091,6 +4091,7 @@ button,input,select{outline:none}
   <div id="fpTfs" style="display:flex;gap:4px;">
     <button data-tf="15m" onclick="fpSetTf(this)" style="background:var(--dark);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;padding:6px 10px;font-family:var(--font-mono);">15m</button>
     <button data-tf="1h" onclick="fpSetTf(this)" style="background:rgba(76,201,240,0.15);border:1px solid rgba(76,201,240,0.5);border-radius:6px;color:#4cc9f0;font-size:11px;font-weight:700;cursor:pointer;padding:6px 10px;font-family:var(--font-mono);">1h</button>
+    <button data-tf="2h" onclick="fpSetTf(this)" style="background:var(--dark);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;padding:6px 10px;font-family:var(--font-mono);">2h</button>
     <button data-tf="4h" onclick="fpSetTf(this)" style="background:var(--dark);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;padding:6px 10px;font-family:var(--font-mono);">4h</button>
     <button data-tf="1d" onclick="fpSetTf(this)" style="background:var(--dark);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px;font-weight:700;cursor:pointer;padding:6px 10px;font-family:var(--font-mono);">1D</button>
   </div>
@@ -4333,10 +4334,10 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
     поле 9 = taker buy volume). Строится из свечей младшего ТФ: 15m←1m,
     1h←5m, 4h←15m, 1d←1h. Тиковый футпринт не нужен — гранулярность
     суб-свечи достаточна для картинки уровней. + фаза рынка по бару."""
-    SUB = {"15m": ("1m", 15), "1h": ("5m", 12), "4h": ("15m", 16),
-           "1d": ("1h", 24)}
-    TFMS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000,
-            "1d": 86_400_000}
+    SUB = {"15m": ("1m", 15), "1h": ("5m", 12), "2h": ("5m", 24),
+           "4h": ("15m", 16), "1d": ("1h", 24)}
+    TFMS = {"15m": 900_000, "1h": 3_600_000, "2h": 7_200_000,
+            "4h": 14_400_000, "1d": 86_400_000}
     tf = (tf or "1h").lower()
     if tf not in SUB:
         return {"ok": False, "error": f"tf {tf}: только {list(SUB)}"}
@@ -4640,7 +4641,7 @@ async def api_klines_delta(symbol: str, tf: str = "1h", limit: int = 500):
         sym = (symbol or "").upper().replace("/", "")
         if not sym.endswith("USDT"):
             sym += "USDT"
-        itv = tf if tf in ("1m", "5m", "15m", "30m", "1h", "4h", "12h", "1d") else "1h"
+        itv = tf if tf in ("1m", "5m", "15m", "30m", "1h", "2h", "4h", "12h", "1d") else "1h"
         lim = max(50, min(int(limit or 500), 1000))
         key = (sym, itv, lim)
         cached = _kd_cache.get(key)
@@ -13365,7 +13366,7 @@ async def api_journal_candles(symbol: str, tf: str = "1h", limit: int = 100,
         response.headers["Cache-Control"] = f"public, max-age={browser_cache_s}"
 
     async def _bg_prefetch_other_tfs():
-        for other_tf in ["15m", "30m", "1h", "4h", "12h", "1d"]:
+        for other_tf in ["15m", "30m", "1h", "2h", "4h", "12h", "1d"]:
             if other_tf == (tf or "").lower():
                 continue
             try:

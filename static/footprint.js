@@ -160,7 +160,7 @@ async function fpLoadZones(pair, tf) {
     const kb = await grab(tf);
     if (kb.length < 60 || !_fpData) return;
     const zs = window._kcBuildZones(kb) || [];
-    const hiTfs = ({ '15m': ['4h', '1d'], '1h': ['4h', '1d'],
+    const hiTfs = ({ '15m': ['4h', '1d'], '1h': ['4h', '1d'], '2h': ['4h', '1d'],
                      '4h': ['1d'] })[tf] || [];
     for (const htf of hiTfs) {
       try {
@@ -258,7 +258,7 @@ function fpAnalyze() {
   // 🪧 сигналы платформы в видимом окне (грузятся из журнала по-монетно)
   try {
     if (_fpSigs && _fpSigs.length && bars.length) {
-      const dur = ({ '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[_fpTf] || 3600) * 1000;
+      const dur = ({ '15m': 900, '1h': 3600, '2h': 7200, '4h': 14400, '1d': 86400 }[_fpTf] || 3600) * 1000;
       let nl = 0, ns = 0;
       _fpSigs.forEach(s => {
         const i = Math.floor((s.ts - bars[0].t) / dur);
@@ -603,7 +603,7 @@ function fpRender() {
   // в продолжение стека аномалий (не закрывают ни ячейки, ни значки)
   _fpSigNotes = {};
   if (_fpSigs && _fpSigs.length && bw >= 4) {
-    const dur = ({ '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[_fpTf] || 3600) * 1000;
+    const dur = ({ '15m': 900, '1h': 3600, '2h': 7200, '4h': 14400, '1d': 86400 }[_fpTf] || 3600) * 1000;
     const gTop = {}, gBot = {};
     _fpSigs.forEach(s => {
       let i = Math.floor((s.ts - bars[0].t) / dur);
@@ -829,7 +829,7 @@ window.addEventListener('resize', () => { if (_fpData) fpRender(); });
     const p = q.get('pair');
     if (p) { const el = document.getElementById('fpPair'); if (el) el.value = p; }
     const t = (q.get('tf') || '').toLowerCase();
-    if (['15m', '1h', '4h', '1d'].includes(t)) _fpTf = t;
+    if (['15m', '1h', '2h', '4h', '1d'].includes(t)) _fpTf = t;
     const bb = q.get('bars');
     if (bb) { const el = document.getElementById('fpBars'); if (el && [...el.options].some(o => o.value === bb)) el.value = bb; }
     document.querySelectorAll('#fpTfs button').forEach(btn => {

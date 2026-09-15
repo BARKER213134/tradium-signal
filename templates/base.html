@@ -1805,7 +1805,7 @@
       }
       window._prefetchOtherTFs = function(symbol, currentTf, limit) {
         if (!symbol) return;
-        const allTFs = ['15m', '30m', '1h', '4h', '1d'];
+        const allTFs = ['15m', '30m', '1h', '2h', '4h', '1d'];
         const others = allTFs.filter(t => t !== currentTf);
         const lim = limit || 200;
         // Идем через requestIdleCallback чтоб не конкурировать с rendering'ом графика
@@ -2863,7 +2863,7 @@
       window._addComputedLevels = async function(chart, pair, tf, candles, opts) {
         opts = opts || {};
         if (!chart || !candles || !candles.length) return [];
-        const SUPPORTED = ['15m', '30m', '1h', '4h', '12h', '1d'];
+        const SUPPORTED = ['15m', '30m', '1h', '2h', '4h', '12h', '1d'];
         const useTf = SUPPORTED.includes(tf) ? tf : '1h';
         const zones = await window._fetchComputedLevels(pair, useTf);
         if (!zones.length) return [];
@@ -4274,7 +4274,7 @@ window.openPairChart = function(symbol, tf) {
       setTimeout(() => { _kcTtl.textContent = _keep; }, 900);
     } catch (e) {}
   };
-  document.getElementById('kcQmTFs').innerHTML = ['5m', '15m', '30m', '1h', '4h', '12h', '1d'].map(t =>
+  document.getElementById('kcQmTFs').innerHTML = ['5m', '15m', '30m', '1h', '2h', '4h', '12h', '1d'].map(t =>
     `<button onclick="openPairChart(window._kcQmSym,'${t}')" style="background:${t === tfCur ? 'rgba(76,201,240,0.18)' : 'none'};` +
     `border:1px solid ${t === tfCur ? 'rgba(76,201,240,0.5)' : 'var(--border,#334)'};border-radius:6px;` +
     `color:${t === tfCur ? '#4cc9f0' : 'var(--muted,#8892a4)'};font-size:11px;cursor:pointer;padding:3px 9px;` +
@@ -4338,7 +4338,7 @@ window._kcQmNav = function(step) {
 };
 // ↑↓ — переключение таймфрейма с клавиатуры
 window._kcQmTf = function(step) {
-  const order = ['5m', '15m', '30m', '1h', '4h', '12h', '1d'];
+  const order = ['5m', '15m', '30m', '1h', '2h', '4h', '12h', '1d'];
   const cur = localStorage.getItem('kc_qm_tf') || '1h';
   const i = order.indexOf(cur);
   if (i < 0 || !window._kcQmSym) return;
@@ -5852,7 +5852,7 @@ async function _renderLwcSignalChart(containerId, opts) {
   container.innerHTML = `
     <div class="lwc-sig-wrap" style="display:flex;flex-direction:column;height:100%;position:relative;">
       <div class="lwc-sig-tfbar" style="display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--border);background:rgba(0,0,0,0.25);">
-        ${['15m','30m','1h','4h','1d'].map(t => `<button class="lwc-tf-btn${t===tf?' active':''}" data-tf="${t}" onclick="event.stopPropagation();_setLwcTF('${containerId}','${t}')" style="background:var(--dark);color:${t===tf?'#000':'var(--muted)'};border:1px solid ${t===tf?'var(--accent)':'var(--border)'};border-radius:6px;padding:3px 10px;font-size:11px;font-family:var(--font-mono);cursor:pointer;min-width:36px;text-align:center;font-weight:${t===tf?'700':'500'};${t===tf?'background:var(--accent);':''}">${t==='1d'?'1D':t}</button>`).join('')}
+        ${['15m','30m','1h','2h','4h','1d'].map(t => `<button class="lwc-tf-btn${t===tf?' active':''}" data-tf="${t}" onclick="event.stopPropagation();_setLwcTF('${containerId}','${t}')" style="background:var(--dark);color:${t===tf?'#000':'var(--muted)'};border:1px solid ${t===tf?'var(--accent)':'var(--border)'};border-radius:6px;padding:3px 10px;font-size:11px;font-family:var(--font-mono);cursor:pointer;min-width:36px;text-align:center;font-weight:${t===tf?'700':'500'};${t===tf?'background:var(--accent);':''}">${t==='1d'?'1D':t}</button>`).join('')}
       </div>
       <div class="lwc-sig-chart" style="flex:1;min-height:300px;position:relative;"></div>
     </div>`;
