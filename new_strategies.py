@@ -905,10 +905,43 @@ async def _maybe_hot_alert(sig: dict) -> None:
         logger.debug(f"[hot] _maybe_hot_alert fail: {e}")
 
 
+_bot13_cache = {"tok": None, "ts": 0.0}
+
+
+def _bot13_token_sync():
+    """Токен BOT13: Mongo (system_config._id='bot13_token') с приоритетом
+    над env — 15.09.26 юзер удалил угнанного бота, в Railway остался его
+    мёртвый токен (каждая отправка 401), а менять переменные без доступа
+    к Railway нельзя. База — управляемая правда. Кэш 10 мин; вызывать
+    через to_thread (sync Mongo в event loop вешает watcher)."""
+    import time as _t
+    now = _t.time()
+    if _bot13_cache["tok"] and now - _bot13_cache["ts"] < 600:
+        return _bot13_cache["tok"]
+    tok = None
+    try:
+        from database import _get_db
+        doc = _get_db().system_config.find_one({"_id": "bot13_token"}) or {}
+        tok = (doc.get("value") or "").strip() or None
+    except Exception:
+        pass
+    if not tok:
+        try:
+            from config import BOT13_BOT_TOKEN
+            tok = BOT13_BOT_TOKEN or None
+        except Exception:
+            tok = None
+    if tok:
+        _bot13_cache["tok"] = tok
+        _bot13_cache["ts"] = now
+    return tok
+
+
 async def _send_strategy_alert(sig: dict) -> None:
     """Send Telegram alert via BOT13. Strategy emoji + pair + dir + entry/sl/tp."""
     try:
-        from config import BOT13_BOT_TOKEN, NEW_STRATEGY_CHAT_ID
+        from config import NEW_STRATEGY_CHAT_ID
+        BOT13_BOT_TOKEN = await asyncio.to_thread(_bot13_token_sync)
     except Exception:
         return
     if not BOT13_BOT_TOKEN or not NEW_STRATEGY_CHAT_ID:
