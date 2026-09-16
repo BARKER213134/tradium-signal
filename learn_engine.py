@@ -266,6 +266,32 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
     by_sym = {}
     for s in sigs:
         by_sym.setdefault(s["pair"], []).append(s)
+    # 💸 история фандинга (8ч-выплаты, limit 1000 ≈ 333д) — фича обучения;
+    # локально fapi 451 → fail-open (None)
+    fund_hist = {}
+    try:
+        import requests as _rq
+        _probe = _rq.get("https://fapi.binance.com/fapi/v1/fundingRate",
+                         params={"symbol": "BTCUSDT", "limit": 1},
+                         timeout=8)
+        fapi_ok = _probe.status_code == 200
+    except Exception:
+        fapi_ok = False
+    if fapi_ok:
+        for k, pair in enumerate(sorted(by_sym)):
+            try:
+                rr = _rq.get(
+                    "https://fapi.binance.com/fapi/v1/fundingRate",
+                    params={"symbol": pair.replace("/", ""), "limit": 1000},
+                    timeout=10)
+                if rr.status_code == 200:
+                    fund_hist[pair] = [(int(x["fundingTime"]),
+                                        float(x["fundingRate"]))
+                                       for x in rr.json()]
+            except Exception:
+                pass
+            if sleep_s and k % 20 == 19:
+                time.sleep(sleep_s)
     packs = {}
     for k, (pair, lst) in enumerate(sorted(by_sym.items())):
         try:
@@ -304,6 +330,23 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
             time.sleep(sleep_s)
         if progress and k % 50 == 49:
             progress(k + 1, len(by_sym))
+    # ₿ BTC-вола: перцентиль скользящего 24ч-диапазона на момент бара
+    # (только по прошлому — без заглядывания вперёд)
+    btc_vt, btc_vp = None, None
+    bp = packs.get("BTC/USDT")
+    if bp is not None:
+        c1b = bp["c1"]
+        rng = np.array([(b["h"] - b["l"]) / b["c"] * 100 for b in c1b])
+        r24 = np.full(len(rng), np.nan)
+        for i in range(24, len(rng)):
+            r24[i] = rng[i - 24:i].mean()
+        btc_vt = bp["t1"]
+        btc_vp = np.full(len(rng), np.nan)
+        for i in range(60, len(rng)):
+            hist = r24[24:i]
+            hist = hist[~np.isnan(hist)]
+            if len(hist) >= 30:
+                btc_vp[i] = (hist < r24[i]).mean() * 100
     # ширина рынка по 4h-сетке из tr4 всех пар
     if not packs:
         return []
@@ -376,7 +419,21 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
         vr = (_outcome_variants(p["c1"], i1, sg)
               if (gold_f or silver_f or dawn_f or heat_f) else None)
         _age = ages.get(s["pair"])
+        _fund = None
+        fh = fund_hist.get(s["pair"])
+        if fh:
+            _fr = [r_ for t_, r_ in fh if t_ <= ts]
+            if _fr:
+                _fund = _fr[-1]
+        _bv = None
+        if btc_vt is not None:
+            _bi = _last_closed(btc_vt, ts, 3_600_000)
+            if 0 <= _bi < len(btc_vp) and not math.isnan(btc_vp[_bi]):
+                _bv = round(float(btc_vp[_bi]), 1)
         rows.append({
+            "fund": _fund, "btc_vol": _bv,
+            "hour": int((ts // 3_600_000) % 24),
+            "age": _age,
             "dmin": dmin, "young": (None if _age is None else bool(_age < 70)),
             "fresh": fresh, "dvol": p.get("dvol") or 0.0, "vr": vr,
             "src": s["src"], "sg": sg, "val": val, "streak": streak,
@@ -662,7 +719,12 @@ def train_lgbm(rows):
                 x["streak"], tr_map.get(x["tr4"], 0),
                 -1.0 if x["br"] is None else round(x["br"], 3),
                 1 if x.get("fresh") else 0,
-                round(_m.log10(max(x.get("dvol") or 1, 1)), 2)]
+                round(_m.log10(max(x.get("dvol") or 1, 1)), 2),
+                (-1 if x.get("young") is None else
+                 (1 if x["young"] else 0)),
+                x.get("hour") or 0,
+                -1.0 if x.get("btc_vol") is None else x["btc_vol"],
+                0.0 if x.get("fund") is None else round(x["fund"] * 1e4, 2)]
 
     rs = sorted(rows, key=lambda x: x["ts"])
     cut = int(len(rs) * 0.75)
@@ -692,7 +754,7 @@ def train_lgbm(rows):
     auc = float((ranks[yte == 1].sum() - n1 * (n1 + 1) / 2) / max(n1 * n0, 1))
     top = p >= np.percentile(p, 80)
     fi = sorted(zip(["src", "dir", "val", "streak", "tr4", "breadth",
-                     "fresh", "liq"],
+                     "fresh", "liq", "young", "hour", "btc_vol", "fund"],
                     m.feature_importance().tolist()), key=lambda z: -z[1])
     return {"ok": True, "n_train": cut, "n_test": len(rs) - cut,
             "auc": round(auc, 3),
