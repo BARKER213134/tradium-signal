@@ -7174,6 +7174,13 @@ function acOpenChart(i) {
   const f = rows[i];
   if (f) { try { openPairChart(f.sym, '2h'); } catch (e) {} }
 }
+function acOpenPaper(i) {
+  // ◀▶ в модале листает по пулу paper-сделок (открытые, затем закрытые)
+  const rows = window._acPaperRows || [];
+  window._kcQmList = rows.map(r => r.sym);
+  const t = rows[i];
+  if (t) { try { openPairChart(t.sym, '2h'); } catch (e) {} }
+}
 async function acAskAiKey(key, elId) {
   const el = document.getElementById(elId);
   if (!el) return;
@@ -7263,7 +7270,7 @@ async function acLoad() {
   const plHtml = pl.map((t, ti) => {
     const dt = new Date(t.at + (t.at.endsWith('Z') ? '' : 'Z'));
     const uc = t.upnl == null ? 'var(--muted)' : t.upnl > 0 ? '#00e5a0' : '#ff5e9c';
-    return `<div onclick="try{openPairChart('${t.sym}','2h')}catch(e){}" style="display:flex;gap:8px;align-items:center;padding:5px 12px;border-bottom:1px solid rgba(42,49,64,0.4);cursor:pointer;font-size:11.5px;font-family:var(--font-mono);" title="${t.rule || ''} · вход ${t.entry}">
+    return `<div onclick="acOpenPaper(${ti})" style="display:flex;gap:8px;align-items:center;padding:5px 12px;border-bottom:1px solid rgba(42,49,64,0.4);cursor:pointer;font-size:11.5px;font-family:var(--font-mono);" title="${t.rule || ''} · вход ${t.entry}">
       <span style="color:var(--muted);font-size:10px;">${dt.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
       <b style="min-width:70px;">${t.sym.replace('USDT', '')}</b>
       <span style="color:${t.dir === 'LONG' ? '#00e5a0' : '#ff5e9c'};font-weight:800;font-size:10px;">${t.dir === 'LONG' ? '▲ЛОНГ' : '▼ШОРТ'}</span>
@@ -7274,7 +7281,7 @@ async function acLoad() {
     <div id="acPAi_o${ti}" style="display:none;padding:7px 14px 9px 30px;border-bottom:1px solid rgba(42,49,64,0.4);background:rgba(123,92,255,0.06);font-size:11px;line-height:1.5;white-space:pre-wrap;"></div>`;
   }).join('');
   const clHtml = cl.length ? `<div style="padding:5px 12px;font-size:10px;color:var(--muted);background:rgba(255,255,255,0.02);">закрытые:</div>` + cl.map((t, ti) =>
-    `<div style="display:flex;gap:8px;align-items:center;padding:4px 12px;border-bottom:1px solid rgba(42,49,64,0.3);font-size:11px;font-family:var(--font-mono);opacity:0.85;">
+    `<div onclick="acOpenPaper(${pl.length + ti})" style="display:flex;gap:8px;align-items:center;padding:4px 12px;border-bottom:1px solid rgba(42,49,64,0.3);cursor:pointer;font-size:11px;font-family:var(--font-mono);opacity:0.85;">
       <b style="min-width:70px;">${t.sym.replace('USDT', '')}</b>
       <span style="color:${t.dir === 'LONG' ? '#00e5a0' : '#ff5e9c'};font-size:10px;">${t.dir === 'LONG' ? '▲' : '▼'}</span>
       <span style="font-size:10px;color:var(--muted);">${t.state}</span>
@@ -7282,6 +7289,7 @@ async function acLoad() {
       <span onclick="acAskAiKey('${t.key}', 'acPAi_c${ti}');" title="🧠 спросить AI об этой сделке" style="cursor:pointer;">🧠</span>
     </div>
     <div id="acPAi_c${ti}" style="display:none;padding:7px 14px 9px 30px;border-bottom:1px solid rgba(42,49,64,0.3);background:rgba(123,92,255,0.06);font-size:11px;line-height:1.5;white-space:pre-wrap;"></div>`).join('') : '';
+  window._acPaperRows = pl.concat(cl);
   document.getElementById('acPaperList').innerHTML = (plHtml || '<div style="padding:12px;color:var(--muted);font-size:11px;">открытых сделок нет</div>') + clHtml;
   document.getElementById('acPaperN').textContent = pl.length ? '· ' + pl.length + ' открыто' : '';
   const ex = (m || {}).exits;
