@@ -5054,19 +5054,22 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       const sl = t.entry * (1 - sg * 0.05);
       const dl = chart.getDataList ? chart.getDataList() : [];
       const lastTs = dl.length ? dl[dl.length - 1].timestamp : null;
+      const fmtP = v => v >= 100 ? v.toFixed(2) : String(+v.toFixed(6));
       const mk = (price, color, dash, label) => {
         chart.createOverlay({ name: 'priceLine', points: [{ value: price }], groupId: 'paperlines', lock: true,
-          styles: { line: { color, style: dash ? 'dashed' : 'solid', size: 1 },
-                    text: { color: '#0a0e14', backgroundColor: color } } });
+          styles: { line: { color, style: dash ? 'dashed' : 'solid', size: 2,
+                            dashedValue: [8, 4] },
+                    text: { color: '#0a0e14', backgroundColor: color,
+                            size: 12, weight: 'bold' } } });
         if (lastTs) {
           chart.createOverlay({ name: 'rightBadge', lock: true, groupId: 'paperlines',
             points: [{ timestamp: lastTs, value: price }],
-            extendData: { text: label, color, dx: 55 } });
+            extendData: { text: label, color, dx: 62, size: 13 } });
         }
       };
-      mk(t.entry, '#ffd23e', false, `📜 вход ${t.direction === 'LONG' ? '▲' : '▼'}`);
-      mk(tp, 'rgba(0,229,160,0.85)', true, '📜 TP +10%');
-      mk(sl, 'rgba(255,77,109,0.85)', true, '📜 SL −5%');
+      mk(t.entry, '#ffd23e', false, `📜 ВХОД ${fmtP(t.entry)} ${t.direction === 'LONG' ? '▲ЛОНГ' : '▼ШОРТ'}`);
+      mk(tp, '#00e5a0', true, `🎯 TP ${fmtP(tp)} (+10%)`);
+      mk(sl, '#ff4d6d', true, `🛑 SL ${fmtP(sl)} (−5%)`);
     } catch (e) {}
   })();
   container.addEventListener('click', (ev) => {
