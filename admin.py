@@ -10852,6 +10852,34 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
 
     items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
 
+    # 📜 Academy paper-сделки — маркеры на графике монеты (18.09)
+    try:
+        from database import _get_db as _gdb_pp
+        for pt in _gdb_pp().academy_paper.find(
+                {"$or": [{"sym": sym_clean}, {"pair": pair_slash}],
+                 "opened_at": {"$gte": since}}):
+            _pst = pt.get("state")
+            _pr = pt.get("r")
+            patt = (f"📜 paper-сделка Академии · "
+                    f"{'ОТКРЫТА' if _pst == 'OPEN' else _pst}"
+                    f" · вход {pt.get('entry')}"
+                    f" · размер ×{(pt.get('size') or '1x').replace('x', '')}"
+                    + (f" · итог {_pr:+.1f}%" if _pr is not None else "")
+                    + (f" · {pt.get('rule')}" if pt.get("rule") else ""))
+            items.append({
+                "source": "academy_paper",
+                "symbol": sym_clean, "pair": pair_slash,
+                "direction": pt.get("dir"),
+                "entry": pt.get("entry"),
+                "pattern": patt, "score": 0,
+                "paper_state": _pst, "paper_r": _pr,
+                "at": pt["opened_at"].isoformat(),
+                "at_ts": int(pt["opened_at"].timestamp()),
+            })
+        items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
+    except Exception:
+        pass
+
     # ✨ Verified Entries per-coin (для chart markers; было только в главном журнале)
     try:
         from database import _get_db as _gdb_v
