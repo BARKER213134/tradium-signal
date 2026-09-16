@@ -5037,6 +5037,35 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       } catch (e) {}
     })();
   }
+  // 📜 TP/SL открытой paper-сделки Академии — линии сразу на графике (16.09)
+  (async () => {
+    try {
+      const r = await fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=5`);
+      const d = await r.json();
+      const pts = (d.items || []).filter(x => x.source === 'academy_paper' && x.paper_state === 'OPEN' && x.entry > 0);
+      if (!pts.length) return;
+      pts.sort((a, b) => (b.at_ts || 0) - (a.at_ts || 0));
+      const t = pts[0];
+      const sg = t.direction === 'LONG' ? 1 : -1;
+      const tp = t.entry * (1 + sg * 0.10);
+      const sl = t.entry * (1 - sg * 0.05);
+      const dl = chart.getDataList ? chart.getDataList() : [];
+      const lastTs = dl.length ? dl[dl.length - 1].timestamp : null;
+      const mk = (price, color, dash, label) => {
+        chart.createOverlay({ name: 'priceLine', points: [{ value: price }], groupId: 'paperlines', lock: true,
+          styles: { line: { color, style: dash ? 'dashed' : 'solid', size: 1 },
+                    text: { color: '#0a0e14', backgroundColor: color } } });
+        if (lastTs) {
+          chart.createOverlay({ name: 'rightBadge', lock: true, groupId: 'paperlines',
+            points: [{ timestamp: lastTs, value: price }],
+            extendData: { text: label, color, dx: 55 } });
+        }
+      };
+      mk(t.entry, '#ffd23e', false, `📜 вход ${t.direction === 'LONG' ? '▲' : '▼'}`);
+      mk(tp, 'rgba(0,229,160,0.85)', true, '📜 TP +10%');
+      mk(sl, 'rgba(255,77,109,0.85)', true, '📜 SL −5%');
+    } catch (e) {}
+  })();
   container.addEventListener('click', (ev) => {
     if (!container._kcAlarmMode) return;
     if (ev.target.closest('.kc-toolbar') || ev.target.closest('.kc-almpop')) return;

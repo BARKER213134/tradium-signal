@@ -675,8 +675,11 @@ def train_lgbm(rows):
     try:
         ds = lgb.Dataset(Xtr, label=ytr, categorical_feature=[0],
                          free_raw_data=False)
+        # num_threads=2: в контейнере Railway OpenMP видит ядра ХОСТА и
+        # плодит треды сверх cgroup-квоты — train висел вечно (16.09)
         m = lgb.train({"objective": "binary", "num_leaves": 15,
                        "learning_rate": 0.06, "min_data_in_leaf": 40,
+                       "num_threads": 2, "force_col_wise": True,
                        "verbosity": -1}, ds, num_boost_round=200)
         p = np.asarray(m.predict(Xte))
     except Exception as e:
