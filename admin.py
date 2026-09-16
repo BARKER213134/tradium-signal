@@ -9460,6 +9460,29 @@ async def api_academy_analyze(key: str):
     return await asyncio.to_thread(_lai.analyze_key, key)
 
 
+_ACADEMY_RECOMPUTE: dict = {"busy": False}
+
+
+@app.post("/api/academy/recompute")
+async def api_academy_recompute():
+    """🔁 Ручной запуск пересчёта модели НА ПРОДЕ (диагностика ночного
+    цикла). Один за раз; прогресс — market_state.academy_loop_state."""
+    if _ACADEMY_RECOMPUTE["busy"]:
+        return {"ok": False, "err": "уже идёт"}
+    _ACADEMY_RECOMPUTE["busy"] = True
+
+    async def _run():
+        try:
+            import learn_engine as _le
+            await asyncio.to_thread(_le.recompute)
+        except Exception:
+            logging.getLogger(__name__).exception("[academy] manual recompute fail")
+        finally:
+            _ACADEMY_RECOMPUTE["busy"] = False
+    asyncio.create_task(_run())
+    return {"ok": True, "msg": "запущено — смотри academy_loop_state"}
+
+
 _ACADEMY_MKT: dict = {"t": 0.0}
 
 

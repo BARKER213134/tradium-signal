@@ -750,15 +750,37 @@ def groq_brief(model):
 
 # ────────────────────────── оркестрация ──────────────────────────
 
+def _loop_state(**kw):
+    """Диагностика цикла: academy_loop_state в market_state — видно с
+    прода без логов Railway (упал/убит/успех)."""
+    try:
+        from database import _get_db, utcnow
+        _get_db().market_state.update_one(
+            {"_id": "academy_loop_state"},
+            {"$set": {**kw, "at": utcnow().isoformat()}}, upsert=True)
+    except Exception:
+        pass
+
+
 def recompute(days=WINDOW_DAYS, progress=None):
     """Полный ночной пересчёт (sync; звать в to_thread). Возвращает модель."""
     from database import _get_db, utcnow
     db = _get_db()
     t0 = time.time()
-    rows = build_rows(days=days, progress=progress)
+    import os as _os
+    import socket as _sock
+    _loop_state(phase="building", host=_sock.gethostname(),
+                pid=_os.getpid(), started=utcnow().isoformat(), error=None)
+    try:
+        rows = build_rows(days=days, progress=progress)
+    except Exception as e:
+        _loop_state(phase="failed", error=f"build: {type(e).__name__}: {e}"[:300])
+        raise
     if len(rows) < 500:
         logger.warning(f"[academy] мало строк: {len(rows)} — модель не обновляю")
+        _loop_state(phase="failed", error=f"мало строк: {len(rows)}")
         return None
+    _loop_state(phase="aggregating", rows_n=len(rows))
     prev = db.learn_model.find_one({"_id": "active"}) or {}
     live_map = paper_live_map()
     rules = aggregate(rows, prev.get("rules"), live_map=live_map)
@@ -802,6 +824,8 @@ def recompute(days=WINDOW_DAYS, progress=None):
     logger.info(f"[academy] модель v{model['version']}: {len(rules)} правил, "
                 f"{model['n_show']} SHOW / {model['n_hide']} HIDE, "
                 f"{model['build_sec']}с")
+    _loop_state(phase="done", version=model["version"],
+                build_sec=model["build_sec"], error=None)
     return model
 
 

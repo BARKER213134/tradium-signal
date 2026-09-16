@@ -308,8 +308,13 @@ async def _academy_loop():
                 if model:
                     logger.info(f"[academy] готово: v{model.get('version')} "
                                 f"({model.get('rows_n')} строк)")
-        except Exception:
+        except Exception as _e:
             logger.exception("[academy] loop crashed")
+            try:
+                _le._loop_state(phase="crashed",
+                                error=f"{type(_e).__name__}: {_e}"[:300])
+            except Exception:
+                pass
         await _asyncio.sleep(1800)
 
 
