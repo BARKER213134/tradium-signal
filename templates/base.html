@@ -5037,9 +5037,12 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       } catch (e) {}
     })();
   }
-  // 📜 TP/SL открытой paper-сделки Академии — линии сразу на графике (16.09)
+  // 📜 TP/SL открытой paper-сделки Академии — линии сразу на графике
+  // (16.09; только при открытии графика СО вкладки Академии — её скрипт
+  // взводит window._kcPaperLines)
   (async () => {
     try {
+      if (!window._kcPaperLines) return;
       const r = await fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=5`);
       const d = await r.json();
       const pts = (d.items || []).filter(x => x.source === 'academy_paper' && x.paper_state === 'OPEN' && x.entry > 0);
