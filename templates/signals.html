@@ -7117,6 +7117,15 @@ const AC_EMO = {supertrend_vip: '🌀', supertrend_mtf: '🌀', supertrend_daily
   corridor: '🎈', level_touch: '📏', flip_retest: '🪜', full_stack: '🧗',
   struct_top: '🏚', st_touch: '🏓', mso_retest: '🧲', mso_obexit: '🌡',
   rsi_deepos: '🤿', rev_candle: '🕯'};
+const AC_EXIT_S = {base: 'TP10/SL5', tp15: 'TP+15', be5: 'БУ@+5',
+  trail4: 'трейл4%', half5: '½@+5', sl35: 'SL3.5', h48: '48ч'};
+const AC_EXIT_F = {base: 'канон: TP+10% / SL−5% / до 96ч',
+  tp15: 'дальний тейк +15% (SL−5%, до 96ч) — одобренные лонги бегут дальше канона',
+  be5: 'после +5% перенос стопа в безубыток',
+  trail4: 'после +5% трейл-стоп 4% от максимума закрытий',
+  half5: 'на +5% фиксация половины, остаток по канону',
+  sl35: 'узкий стоп −3.5%', h48: 'короткий горизонт 48ч'};
+const AC_EXIT_BK = {gold: '🥇', silver: '🥈', dawn: '🌅', heat: '🌡'};
 function acMsSpan(ms) {
   const col = ms == null ? 'var(--border)' : ms <= -27 ? '#4cc9f0' : ms >= 27 ? '#ff9d5c' : ms > 0 ? '#88d8a3' : '#ff8fa8';
   return `<span style="font-weight:800;color:${col};font-family:var(--font-mono);">${ms == null ? '·' : ms}</span>`;
@@ -7319,15 +7328,6 @@ const DP_EMO = {supertrend: '🌀', stack: '🧗', volume_surge: '🌊', combo: 
   corridor: '🎈', level_touch: '📏', flip_retest: '🪜', full_stack: '🧗',
   struct_top: '🏚', st_touch: '🏓', mso_retest: '🧲', mso_obexit: '🌡',
   rsi_deepos: '🤿', rev_candle: '🕯', hot_now: '🔥'};
-const AC_EXIT_S = {base: 'TP10/SL5', tp15: 'TP+15', be5: 'БУ@+5',
-  trail4: 'трейл4%', half5: '½@+5', sl35: 'SL3.5', h48: '48ч'};
-const AC_EXIT_F = {base: 'канон: TP+10% / SL−5% / до 96ч',
-  tp15: 'дальний тейк +15% (SL−5%, до 96ч) — одобренные лонги бегут дальше канона',
-  be5: 'после +5% перенос стопа в безубыток',
-  trail4: 'после +5% трейл-стоп 4% от максимума закрытий',
-  half5: 'на +5% фиксация половины, остаток по канону',
-  sl35: 'узкий стоп −3.5%', h48: 'короткий горизонт 48ч'};
-const AC_EXIT_BK = {gold: '🥇', silver: '🥈', dawn: '🌅', heat: '🌡'};
 function dpMs(sym) {
   const row = ((_dpTr || {}).rows || []).find(x => x.s === sym);
   return row && row.ms != null ? row.ms : null;
