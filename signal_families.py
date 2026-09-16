@@ -79,6 +79,9 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
                 "volcano",
                 # 13.09: mso_retest — вход от уровня, растворять нельзя
                 "mso_retest", "mso_obexit",
+                # 16.09: paper-сделки Академии — маркеры/линии TP-SL на
+                # графике, в 🧩-стеке терялся paper_state
+                "academy_paper",
                 # 16.09: rsi_deepos — точечный лонг-вход, в 🧩 не растворять
                 "rsi_deepos"}
     from collections import defaultdict
