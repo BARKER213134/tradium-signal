@@ -7148,9 +7148,10 @@ function acRenderFeed() {
       ${f.val === true ? '<span title="🧿 валидный">🧿</span>' : ''}
       ${acMsSpan(f.ms)}
       ${rl}
-      ${f.ai ? `<span onclick="event.stopPropagation();acToggleAi(${fi});" title="🧠 AI-разбор позиции (${f.ai_by || ''}) — клик" style="cursor:pointer;margin-left:auto;">🧠</span>` : ''}
+      ${f.exit ? `<span style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.35);border-radius:4px;padding:0 5px;font-size:9.5px;color:#00d4ff;white-space:nowrap;" title="🚪 выход ${f.exit_bk ? 'корзины ' + (AC_EXIT_BK[f.exit_bk] || f.exit_bk) : 'по умолчанию'}: ${AC_EXIT_F[f.exit] || f.exit}${f.exit_avg != null ? ' · историч. ' + (f.exit_avg > 0 ? '+' : '') + f.exit_avg + '/вход' : ''} (само-обучение, пересчёт каждую ночь)">🚪${AC_EXIT_S[f.exit] || f.exit}</span>` : ''}
+      <span onclick="event.stopPropagation();acAskAi(${fi});" title="${f.ai ? '🧠 AI-разбор (' + (f.ai_by || '') + ') — клик' : '🧠 спросить AI об этой сделке'}" style="cursor:pointer;margin-left:auto;${f.ai ? '' : 'opacity:0.4;'}">🧠</span>
     </div>
-    ${f.ai ? `<div id="acAi_${fi}" style="display:none;padding:8px 14px 10px 34px;border-bottom:1px solid rgba(42,49,64,0.5);background:rgba(123,92,255,0.06);font-size:11.5px;line-height:1.55;white-space:pre-wrap;">${f.ai.replace(/</g, '&lt;')}</div>` : ''}`;
+    <div id="acAi_${fi}" style="display:none;padding:8px 14px 10px 34px;border-bottom:1px solid rgba(42,49,64,0.5);background:rgba(123,92,255,0.06);font-size:11.5px;line-height:1.55;white-space:pre-wrap;">${(f.ai || '').replace(/</g, '&lt;')}</div>`;
   }).join('');
   document.getElementById('acFeed').innerHTML = html || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">пусто в этой группе за 48ч</div>';
   document.getElementById('acFeedN').textContent = '· ' + rows.length;
@@ -7160,6 +7161,20 @@ function acOpenChart(i) {
   window._kcQmList = rows.map(f => f.sym);
   const f = rows[i];
   if (f) { try { openPairChart(f.sym, '2h'); } catch (e) {} }
+}
+async function acAskAi(i) {
+  const f = (window._acRows || [])[i];
+  const el = document.getElementById('acAi_' + i);
+  if (!f || !el) return;
+  if (f.ai) { acToggleAi(i); return; }
+  el.style.display = 'block';
+  el.textContent = '🧠 спрашиваю AI…';
+  try {
+    const r = await fetch('/api/academy/analyze?key=' + encodeURIComponent(f.key));
+    const d = await r.json();
+    if (d.ok) { f.ai = d.text; f.ai_by = d.provider; el.textContent = d.text; }
+    else { el.textContent = '🧠 ' + (d.err || 'AI не ответил — попробуй ещё раз'); }
+  } catch (e) { el.textContent = '🧠 ошибка сети — попробуй ещё раз'; }
 }
 function acToggleAi(i) {
   const el = document.getElementById('acAi_' + i);
@@ -7279,6 +7294,15 @@ const DP_EMO = {supertrend: '🌀', stack: '🧗', volume_surge: '🌊', combo: 
   corridor: '🎈', level_touch: '📏', flip_retest: '🪜', full_stack: '🧗',
   struct_top: '🏚', st_touch: '🏓', mso_retest: '🧲', mso_obexit: '🌡',
   rsi_deepos: '🤿', rev_candle: '🕯', hot_now: '🔥'};
+const AC_EXIT_S = {base: 'TP10/SL5', tp15: 'TP+15', be5: 'БУ@+5',
+  trail4: 'трейл4%', half5: '½@+5', sl35: 'SL3.5', h48: '48ч'};
+const AC_EXIT_F = {base: 'канон: TP+10% / SL−5% / до 96ч',
+  tp15: 'дальний тейк +15% (SL−5%, до 96ч) — одобренные лонги бегут дальше канона',
+  be5: 'после +5% перенос стопа в безубыток',
+  trail4: 'после +5% трейл-стоп 4% от максимума закрытий',
+  half5: 'на +5% фиксация половины, остаток по канону',
+  sl35: 'узкий стоп −3.5%', h48: 'короткий горизонт 48ч'};
+const AC_EXIT_BK = {gold: '🥇', silver: '🥈', dawn: '🌅', heat: '🌡'};
 function dpMs(sym) {
   const row = ((_dpTr || {}).rows || []).find(x => x.s === sym);
   return row && row.ms != null ? row.ms : null;

@@ -79,9 +79,14 @@ def analyze(ctx):
     ms = ctx.get("ms")
     ser = ("нет данных" if ms is None else
            f"{'зелёная' if ms > 0 else 'красная'}, {abs(ms)} баров")
+    vd = ctx.get("verdict")
+    vphr = ("одобрила этот сигнал" if vd == "ACTIVE_SHOW" else
+            "СКРЫЛА этот сигнал — его клетка исторически в минусе"
+            if vd == "ACTIVE_HIDE" else
+            "не имеет уверенного вердикта по этому сигналу")
     prompt = (
         "Ты трейдер-аналитик крипто-платформы. Самообучаемая модель "
-        "одобрила сигнал. Дай разбор СТРОГО в 3 строках по-русски, "
+        f"{vphr}. Дай разбор СТРОГО в 3 строках по-русски, "
         "каждая с префиксом:\nЗА: <главный аргумент входа>\n"
         "РИСК: <главная угроза сделке>\nПЛАН: <вход/выход одной фразой, "
         f"выход: {ctx.get('exit_plan') or 'TP+10% / SL-5% / до 96ч'}>"
@@ -98,6 +103,88 @@ def analyze(ctx):
         "Контекст платформы: лучшие входы — против режима; зелёная серия "
         "27+ для лонга — зона обрыва; красная серия для шорта — запрет.")
     return _ask_gemini(prompt) or _ask_groq(prompt)
+
+
+def _sig_ctx(db, key):
+    """Достать сигнал по ключу ленты (ns_/st_ + ObjectId) → ctx-словарь."""
+    from bson import ObjectId
+    try:
+        col, sid = key.split("_", 1)
+        oid = ObjectId(sid)
+    except Exception:
+        return None
+    if col == "ns":
+        d = db.new_strategy_signals.find_one({"_id": oid})
+        if not d:
+            return None
+        return {"sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
+                "src": d.get("strategy") or "?", "dir": d.get("direction"),
+                "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
+                "at": d.get("created_at")}
+    if col == "st":
+        d = db.supertrend_signals.find_one({"_id": oid})
+        if not d:
+            return None
+        return {"sym": d.get("pair_norm") or (d.get("pair") or "").replace("/", ""),
+                "src": "supertrend_" + (d.get("tier") or "?"),
+                "dir": d.get("direction"), "val": d.get("validator_ok"),
+                "ms": d.get("mso_streak2h"), "at": d.get("created_at")}
+    return None
+
+
+def analyze_key(key):
+    """On-demand разбор одной сделки по ключу ленты (sync; в to_thread).
+    Кэш тот же learn_ai — повторный клик бесплатный."""
+    import learn_engine as le
+    from database import _get_db, utcnow
+    db = _get_db()
+    ex = db.learn_ai.find_one({"_id": key})
+    if ex:
+        return {"ok": True, "text": ex["text"],
+                "provider": ex.get("provider"), "cached": True}
+    c = _sig_ctx(db, key)
+    if not c:
+        return {"ok": False, "err": "сигнал не найден"}
+    model = db.learn_model.find_one({"_id": "active"}) or {}
+    status, rule = le.score_signal(model, c["src"], c["dir"],
+                                   c["val"], c["ms"])
+    if rule is None:
+        rules = {r["id"]: r for r in model.get("rules") or []}
+        dl = "LONG" if c["dir"] == "LONG" else "SHORT"
+        rule = rules.get(f"p_{c['src']}_{dl}")
+    c["rule"] = rule
+    c["verdict"] = status
+    try:
+        tm = db.market_state.find_one({"_id": "trend_matrix"}) or {}
+        rows = tm.get("rows") or []
+        up = [r for r in rows if ((r.get("d") or {}).get("4h") or 0) > 0]
+        n4 = [r for r in rows if (r.get("d") or {}).get("4h")]
+        c["breadth"] = round(len(up) / max(1, len(n4)) * 100)
+        td = next((r.get("d") or {} for r in rows
+                   if r.get("s") == c["sym"]), {})
+        arrow = {1: "▲", -1: "▼"}
+        c["trends"] = "/".join(arrow.get(td.get(tf), "·")
+                               for tf in ("1h", "2h", "4h", "12h"))
+    except Exception:
+        pass
+    _ms = c["ms"]
+    _bk = ("gold" if c["val"] is True and c["dir"] == "LONG"
+           and (_ms is None or _ms < 27)
+           else "heat" if c["dir"] == "SHORT" and _ms is not None
+           and _ms >= 27 else None)
+    c["exit_plan"] = ((model.get("exits") or {}).get(_bk)
+                      or {}).get("best_label")
+    res = analyze(c)
+    if not res:
+        return {"ok": False, "err": "AI-провайдеры не ответили"}
+    db.learn_ai.update_one(
+        {"_id": key},
+        {"$set": {"sym": c["sym"], "dir": c["dir"], "src": c["src"],
+                  "text": res["text"], "provider": res["provider"],
+                  "sig_at": c.get("at"), "at": utcnow(),
+                  "on_demand": True}},
+        upsert=True)
+    return {"ok": True, "text": res["text"], "provider": res["provider"]}
 
 
 def run_batch(max_n=BATCH):
@@ -154,6 +241,7 @@ def run_batch(max_n=BATCH):
         if db.learn_ai.find_one({"_id": key}, {"_id": 1}):
             continue
         c["rule"] = rule
+        c["verdict"] = "ACTIVE_SHOW"
         _ms = c["ms"]
         _bk = ("gold" if c["val"] is True and c["dir"] == "LONG"
                and (_ms is None or _ms < 27)

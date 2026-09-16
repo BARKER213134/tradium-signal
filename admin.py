@@ -9453,6 +9453,13 @@ def _setup_check_batch_sync(hours: int, max_pairs: int):
             "setups": n_setup, "items": items}
 
 
+@app.get("/api/academy/analyze")
+async def api_academy_analyze(key: str):
+    """🧠 On-demand AI-разбор одной сделки из ленты Академии."""
+    import learn_ai as _lai
+    return await asyncio.to_thread(_lai.analyze_key, key)
+
+
 _ACADEMY_MKT: dict = {"t": 0.0}
 
 
@@ -9537,6 +9544,14 @@ async def api_academy():
                 "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
         feed.sort(key=lambda x: x["at"], reverse=True)
         feed = feed[:400]
+        # 🚪 выходы корзин + текущие тренды (для silver/dawn-принадлежности)
+        _exits = (model or {}).get("exits") or {}
+        try:
+            _tmx = {r.get("s"): (r.get("d") or {}) for r in (
+                (db.market_state.find_one({"_id": "trend_matrix"}) or {}
+                 ).get("rows") or [])}
+        except Exception:
+            _tmx = {}
         # 🧠 кэш AI-разборов одобренных позиций (learn_ai, цикл watcher)
         ai_map = {}
         try:
@@ -9559,6 +9574,29 @@ async def api_academy():
                 f["ai_by"] = a.get("provider")
             if status == "ACTIVE_SHOW":
                 f["size"] = le.size_tier(rule)
+                _msv = f["ms"]
+                _bk = None
+                if f["dir"] == "LONG" and f["val"] is True and \
+                        (_msv is None or _msv < 27):
+                    _bk = "gold"
+                elif f["dir"] == "SHORT" and _msv is not None and _msv >= 27:
+                    _bk = "heat"
+                else:
+                    _dd = _tmx.get(f["sym"]) or {}
+                    if f["dir"] == "LONG" and _dd.get("1h") == -1 \
+                            and _dd.get("2h") == -1 and _dd.get("4h") == -1 \
+                            and _msv is not None and _msv <= -27:
+                        _bk = "silver"
+                    elif f["dir"] == "LONG" and _dd.get("1h") == 1 \
+                            and _dd.get("4h") == -1:
+                        _bk = "dawn"
+                _e = _exits.get(_bk) if _bk else None
+                if _e:
+                    f["exit"] = _e.get("best")
+                    f["exit_bk"] = _bk
+                    f["exit_avg"] = _e.get("best_avg")
+                else:
+                    f["exit"] = "base"
             fr = (mkt.get("fund") or {}).get(f["sym"])
             if fr is not None:
                 f["fund"] = round(fr * 100, 4)
