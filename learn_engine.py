@@ -781,38 +781,51 @@ def recompute(days=WINDOW_DAYS, progress=None):
         _loop_state(phase="failed", error=f"мало строк: {len(rows)}")
         return None
     _loop_state(phase="aggregating", rows_n=len(rows))
-    prev = db.learn_model.find_one({"_id": "active"}) or {}
-    live_map = paper_live_map()
-    rules = aggregate(rows, prev.get("rules"), live_map=live_map)
-    lgbm = train_lgbm(rows)
+    try:
+        prev = db.learn_model.find_one({"_id": "active"}) or {}
+        live_map = paper_live_map()
+        rules = aggregate(rows, prev.get("rules"), live_map=live_map)
+        _loop_state(phase="lgbm")
+        lgbm = train_lgbm(rows)
+        _loop_state(phase="oos")
     # 🤖 vs 📊: OOS-сравнение LightGBM-топа с портфелем супер-клеток
-    rs_sorted = sorted(rows, key=lambda x: x["ts"])
-    test = rs_sorted[int(len(rs_sorted) * 0.75):]
-    tbl = [x["r"] for x in test
-           if x["gold"] or x["silver"] or x["dawn"] or x["heat"]]
-    table_oos = round(float(np.mean(tbl)), 3) if len(tbl) >= 50 else None
-    beat = bool(lgbm.get("ok") and table_oos is not None
-                and lgbm["oos_top20_avg"] > table_oos)
-    lgbm_streak = (int(prev.get("lgbm_beat_streak", 0)) + 1) if beat else 0
-    model = {
-        "_id": "active",
-        "version": int(prev.get("version", 0)) + 1,
-        "window_days": days, "rows_n": len(rows),
-        "syms_n": len({x["sym"] for x in rows}),
-        "built_at": utcnow().isoformat(),
-        "build_sec": int(time.time() - t0),
-        "rules": rules, "lgbm": lgbm,
-        "exits": exits_table(rows), "liq": liq_split(rows),
-        "tuning": tune_thresholds(rows),
-        "live_n": sum(v["n"] for v in live_map.values()),
-        "table_oos": table_oos, "lgbm_beat_streak": lgbm_streak,
-        "lgbm_ready": bool(lgbm_streak >= 28),
-        "n_show": sum(1 for r in rules if r["status"] == "ACTIVE_SHOW"),
-        "n_hide": sum(1 for r in rules if r["status"] == "ACTIVE_HIDE"),
-        "n_shadow": sum(1 for r in rules if r["status"] == "SHADOW"),
-        "degraded": [r["id"] for r in rules if r.get("degraded") is not None],
-    }
-    model["brief"] = groq_brief(model)
+        rs_sorted = sorted(rows, key=lambda x: x["ts"])
+        test = rs_sorted[int(len(rs_sorted) * 0.75):]
+        tbl = [x["r"] for x in test
+               if x["gold"] or x["silver"] or x["dawn"] or x["heat"]]
+        table_oos = round(float(np.mean(tbl)), 3) if len(tbl) >= 50 else None
+        beat = bool(lgbm.get("ok") and table_oos is not None
+                    and lgbm["oos_top20_avg"] > table_oos)
+        lgbm_streak = (int(prev.get("lgbm_beat_streak", 0)) + 1) if beat else 0
+        _loop_state(phase="exits")
+        model = {
+            "_id": "active",
+            "version": int(prev.get("version", 0)) + 1,
+            "window_days": days, "rows_n": len(rows),
+            "syms_n": len({x["sym"] for x in rows}),
+            "built_at": utcnow().isoformat(),
+            "build_sec": int(time.time() - t0),
+            "rules": rules, "lgbm": lgbm,
+            "exits": exits_table(rows), "liq": liq_split(rows),
+            "tuning": tune_thresholds(rows),
+            "live_n": sum(v["n"] for v in live_map.values()),
+            "table_oos": table_oos, "lgbm_beat_streak": lgbm_streak,
+            "lgbm_ready": bool(lgbm_streak >= 28),
+            "n_show": sum(1 for r in rules if r["status"] == "ACTIVE_SHOW"),
+            "n_hide": sum(1 for r in rules if r["status"] == "ACTIVE_HIDE"),
+            "n_shadow": sum(1 for r in rules if r["status"] == "SHADOW"),
+            "degraded": [r["id"] for r in rules
+                         if r.get("degraded") is not None],
+        }
+        _loop_state(phase="brief")
+        model["brief"] = groq_brief(model)
+        _loop_state(phase="saving")
+    except Exception as e:
+        import traceback as _tb
+        _loop_state(phase="failed",
+                    error=f"post: {type(e).__name__}: {e} | "
+                          f"{_tb.format_exc()[-250:]}"[:400])
+        raise
     db.learn_model.replace_one({"_id": "active"}, model, upsert=True)
     hist = dict(model)
     hist["_id"] = f"v{model['version']}_{model['built_at'][:16]}"
