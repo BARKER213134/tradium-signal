@@ -38,7 +38,7 @@ def _ask_gemini(prompt):
             f"https://generativelanguage.googleapis.com/v1beta/models/{mdl}:generateContent",
             params={"key": key},
             json={"contents": [{"parts": [{"text": prompt}]}],
-                  "generationConfig": {"maxOutputTokens": 400,
+                  "generationConfig": {"maxOutputTokens": 700,
                                        "temperature": 0.3}},
             timeout=25)
         if r.status_code == 200:
@@ -56,13 +56,13 @@ def _ask_groq(prompt):
         return None
     try:
         import requests
-        mdl = os.getenv("GROQ_SIGNAL_MODEL", "openai/gpt-oss-20b")
+        mdl = os.getenv("GROQ_SIGNAL_MODEL", "openai/gpt-oss-120b")
         r = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {key}"},
             json={"model": mdl,
                   "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 400, "temperature": 0.3},
+                  "max_tokens": 900, "temperature": 0.3},
             timeout=25)
         if r.status_code == 200:
             t = r.json()["choices"][0]["message"]["content"].strip()
@@ -84,24 +84,104 @@ def analyze(ctx):
             "СКРЫЛА этот сигнал — его клетка исторически в минусе"
             if vd == "ACTIVE_HIDE" else
             "не имеет уверенного вердикта по этому сигналу")
+    # 💰 живая цена, цена на сигнале и сдвиг — оцениваем вход ИМЕННО СЕЙЧАС
+    sym = ctx.get("sym") or ""
+    px = None
+    drift_txt = ""
+    try:
+        from exchange import get_klines_any
+        bars = get_klines_any(sym[:-4] + "/USDT", "1h", 120)
+        if bars:
+            px = float(bars[-1]["c"])
+            at = ctx.get("at")
+            if at is not None:
+                at_ms = int(at.timestamp() * 1000)
+                age_h = max(0.0, (bars[-1]["t"] - at_ms) / 3_600_000)
+                sig_px = None
+                for b in bars:
+                    if b["t"] + 3_600_000 > at_ms:
+                        break
+                    sig_px = float(b["c"])
+                if sig_px:
+                    dr = (px / sig_px - 1) * 100
+                    sgd = 1 if ctx.get("dir") == "LONG" else -1
+                    gone = dr * sgd
+                    drift_txt = (
+                        f"Сигнал был {age_h:.0f}ч назад по ~{sig_px}. С тех "
+                        f"пор цена сдвинулась {dr:+.2f}% — "
+                        + ("движение УЖЕ ЧАСТИЧНО ОТРАБОТАНО в сторону "
+                           "сделки, вход догоняющий" if gone > 1.5 else
+                           "цена ушла ПРОТИВ сделки, вход лучше сигнального, "
+                           "но проверь не сломан ли сетап" if gone < -1.5 else
+                           "цена почти на месте сигнала") + ".\n")
+    except Exception:
+        pass
+    ek = ctx.get("exit_key") or "base"
+    tp_pct = 15.0 if ek == "tp15" else 10.0
+    sl_pct = 3.5 if ek == "sl35" else 5.0
+    sg = 1 if ctx.get("dir") == "LONG" else -1
+    cond = {"be5": "после +5% перенести стоп в безубыток",
+            "trail4": "после +5% вести трейл-стоп 4% от макс. закрытия",
+            "half5": "на +5% зафиксировать половину",
+            "h48": "выйти не позже 48 часов"}.get(ek, "")
+    if px:
+        tp_px = px * (1 + sg * tp_pct / 100)
+        sl_px = px * (1 - sg * sl_pct / 100)
+        fmt = (lambda v: f"{v:.6f}".rstrip("0").rstrip(".")
+               if v < 100 else f"{v:.2f}")
+        lvl = (f"цена сейчас {fmt(px)}, TP {fmt(tp_px)} ({tp_pct:+.0f}%), "
+               f"SL {fmt(sl_px)} (−{sl_pct}%)"
+               + (f", {cond}" if cond else "") + ", горизонт до 96ч")
+    else:
+        lvl = (f"цена недоступна — уровни в %: TP {tp_pct:+.0f}%, "
+               f"SL −{sl_pct}%" + (f", {cond}" if cond else ""))
+    # 💸 фандинг и возраст — если достали
+    extra = ""
+    fund = ctx.get("fund")
+    if fund is not None:
+        extra += (f"Фандинг перпа: {fund:+.4f}%/8ч"
+                  + (" — экстрем, толпа зажата против движения"
+                     if abs(fund) >= 0.05 else "") + ".\n")
+    age = ctx.get("age_days")
+    if age is not None:
+        extra += (f"Возраст монеты: {age}д"
+                  + (" — МОЛОДАЯ (<70д): перегрев ведёт себя иначе, "
+                     "стат. клетка ещё копится" if age < 70 else "") + ".\n")
+    lv = rule.get("live")
+    live_txt = (f" Живые paper-исходы правила: n={lv['n']}, WR {lv['wr']}, "
+                f"avg {lv['avg']}." if lv else "")
     prompt = (
-        "Ты трейдер-аналитик крипто-платформы. Самообучаемая модель "
-        f"{vphr}. Дай разбор СТРОГО в 3 строках по-русски, "
-        "каждая с префиксом:\nЗА: <главный аргумент входа>\n"
-        "РИСК: <главная угроза сделке>\nПЛАН: <вход/выход одной фразой, "
-        f"выход: {ctx.get('exit_plan') or 'TP+10% / SL-5% / до 96ч'}>"
-        "\nБез воды, конкретно.\n\n"
-        f"Сигнал: {ctx.get('sym')} {ctx.get('dir')}, источник "
-        f"{ctx.get('src')}.\n"
+        "Ты опытный крипто-трейдер и риск-менеджер платформы. "
+        f"Самообучаемая модель {vphr}. Дай разбор СТРОГО в 5 строках "
+        "по-русски, каждая с префиксом:\n"
+        "ЗА: <главный аргумент входа, с цифрами>\n"
+        "ПРОТИВ: <главная угроза сделке, конкретно>\n"
+        f"УРОВНИ: <точные цены: {lvl}>\n"
+        "ВЕДЕНИЕ: <как вести позицию: когда двигать стоп, когда фиксировать, "
+        "при каком развитии выйти раньше>\n"
+        "ВЕРДИКТ: <БРАТЬ СЕЙЧАС / ПРОПУСТИТЬ / ЖДАТЬ ОТКАТ> уверенность "
+        "<N>/10 — одной фразой почему\n"
+        "ВАЖНО: оценивай вход ИМЕННО СЕЙЧАС по текущей цене — если "
+        "движение от сигнала уже отработано, честно говори ПРОПУСТИТЬ "
+        "или ЖДАТЬ ОТКАТ. Опирайся ТОЛЬКО на данные ниже, уровни не "
+        "выдумывай, размер не советуй.\n\n"
+        f"Сигнал: {sym} {ctx.get('dir')}, источник {ctx.get('src')}.\n"
+        f"{drift_txt}"
         f"Серия MSO 2h: {ser} ({ms}).\n"
-        f"🧿 валидатор (у ST-уровня и против режима): "
+        f"🧿 валидатор (у ST-уровня И против режима): "
         f"{'ДА' if ctx.get('val') is True else 'нет'}.\n"
-        f"Правило модели: {rule.get('label')} — исторически n={rule.get('n')}, "
-        f"WR {rule.get('wr')}%, средний исход {rule.get('avg')}%/вход.\n"
+        f"Правило модели: {rule.get('label')} — n={rule.get('n')}, "
+        f"WR {rule.get('wr')}%, avg {rule.get('avg')}%/вход, "
+        f"EV {rule.get('ev')}.{live_txt}\n"
         f"Широта рынка (доля пар в 4h-аптренде): {ctx.get('breadth', '?')}%.\n"
-        f"Тренды монеты сейчас (1h/2h/4h/12h): {ctx.get('trends', '?')}.\n"
-        "Контекст платформы: лучшие входы — против режима; зелёная серия "
-        "27+ для лонга — зона обрыва; красная серия для шорта — запрет.")
+        f"Тренды монеты (1h/2h/4h/12h): {ctx.get('trends', '?')}.\n"
+        f"{extra}"
+        f"План выхода корзины (само-обучение): "
+        f"{ctx.get('exit_plan') or 'канон TP+10/SL-5/96ч'}.\n"
+        "Законы платформы (из 45д бэктестов): лучшие входы — ПРОТИВ "
+        "режима; зелёная серия 27+ для лонга — зона обрыва (-2.15); "
+        "красная серия для шорта — запрет; первое касание монеты "
+        "сильнее повторных; одобренные лонги бегут дальше +10%.")
     return _ask_gemini(prompt) or _ask_groq(prompt)
 
 
@@ -172,8 +252,24 @@ def analyze_key(key):
            and (_ms is None or _ms < 27)
            else "heat" if c["dir"] == "SHORT" and _ms is not None
            and _ms >= 27 else None)
-    c["exit_plan"] = ((model.get("exits") or {}).get(_bk)
-                      or {}).get("best_label")
+    _ex = (model.get("exits") or {}).get(_bk) or {}
+    c["exit_plan"] = _ex.get("best_label")
+    c["exit_key"] = _ex.get("best")
+    try:
+        _ag = db.coin_ages.find_one(
+            {"_id": c["sym"][:-4] + "/USDT"}, {"days": 1})
+        if _ag:
+            c["age_days"] = _ag.get("days")
+    except Exception:
+        pass
+    try:
+        import requests as _rq
+        _fr = _rq.get("https://fapi.binance.com/fapi/v1/premiumIndex",
+                      params={"symbol": c["sym"]}, timeout=8)
+        if _fr.status_code == 200:
+            c["fund"] = float(_fr.json().get("lastFundingRate") or 0) * 100
+    except Exception:
+        pass
     res = analyze(c)
     if not res:
         return {"ok": False, "err": "AI-провайдеры не ответили"}
@@ -247,8 +343,16 @@ def run_batch(max_n=BATCH):
                and (_ms is None or _ms < 27)
                else "heat" if c["dir"] == "SHORT" and _ms is not None
                and _ms >= 27 else None)
-        c["exit_plan"] = ((model.get("exits") or {}).get(_bk)
-                          or {}).get("best_label")
+        _ex = (model.get("exits") or {}).get(_bk) or {}
+        c["exit_plan"] = _ex.get("best_label")
+        c["exit_key"] = _ex.get("best")
+        try:
+            _ag = db.coin_ages.find_one(
+                {"_id": c["sym"][:-4] + "/USDT"}, {"days": 1})
+            if _ag:
+                c["age_days"] = _ag.get("days")
+        except Exception:
+            pass
         c["breadth"] = breadth
         td = (trends_map or {}).get(c["sym"]) or {}
         arrow = {1: "▲", -1: "▼"}

@@ -7173,6 +7173,19 @@ function acOpenChart(i) {
   const f = rows[i];
   if (f) { try { openPairChart(f.sym, '2h'); } catch (e) {} }
 }
+async function acAskAiKey(key, elId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (el.dataset.done) { el.style.display = el.style.display === 'none' ? 'block' : 'none'; return; }
+  el.style.display = 'block';
+  el.textContent = '🧠 спрашиваю AI…';
+  try {
+    const r = await fetch('/api/academy/analyze?key=' + encodeURIComponent(key));
+    const d = await r.json();
+    el.textContent = d.ok ? d.text : ('🧠 ' + (d.err || 'AI не ответил — попробуй ещё раз'));
+    if (d.ok) el.dataset.done = '1';
+  } catch (e) { el.textContent = '🧠 ошибка сети — попробуй ещё раз'; }
+}
 async function acAskAi(i) {
   const f = (window._acRows || [])[i];
   const el = document.getElementById('acAi_' + i);
@@ -7246,7 +7259,7 @@ async function acLoad() {
   pel.innerHTML = `<span style="color:#00e5a0;">${po.l || 0}L</span> / <span style="color:#ff5e9c;">${po.s || 0}S</span>`;
   const pl = (pp && pp.open_list) || [];
   const cl = (pp && pp.closed_list) || [];
-  const plHtml = pl.map(t => {
+  const plHtml = pl.map((t, ti) => {
     const dt = new Date(t.at + (t.at.endsWith('Z') ? '' : 'Z'));
     const uc = t.upnl == null ? 'var(--muted)' : t.upnl > 0 ? '#00e5a0' : '#ff5e9c';
     return `<div onclick="try{openPairChart('${t.sym}','2h')}catch(e){}" style="display:flex;gap:8px;align-items:center;padding:5px 12px;border-bottom:1px solid rgba(42,49,64,0.4);cursor:pointer;font-size:11.5px;font-family:var(--font-mono);" title="${t.rule || ''} · вход ${t.entry}">
@@ -7255,15 +7268,19 @@ async function acLoad() {
       <span style="color:${t.dir === 'LONG' ? '#00e5a0' : '#ff5e9c'};font-weight:800;font-size:10px;">${t.dir === 'LONG' ? '▲ЛОНГ' : '▼ШОРТ'}</span>
       <span style="color:#ffd23e;font-size:10px;">×${(t.size || '1x').replace('x', '')}</span>
       <span style="margin-left:auto;font-weight:800;color:${uc};">${t.upnl == null ? '…' : (t.upnl > 0 ? '+' : '') + t.upnl + '%'}</span>
-    </div>`;
+      <span onclick="event.stopPropagation();acAskAiKey('${t.key}', 'acPAi_o${ti}');" title="🧠 спросить AI об этой сделке" style="cursor:pointer;">🧠</span>
+    </div>
+    <div id="acPAi_o${ti}" style="display:none;padding:7px 14px 9px 30px;border-bottom:1px solid rgba(42,49,64,0.4);background:rgba(123,92,255,0.06);font-size:11px;line-height:1.5;white-space:pre-wrap;"></div>`;
   }).join('');
-  const clHtml = cl.length ? `<div style="padding:5px 12px;font-size:10px;color:var(--muted);background:rgba(255,255,255,0.02);">закрытые:</div>` + cl.map(t =>
+  const clHtml = cl.length ? `<div style="padding:5px 12px;font-size:10px;color:var(--muted);background:rgba(255,255,255,0.02);">закрытые:</div>` + cl.map((t, ti) =>
     `<div style="display:flex;gap:8px;align-items:center;padding:4px 12px;border-bottom:1px solid rgba(42,49,64,0.3);font-size:11px;font-family:var(--font-mono);opacity:0.85;">
       <b style="min-width:70px;">${t.sym.replace('USDT', '')}</b>
       <span style="color:${t.dir === 'LONG' ? '#00e5a0' : '#ff5e9c'};font-size:10px;">${t.dir === 'LONG' ? '▲' : '▼'}</span>
       <span style="font-size:10px;color:var(--muted);">${t.state}</span>
       <span style="margin-left:auto;font-weight:800;color:${t.r > 0 ? '#00e5a0' : '#ff5e9c'};">${t.r > 0 ? '+' : ''}${t.r}%</span>
-    </div>`).join('') : '';
+      <span onclick="acAskAiKey('${t.key}', 'acPAi_c${ti}');" title="🧠 спросить AI об этой сделке" style="cursor:pointer;">🧠</span>
+    </div>
+    <div id="acPAi_c${ti}" style="display:none;padding:7px 14px 9px 30px;border-bottom:1px solid rgba(42,49,64,0.3);background:rgba(123,92,255,0.06);font-size:11px;line-height:1.5;white-space:pre-wrap;"></div>`).join('') : '';
   document.getElementById('acPaperList').innerHTML = (plHtml || '<div style="padding:12px;color:var(--muted);font-size:11px;">открытых сделок нет</div>') + clHtml;
   document.getElementById('acPaperN').textContent = pl.length ? '· ' + pl.length + ' открыто' : '';
   const ex = (m || {}).exits;

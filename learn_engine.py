@@ -671,11 +671,16 @@ def train_lgbm(rows):
     Xte = np.array([feats(x) for x in rs[cut:]], dtype=float)
     rte = np.array([x["r"] for x in rs[cut:]])
     yte = (rte > 0).astype(int)
-    m = lgb.LGBMClassifier(n_estimators=200, num_leaves=15, learning_rate=0.06,
-                           min_child_samples=40, verbose=-1,
-                           categorical_feature=[0])
-    m.fit(Xtr, ytr)
-    p = m.predict_proba(Xte)[:, 1]
+    # нативный API (sklearn-обёртки на проде нет — LightGBMError 16.09)
+    try:
+        ds = lgb.Dataset(Xtr, label=ytr, categorical_feature=[0],
+                         free_raw_data=False)
+        m = lgb.train({"objective": "binary", "num_leaves": 15,
+                       "learning_rate": 0.06, "min_data_in_leaf": 40,
+                       "verbosity": -1}, ds, num_boost_round=200)
+        p = np.asarray(m.predict(Xte))
+    except Exception as e:
+        return {"ok": False, "reason": f"train: {type(e).__name__}: {e}"[:200]}
     # AUC руками (без sklearn)
     order = np.argsort(p)
     ranks = np.empty(len(p))
@@ -685,7 +690,7 @@ def train_lgbm(rows):
     top = p >= np.percentile(p, 80)
     fi = sorted(zip(["src", "dir", "val", "streak", "tr4", "breadth",
                      "fresh", "liq"],
-                    m.feature_importances_.tolist()), key=lambda z: -z[1])
+                    m.feature_importance().tolist()), key=lambda z: -z[1])
     return {"ok": True, "n_train": cut, "n_test": len(rs) - cut,
             "auc": round(auc, 3),
             "oos_all_avg": round(float(rte.mean()), 3),

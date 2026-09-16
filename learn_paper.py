@@ -142,7 +142,8 @@ def lists(db):
     op = []
     for d in db.academy_paper.find({"state": "OPEN"}).sort(
             "opened_at", -1).limit(60):
-        op.append({"sym": d["sym"], "dir": d["dir"], "src": d.get("src"),
+        op.append({"key": str(d["_id"]),
+                   "sym": d["sym"], "dir": d["dir"], "src": d.get("src"),
                    "entry": d.get("entry"), "size": d.get("size"),
                    "rule": d.get("rule"),
                    "at": d["opened_at"].isoformat()})
@@ -150,7 +151,8 @@ def lists(db):
     for d in db.academy_paper.find(
             {"state": {"$in": ["TP", "SL", "TIMEOUT"]}}).sort(
             "closed_at", -1).limit(20):
-        cl.append({"sym": d["sym"], "dir": d["dir"], "state": d["state"],
+        cl.append({"key": str(d["_id"]),
+                   "sym": d["sym"], "dir": d["dir"], "state": d["state"],
                    "r": d.get("r"), "at": (d.get("closed_at")
                                            or d["opened_at"]).isoformat()})
     return op, cl
