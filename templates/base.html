@@ -4254,7 +4254,9 @@ window.openPairChart = function(symbol, tf) {
   window._kcQmSym = sym;
   if (window._kcQmRevPaint) window._kcQmRevPaint();
   // ◀▶ листание по списку вкладки (Тренды кладут порядок в _kcQmList)
-  const navList = window._kcQmList || [];
+  // дубли монет (пул/лента: несколько сделок одной монеты) ломали
+  // indexOf-навигацию — листаем по уникальным символам (16.09)
+  const navList = [...new Set(window._kcQmList || [])];
   const navIx = navList.indexOf(sym);
   const navBox = document.getElementById('kcQmNavBox');
   if (navBox) {
@@ -4332,7 +4334,7 @@ window._kcQmClusters = function() {
   }
 };
 window._kcQmNav = function(step) {
-  const list = window._kcQmList || [];
+  const list = [...new Set(window._kcQmList || [])];
   const ix = list.indexOf(window._kcQmSym);
   if (ix < 0 || !list.length) return;
   const nx = (ix + step + list.length) % list.length;
