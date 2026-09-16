@@ -341,6 +341,19 @@ async def _academy_paper_loop():
         await _asyncio.sleep(300)
 
 
+async def _academy_digest_loop():
+    """🌅 Академия: утренний TG-дайджест раз в день в 08:xx UTC."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(660)
+    while True:
+        try:
+            import learn_digest as _ld
+            await _asyncio.to_thread(_ld.maybe_send)
+        except Exception:
+            logger.exception("[digest] loop crashed")
+        await _asyncio.sleep(600)
+
+
 async def _mso_retest_loop():
     """🧲/🌡 MSO-сигналы (грид 15.09: MSO — шортовый индикатор): 2h
     SHORT-ретест (эдж +0.24) после 2h-границ +9 мин; на границах 12h
@@ -4084,6 +4097,7 @@ async def start_watcher():
         asyncio.create_task(_academy_loop())
         asyncio.create_task(_academy_ai_loop())
         asyncio.create_task(_academy_paper_loop())
+        asyncio.create_task(_academy_digest_loop())
         logger.info("[svetofor] stamp loop started")
     except Exception:
         logger.exception("[svetofor] failed to start loop")

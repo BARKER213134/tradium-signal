@@ -255,6 +255,13 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
     from backtest_supertrend import compute_st_series
     from database import utcnow
     now_ms = int(utcnow().timestamp() * 1000)
+    ages = {}
+    try:
+        from database import _get_db as _gdb_a
+        for d in _gdb_a().coin_ages.find({}, {"days": 1}):
+            ages[d["_id"]] = d.get("days")
+    except Exception:
+        pass
     sigs = _load_signals(days)
     by_sym = {}
     for s in sigs:
@@ -368,7 +375,9 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
         fresh = s.get("_prev") is None or (ts - s["_prev"]) > 7 * 86_400_000
         vr = (_outcome_variants(p["c1"], i1, sg)
               if (gold_f or silver_f or dawn_f or heat_f) else None)
+        _age = ages.get(s["pair"])
         rows.append({
+            "dmin": dmin, "young": (None if _age is None else bool(_age < 70)),
             "fresh": fresh, "dvol": p.get("dvol") or 0.0, "vr": vr,
             "src": s["src"], "sg": sg, "val": val, "streak": streak,
             "bk": bucket(streak), "tr4": tr4,
@@ -397,11 +406,16 @@ def _stats(sel, tmid):
             "stable": stable}
 
 
-def aggregate(rows, prev_rules=None):
-    """rows → список правил со статистикой, статусами и счётчиками."""
+def aggregate(rows, prev_rules=None, live_map=None):
+    """rows → список правил со статистикой, статусами и счётчиками.
+    live_map: {rule_id: {n, wr, avg}} из закрытых paper-сделок — живые
+    исходы подмешиваются в EV с тройным весом (реальное исполнение
+    важнее свечной симуляции)."""
     from database import utcnow
     prev = {r["id"]: r for r in (prev_rules or [])}
+    live_map = live_map or {}
     tmid = float(np.median([x["ts"] for x in rows]))
+    tmax = max(x["ts"] for x in rows)
     glob = {1: np.mean([x["r"] for x in rows if x["sg"] > 0] or [0]),
             -1: np.mean([x["r"] for x in rows if x["sg"] < 0] or [0])}
     cut14 = max(x["ts"] for x in rows) - DEGRADE_DAYS * 86_400_000
@@ -418,6 +432,20 @@ def aggregate(rows, prev_rules=None):
         cand = None
         if st["n"] >= MIN_N and st["stable"]:
             cand = "show" if st["avg"] > 0.3 else ("hide" if st["avg"] < -0.1 else None)
+        # 📈 спарклайн жизни: WR по 6 последним неделям (свежая слева)
+        wk = []
+        for w in range(6):
+            lo = tmax - (w + 1) * 7 * 86_400_000
+            hi = tmax - w * 7 * 86_400_000
+            a = [x["r"] for x in sel if lo < x["ts"] <= hi]
+            wk.append(round(sum(1 for r_ in a if r_ > 0) / len(a) * 100)
+                      if len(a) >= 5 else None)
+        # 📜 живые paper-исходы этого правила
+        lv = live_map.get(rid)
+        if lv and lv["n"] >= 30:
+            ev = round((st["n"] * st["avg"] + 3 * lv["n"] * lv["avg"]
+                        + SHRINK_K * parent)
+                       / (st["n"] + 3 * lv["n"] + SHRINK_K), 3)
         pv = prev.get(rid) or {}
         runs = (pv.get("runs", 0) + 1) if cand and cand == pv.get("cand") else (1 if cand else 0)
         status = pv.get("status", "NEUTRAL")
@@ -439,6 +467,7 @@ def aggregate(rows, prev_rules=None):
                 status = "SHADOW"   # разжалование
                 runs = 0
         rules.append({"id": rid, "label": label, "kind": kind, **st,
+                      "wk": wk, "live": lv,
                       "ev": ev, "cand": cand, "runs": runs, "status": status,
                       "degraded": deg,
                       "recent_n": len(recent),
@@ -453,6 +482,10 @@ def aggregate(rows, prev_rules=None):
              [x for x in rows if x["dawn"]], "super")
     add_rule("sc_heat", "🌡 SHORT зелёная 27+",
              [x for x in rows if x["heat"]], "super")
+    add_rule("sc_heat_young", "🌡 SHORT 27+ · монета моложе 70д",
+             [x for x in rows if x["heat"] and x["young"] is True], "super")
+    add_rule("sc_heat_old", "🌡 SHORT 27+ · монета старше 70д",
+             [x for x in rows if x["heat"] and x["young"] is False], "super")
     add_rule("sc_fresh", "🆕 LONG первое касание 7д (лонг-корзины)",
              [x for x in rows if x["fresh"]
               and (x["gold"] or x["silver"] or x["dawn"])], "super")
@@ -529,6 +562,69 @@ def liq_split(rows):
     return {"median_dvol": int(med),
             "hi": st([x for x in sel if x["dvol"] >= med]),
             "lo": st([x for x in sel if x["dvol"] < med])}
+
+
+def tune_thresholds(rows):
+    """🔧 Авто-тюнинг порогов (ТОЛЬКО тень): сетка вокруг боевых констант
+    валидатора (дистанция до ST-линии, широта) и порога серии для 🌡.
+    Боевые значения не трогаются — вкладка показывает, куда дышит рынок."""
+    tmid = float(np.median([x["ts"] for x in rows]))
+
+    def st(sel):
+        if len(sel) < 300:
+            return None
+        a = np.array([x["r"] for x in sel])
+        ts = np.array([x["ts"] for x in sel])
+        h1, h2 = a[ts < tmid], a[ts >= tmid]
+        return {"n": int(len(a)), "avg": round(float(a.mean()), 3),
+                "wr": round(float((a > 0).mean() * 100), 1),
+                "stable": bool(len(h1) > 30 and len(h2) > 30
+                               and (h1.mean() > 0) == (h2.mean() > 0))}
+
+    out = {}
+    longs = [x for x in rows if x["sg"] > 0 and x["dmin"] is not None
+             and x["br"] is not None and x["streak"] < 27]
+    grid = []
+    for dist in (3.0, 4.0, 5.0, 6.0):
+        for brm in (0.40, 0.45, 0.50):
+            s = st([x for x in longs if x["dmin"] <= dist and x["br"] <= brm])
+            if s:
+                grid.append({"dist": dist, "br": brm, **s})
+    cur = next((g for g in grid if g["dist"] == 4.0 and g["br"] == 0.45), None)
+    best = max((g for g in grid if g["stable"]), key=lambda g: g["avg"],
+               default=None)
+    out["gold"] = {"current": cur, "best": best,
+                   "grid": sorted(grid, key=lambda g: -g["avg"])[:5]}
+    shorts = [x for x in rows if x["sg"] < 0]
+    sgrid = []
+    for thr in (22, 27, 32):
+        s = st([x for x in shorts if x["streak"] >= thr])
+        if s:
+            sgrid.append({"thr": thr, **s})
+    cur_s = next((g for g in sgrid if g["thr"] == 27), None)
+    best_s = max((g for g in sgrid if g["stable"]), key=lambda g: g["avg"],
+                 default=None)
+    out["heat"] = {"current": cur_s, "best": best_s, "grid": sgrid}
+    return out
+
+
+def paper_live_map():
+    """{rule_id: {n, wr, avg}} из закрытых paper-сделок (sync)."""
+    from database import _get_db
+    agg = {}
+    try:
+        for d in _get_db().academy_paper.find(
+                {"state": {"$in": ["TP", "SL", "TIMEOUT"]},
+                 "rule_id": {"$ne": None}}, {"rule_id": 1, "r": 1}):
+            if d.get("r") is None:
+                continue
+            agg.setdefault(d["rule_id"], []).append(float(d["r"]))
+    except Exception:
+        pass
+    return {k: {"n": len(v),
+                "wr": round(sum(1 for r in v if r > 0) / len(v) * 100, 1),
+                "avg": round(sum(v) / len(v), 3)}
+            for k, v in agg.items() if len(v) >= 5}
 
 
 def size_tier(rule):
@@ -664,8 +760,18 @@ def recompute(days=WINDOW_DAYS, progress=None):
         logger.warning(f"[academy] мало строк: {len(rows)} — модель не обновляю")
         return None
     prev = db.learn_model.find_one({"_id": "active"}) or {}
-    rules = aggregate(rows, prev.get("rules"))
+    live_map = paper_live_map()
+    rules = aggregate(rows, prev.get("rules"), live_map=live_map)
     lgbm = train_lgbm(rows)
+    # 🤖 vs 📊: OOS-сравнение LightGBM-топа с портфелем супер-клеток
+    rs_sorted = sorted(rows, key=lambda x: x["ts"])
+    test = rs_sorted[int(len(rs_sorted) * 0.75):]
+    tbl = [x["r"] for x in test
+           if x["gold"] or x["silver"] or x["dawn"] or x["heat"]]
+    table_oos = round(float(np.mean(tbl)), 3) if len(tbl) >= 50 else None
+    beat = bool(lgbm.get("ok") and table_oos is not None
+                and lgbm["oos_top20_avg"] > table_oos)
+    lgbm_streak = (int(prev.get("lgbm_beat_streak", 0)) + 1) if beat else 0
     model = {
         "_id": "active",
         "version": int(prev.get("version", 0)) + 1,
@@ -675,6 +781,10 @@ def recompute(days=WINDOW_DAYS, progress=None):
         "build_sec": int(time.time() - t0),
         "rules": rules, "lgbm": lgbm,
         "exits": exits_table(rows), "liq": liq_split(rows),
+        "tuning": tune_thresholds(rows),
+        "live_n": sum(v["n"] for v in live_map.values()),
+        "table_oos": table_oos, "lgbm_beat_streak": lgbm_streak,
+        "lgbm_ready": bool(lgbm_streak >= 28),
         "n_show": sum(1 for r in rules if r["status"] == "ACTIVE_SHOW"),
         "n_hide": sum(1 for r in rules if r["status"] == "ACTIVE_HIDE"),
         "n_shadow": sum(1 for r in rules if r["status"] == "SHADOW"),

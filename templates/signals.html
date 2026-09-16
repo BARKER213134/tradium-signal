@@ -7094,7 +7094,9 @@ setInterval(trLoad, 60000);
       <button id="acFnt" onclick="_acF='none';acRenderFeed();" style="border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);font-size:11px;font-weight:800;cursor:pointer;padding:4px 10px;font-family:var(--font-mono);">⚪ Без вердикта</button>
     </div>
     <div style="background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.4);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#00e5a0;">Лента 48ч <span id="acFeedN" style="opacity:0.8;"></span></div>
-    <div id="acFeed" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:72vh;overflow-y:auto;"></div>
+    <div id="acFeed" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:52vh;overflow-y:auto;"></div>
+    <div style="margin-top:10px;background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.4);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#ffd23e;" title="📜 каждый одобренный сигнал автоматически становится paper-сделкой: вход по 1h-закрытию, выход по канону. Живая проверка модели без денег.">📜 Paper-сделки <span id="acPaperN" style="opacity:0.8;"></span></div>
+    <div id="acPaperList" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:34vh;overflow-y:auto;"></div>
   </div>
   <div>
     <div id="acExits" style="display:none;margin-bottom:10px;border:1px solid rgba(0,212,255,0.35);border-radius:8px;overflow:hidden;">
@@ -7191,12 +7193,13 @@ function acRenderRules() {
     const rs = (d.rules || []).filter(r => r.status === st);
     if (!rs.length) return;
     html += `<div style="padding:7px 12px;font-size:10.5px;font-weight:800;color:${col};background:rgba(255,255,255,0.03);border-bottom:1px solid var(--border);">${title} · ${rs.length}</div>`;
-    html += rs.map(r => `<div style="display:grid;grid-template-columns:1fr 44px 46px 60px 84px;gap:4px;align-items:center;padding:5px 12px;border-bottom:1px solid rgba(42,49,64,0.4);font-size:11px;font-family:var(--font-mono);" title="стаж подтверждений: ${r.runs} · свежих 14д: ${r.recent_n}${r.degraded != null ? ' · ⚠️ ДЕГРАДАЦИЯ: свежие 14д avgR ' + r.degraded : ''}">
+    html += rs.map(r => `<div style="display:grid;grid-template-columns:1fr 44px 46px 60px 84px 64px;gap:4px;align-items:center;padding:5px 12px;border-bottom:1px solid rgba(42,49,64,0.4);font-size:11px;font-family:var(--font-mono);" title="стаж подтверждений: ${r.runs} · свежих 14д: ${r.recent_n}${r.degraded != null ? ' · ⚠️ ДЕГРАДАЦИЯ: свежие 14д avgR ' + r.degraded : ''}">
       <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.degraded != null ? '⚠️ ' : ''}${r.label}</span>
       <span style="color:var(--muted);text-align:right;">${r.n}</span>
       <span style="text-align:right;">${r.wr}</span>
       <span style="text-align:right;font-weight:800;color:${r.avg > 0 ? '#00e5a0' : '#ff5e9c'};">${r.avg > 0 ? '+' : ''}${r.avg}</span>
       <span style="color:var(--muted);text-align:right;font-size:10px;">${r.h1 == null ? '' : (r.h1 > 0 ? '+' : '') + r.h1 + ' / ' + (r.h2 > 0 ? '+' : '') + r.h2}</span>
+      <span style="letter-spacing:1px;font-size:9px;" title="📈 WR по неделям, свежая слева: ${(r.wk || []).map(w => w == null ? '·' : w + '%').join(' / ')}${r.live ? ' · 📜 живые: n=' + r.live.n + ' WR ' + r.live.wr + ' avg ' + r.live.avg : ''}">${(r.wk || []).map(w => w == null ? '<span style="color:var(--border);">▮</span>' : w >= 55 ? '<span style="color:#00e5a0;">▮</span>' : w >= 45 ? '<span style="color:#ffd23e;">▮</span>' : '<span style="color:#ff5e9c;">▮</span>').join('')}${r.live ? '📜' : ''}</span>
     </div>`).join('');
   });
   document.getElementById('acRules').innerHTML = html || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">модель ещё не построена — первый ночной пересчёт заполнит таблицу</div>';
@@ -7222,7 +7225,7 @@ async function acLoad() {
     }
   }
   const lg = _acD.lgbm;
-  document.getElementById('acLgbm').textContent = lg && lg.ok ? lg.auc + ' · топ20% ' + (lg.oos_top20_avg > 0 ? '+' : '') + lg.oos_top20_avg : '—';
+  document.getElementById('acLgbm').textContent = (lg && lg.ok ? lg.auc + ' · топ20% ' + (lg.oos_top20_avg > 0 ? '+' : '') + lg.oos_top20_avg : '—') + ((m && m.lgbm_beat_streak) ? ' · 🔥' + m.lgbm_beat_streak + '/28' : '');
   const btc = _acD.btc || {};
   const bd = btc.d || {};
   const ar = v => v > 0 ? '<span style="color:#00e5a0;">▲</span>' : v < 0 ? '<span style="color:#ff5e9c;">▼</span>' : '·';
@@ -7232,6 +7235,28 @@ async function acLoad() {
   const po = _acD.port || {};
   const pel = document.getElementById('acPort');
   pel.innerHTML = `<span style="color:#00e5a0;">${po.l || 0}L</span> / <span style="color:#ff5e9c;">${po.s || 0}S</span>`;
+  const pl = (pp && pp.open_list) || [];
+  const cl = (pp && pp.closed_list) || [];
+  const plHtml = pl.map(t => {
+    const dt = new Date(t.at + (t.at.endsWith('Z') ? '' : 'Z'));
+    const uc = t.upnl == null ? 'var(--muted)' : t.upnl > 0 ? '#00e5a0' : '#ff5e9c';
+    return `<div onclick="try{openPairChart('${t.sym}','2h')}catch(e){}" style="display:flex;gap:8px;align-items:center;padding:5px 12px;border-bottom:1px solid rgba(42,49,64,0.4);cursor:pointer;font-size:11.5px;font-family:var(--font-mono);" title="${t.rule || ''} · вход ${t.entry}">
+      <span style="color:var(--muted);font-size:10px;">${dt.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
+      <b style="min-width:70px;">${t.sym.replace('USDT', '')}</b>
+      <span style="color:${t.dir === 'LONG' ? '#00e5a0' : '#ff5e9c'};font-weight:800;font-size:10px;">${t.dir === 'LONG' ? '▲ЛОНГ' : '▼ШОРТ'}</span>
+      <span style="color:#ffd23e;font-size:10px;">×${(t.size || '1x').replace('x', '')}</span>
+      <span style="margin-left:auto;font-weight:800;color:${uc};">${t.upnl == null ? '…' : (t.upnl > 0 ? '+' : '') + t.upnl + '%'}</span>
+    </div>`;
+  }).join('');
+  const clHtml = cl.length ? `<div style="padding:5px 12px;font-size:10px;color:var(--muted);background:rgba(255,255,255,0.02);">закрытые:</div>` + cl.map(t =>
+    `<div style="display:flex;gap:8px;align-items:center;padding:4px 12px;border-bottom:1px solid rgba(42,49,64,0.3);font-size:11px;font-family:var(--font-mono);opacity:0.85;">
+      <b style="min-width:70px;">${t.sym.replace('USDT', '')}</b>
+      <span style="color:${t.dir === 'LONG' ? '#00e5a0' : '#ff5e9c'};font-size:10px;">${t.dir === 'LONG' ? '▲' : '▼'}</span>
+      <span style="font-size:10px;color:var(--muted);">${t.state}</span>
+      <span style="margin-left:auto;font-weight:800;color:${t.r > 0 ? '#00e5a0' : '#ff5e9c'};">${t.r > 0 ? '+' : ''}${t.r}%</span>
+    </div>`).join('') : '';
+  document.getElementById('acPaperList').innerHTML = (plHtml || '<div style="padding:12px;color:var(--muted);font-size:11px;">открытых сделок нет</div>') + clHtml;
+  document.getElementById('acPaperN').textContent = pl.length ? '· ' + pl.length + ' открыто' : '';
   const ex = (m || {}).exits;
   if (ex && Object.keys(ex).length) {
     const EB = {gold: '🥇', silver: '🥈', dawn: '🌅', heat: '🌡'};
@@ -7242,7 +7267,7 @@ async function acLoad() {
         <span style="flex:1;">${e.best_label}</span>
         <span style="font-weight:800;color:${e.best_avg > e.base_avg ? '#00e5a0' : 'var(--muted)'};">${e.best_avg > 0 ? '+' : ''}${e.best_avg}</span>
         <span style="color:var(--muted);font-size:10px;">канон ${e.base_avg > 0 ? '+' : ''}${e.base_avg}</span>
-      </div>`).join('') + ((m.liq && m.liq.hi) ? `<div style="padding:5px 12px;border-top:1px solid rgba(42,49,64,0.4);color:var(--muted);" title="эдж портфеля по половинам суточного $-объёма монет">💧 ликвидные ${m.liq.hi.avg > 0 ? '+' : ''}${m.liq.hi.avg} (WR ${m.liq.hi.wr}) · неликвид ${m.liq.lo.avg > 0 ? '+' : ''}${m.liq.lo.avg} (WR ${m.liq.lo.wr})</div>` : '');
+      </div>`).join('') + ((m.liq && m.liq.hi) ? `<div style="padding:5px 12px;border-top:1px solid rgba(42,49,64,0.4);color:var(--muted);" title="эдж портфеля по половинам суточного $-объёма монет">💧 ликвидные ${m.liq.hi.avg > 0 ? '+' : ''}${m.liq.hi.avg} (WR ${m.liq.hi.wr}) · неликвид ${m.liq.lo.avg > 0 ? '+' : ''}${m.liq.lo.avg} (WR ${m.liq.lo.wr})</div>` : '') + ((m.tuning && m.tuning.gold && m.tuning.gold.best) ? `<div style="padding:5px 12px;border-top:1px solid rgba(42,49,64,0.4);color:var(--muted);" title="🔧 авто-тюнинг порогов (только тень, боевые не трогаются): лучшая сетка для лонгов у уровня — дистанция ${m.tuning.gold.best.dist}% / широта ≤${Math.round(m.tuning.gold.best.br * 100)}% → avg ${m.tuning.gold.best.avg} vs текущие 4%/45% → ${m.tuning.gold.current ? m.tuning.gold.current.avg : '?'}${m.tuning.heat && m.tuning.heat.best ? ' · порог серии шорта: лучший ' + m.tuning.heat.best.thr + ' (avg ' + m.tuning.heat.best.avg + ')' : ''}">🔧 тюнинг (тень): дист ${m.tuning.gold.best.dist}%/шир ${Math.round(m.tuning.gold.best.br * 100)}% → ${m.tuning.gold.best.avg > 0 ? '+' : ''}${m.tuning.gold.best.avg} · сейчас ${m.tuning.gold.current ? (m.tuning.gold.current.avg > 0 ? '+' : '') + m.tuning.gold.current.avg : '?'}</div>` : '');
   }
   acRenderFeed();
   acRenderRules();

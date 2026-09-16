@@ -9478,6 +9478,7 @@ async def api_academy():
         # пустая карта фандинга не кэшируется надолго (ретрай 2 мин)
         if _time.time() - mkt.get("t", 0) > (600 if mkt.get("fund") else 120):
             fund = {}
+            mark = {}
             fund_err = None
             try:
                 import requests as _rq
@@ -9488,6 +9489,8 @@ async def api_academy():
                         try:
                             fund[it["symbol"]] = float(
                                 it.get("lastFundingRate") or 0)
+                            mark[it["symbol"]] = float(
+                                it.get("markPrice") or 0)
                         except Exception:
                             pass
                 else:
@@ -9515,6 +9518,7 @@ async def api_academy():
                 pass
             mkt.update({"t": _time.time(),
                         "fund": fund or mkt.get("fund") or {},
+                        "mark": mark or mkt.get("mark") or {},
                         "fund_err": fund_err, "btc": btc})
         since = utcnow() - _td(hours=48)
         feed = []
@@ -9635,6 +9639,11 @@ async def api_academy():
         if meta is not None:
             meta["exits"] = model.get("exits")
             meta["liq"] = model.get("liq")
+            meta["tuning"] = model.get("tuning")
+            meta["live_n"] = model.get("live_n")
+            meta["table_oos"] = model.get("table_oos")
+            meta["lgbm_beat_streak"] = model.get("lgbm_beat_streak")
+            meta["lgbm_ready"] = model.get("lgbm_ready")
         # 💼 портфель за 24ч + 📜 paper-статистика
         cut24 = utcnow() - _td(hours=24)
         port = {"l": sum(1 for f in feed if f["verdict"] == "ACTIVE_SHOW"
@@ -9645,6 +9654,15 @@ async def api_academy():
         try:
             import learn_paper as _lp
             paper = _lp.stats(db)
+            _op, _cl = _lp.lists(db)
+            _marks = mkt.get("mark") or {}
+            for t in _op:
+                mp = _marks.get(t["sym"])
+                if mp and t.get("entry"):
+                    sgn = 1 if t["dir"] == "LONG" else -1
+                    t["upnl"] = round((mp / t["entry"] - 1) * 100 * sgn, 2)
+            paper["open_list"] = _op
+            paper["closed_list"] = _cl
         except Exception:
             pass
         for f in feed:

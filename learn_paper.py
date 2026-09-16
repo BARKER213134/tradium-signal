@@ -67,6 +67,7 @@ def _open_new(db, model, now):
         db.academy_paper.update_one({"_id": key}, {"$set": {
             "sym": c["sym"], "pair": pair, "dir": c["dir"], "src": c["src"],
             "rule": rule.get("label") if rule else None,
+            "rule_id": rule.get("id") if rule else None,
             "ev": rule.get("ev") if rule else None,
             "size": le.size_tier(rule), "bucket": bucket,
             "entry": px, "state": "OPEN",
@@ -134,6 +135,25 @@ def run_cycle():
     if opened or closed:
         logger.info(f"[paper] открыто {opened} · закрыто {closed}")
     return opened, closed
+
+
+def lists(db):
+    """Открытые и свежезакрытые paper-сделки для вкладки."""
+    op = []
+    for d in db.academy_paper.find({"state": "OPEN"}).sort(
+            "opened_at", -1).limit(60):
+        op.append({"sym": d["sym"], "dir": d["dir"], "src": d.get("src"),
+                   "entry": d.get("entry"), "size": d.get("size"),
+                   "rule": d.get("rule"),
+                   "at": d["opened_at"].isoformat()})
+    cl = []
+    for d in db.academy_paper.find(
+            {"state": {"$in": ["TP", "SL", "TIMEOUT"]}}).sort(
+            "closed_at", -1).limit(20):
+        cl.append({"sym": d["sym"], "dir": d["dir"], "state": d["state"],
+                   "r": d.get("r"), "at": (d.get("closed_at")
+                                           or d["opened_at"]).isoformat()})
+    return op, cl
 
 
 def stats(db):
