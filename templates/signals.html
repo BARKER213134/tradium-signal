@@ -7096,6 +7096,7 @@ setInterval(trLoad, 60000);
     <div style="background:rgba(0,229,160,0.10);border:1px solid rgba(0,229,160,0.4);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#00e5a0;">Лента 48ч <span id="acFeedN" style="opacity:0.8;"></span></div>
     <div id="acFeed" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:52vh;overflow-y:auto;"></div>
     <div style="margin-top:10px;background:rgba(255,210,62,0.10);border:1px solid rgba(255,210,62,0.4);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#ffd23e;" title="📜 каждый одобренный сигнал автоматически становится paper-сделкой: вход по 1h-закрытию, выход по канону. Живая проверка модели без денег.">📜 Paper-сделки <span id="acPaperN" style="opacity:0.8;"></span></div>
+    <div id="acPStats" style="display:none;border:1px solid var(--border);border-top:none;padding:7px 12px;font-size:10.5px;font-family:var(--font-mono);line-height:1.7;color:var(--muted);"></div>
     <div id="acPaperList" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:34vh;overflow-y:auto;"></div>
   </div>
   <div>
@@ -7289,6 +7290,16 @@ async function acLoad() {
       <span onclick="acAskAiKey('${t.key}', 'acPAi_c${ti}');" title="🧠 спросить AI об этой сделке" style="cursor:pointer;">🧠</span>
     </div>
     <div id="acPAi_c${ti}" style="display:none;padding:7px 14px 9px 30px;border-bottom:1px solid rgba(42,49,64,0.3);background:rgba(123,92,255,0.06);font-size:11px;line-height:1.5;white-space:pre-wrap;"></div>`).join('') : '';
+  const pst = document.getElementById('acPStats');
+  if (pp && pp.closed) {
+    const f = s => s ? `n${s.n} · WR <b>${s.wr}</b> · avgR <b style="color:${s.avg > 0 ? '#00e5a0' : '#ff5e9c'};">${s.avg > 0 ? '+' : ''}${s.avg}</b> · ΣR ${s.sum > 0 ? '+' : ''}${s.sum}` : '—';
+    pst.style.display = 'block';
+    pst.innerHTML =
+      `Закрыто <b>${pp.closed}</b>: 🎯TP ${pp.tp || 0} · 🛑SL ${pp.sl || 0} · ⏱TO ${pp.to || 0} · WR <b>${pp.wr}</b> · avgR <b style="color:${pp.avg > 0 ? '#00e5a0' : '#ff5e9c'};">${pp.avg > 0 ? '+' : ''}${pp.avg}</b> · ΣR ${pp.sum > 0 ? '+' : ''}${pp.sum}` +
+      `<br><span style="color:#00e5a0;">▲LONG</span> ${f(pp.long)}   <span style="color:#ff5e9c;">▼SHORT</span> ${f(pp.short)}` +
+      `<br>за 24ч: ${f(pp.s24)}${pp.med_h ? ' · медиана сделки ' + pp.med_h + 'ч' : ''}` +
+      `<br><span style="opacity:0.7;" title="TIMEOUT-исходы появятся, когда первым сделкам исполнится 96ч — ранняя выборка смещена к быстрым SL/TP">⚠️ ранняя выборка: таймауты 96ч ещё зреют</span>`;
+  }
   window._acPaperRows = pl.concat(cl);
   document.getElementById('acPaperList').innerHTML = (plHtml || '<div style="padding:12px;color:var(--muted);font-size:11px;">открытых сделок нет</div>') + clHtml;
   document.getElementById('acPaperN').textContent = pl.length ? '· ' + pl.length + ' открыто' : '';

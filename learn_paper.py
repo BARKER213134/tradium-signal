@@ -159,13 +159,37 @@ def lists(db):
 
 
 def stats(db):
-    """Сводка для API."""
+    """Сводка для API: общая + по состояниям/направлениям/за 24ч."""
+    from database import utcnow
     out = {"open": db.academy_paper.count_documents({"state": "OPEN"})}
-    rs = [d.get("r") for d in db.academy_paper.find(
-        {"state": {"$in": ["TP", "SL", "TIMEOUT"]}}, {"r": 1}) if d.get("r") is not None]
-    out["closed"] = len(rs)
-    if rs:
-        out["wr"] = round(sum(1 for r in rs if r > 0) / len(rs) * 100, 1)
-        out["avg"] = round(sum(rs) / len(rs), 2)
-        out["sum"] = round(sum(rs), 1)
+    cl = list(db.academy_paper.find(
+        {"state": {"$in": ["TP", "SL", "TIMEOUT"]}},
+        {"r": 1, "state": 1, "dir": 1, "opened_at": 1, "closed_at": 1}))
+    out["closed"] = len(cl)
+    if not cl:
+        return out
+
+    def _st(sel):
+        a = [d["r"] for d in sel if d.get("r") is not None]
+        if not a:
+            return None
+        return {"n": len(a),
+                "wr": round(sum(1 for x in a if x > 0) / len(a) * 100, 1),
+                "avg": round(sum(a) / len(a), 2), "sum": round(sum(a), 1)}
+    tot = _st(cl) or {}
+    out.update({"wr": tot.get("wr"), "avg": tot.get("avg"),
+                "sum": tot.get("sum")})
+    out["tp"] = sum(1 for d in cl if d["state"] == "TP")
+    out["sl"] = sum(1 for d in cl if d["state"] == "SL")
+    out["to"] = sum(1 for d in cl if d["state"] == "TIMEOUT")
+    out["long"] = _st([d for d in cl if d.get("dir") == "LONG"])
+    out["short"] = _st([d for d in cl if d.get("dir") == "SHORT"])
+    from datetime import timedelta
+    cut = utcnow() - timedelta(hours=24)
+    out["s24"] = _st([d for d in cl
+                      if d.get("closed_at") and d["closed_at"] >= cut])
+    durs = sorted((d["closed_at"] - d["opened_at"]).total_seconds() / 3600
+                  for d in cl if d.get("closed_at") and d.get("opened_at"))
+    if durs:
+        out["med_h"] = round(durs[len(durs) // 2])
     return out
