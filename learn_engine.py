@@ -523,8 +523,20 @@ def aggregate(rows, prev_rules=None, live_map=None):
                 deg = round(ra, 2)
                 status = "SHADOW"   # разжалование
                 runs = 0
+        # 📜 ЖИВАЯ деградация (17.09): реальные paper-исходы бьют
+        # симуляцию — правило с n>=30 живых сделок и сильным минусом
+        # выключается, даже если свечная статистика всё ещё «за»
+        # (кейс supertrend_vip SHORT 🔴1-26: сим +0.85, живые −5.1)
+        live_dem = None
+        if (lv and lv["n"] >= 30 and status == "ACTIVE_SHOW"
+                and lv["avg"] < -1.0):
+            live_dem = lv["avg"]
+            status = "ACTIVE_HIDE" if lv["avg"] < -2.5 else "SHADOW"
+            runs = 0
+            if deg is None:
+                deg = round(lv["avg"], 2)
         rules.append({"id": rid, "label": label, "kind": kind, **st,
-                      "wk": wk, "live": lv,
+                      "wk": wk, "live": lv, "live_demoted": live_dem,
                       "ev": ev, "cand": cand, "runs": runs, "status": status,
                       "degraded": deg,
                       "recent_n": len(recent),
