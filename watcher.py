@@ -308,6 +308,11 @@ async def _academy_loop():
                 if model:
                     logger.info(f"[academy] готово: v{model.get('version')} "
                                 f"({model.get('rows_n')} строк)")
+                    try:
+                        import learn_ai as _lai
+                        await _asyncio.to_thread(_lai.refresh_lessons)
+                    except Exception:
+                        logger.exception("[ai-lessons] refresh fail")
         except Exception as _e:
             logger.exception("[academy] loop crashed")
             try:

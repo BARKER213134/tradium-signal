@@ -182,7 +182,127 @@ def analyze(ctx):
         "режима; зелёная серия 27+ для лонга — зона обрыва (-2.15); "
         "красная серия для шорта — запрет; первое касание монеты "
         "сильнее повторных; одобренные лонги бегут дальше +10%.")
+    lessons = _lessons_text()
+    if lessons:
+        prompt += ("\n\nУРОКИ ТВОИХ ПРОШЛЫХ РАЗБОРОВ (автосверка вердиктов "
+                   "с фактическими исходами paper-сделок — учти их):\n"
+                   + lessons)
     return _ask_gemini(prompt) or _ask_groq(prompt)
+
+
+_LESSONS_CACHE = {"t": 0.0, "txt": None}
+
+
+def _lessons_text():
+    import time as _t
+    if _t.time() - _LESSONS_CACHE["t"] < 600:
+        return _LESSONS_CACHE["txt"]
+    txt = None
+    try:
+        from database import _get_db
+        d = _get_db().system_config.find_one({"_id": "ai_lessons"}) or {}
+        txt = d.get("text")
+    except Exception:
+        pass
+    _LESSONS_CACHE.update({"t": _t.time(), "txt": txt})
+    return txt
+
+
+def _parse_verdict(text):
+    """'ВЕРДИКТ: БРАТЬ СЕЙЧАС ... 7/10' → ('БРАТЬ', 7)."""
+    import re
+    m = re.search(r"ВЕРДИКТ:\s*([А-ЯЁ ]+?)(?:\s+уверенность)?\s+(\d+)\s*/\s*10",
+                  text or "", re.I)
+    if not m:
+        m2 = re.search(r"ВЕРДИКТ:\s*([А-ЯЁ ]+)", text or "", re.I)
+        if not m2:
+            return None, None
+        w, cf = m2.group(1), None
+    else:
+        w, cf = m.group(1), int(m.group(2))
+    w = w.upper()
+    for key in ("БРАТЬ", "ПРОПУСТИТЬ", "ЖДАТЬ"):
+        if key in w:
+            return key, cf
+    return None, cf
+
+
+def refresh_lessons():
+    """🧠→🎓 Самообучение советчика (ночной вызов): сверка вердиктов AI
+    с фактическими исходами paper-сделок (join по общему ключу ns_/st_),
+    выжимка системных ошибок → system_config.ai_lessons. Уроки попадают
+    в каждый следующий промпт."""
+    from database import _get_db, utcnow
+    db = _get_db()
+    outcomes = {d["_id"]: d for d in db.academy_paper.find(
+        {"state": {"$in": ["TP", "SL", "TIMEOUT"]}},
+        {"r": 1, "dir": 1})}
+    rows = []
+    for d in db.learn_ai.find({}, {"text": 1, "dir": 1}):
+        o = outcomes.get(d["_id"])
+        if not o or o.get("r") is None:
+            continue
+        v, cf = _parse_verdict(d.get("text"))
+        if not v:
+            continue
+        rows.append({"v": v, "cf": cf, "dir": d.get("dir") or o.get("dir"),
+                     "r": float(o["r"])})
+    if len(rows) < 15:
+        logger.info(f"[ai-lessons] мало сверок ({len(rows)}) — уроки не обновляю")
+        return None
+
+    def st(sel):
+        a = [x["r"] for x in sel]
+        if not a:
+            return None
+        return {"n": len(a),
+                "wr": round(sum(1 for r in a if r > 0) / len(a) * 100),
+                "avg": round(sum(a) / len(a), 2)}
+    by_v = {v: st([x for x in rows if x["v"] == v])
+            for v in ("БРАТЬ", "ПРОПУСТИТЬ", "ЖДАТЬ")}
+    lines = []
+    b = by_v.get("БРАТЬ")
+    p = by_v.get("ПРОПУСТИТЬ")
+    if b:
+        lines.append(f"- Твои «БРАТЬ» по факту: n={b['n']}, WR {b['wr']}%, "
+                     f"avgR {b['avg']:+.2f}."
+                     + (" Ты слишком щедр на БРАТЬ — будь строже."
+                        if b["avg"] < 0.3 else
+                        " Калибровка в порядке — держи планку."))
+    if p and b and p["avg"] > b["avg"] + 0.5:
+        lines.append(f"- Сделки, которые ты ПРОПУСКАЛ, шли ЛУЧШЕ взятых "
+                     f"({p['avg']:+.2f} vs {b['avg']:+.2f}) — ты "
+                     f"перестраховываешься, пересмотри критерии отказа.")
+    for dr, lbl in (("LONG", "лонгам"), ("SHORT", "шортам")):
+        s = st([x for x in rows if x["v"] == "БРАТЬ" and x["dir"] == dr])
+        if s and s["n"] >= 8:
+            if s["avg"] < -0.5:
+                lines.append(f"- Твои «БРАТЬ» по {lbl}: avgR {s['avg']:+.2f} "
+                             f"(n={s['n']}) — СИСТЕМНАЯ ОШИБКА, по {lbl} "
+                             f"будь заметно строже.")
+            else:
+                lines.append(f"- «БРАТЬ» по {lbl}: avgR {s['avg']:+.2f} "
+                             f"(n={s['n']}).")
+    hi = st([x for x in rows if x["v"] == "БРАТЬ" and (x["cf"] or 0) >= 7])
+    lo = st([x for x in rows if x["v"] == "БРАТЬ" and 0 < (x["cf"] or 0) <= 5])
+    if hi and lo and hi["n"] >= 8 and lo["n"] >= 8:
+        if hi["avg"] <= lo["avg"]:
+            lines.append(f"- Твоя уверенность НЕ калибрована: 7+/10 дало "
+                         f"{hi['avg']:+.2f}, а 5-/10 дало {lo['avg']:+.2f} — "
+                         f"не завышай уверенность.")
+        else:
+            lines.append(f"- Уверенность калибрована: 7+/10 → {hi['avg']:+.2f} "
+                         f"vs 5-/10 → {lo['avg']:+.2f}.")
+    text = "\n".join(lines)
+    db.system_config.update_one(
+        {"_id": "ai_lessons"},
+        {"$set": {"text": text, "n": len(rows),
+                  "by_verdict": by_v, "updated": utcnow().isoformat()}},
+        upsert=True)
+    _LESSONS_CACHE["t"] = 0.0
+    logger.info(f"[ai-lessons] уроки обновлены: {len(rows)} сверок, "
+                f"{len(lines)} уроков")
+    return text
 
 
 def _sig_ctx(db, key):

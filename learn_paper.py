@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 SIG_MAX_AGE_H = 2      # открываем только по свежим сигналам
 OPEN_BATCH = 12        # новых сделок за цикл
-CLOSE_BATCH = 60       # проверок закрытия за цикл
+CLOSE_BATCH = 150       # проверок закрытия за цикл (свечи 1 раз/монету)
 
 
 def _last_close(pair):
@@ -78,47 +78,62 @@ def _open_new(db, model, now):
 
 
 def _close_open(db, now):
+    """Закрытие созревших. 🔁 Ротация по chk (время последней проверки):
+    давно не проверенные первыми — иначе старые вечно-открытые (ждут
+    таймаута 96ч) замораживали окно и до свежих сделок проход не доходил
+    (17.09: 0 закрытий с rule_id → live_map пуст). Свечи тянем один раз
+    на монету, не на сделку."""
     from exchange import get_klines_any
     closed = 0
-    checked = 0
-    for t in db.academy_paper.find({"state": "OPEN"}).limit(CLOSE_BATCH * 3):
-        if checked >= CLOSE_BATCH:
-            break
-        checked += 1
+    batch = list(db.academy_paper.find({"state": "OPEN"})
+                 .sort("chk", 1).limit(CLOSE_BATCH))
+    by_pair = {}
+    for t in batch:
+        by_pair.setdefault(t.get("pair") or (t["sym"][:-4] + "/USDT"),
+                           []).append(t)
+    now_ms = int(now.timestamp() * 1000)
+    for pair, trades in by_pair.items():
+        c1 = None
         try:
-            age_h = (now - t["opened_at"]).total_seconds() / 3600
-            need = int(min(age_h, 100)) + 3
-            c1 = get_klines_any(t.get("pair") or (t["sym"][:-4] + "/USDT"),
-                                "1h", max(need, 5))
-            if not c1:
-                continue
-            o_ms = int(t["opened_at"].timestamp() * 1000)
-            entry = float(t["entry"])
-            sg = 1 if t["dir"] == "LONG" else -1
-            tp = entry * (1 + sg * 0.10)
-            sl = entry * (1 - sg * 0.05)
-            res = None
-            for b in c1:
-                if b["t"] <= o_ms or b["t"] + 3_600_000 > int(
-                        now.timestamp() * 1000):
-                    continue   # только полные закрытые бары после входа
-                if (b["l"] <= sl) if sg > 0 else (b["h"] >= sl):
-                    res = ("SL", -5.0 - 0.1)
-                    break
-                if (b["h"] >= tp) if sg > 0 else (b["l"] <= tp):
-                    res = ("TP", 10.0 - 0.1)
-                    break
-            if res is None and age_h >= 96:
-                res = ("TIMEOUT",
-                       (float(c1[-1]["c"]) / entry - 1) * 100 * sg - 0.1)
-            if res:
-                db.academy_paper.update_one(
-                    {"_id": t["_id"]},
-                    {"$set": {"state": res[0], "r": round(res[1], 2),
-                              "closed_at": now}})
-                closed += 1
+            oldest = min(t["opened_at"] for t in trades)
+            need = int(min((now - oldest).total_seconds() / 3600, 100)) + 3
+            c1 = get_klines_any(pair, "1h", max(need, 5))
         except Exception:
-            logger.debug(f"[paper] close fail {t.get('sym')}", exc_info=True)
+            logger.debug(f"[paper] klines fail {pair}", exc_info=True)
+        for t in trades:
+            try:
+                db.academy_paper.update_one(
+                    {"_id": t["_id"]}, {"$set": {"chk": now}})
+                if not c1:
+                    continue
+                age_h = (now - t["opened_at"]).total_seconds() / 3600
+                o_ms = int(t["opened_at"].timestamp() * 1000)
+                entry = float(t["entry"])
+                sg = 1 if t["dir"] == "LONG" else -1
+                tp = entry * (1 + sg * 0.10)
+                sl = entry * (1 - sg * 0.05)
+                res = None
+                for b in c1:
+                    if b["t"] <= o_ms or b["t"] + 3_600_000 > now_ms:
+                        continue   # только полные закрытые бары после входа
+                    if (b["l"] <= sl) if sg > 0 else (b["h"] >= sl):
+                        res = ("SL", -5.0 - 0.1)
+                        break
+                    if (b["h"] >= tp) if sg > 0 else (b["l"] <= tp):
+                        res = ("TP", 10.0 - 0.1)
+                        break
+                if res is None and age_h >= 96:
+                    res = ("TIMEOUT",
+                           (float(c1[-1]["c"]) / entry - 1) * 100 * sg - 0.1)
+                if res:
+                    db.academy_paper.update_one(
+                        {"_id": t["_id"]},
+                        {"$set": {"state": res[0], "r": round(res[1], 2),
+                                  "closed_at": now}})
+                    closed += 1
+            except Exception:
+                logger.debug(f"[paper] close fail {t.get('sym')}",
+                             exc_info=True)
     return closed
 
 
