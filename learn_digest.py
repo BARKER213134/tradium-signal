@@ -114,8 +114,7 @@ def build_text(db):
             mo = ((1 + net / days * 0.10 / 100) ** 30 - 1) * 100
             need = round(20000 / (mo / 100)) if mo > 1 else None
             lines.append(
-                f"
-🎯 К цели $20k/мес: темп {mo:+.1f}%/мес "
+                f"\n🎯 К цели $20k/мес: темп {mo:+.1f}%/мес "
                 f"(закрытых live {len(lcl)}, окно {days:.0f}д)"
                 + (f" → нужен депо ~${need:,}" if need else "")
                 + (" · ⚠️ данных мало" if days < 14 or len(lcl) < 60 else ""))
