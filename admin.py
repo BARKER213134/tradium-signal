@@ -9502,14 +9502,25 @@ async def api_live():
                 t0 = min(d["opened_at"] for d in lcl2)
                 days = max(1.0, (utcnow() - t0).total_seconds() / 86400)
                 pos_frac = 0.10   # 10% депо на сделку (план микро-лайва)
+                start_depo = 1000  # 🎯 старт юзера: строго $1000
                 daily_pct = net / days * pos_frac
                 mo_pct = ((1 + daily_pct / 100) ** 30 - 1) * 100
+                need_depo = (round(20000 / (mo_pct / 100))
+                             if mo_pct > 1 else None)
+                import math as _mm
+                months_to = None
+                if need_depo and daily_pct > 0.05:
+                    months_to = round(
+                        _mm.log(need_depo / start_depo)
+                        / _mm.log(1 + daily_pct / 100) / 30.4, 1)
                 goal = {"target": 20000, "pos_frac": pos_frac,
+                        "start_depo": start_depo,
                         "n": len(lcl2), "window_d": round(days, 1),
                         "daily_pct": round(daily_pct, 2),
                         "monthly_pct": round(mo_pct, 1),
-                        "need_depo": (round(20000 / (mo_pct / 100))
-                                      if mo_pct > 1 else None),
+                        "month1_usd": round(start_depo * mo_pct / 100),
+                        "need_depo": need_depo,
+                        "months_to_target": months_to,
                         "reliable": days >= 14 and len(lcl2) >= 60}
         except Exception:
             pass

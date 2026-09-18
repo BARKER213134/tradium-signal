@@ -7076,7 +7076,7 @@ setInterval(trLoad, 60000);
     <div id="lvSum" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">ΣR с комиссией</div>
   </div>
-  <div id="lvGoalBox" style="background:linear-gradient(135deg,rgba(255,210,62,0.10),rgba(255,179,71,0.06));border:1px solid rgba(255,210,62,0.45);border-radius:10px;padding:10px 16px;" title="🎯 цель $20k/мес: темп считается ТОЛЬКО по закрытым live-сделкам (позиция 10% депо), открытая прибыль не учитывается. Достоверно после ≥60 закрытий и ≥14 дней.">
+  <div id="lvGoalBox" style="background:linear-gradient(135deg,rgba(255,210,62,0.10),rgba(255,179,71,0.06));border:1px solid rgba(255,210,62,0.45);border-radius:10px;padding:10px 16px;" title="🎯 старт строго $1000 (решение юзера 18.09). Темп — ТОЛЬКО по закрытым live-сделкам (позиция 10% депо), открытая прибыль не считается. Лестница: $1k→$2k→$5k ($1.7k/мес)→$20k ($7k/мес)→$57k = цель $20k/мес. Достоверно после ≥60 закрытий и ≥14 дней.">
     <div id="lvGoal" style="font-size:15px;font-weight:900;font-family:var(--font-mono);line-height:1.4;">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">🎯 цель $20 000/мес</div>
   </div>
@@ -7145,8 +7145,9 @@ async function lvLoad() {
   const ge = document.getElementById('lvGoal');
   if (g && g.monthly_pct != null) {
     ge.innerHTML = `темп <b style="color:${g.monthly_pct > 0 ? '#00e5a0' : '#ff5e9c'};">${g.monthly_pct > 0 ? '+' : ''}${g.monthly_pct}%/мес</b>` +
-      (g.need_depo ? ` · нужен депо <b>$${g.need_depo.toLocaleString('en')}</b>` : '') +
-      `<br><span style="font-size:10px;color:var(--muted);">окно ${g.window_d}д · ${g.n} закрытий · ${g.reliable ? 'достоверно' : '⚠️ мало данных — ориентир после недели'}</span>`;
+      (g.month1_usd != null ? ` · с $${(g.start_depo || 1000).toLocaleString('en')} это ~<b>$${g.month1_usd.toLocaleString('en')}/мес</b> сейчас` : '') +
+      (g.months_to_target != null ? `<br>компаундом до $20k/мес: ~<b>${g.months_to_target} мес</b> (депо $${(g.need_depo || 0).toLocaleString('en')})` : '<br>') +
+      `<span style="font-size:10px;color:var(--muted);"> · окно ${g.window_d}д · ${g.n} закрытий · ${g.reliable ? 'достоверно' : '⚠️ мало данных'}</span>`;
   } else {
     ge.textContent = 'копим закрытия…';
   }

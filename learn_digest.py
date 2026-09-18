@@ -113,10 +113,17 @@ def build_text(db):
                 d["opened_at"] for d in lcl)).total_seconds() / 86400)
             mo = ((1 + net / days * 0.10 / 100) ** 30 - 1) * 100
             need = round(20000 / (mo / 100)) if mo > 1 else None
+            import math as _mm
+            m1 = round(1000 * mo / 100)
+            mt = None
+            dly = net / days * 0.10
+            if need and dly > 0.05:
+                mt = round(_mm.log(need / 1000)
+                           / _mm.log(1 + dly / 100) / 30.4, 1)
             lines.append(
-                f"\n🎯 К цели $20k/мес: темп {mo:+.1f}%/мес "
-                f"(закрытых live {len(lcl)}, окно {days:.0f}д)"
-                + (f" → нужен депо ~${need:,}" if need else "")
+                f"\n🎯 Темп {mo:+.1f}%/мес — с $1000 это ~${m1}/мес"
+                + (f"; компаундом до $20k/мес ~{mt} мес" if mt else "")
+                + f" ({len(lcl)} закрытий, окно {days:.0f}д)"
                 + (" · ⚠️ данных мало" if days < 14 or len(lcl) < 60 else ""))
     except Exception:
         pass
