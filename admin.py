@@ -9481,8 +9481,9 @@ async def api_live():
                 "closed_at", -1).limit(30):
             cl.append({"key": str(d["_id"]), "sym": d["sym"],
                        "dir": d["dir"], "state": d["state"],
-                       "r": d.get("r"),
-                       "r_adj": (round(d["r"] - lp.LIVE_FEE_EXTRA, 2)
+                       "r": d.get("r"), "fund": d.get("fund_cost"),
+                       "r_adj": (round(d["r"] - lp.LIVE_FEE_EXTRA
+                                       - (d.get("fund_cost") or 0), 2)
                                  if d.get("r") is not None else None),
                        "at": (d.get("closed_at")
                               or d["opened_at"]).isoformat()})

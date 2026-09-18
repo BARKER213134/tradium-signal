@@ -7156,7 +7156,7 @@ async function lvLoad() {
   const cl = d.closed || [];
   document.getElementById('lvClosed').innerHTML = cl.map((t, i) => {
     const dt = new Date(t.at + (t.at.endsWith('Z') ? '' : 'Z'));
-    return `<div onclick="lvOpenChart(${i}, true)" style="display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.4);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
+    return `<div onclick="lvOpenChart(${i}, true)" title="${t.fund != null ? 'фандинг за удержание: ' + (t.fund > 0 ? '−' : '+') + Math.abs(t.fund) + '%' : 'фандинг: н/д'}" style="display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.4);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
       <span style="color:var(--muted);font-size:10px;white-space:nowrap;">${dt.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
       <b style="min-width:76px;">${t.sym.replace('USDT', '')}</b>
       <span style="font-size:10px;color:var(--muted);">${t.state}</span>

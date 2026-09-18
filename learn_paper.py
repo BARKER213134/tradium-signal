@@ -20,6 +20,30 @@ LIVE_FEE_EXTRA = 0.1   # 💎 доп. штраф лайва к R (%): проск
 _BINGX_CACHE = {"t": 0.0, "set": set()}
 
 
+def _funding_cost(sym, t_open, t_close, direction):
+    """💸 Фактический фандинг за окно удержания (%): сумма 8ч-ставок
+    fapi между открытием и закрытием. LONG платит положительные ставки.
+    fail-open → None (локально fapi 451)."""
+    try:
+        import requests
+        r = requests.get(
+            "https://fapi.binance.com/fapi/v1/fundingRate",
+            params={"symbol": sym,
+                    "startTime": int(t_open.timestamp() * 1000),
+                    "endTime": int(t_close.timestamp() * 1000),
+                    "limit": 100},
+            timeout=10)
+        if r.status_code != 200:
+            return None
+        rates = [float(x.get("fundingRate") or 0) for x in r.json()]
+        if not rates:
+            return 0.0
+        sg = 1 if direction == "LONG" else -1
+        return round(sum(rates) * sg * 100, 4)   # + = заплатили
+    except Exception:
+        return None
+
+
 def live_throttle(db):
     """🛑 Режимный тормоз live-среза (18.09): сжимает дневной кап при
     перегреве рынка (широта 4h) или просадке скользящего WR последних
@@ -71,6 +95,18 @@ def live_throttle(db):
         if prev.get("level") != level:
             logger.info(f"[live] 🛑 тормоз: уровень {prev.get('level')} → "
                         f"{level} (кап {cap}) — {st['reason']}")
+            if "level" in prev:   # не спамить на первом создании дока
+                try:
+                    import learn_digest
+                    ico = {0: "🟢 НОРМА", 1: "🟡 ОСТОРОЖНО",
+                           2: "🔴 СТОП"}.get(level, "?")
+                    learn_digest.send(
+                        f"🛑 <b>Режимный тормоз лайва: {ico}</b> "
+                        f"(кап {cap}/день)\n{st['reason']}"
+                        + (f"\nШирота 4h: {breadth}%" if breadth is not None else "")
+                        + (f" · WR20: {wr20}%" if wr20 is not None else ""))
+                except Exception:
+                    logger.debug("[live] throttle tg fail", exc_info=True)
         db.system_config.update_one(
             {"_id": "live_throttle"}, {"$set": st}, upsert=True)
     except Exception:
@@ -246,10 +282,15 @@ def _close_open(db, now):
                     res = ("TIMEOUT",
                            (float(c1[-1]["c"]) / entry - 1) * 100 * sg - 0.1)
                 if res:
+                    upd = {"state": res[0], "r": round(res[1], 2),
+                           "closed_at": now}
+                    if t.get("live"):
+                        fc = _funding_cost(t["sym"], t["opened_at"],
+                                           now, t["dir"])
+                        if fc is not None:
+                            upd["fund_cost"] = fc
                     db.academy_paper.update_one(
-                        {"_id": t["_id"]},
-                        {"$set": {"state": res[0], "r": round(res[1], 2),
-                                  "closed_at": now}})
+                        {"_id": t["_id"]}, {"$set": upd})
                     closed += 1
             except Exception:
                 logger.debug(f"[paper] close fail {t.get('sym')}",
@@ -326,11 +367,19 @@ def stats(db):
     # 💎 live-tier срез (закрытые с флагом live) + поправка на исполнение
     lcl = list(db.academy_paper.find(
         {"live": True, "state": {"$in": ["TP", "SL", "TIMEOUT"]}},
-        {"r": 1, "closed_at": 1, "opened_at": 1}))
+        {"r": 1, "closed_at": 1, "opened_at": 1, "fund_cost": 1}))
     lv = _st(lcl)
     if lv:
-        lv["avg_adj"] = round(lv["avg"] - LIVE_FEE_EXTRA, 2)
-        lv["sum_adj"] = round(lv["sum"] - LIVE_FEE_EXTRA * lv["n"], 1)
+        # честный adj: комиссия-экстра + ФАКТИЧЕСКИЙ фандинг сделки
+        fcs = [d.get("fund_cost") for d in lcl]
+        fund_avg = (round(sum(f for f in fcs if f is not None)
+                          / max(1, sum(1 for f in fcs if f is not None)), 3)
+                    if any(f is not None for f in fcs) else None)
+        net = [d["r"] - LIVE_FEE_EXTRA - (d.get("fund_cost") or 0)
+               for d in lcl if d.get("r") is not None]
+        lv["fund_avg"] = fund_avg
+        lv["avg_adj"] = round(sum(net) / len(net), 2) if net else None
+        lv["sum_adj"] = round(sum(net), 1) if net else None
     out["live"] = lv
     out["live_open"] = db.academy_paper.count_documents(
         {"live": True, "state": "OPEN"})
