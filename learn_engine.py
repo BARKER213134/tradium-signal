@@ -528,8 +528,12 @@ def aggregate(rows, prev_rules=None, live_map=None):
         # выключается, даже если свечная статистика всё ещё «за»
         # (кейс supertrend_vip SHORT 🔴1-26: сим +0.85, живые −5.1)
         live_dem = None
-        if (lv and lv["n"] >= 30 and status == "ACTIVE_SHOW"
-                and lv["avg"] < -1.0):
+        # катастрофа (avg<-2.5, WR<15) выключается уже с n>=15 — ждать 30
+        # сверок для редких правил значило травить паперу неделями (18.09:
+        # vip SHORT 🔴1-26 давал ~2 сигнала/день при live 22×−5.1)
+        if lv and status == "ACTIVE_SHOW" and (
+                (lv["n"] >= 30 and lv["avg"] < -1.0)
+                or (lv["n"] >= 15 and lv["avg"] < -2.5 and lv["wr"] < 15)):
             live_dem = lv["avg"]
             status = "ACTIVE_HIDE" if lv["avg"] < -2.5 else "SHADOW"
             runs = 0
