@@ -9457,7 +9457,7 @@ def _setup_check_batch_sync(hours: int, max_pairs: int):
 async def api_live():
     """💎 Лайв-симуляция: что реально торговали бы на BingX и как."""
     def _q():
-        from database import _get_db
+        from database import _get_db, utcnow
         import learn_paper as lp
         db = _get_db()
         st = lp.stats(db)
