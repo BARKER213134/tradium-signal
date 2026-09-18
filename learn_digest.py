@@ -100,6 +100,27 @@ def build_text(db):
                          f"{thr.get('reason')}")
     except Exception:
         pass
+    # 🎯 цель $20k/мес: подтверждённый темп по закрытым live
+    try:
+        import learn_paper as _lp3
+        lcl = list(db.academy_paper.find(
+            {"live": True, "state": {"$in": ["TP", "SL", "TIMEOUT"]}},
+            {"r": 1, "fund_cost": 1, "opened_at": 1}))
+        if len(lcl) >= 3:
+            net = sum(d["r"] - _lp3.LIVE_FEE_EXTRA - (d.get("fund_cost") or 0)
+                      for d in lcl if d.get("r") is not None)
+            days = max(1.0, (utcnow() - min(
+                d["opened_at"] for d in lcl)).total_seconds() / 86400)
+            mo = ((1 + net / days * 0.10 / 100) ** 30 - 1) * 100
+            need = round(20000 / (mo / 100)) if mo > 1 else None
+            lines.append(
+                f"
+🎯 К цели $20k/мес: темп {mo:+.1f}%/мес "
+                f"(закрытых live {len(lcl)}, окно {days:.0f}д)"
+                + (f" → нужен депо ~${need:,}" if need else "")
+                + (" · ⚠️ данных мало" if days < 14 or len(lcl) < 60 else ""))
+    except Exception:
+        pass
     deg = model.get("degraded") or []
     if deg:
         lines.append(f"\n⚠️ Деградировали и разжалованы: {len(deg)} правил")
