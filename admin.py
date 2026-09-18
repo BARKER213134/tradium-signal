@@ -9581,8 +9581,13 @@ async def api_academy():
         # 🌐 рыночный контекст (кэш 10 мин): фандинг всех перпов + BTC-режим
         import time as _time
         mkt = _ACADEMY_MKT
-        # пустая карта фандинга не кэшируется надолго (ретрай 2 мин)
-        if _time.time() - mkt.get("t", 0) > (600 if mkt.get("fund") else 120):
+        # пустая карта фандинга: ретрай 2 мин, НО при 418/429 (бан за
+        # лимиты) уважаем бан — пауза 15 мин, иначе продлеваем его сами
+        _retry = 120
+        if mkt.get("fund_err") and any(
+                c in str(mkt["fund_err"]) for c in ("418", "429")):
+            _retry = 900
+        if _time.time() - mkt.get("t", 0) > (600 if mkt.get("fund") else _retry):
             fund = {}
             mark = {}
             fund_err = None
@@ -9603,6 +9608,22 @@ async def api_academy():
                     fund_err = f"http {rr.status_code}"
             except Exception as e:
                 fund_err = str(e)[:120]
+            if not mark:
+                # 🥈 fallback: spot-тикеры одним запросом (data-api не
+                # банится) — uPnL живёт даже под fapi-баном; спот-цена
+                # ≈ фьючерсной для целей uPnL
+                try:
+                    rr2 = _rq.get(
+                        "https://data-api.binance.vision/api/v3/ticker/price",
+                        timeout=20)
+                    if rr2.status_code == 200:
+                        for it in rr2.json():
+                            try:
+                                mark[it["symbol"]] = float(it["price"])
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
             btc = {}
             try:
                 from exchange import get_klines_any as _gk
