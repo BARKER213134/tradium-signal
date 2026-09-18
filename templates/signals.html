@@ -7140,7 +7140,7 @@ async function lvLoad() {
   const sumEl = document.getElementById('lvSum');
   sumEl.textContent = st.sum_adj != null ? (st.sum_adj > 0 ? '+' : '') + st.sum_adj : '—';
   sumEl.style.color = st.sum_adj > 0 ? '#00e5a0' : st.sum_adj != null ? '#ff5e9c' : 'var(--text)';
-  document.getElementById('lvBx').textContent = d.bingx_n || '—';
+  document.getElementById('lvBx').textContent = (d.bingx_n || '—') + ' · ⟳' + new Date().toLocaleTimeString('ru').slice(0, 5);
   const g = d.goal;
   const ge = document.getElementById('lvGoal');
   if (g && g.monthly_pct != null) {
@@ -7182,7 +7182,7 @@ async function lvLoad() {
   document.getElementById('lvClN').textContent = cl.length ? '· ' + cl.length : '';
 }
 lvLoad();
-setInterval(lvLoad, 60000);
+setInterval(lvLoad, 30000);
 </script>
 
 {% elif bot == 'academy' %}
@@ -7437,7 +7437,7 @@ async function acLoad() {
       `Закрыто <b>${pp.closed}</b>: 🎯TP ${pp.tp || 0} · 🛑SL ${pp.sl || 0} · ⏱TO ${pp.to || 0} · WR <b>${pp.wr}</b> · avgR <b style="color:${pp.avg > 0 ? '#00e5a0' : '#ff5e9c'};">${pp.avg > 0 ? '+' : ''}${pp.avg}</b> · ΣR ${pp.sum > 0 ? '+' : ''}${pp.sum}` +
       `<br><span style="color:#00e5a0;">▲LONG</span> ${f(pp.long)}   <span style="color:#ff5e9c;">▼SHORT</span> ${f(pp.short)}` +
       `<br>за 24ч: ${f(pp.s24)}${pp.med_h ? ' · медиана сделки ' + pp.med_h + 'ч' : ''}` +
-      `<br><span style="opacity:0.7;" title="TIMEOUT-исходы появятся, когда первым сделкам исполнится 96ч — ранняя выборка смещена к быстрым SL/TP">⚠️ ранняя выборка: таймауты 96ч ещё зреют</span>`;
+      `<br><span style="opacity:0.7;" title="TIMEOUT-исходы появятся, когда первым сделкам исполнится 96ч — ранняя выборка смещена к быстрым SL/TP">⚠️ ранняя выборка: таймауты 96ч ещё зреют</span> <span style="float:right;color:var(--muted);" title="полоса перезапрашивается каждые 45с; закрытия приходят пачками раз в ~5 мин">⟳ ${new Date().toLocaleTimeString('ru')}</span>`;
   }
   window._acPaperRows = pl.concat(cl);
   document.getElementById('acPaperList').innerHTML = (plHtml || '<div style="padding:12px;color:var(--muted);font-size:11px;">открытых сделок нет</div>') + clHtml;
@@ -7458,7 +7458,7 @@ async function acLoad() {
   acRenderRules();
 }
 acLoad();
-setInterval(acLoad, 90000);
+setInterval(acLoad, 45000);
 </script>
 
 {% elif bot == 'daypick' %}
