@@ -4742,7 +4742,7 @@ def _signals_list_sync(request, db, page, pair, direction, has_chart, tab, bot):
     query = db.query(Signal).filter(Signal.source == bot)
 
     # Cryptovizor имеет свои вкладки
-    if bot in ("confluence", "journal", "autotrading", "fundingpips", "daypick", "academy"):
+    if bot in ("confluence", "journal", "autotrading", "fundingpips", "daypick", "academy", "live"):
         return templates.TemplateResponse(request, "signals.html", {
             "signals": [],
             "total": 0,
@@ -9453,6 +9453,49 @@ def _setup_check_batch_sync(hours: int, max_pairs: int):
             "setups": n_setup, "items": items}
 
 
+@app.get("/api/live")
+async def api_live():
+    """💎 Лайв-симуляция: что реально торговали бы на BingX и как."""
+    def _q():
+        from database import _get_db
+        import learn_paper as lp
+        db = _get_db()
+        st = lp.stats(db)
+        marks = (_ACADEMY_MKT.get("mark") or {})
+        op = []
+        for d in db.academy_paper.find(
+                {"live": True, "state": "OPEN"}).sort(
+                "opened_at", -1).limit(40):
+            t = {"key": str(d["_id"]), "sym": d["sym"], "dir": d["dir"],
+                 "entry": d.get("entry"), "ev": d.get("ev"),
+                 "rule": d.get("rule"), "at": d["opened_at"].isoformat()}
+            mp = marks.get(d["sym"])
+            if mp and t["entry"]:
+                sgn = 1 if d["dir"] == "LONG" else -1
+                t["upnl"] = round((mp / t["entry"] - 1) * 100 * sgn, 2)
+            op.append(t)
+        cl = []
+        for d in db.academy_paper.find(
+                {"live": True,
+                 "state": {"$in": ["TP", "SL", "TIMEOUT"]}}).sort(
+                "closed_at", -1).limit(30):
+            cl.append({"key": str(d["_id"]), "sym": d["sym"],
+                       "dir": d["dir"], "state": d["state"],
+                       "r": d.get("r"),
+                       "r_adj": (round(d["r"] - lp.LIVE_FEE_EXTRA, 2)
+                                 if d.get("r") is not None else None),
+                       "at": (d.get("closed_at")
+                              or d["opened_at"]).isoformat()})
+        bx = db.system_config.find_one({"_id": "bingx_universe"}) or {}
+        return {"ok": True, "stats": st.get("live"),
+                "open_n": st.get("live_open"),
+                "today_n": st.get("live_today"),
+                "caps": {"day": lp.LIVE_DAY_CAP, "conc": lp.LIVE_CONC_CAP},
+                "fee_extra": lp.LIVE_FEE_EXTRA,
+                "bingx_n": bx.get("n"), "open": op, "closed": cl}
+    return await asyncio.to_thread(_q)
+
+
 @app.get("/api/academy/analyze")
 async def api_academy_analyze(key: str):
     """🧠 On-demand AI-разбор одной сделки из ленты Академии."""
@@ -9624,6 +9667,13 @@ async def api_academy():
                     f["exit_avg"] = _e.get("best_avg")
                 else:
                     f["exit"] = "base"
+            if (status == "ACTIVE_SHOW" and f["dir"] == "LONG"
+                    and f.get("size") == "2x"):
+                try:
+                    import learn_paper as _lpx
+                    f["live_ok"] = f["sym"] in _lpx.bingx_set(db)
+                except Exception:
+                    pass
             fr = (mkt.get("fund") or {}).get(f["sym"])
             if fr is not None:
                 f["fund"] = round(fr * 100, 4)

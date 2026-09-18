@@ -7049,6 +7049,116 @@ trLoad();
 setInterval(trLoad, 60000);
 </script>
 
+{% elif bot == 'live' %}
+<!-- ════════════ 💎 Лайв — симуляция реальной торговли BingX (18.09.26) ════════════ -->
+<div style="display:flex;gap:12px;align-items:stretch;flex-wrap:wrap;margin-bottom:12px;">
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;">
+    <div id="lvToday" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">входов сегодня / кап</div>
+  </div>
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;">
+    <div id="lvOpenN" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">позиций сейчас / кап</div>
+  </div>
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;">
+    <div id="lvWr" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">WR закрытых</div>
+  </div>
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;" title="средний R с поправкой на живое исполнение BingX: канонные −0.1% комиссии + ещё −0.1% проскальзывания">
+    <div id="lvAvg" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">avgR с комиссией</div>
+  </div>
+  <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;">
+    <div id="lvSum" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">ΣR с комиссией</div>
+  </div>
+</div>
+<div style="font-size:10.5px;color:var(--muted);margin:-4px 0 12px;line-height:1.6;">
+  💎 Фильтр лайва: <b>только ЛОНГ</b> · только правила сайзинга <b>×2</b> (EV≥3, WR≥60) · монета торгуется на <b>BingX</b> (<span id="lvBx">—</span> перпов, ~93% наших) · капы: <b>10 входов/день, 15 позиций</b> · показанные R уже включают −0.2% на комиссию и проскальзывание. Это ровно те сделки, которые пойдут в реальный лайв — статистика копится отдельно от общего пейпера. Клик по монете — график с уровнями.
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px;align-items:start;">
+  <div>
+    <div style="background:rgba(0,229,160,0.12);border:1px solid rgba(0,229,160,0.5);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#00e5a0;">💎 Открытые позиции <span id="lvOpN2" style="opacity:0.8;"></span></div>
+    <div id="lvOpen" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:70vh;overflow-y:auto;"></div>
+  </div>
+  <div>
+    <div style="background:rgba(255,210,62,0.12);border:1px solid rgba(255,210,62,0.5);border-radius:8px 8px 0 0;padding:8px 12px;font-weight:800;font-size:12px;color:#ffd23e;">Закрытые (с комиссией) <span id="lvClN" style="opacity:0.8;"></span></div>
+    <div id="lvClosed" style="border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;max-height:70vh;overflow-y:auto;"></div>
+  </div>
+</div>
+<script>
+window._kcPaperLines = true;   // 📜 линии TP/SL и с этой вкладки
+let _lvD = null;
+function lvOpenChart(i, closed) {
+  const rows = closed ? ((_lvD || {}).closed || []) : ((_lvD || {}).open || []);
+  window._kcQmList = rows.map(r => r.sym);
+  const t = rows[i];
+  if (t) { try { openPairChart(t.sym, '2h'); } catch (e) {} }
+}
+async function lvAskAi(key, elId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (el.dataset.done) { el.style.display = el.style.display === 'none' ? 'block' : 'none'; return; }
+  el.style.display = 'block';
+  el.textContent = '🧠 спрашиваю AI…';
+  try {
+    const r = await fetch('/api/academy/analyze?key=' + encodeURIComponent(key));
+    const d = await r.json();
+    el.textContent = d.ok ? d.text : ('🧠 ' + (d.err || 'AI не ответил'));
+    if (d.ok) el.dataset.done = '1';
+  } catch (e) { el.textContent = '🧠 ошибка сети'; }
+}
+async function lvLoad() {
+  try {
+    const r = await fetch('/api/live');
+    _lvD = await r.json();
+  } catch (e) { return; }
+  const d = _lvD;
+  const st = d.stats || {};
+  document.getElementById('lvToday').textContent = (d.today_n == null ? '—' : d.today_n) + ' / ' + ((d.caps || {}).day || 10);
+  document.getElementById('lvOpenN').textContent = (d.open_n == null ? '—' : d.open_n) + ' / ' + ((d.caps || {}).conc || 15);
+  document.getElementById('lvWr').textContent = st.wr != null ? st.wr + '%' : '—';
+  const avgEl = document.getElementById('lvAvg');
+  avgEl.textContent = st.avg_adj != null ? (st.avg_adj > 0 ? '+' : '') + st.avg_adj : '—';
+  avgEl.style.color = st.avg_adj > 0 ? '#00e5a0' : st.avg_adj != null ? '#ff5e9c' : 'var(--text)';
+  const sumEl = document.getElementById('lvSum');
+  sumEl.textContent = st.sum_adj != null ? (st.sum_adj > 0 ? '+' : '') + st.sum_adj : '—';
+  sumEl.style.color = st.sum_adj > 0 ? '#00e5a0' : st.sum_adj != null ? '#ff5e9c' : 'var(--text)';
+  document.getElementById('lvBx').textContent = d.bingx_n || '—';
+  const op = d.open || [];
+  document.getElementById('lvOpen').innerHTML = op.map((t, i) => {
+    const dt = new Date(t.at + (t.at.endsWith('Z') ? '' : 'Z'));
+    const uc = t.upnl == null ? 'var(--muted)' : t.upnl > 0 ? '#00e5a0' : '#ff5e9c';
+    return `<div onclick="lvOpenChart(${i}, false)" style="display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);" title="${t.rule || ''}">
+      <span style="color:var(--muted);font-size:10px;white-space:nowrap;">${dt.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
+      <b style="min-width:76px;">${t.sym.replace('USDT', '')}</b>
+      <span style="background:rgba(0,229,160,0.14);color:#00e5a0;border:1px solid rgba(0,229,160,0.4);border-radius:4px;padding:0 6px;font-size:10px;font-weight:800;">▲ ЛОНГ</span>
+      <span style="color:var(--muted);font-size:10px;">вход ${t.entry}</span>
+      <span style="font-size:10px;color:var(--muted);">EV ${t.ev != null ? (t.ev > 0 ? '+' : '') + t.ev : '—'}</span>
+      <span style="margin-left:auto;font-weight:800;color:${uc};">${t.upnl == null ? '…' : (t.upnl > 0 ? '+' : '') + t.upnl + '%'}</span>
+      <span onclick="event.stopPropagation();lvAskAi('${t.key}', 'lvAi_o${i}');" title="🧠 AI-разбор" style="cursor:pointer;">🧠</span>
+    </div>
+    <div id="lvAi_o${i}" style="display:none;padding:7px 14px 9px 30px;border-bottom:1px solid rgba(42,49,64,0.4);background:rgba(123,92,255,0.06);font-size:11px;line-height:1.5;white-space:pre-wrap;"></div>`;
+  }).join('') || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">открытых нет — фильтр ждёт сигналов ×2 на монетах BingX</div>';
+  document.getElementById('lvOpN2').textContent = op.length ? '· ' + op.length : '';
+  const cl = d.closed || [];
+  document.getElementById('lvClosed').innerHTML = cl.map((t, i) => {
+    const dt = new Date(t.at + (t.at.endsWith('Z') ? '' : 'Z'));
+    return `<div onclick="lvOpenChart(${i}, true)" style="display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.4);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
+      <span style="color:var(--muted);font-size:10px;white-space:nowrap;">${dt.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
+      <b style="min-width:76px;">${t.sym.replace('USDT', '')}</b>
+      <span style="font-size:10px;color:var(--muted);">${t.state}</span>
+      <span style="margin-left:auto;font-weight:800;color:${t.r_adj > 0 ? '#00e5a0' : '#ff5e9c'};">${t.r_adj > 0 ? '+' : ''}${t.r_adj}%</span>
+      <span onclick="event.stopPropagation();lvAskAi('${t.key}', 'lvAi_c${i}');" title="🧠 AI-разбор" style="cursor:pointer;">🧠</span>
+    </div>
+    <div id="lvAi_c${i}" style="display:none;padding:7px 14px 9px 30px;border-bottom:1px solid rgba(42,49,64,0.3);background:rgba(123,92,255,0.06);font-size:11px;line-height:1.5;white-space:pre-wrap;"></div>`;
+  }).join('') || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">закрытых пока нет</div>';
+  document.getElementById('lvClN').textContent = cl.length ? '· ' + cl.length : '';
+}
+lvLoad();
+setInterval(lvLoad, 60000);
+</script>
+
 {% elif bot == 'academy' %}
 <!-- ════════════ 🎓 Академия — самообучаемая модель платформы (17.09.26) ════════════ -->
 <div style="display:flex;gap:12px;align-items:stretch;flex-wrap:wrap;margin-bottom:12px;">
@@ -7157,6 +7267,7 @@ function acRenderFeed() {
       ${f.size ? `<span style="color:#ffd23e;font-weight:900;font-size:10.5px;" title="размер позиции от силы правила (Kelly-лайт: EV≥3 и WR≥60 → ×2, EV≥1 → ×1, иначе ×0.5)">×${f.size.replace('x', '')}</span>` : ''}
       ${f.fresh ? `<span title="🆕 первое касание платформой за 7 дней — первый вход исторически сильнее повторных">🆕</span>` : ''}
       ${f.squeeze ? `<span title="💸 экстремальный фандинг ${f.fund}%/8ч против направления сделки — толпа зажата, топливо сквиза">💸</span>` : ''}
+      ${f.live_ok ? `<span title="💎 проходит лайв-фильтр: ЛОНГ × правило ×2 × монета есть на BingX — кандидат в реальную торговлю (вкладка 💎 Лайв)">💎</span>` : ''}
       <span title="${f.src}">${AC_EMO[f.src] || '✨'}</span>
       ${f.val === true ? '<span title="🧿 валидный">🧿</span>' : ''}
       ${acMsSpan(f.ms)}

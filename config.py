@@ -181,6 +181,8 @@ BOTS = [
     {"id": "daypick", "label": "🥇 Отбор", "category": "crypto"},
     # 🎓 Академия — самообучаемая модель (ночной пересчёт, 17.09)
     {"id": "academy", "label": "🎓 Академия", "category": "crypto"},
+    # 💎 Лайв — симуляция реальной торговли BingX (top-EV срез, 18.09)
+    {"id": "live", "label": "💎 Лайв", "category": "crypto"},
     {"id": "journal", "label": "Журнал", "category": "crypto"},
     # 💱 FOREX: проп FundingPips — уикенд-гэп на кроссах (единственная
     # модель, пережившая стенды M1 Dukascopy 03.08.26). Сканер gap_scanner.

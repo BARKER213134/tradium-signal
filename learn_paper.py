@@ -12,6 +12,52 @@ from datetime import timedelta
 logger = logging.getLogger(__name__)
 
 SIG_MAX_AGE_H = 2      # открываем только по свежим сигналам
+LIVE_DAY_CAP = 10      # 💎 live-tier: входов в день
+LIVE_CONC_CAP = 15     # 💎 одновременных позиций
+LIVE_FEE_EXTRA = 0.1   # 💎 доп. штраф лайва к R (%): проскальзывание BingX
+                       # (канонная сетка уже вычитает 0.1 комиссии)
+
+_BINGX_CACHE = {"t": 0.0, "set": set()}
+
+
+def bingx_set(db):
+    """Монеты BingX perpetual (system_config.bingx_universe, кэш 10 мин)."""
+    import time as _t
+    if _t.time() - _BINGX_CACHE["t"] > 600:
+        try:
+            d = db.system_config.find_one({"_id": "bingx_universe"}) or {}
+            _BINGX_CACHE["set"] = set(d.get("symbols") or [])
+        except Exception:
+            pass
+        _BINGX_CACHE["t"] = _t.time()
+    return _BINGX_CACHE["set"]
+
+
+def refresh_bingx(db):
+    """Ночное обновление вселенной BingX (публичный API, fail-open)."""
+    try:
+        import requests
+        from database import utcnow
+        r = requests.get(
+            "https://open-api.bingx.com/openApi/swap/v2/quote/contracts",
+            timeout=20)
+        if r.status_code != 200:
+            return 0
+        syms = sorted({(c.get("symbol") or "").replace("-USDT", "USDT")
+                       for c in (r.json().get("data") or [])
+                       if (c.get("symbol") or "").endswith("-USDT")})
+        if len(syms) > 300:
+            db.system_config.update_one(
+                {"_id": "bingx_universe"},
+                {"$set": {"symbols": syms, "n": len(syms),
+                          "updated": utcnow().isoformat()}},
+                upsert=True)
+            _BINGX_CACHE["t"] = 0.0
+            logger.info(f"[live] BingX universe: {len(syms)}")
+        return len(syms)
+    except Exception:
+        logger.debug("[live] bingx refresh fail", exc_info=True)
+        return 0
 OPEN_BATCH = 12        # новых сделок за цикл
 CLOSE_BATCH = 150       # проверок закрытия за цикл (свечи 1 раз/монету)
 
@@ -64,7 +110,22 @@ def _open_new(db, model, now):
                   and (ms is None or ms < 27)
                   else "heat" if c["dir"] == "SHORT" and ms is not None
                   and ms >= 27 else None)
+        # 💎 live-tier: LONG × ×2 × BingX × капы дня/одновременных
+        live = False
+        try:
+            if (c["dir"] == "LONG" and le.size_tier(rule) == "2x"
+                    and c["sym"] in bingx_set(db)):
+                from datetime import datetime as _dt
+                day0 = _dt(now.year, now.month, now.day)
+                today_n = db.academy_paper.count_documents(
+                    {"live": True, "opened_at": {"$gte": day0}})
+                conc_n = db.academy_paper.count_documents(
+                    {"live": True, "state": "OPEN"})
+                live = today_n < LIVE_DAY_CAP and conc_n < LIVE_CONC_CAP
+        except Exception:
+            pass
         db.academy_paper.update_one({"_id": key}, {"$set": {
+            "live": live,
             "sym": c["sym"], "pair": pair, "dir": c["dir"], "src": c["src"],
             "rule": rule.get("label") if rule else None,
             "rule_id": rule.get("id") if rule else None,
@@ -203,6 +264,25 @@ def stats(db):
     cut = utcnow() - timedelta(hours=24)
     out["s24"] = _st([d for d in cl
                       if d.get("closed_at") and d["closed_at"] >= cut])
+    # 💎 live-tier срез (закрытые с флагом live) + поправка на исполнение
+    lcl = list(db.academy_paper.find(
+        {"live": True, "state": {"$in": ["TP", "SL", "TIMEOUT"]}},
+        {"r": 1, "closed_at": 1, "opened_at": 1}))
+    lv = _st(lcl)
+    if lv:
+        lv["avg_adj"] = round(lv["avg"] - LIVE_FEE_EXTRA, 2)
+        lv["sum_adj"] = round(lv["sum"] - LIVE_FEE_EXTRA * lv["n"], 1)
+    out["live"] = lv
+    out["live_open"] = db.academy_paper.count_documents(
+        {"live": True, "state": "OPEN"})
+    try:
+        from datetime import datetime as _dt2
+        _n = utcnow()
+        day0 = _dt2(_n.year, _n.month, _n.day)
+        out["live_today"] = db.academy_paper.count_documents(
+            {"live": True, "opened_at": {"$gte": day0}})
+    except Exception:
+        pass
     durs = sorted((d["closed_at"] - d["opened_at"]).total_seconds() / 3600
                   for d in cl if d.get("closed_at") and d.get("opened_at"))
     if durs:

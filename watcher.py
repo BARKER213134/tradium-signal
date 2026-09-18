@@ -313,6 +313,13 @@ async def _academy_loop():
                         await _asyncio.to_thread(_lai.refresh_lessons)
                     except Exception:
                         logger.exception("[ai-lessons] refresh fail")
+                    try:
+                        import learn_paper as _lp2
+                        from database import _get_db as _gdb_lp
+                        await _asyncio.to_thread(
+                            _lp2.refresh_bingx, _gdb_lp())
+                    except Exception:
+                        logger.exception("[live] bingx refresh fail")
         except Exception as _e:
             logger.exception("[academy] loop crashed")
             try:
