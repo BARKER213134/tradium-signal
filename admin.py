@@ -9489,6 +9489,30 @@ async def api_live():
                               or d["opened_at"]).isoformat()})
         bx = db.system_config.find_one({"_id": "bingx_universe"}) or {}
         thr = db.system_config.find_one({"_id": "live_throttle"}) or {}
+        # 🎯 цель $20k/мес: подтверждённый темп ТОЛЬКО по закрытым live
+        goal = None
+        try:
+            lcl2 = list(db.academy_paper.find(
+                {"live": True, "state": {"$in": ["TP", "SL", "TIMEOUT"]}},
+                {"r": 1, "fund_cost": 1, "opened_at": 1}))
+            if len(lcl2) >= 3:
+                net = sum(d["r"] - lp.LIVE_FEE_EXTRA
+                          - (d.get("fund_cost") or 0)
+                          for d in lcl2 if d.get("r") is not None)
+                t0 = min(d["opened_at"] for d in lcl2)
+                days = max(1.0, (utcnow() - t0).total_seconds() / 86400)
+                pos_frac = 0.10   # 10% депо на сделку (план микро-лайва)
+                daily_pct = net / days * pos_frac
+                mo_pct = ((1 + daily_pct / 100) ** 30 - 1) * 100
+                goal = {"target": 20000, "pos_frac": pos_frac,
+                        "n": len(lcl2), "window_d": round(days, 1),
+                        "daily_pct": round(daily_pct, 2),
+                        "monthly_pct": round(mo_pct, 1),
+                        "need_depo": (round(20000 / (mo_pct / 100))
+                                      if mo_pct > 1 else None),
+                        "reliable": days >= 14 and len(lcl2) >= 60}
+        except Exception:
+            pass
         return {"ok": True, "stats": st.get("live"),
                 "throttle": {k: thr.get(k) for k in
                              ("level", "cap", "reason", "breadth", "wr20")},
@@ -9496,7 +9520,8 @@ async def api_live():
                 "today_n": st.get("live_today"),
                 "caps": {"day": lp.LIVE_DAY_CAP, "conc": lp.LIVE_CONC_CAP},
                 "fee_extra": lp.LIVE_FEE_EXTRA,
-                "bingx_n": bx.get("n"), "open": op, "closed": cl}
+                "bingx_n": bx.get("n"), "goal": goal,
+                "open": op, "closed": cl}
     return await asyncio.to_thread(_q)
 
 

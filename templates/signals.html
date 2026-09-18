@@ -7076,6 +7076,10 @@ setInterval(trLoad, 60000);
     <div id="lvSum" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">ΣR с комиссией</div>
   </div>
+  <div id="lvGoalBox" style="background:linear-gradient(135deg,rgba(255,210,62,0.10),rgba(255,179,71,0.06));border:1px solid rgba(255,210,62,0.45);border-radius:10px;padding:10px 16px;" title="🎯 цель $20k/мес: темп считается ТОЛЬКО по закрытым live-сделкам (позиция 10% депо), открытая прибыль не учитывается. Достоверно после ≥60 закрытий и ≥14 дней.">
+    <div id="lvGoal" style="font-size:15px;font-weight:900;font-family:var(--font-mono);line-height:1.4;">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">🎯 цель $20 000/мес</div>
+  </div>
 </div>
 <div style="font-size:10.5px;color:var(--muted);margin:-4px 0 12px;line-height:1.6;">
   💎 Фильтр лайва: <b>только ЛОНГ</b> · только правила сайзинга <b>×2</b> (EV≥3, WR≥60) · монета торгуется на <b>BingX</b> (<span id="lvBx">—</span> перпов, ~93% наших) · капы: <b>10 входов/день, 15 позиций</b> · показанные R уже включают −0.2% на комиссию и проскальзывание. Это ровно те сделки, которые пойдут в реальный лайв — статистика копится отдельно от общего пейпера. Клик по монете — график с уровнями.
@@ -7137,6 +7141,15 @@ async function lvLoad() {
   sumEl.textContent = st.sum_adj != null ? (st.sum_adj > 0 ? '+' : '') + st.sum_adj : '—';
   sumEl.style.color = st.sum_adj > 0 ? '#00e5a0' : st.sum_adj != null ? '#ff5e9c' : 'var(--text)';
   document.getElementById('lvBx').textContent = d.bingx_n || '—';
+  const g = d.goal;
+  const ge = document.getElementById('lvGoal');
+  if (g && g.monthly_pct != null) {
+    ge.innerHTML = `темп <b style="color:${g.monthly_pct > 0 ? '#00e5a0' : '#ff5e9c'};">${g.monthly_pct > 0 ? '+' : ''}${g.monthly_pct}%/мес</b>` +
+      (g.need_depo ? ` · нужен депо <b>$${g.need_depo.toLocaleString('en')}</b>` : '') +
+      `<br><span style="font-size:10px;color:var(--muted);">окно ${g.window_d}д · ${g.n} закрытий · ${g.reliable ? 'достоверно' : '⚠️ мало данных — ориентир после недели'}</span>`;
+  } else {
+    ge.textContent = 'копим закрытия…';
+  }
   const op = d.open || [];
   document.getElementById('lvOpen').innerHTML = op.map((t, i) => {
     const dt = new Date(t.at + (t.at.endsWith('Z') ? '' : 'Z'));
