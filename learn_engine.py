@@ -230,18 +230,22 @@ def _load_signals(days):
     for d in db.new_strategy_signals.find(
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
-            {"pair": 1, "direction": 1, "strategy": 1, "created_at": 1}):
+            {"pair": 1, "direction": 1, "strategy": 1, "created_at": 1,
+             "svetofor": 1, "svetofor_score": 1}):
         if d.get("pair") and d.get("strategy"):
             sigs.append({"pair": d["pair"], "dir": d["direction"],
                          "src": d["strategy"],
+                         "sv": d.get("svetofor"), "sc": d.get("svetofor_score"),
                          "ts": int(d["created_at"].timestamp() * 1000)})
     for d in db.supertrend_signals.find(
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
-            {"pair": 1, "direction": 1, "tier": 1, "created_at": 1}):
+            {"pair": 1, "direction": 1, "tier": 1, "created_at": 1,
+             "svetofor": 1, "svetofor_score": 1}):
         if d.get("pair"):
             sigs.append({"pair": d["pair"], "dir": d["direction"],
                          "src": "supertrend_" + (d.get("tier") or "?"),
+                         "sv": d.get("svetofor"), "sc": d.get("svetofor_score"),
                          "ts": int(d["created_at"].timestamp() * 1000)})
     return sigs
 
@@ -430,7 +434,10 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
             _bi = _last_closed(btc_vt, ts, 3_600_000)
             if 0 <= _bi < len(btc_vp) and not math.isnan(btc_vp[_bi]):
                 _bv = round(float(btc_vp[_bi]), 1)
+        _sc = s.get("sc")
         rows.append({
+            "sv": s.get("sv"),
+            "sc": (None if _sc is None or _sc <= -50 else _sc),
             "fund": _fund, "btc_vol": _bv,
             "hour": int((ts // 3_600_000) % 24),
             "age": _age,
@@ -559,6 +566,13 @@ def aggregate(rows, prev_rules=None, live_map=None):
              [x for x in rows if x["heat"] and x["young"] is True], "super")
     add_rule("sc_heat_old", "🌡 SHORT 27+ · монета старше 70д",
              [x for x in rows if x["heat"] and x["young"] is False], "super")
+    # 🚦 светофор — контрарианский агрегат трендов (18.09: «ДА» WR 35,
+    # «НЕТ» WR 77 на живых paper) — клетки по вердикту×направлению
+    for _svv, _svl in (("ДА", "🚦ДА"), ("МОЖНО", "🚦МОЖНО"), ("НЕТ", "🚦НЕТ")):
+        for _sg, _dl in ((1, "LONG"), (-1, "SHORT")):
+            add_rule(f"sv_{_svv}_{_dl}", f"{_svl} {_dl} (светофор)",
+                     [x for x in rows if x["sv"] == _svv and x["sg"] == _sg],
+                     "super")
     add_rule("sc_fresh", "🆕 LONG первое касание 7д (лонг-корзины)",
              [x for x in rows if x["fresh"]
               and (x["gold"] or x["silver"] or x["dawn"])], "super")
@@ -740,7 +754,9 @@ def train_lgbm(rows):
                  (1 if x["young"] else 0)),
                 x.get("hour") or 0,
                 -1.0 if x.get("btc_vol") is None else x["btc_vol"],
-                0.0 if x.get("fund") is None else round(x["fund"] * 1e4, 2)]
+                0.0 if x.get("fund") is None else round(x["fund"] * 1e4, 2),
+                {"ДА": 2, "МОЖНО": 1, "НЕТ": 0}.get(x.get("sv"), -1),
+                -50.0 if x.get("sc") is None else x["sc"]]
 
     rs = sorted(rows, key=lambda x: x["ts"])
     cut = int(len(rs) * 0.75)
@@ -770,7 +786,8 @@ def train_lgbm(rows):
     auc = float((ranks[yte == 1].sum() - n1 * (n1 + 1) / 2) / max(n1 * n0, 1))
     top = p >= np.percentile(p, 80)
     fi = sorted(zip(["src", "dir", "val", "streak", "tr4", "breadth",
-                     "fresh", "liq", "young", "hour", "btc_vol", "fund"],
+                     "fresh", "liq", "young", "hour", "btc_vol", "fund",
+                     "svetofor", "sv_score"],
                     m.feature_importance().tolist()), key=lambda z: -z[1])
     return {"ok": True, "n_train": cut, "n_test": len(rs) - cut,
             "auc": round(auc, 3),
