@@ -91,6 +91,15 @@ def build_text(db):
             lines.append(f"\n📜 Paper: открыто {ps['open']}, закрытий ещё нет")
     except Exception:
         pass
+    try:
+        thr = db.system_config.find_one({"_id": "live_throttle"}) or {}
+        if thr.get("level"):
+            lvl = {1: "🟡 ОСТОРОЖНО (кап 3)", 2: "🔴 СТОП (кап 0)"}.get(
+                thr["level"], "?")
+            lines.append(f"\n🛑 Режимный тормоз лайва: {lvl} — "
+                         f"{thr.get('reason')}")
+    except Exception:
+        pass
     deg = model.get("degraded") or []
     if deg:
         lines.append(f"\n⚠️ Деградировали и разжалованы: {len(deg)} правил")

@@ -20,6 +20,64 @@ LIVE_FEE_EXTRA = 0.1   # 💎 доп. штраф лайва к R (%): проск
 _BINGX_CACHE = {"t": 0.0, "set": set()}
 
 
+def live_throttle(db):
+    """🛑 Режимный тормоз live-среза (18.09): сжимает дневной кап при
+    перегреве рынка (широта 4h) или просадке скользящего WR последних
+    20 live-закрытий. Уровни: 0=норма (кап 10) / 1=осторожно (3) /
+    2=стоп (0). Обучение НЕ трогает — paper торгует всё как торговал.
+    Состояние → system_config.live_throttle (вкладка/дайджест/AI)."""
+    from database import utcnow
+    breadth = None
+    try:
+        rows = (db.market_state.find_one({"_id": "trend_matrix"})
+                or {}).get("rows") or []
+        n4 = [r for r in rows if (r.get("d") or {}).get("4h")]
+        if len(n4) >= 50:
+            breadth = round(sum(1 for r in n4 if r["d"]["4h"] > 0)
+                            / len(n4) * 100)
+    except Exception:
+        pass
+    wr20 = None
+    try:
+        last = [d.get("r") for d in db.academy_paper.find(
+            {"live": True, "state": {"$in": ["TP", "SL", "TIMEOUT"]}},
+            {"r": 1}).sort("closed_at", -1).limit(20)]
+        last = [r for r in last if r is not None]
+        if len(last) >= 10:
+            wr20 = round(sum(1 for r in last if r > 0) / len(last) * 100)
+    except Exception:
+        pass
+    level = 0
+    reasons = []
+    if breadth is not None and breadth > 60:
+        level = 2
+        reasons.append(f"широта {breadth}% > 60 — эйфория, лонги от дна не работают")
+    elif breadth is not None and breadth > 50:
+        level = max(level, 1)
+        reasons.append(f"широта {breadth}% > 50 — режим против контрарианских лонгов")
+    if wr20 is not None and wr20 < 30:
+        level = 2
+        reasons.append(f"скользящий WR live {wr20}% < 30 — система в просадке")
+    elif wr20 is not None and wr20 < 45:
+        level = max(level, 1)
+        reasons.append(f"скользящий WR live {wr20}% < 45")
+    cap = {0: LIVE_DAY_CAP, 1: 3, 2: 0}[level]
+    st = {"level": level, "cap": cap,
+          "reason": " · ".join(reasons) if reasons else "норма",
+          "breadth": breadth, "wr20": wr20,
+          "at": utcnow().isoformat()}
+    try:
+        prev = db.system_config.find_one({"_id": "live_throttle"}) or {}
+        if prev.get("level") != level:
+            logger.info(f"[live] 🛑 тормоз: уровень {prev.get('level')} → "
+                        f"{level} (кап {cap}) — {st['reason']}")
+        db.system_config.update_one(
+            {"_id": "live_throttle"}, {"$set": st}, upsert=True)
+    except Exception:
+        pass
+    return st
+
+
 def bingx_set(db):
     """Монеты BingX perpetual (system_config.bingx_universe, кэш 10 мин)."""
     import time as _t
@@ -92,6 +150,7 @@ def _open_new(db, model, now):
             "src": "supertrend_" + (d.get("tier") or "?"),
             "dir": d["direction"], "val": d.get("validator_ok"),
             "ms": d.get("mso_streak2h"), "at": d["created_at"]}))
+    thr = live_throttle(db)
     opened = 0
     for key, pair, c in sorted(cands, key=lambda x: x[2]["at"], reverse=True):
         if opened >= OPEN_BATCH:
@@ -121,7 +180,7 @@ def _open_new(db, model, now):
                     {"live": True, "opened_at": {"$gte": day0}})
                 conc_n = db.academy_paper.count_documents(
                     {"live": True, "state": "OPEN"})
-                live = today_n < LIVE_DAY_CAP and conc_n < LIVE_CONC_CAP
+                live = today_n < thr["cap"] and conc_n < LIVE_CONC_CAP
         except Exception:
             pass
         db.academy_paper.update_one({"_id": key}, {"$set": {
@@ -218,7 +277,7 @@ def lists(db):
     op = []
     for d in db.academy_paper.find({"state": "OPEN"}).sort(
             "opened_at", -1).limit(60):
-        op.append({"key": str(d["_id"]),
+        op.append({"key": str(d["_id"]), "live": bool(d.get("live")),
                    "sym": d["sym"], "dir": d["dir"], "src": d.get("src"),
                    "entry": d.get("entry"), "size": d.get("size"),
                    "rule": d.get("rule"),
@@ -227,7 +286,7 @@ def lists(db):
     for d in db.academy_paper.find(
             {"state": {"$in": ["TP", "SL", "TIMEOUT"]}}).sort(
             "closed_at", -1).limit(20):
-        cl.append({"key": str(d["_id"]),
+        cl.append({"key": str(d["_id"]), "live": bool(d.get("live")),
                    "sym": d["sym"], "dir": d["dir"], "state": d["state"],
                    "r": d.get("r"), "at": (d.get("closed_at")
                                            or d["opened_at"]).isoformat()})

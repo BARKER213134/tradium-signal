@@ -7060,6 +7060,10 @@ setInterval(trLoad, 60000);
     <div id="lvOpenN" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">позиций сейчас / кап</div>
   </div>
+  <div id="lvThrBox" style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;" title="🛑 режимный тормоз: сжимает дневной кап лайва при широте 4h >50/60% или падении скользящего WR (20 закрытий) <45/30. Школу-paper не трогает.">
+    <div id="lvThr" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">🛑 режимный тормоз</div>
+  </div>
   <div style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;">
     <div id="lvWr" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">WR закрытых</div>
@@ -7115,7 +7119,15 @@ async function lvLoad() {
   } catch (e) { return; }
   const d = _lvD;
   const st = d.stats || {};
-  document.getElementById('lvToday').textContent = (d.today_n == null ? '—' : d.today_n) + ' / ' + ((d.caps || {}).day || 10);
+  const thr = d.throttle || {};
+  const thrCap = thr.cap != null ? thr.cap : ((d.caps || {}).day || 10);
+  document.getElementById('lvToday').textContent = (d.today_n == null ? '—' : d.today_n) + ' / ' + thrCap;
+  const te = document.getElementById('lvThr');
+  const tb = document.getElementById('lvThrBox');
+  if (thr.level === 2) { te.textContent = '🔴 СТОП'; te.style.color = '#ff5e9c'; tb.style.borderColor = 'rgba(255,77,109,0.6)'; }
+  else if (thr.level === 1) { te.textContent = '🟡 КАП 3'; te.style.color = '#ffd23e'; tb.style.borderColor = 'rgba(255,210,62,0.55)'; }
+  else { te.textContent = '🟢 НОРМА'; te.style.color = '#00e5a0'; tb.style.borderColor = 'var(--border)'; }
+  tb.title = '🛑 режимный тормоз: ' + (thr.reason || 'норма') + (thr.breadth != null ? ' · широта ' + thr.breadth + '%' : '') + (thr.wr20 != null ? ' · WR20 ' + thr.wr20 + '%' : '');
   document.getElementById('lvOpenN').textContent = (d.open_n == null ? '—' : d.open_n) + ' / ' + ((d.caps || {}).conc || 15);
   document.getElementById('lvWr').textContent = st.wr != null ? st.wr + '%' : '—';
   const avgEl = document.getElementById('lvAvg');
@@ -7387,6 +7399,7 @@ async function acLoad() {
       <b style="min-width:70px;">${t.sym.replace('USDT', '')}</b>
       <span style="color:${t.dir === 'LONG' ? '#00e5a0' : '#ff5e9c'};font-weight:800;font-size:10px;">${t.dir === 'LONG' ? '▲ЛОНГ' : '▼ШОРТ'}</span>
       <span style="color:#ffd23e;font-size:10px;">×${(t.size || '1x').replace('x', '')}</span>
+      ${t.live ? `<span title="💎 сделка пошла в лайв-срез (вкладка 💎 Лайв)">💎</span>` : ''}
       <span style="margin-left:auto;font-weight:800;color:${uc};">${t.upnl == null ? '…' : (t.upnl > 0 ? '+' : '') + t.upnl + '%'}</span>
       <span onclick="event.stopPropagation();acAskAiKey('${t.key}', 'acPAi_o${ti}');" title="🧠 спросить AI об этой сделке" style="cursor:pointer;">🧠</span>
     </div>
@@ -7397,6 +7410,7 @@ async function acLoad() {
       <b style="min-width:70px;">${t.sym.replace('USDT', '')}</b>
       <span style="color:${t.dir === 'LONG' ? '#00e5a0' : '#ff5e9c'};font-size:10px;">${t.dir === 'LONG' ? '▲' : '▼'}</span>
       <span style="font-size:10px;color:var(--muted);">${t.state}</span>
+      ${t.live ? `<span title="💎 сделка была в лайв-срезе">💎</span>` : ''}
       <span style="margin-left:auto;font-weight:800;color:${t.r > 0 ? '#00e5a0' : '#ff5e9c'};">${t.r > 0 ? '+' : ''}${t.r}%</span>
       <span onclick="acAskAiKey('${t.key}', 'acPAi_c${ti}');" title="🧠 спросить AI об этой сделке" style="cursor:pointer;">🧠</span>
     </div>

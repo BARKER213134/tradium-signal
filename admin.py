@@ -9487,7 +9487,10 @@ async def api_live():
                        "at": (d.get("closed_at")
                               or d["opened_at"]).isoformat()})
         bx = db.system_config.find_one({"_id": "bingx_universe"}) or {}
+        thr = db.system_config.find_one({"_id": "live_throttle"}) or {}
         return {"ok": True, "stats": st.get("live"),
+                "throttle": {k: thr.get(k) for k in
+                             ("level", "cap", "reason", "breadth", "wr20")},
                 "open_n": st.get("live_open"),
                 "today_n": st.get("live_today"),
                 "caps": {"day": lp.LIVE_DAY_CAP, "conc": lp.LIVE_CONC_CAP},

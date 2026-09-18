@@ -182,6 +182,10 @@ def analyze(ctx):
         "режима; зелёная серия 27+ для лонга — зона обрыва (-2.15); "
         "красная серия для шорта — запрет; первое касание монеты "
         "сильнее повторных; одобренные лонги бегут дальше +10%.")
+    thr = ctx.get("throttle")
+    if thr:
+        prompt += ("\nРежимный тормоз лайва АКТИВЕН: " + str(thr) +
+                   " — учитывай это в вердикте (система осторожничает).")
     lessons = _lessons_text()
     if lessons:
         prompt += ("\n\nУРОКИ ТВОИХ ПРОШЛЫХ РАЗБОРОВ (автосверка вердиктов "
@@ -375,6 +379,12 @@ def analyze_key(key):
     _ex = (model.get("exits") or {}).get(_bk) or {}
     c["exit_plan"] = _ex.get("best_label")
     c["exit_key"] = _ex.get("best")
+    try:
+        _thr = db.system_config.find_one({"_id": "live_throttle"}) or {}
+        if _thr.get("level"):
+            c["throttle"] = _thr.get("reason")
+    except Exception:
+        pass
     try:
         _ag = db.coin_ages.find_one(
             {"_id": c["sym"][:-4] + "/USDT"}, {"days": 1})
