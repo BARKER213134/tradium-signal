@@ -7103,17 +7103,19 @@ function lvOpenChart(i, closed) {
   const t = rows[i];
   if (t) { try { openPairChart(t.sym, '2h'); } catch (e) {} }
 }
-async function lvAskAi(key, elId) {
+async function lvAskAi(key, elId, closed) {
   const el = document.getElementById(elId);
   if (!el) return;
   if (el.dataset.done) { el.style.display = el.style.display === 'none' ? 'block' : 'none'; return; }
   el.style.display = 'block';
-  el.textContent = '🧠 спрашиваю AI…';
+  el.textContent = closed ? '📝 разбираю итог сделки…' : '🧠 спрашиваю AI…';
   try {
-    const r = await fetch('/api/academy/analyze?key=' + encodeURIComponent(key));
+    const r = await fetch((closed ? '/api/academy/postmortem?key=' : '/api/academy/analyze?key=') + encodeURIComponent(key));
     const d = await r.json();
-    el.textContent = d.ok ? d.text : ('🧠 ' + (d.err || 'AI не ответил'));
-    if (d.ok) el.dataset.done = '1';
+    if (d.ok) {
+      el.textContent = (closed ? '📝 ИТОГ СДЕЛКИ\n' : '') + d.text + (closed && d.pre ? '\n\n— довходовой разбор был —\n' + d.pre : '');
+      el.dataset.done = '1';
+    } else { el.textContent = '🧠 ' + (d.err || 'AI не ответил'); }
   } catch (e) { el.textContent = '🧠 ошибка сети'; }
 }
 async function lvLoad() {
@@ -7175,7 +7177,7 @@ async function lvLoad() {
       <b style="min-width:76px;">${t.sym.replace('USDT', '')}</b>
       <span style="font-size:10px;color:var(--muted);">${t.state}</span>
       <span style="margin-left:auto;font-weight:800;color:${t.r_adj > 0 ? '#00e5a0' : '#ff5e9c'};">${t.r_adj > 0 ? '+' : ''}${t.r_adj}%</span>
-      <span onclick="event.stopPropagation();lvAskAi('${t.key}', 'lvAi_c${i}');" title="🧠 AI-разбор" style="cursor:pointer;">🧠</span>
+      <span onclick="event.stopPropagation();lvAskAi('${t.key}', 'lvAi_c${i}', true);" title="📝 итог сделки: почему сработало/нет, был ли прав довходовой вердикт, урок" style="cursor:pointer;">📝</span>
     </div>
     <div id="lvAi_c${i}" style="display:none;padding:7px 14px 9px 30px;border-bottom:1px solid rgba(42,49,64,0.3);background:rgba(123,92,255,0.06);font-size:11px;line-height:1.5;white-space:pre-wrap;"></div>`;
   }).join('') || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">закрытых пока нет</div>';
@@ -7319,17 +7321,19 @@ function acOpenPaper(i) {
   const t = rows[i];
   if (t) { try { openPairChart(t.sym, '2h'); } catch (e) {} }
 }
-async function acAskAiKey(key, elId) {
+async function acAskAiKey(key, elId, closed) {
   const el = document.getElementById(elId);
   if (!el) return;
   if (el.dataset.done) { el.style.display = el.style.display === 'none' ? 'block' : 'none'; return; }
   el.style.display = 'block';
-  el.textContent = '🧠 спрашиваю AI…';
+  el.textContent = closed ? '📝 разбираю итог сделки…' : '🧠 спрашиваю AI…';
   try {
-    const r = await fetch('/api/academy/analyze?key=' + encodeURIComponent(key));
+    const r = await fetch((closed ? '/api/academy/postmortem?key=' : '/api/academy/analyze?key=') + encodeURIComponent(key));
     const d = await r.json();
-    el.textContent = d.ok ? d.text : ('🧠 ' + (d.err || 'AI не ответил — попробуй ещё раз'));
-    if (d.ok) el.dataset.done = '1';
+    if (d.ok) {
+      el.textContent = (closed ? '📝 ИТОГ СДЕЛКИ\n' : '') + d.text + (closed && d.pre ? '\n\n— довходовой разбор был —\n' + d.pre : '');
+      el.dataset.done = '1';
+    } else { el.textContent = '🧠 ' + (d.err || 'AI не ответил — попробуй ещё раз'); }
   } catch (e) { el.textContent = '🧠 ошибка сети — попробуй ещё раз'; }
 }
 async function acAskAi(i) {
@@ -7426,7 +7430,7 @@ async function acLoad() {
       <span style="font-size:10px;color:var(--muted);">${t.state}</span>
       ${t.live ? `<span title="💎 сделка была в лайв-срезе">💎</span>` : ''}
       <span style="margin-left:auto;font-weight:800;color:${t.r > 0 ? '#00e5a0' : '#ff5e9c'};">${t.r > 0 ? '+' : ''}${t.r}%</span>
-      <span onclick="acAskAiKey('${t.key}', 'acPAi_c${ti}');" title="🧠 спросить AI об этой сделке" style="cursor:pointer;">🧠</span>
+      <span onclick="acAskAiKey('${t.key}', 'acPAi_c${ti}', true);" title="📝 итог сделки: почему сработало/нет + урок" style="cursor:pointer;">📝</span>
     </div>
     <div id="acPAi_c${ti}" style="display:none;padding:7px 14px 9px 30px;border-bottom:1px solid rgba(42,49,64,0.3);background:rgba(123,92,255,0.06);font-size:11px;line-height:1.5;white-space:pre-wrap;"></div>`).join('') : '';
   const pst = document.getElementById('acPStats');

@@ -339,6 +339,7 @@ async def _academy_ai_loop():
         try:
             import learn_ai as _lai
             await _asyncio.to_thread(_lai.run_batch)
+            await _asyncio.to_thread(_lai.run_postmortems)
         except Exception:
             logger.exception("[ai] loop crashed")
         await _asyncio.sleep(300)

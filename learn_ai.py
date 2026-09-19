@@ -297,6 +297,28 @@ def refresh_lessons():
         else:
             lines.append(f"- Уверенность калибрована: 7+/10 → {hi['avg']:+.2f} "
                          f"vs 5-/10 → {lo['avg']:+.2f}.")
+    # 📝 уроки из пост-мортемов закрытых сделок (21д) — выжимка LLM
+    try:
+        from datetime import timedelta as _td
+        pm = list(db.learn_ai_post.find(
+            {"at": {"$gte": utcnow() - _td(days=21)}, "lesson": {"$ne": None}},
+            {"lesson": 1, "r": 1, "dir": 1, "src": 1, "state": 1}))
+        if len(pm) >= 5:
+            raw = "\n".join(
+                f"- [{d.get('src')} {d.get('dir')} {d.get('state')} {(d.get('r') or 0):+.1f}%] {d['lesson']}"
+                for d in pm[-60:])
+            dp = ("Ниже уроки, которые ты сам вывел из разборов закрытых "
+                  "сделок. Сожми их в 3-5 ОБОБЩЁННЫХ правил по-русски "
+                  "(каждое с '- ', одна строка, конкретно: источник/"
+                  "направление/режим → что делать). Только правила, "
+                  "повторяющиеся в данных; без воды.\n\n" + raw)
+            dist = _ask_gemini(dp) or _ask_groq(dp)
+            if dist and dist.get("text"):
+                lines.append("Уроки из разборов закрытых сделок "
+                             f"(выжимка из {len(pm)}):")
+                lines.append(dist["text"].strip())
+    except Exception:
+        logger.debug("[ai-lessons] postmortem distill fail", exc_info=True)
     text = "\n".join(lines)
     db.system_config.update_one(
         {"_id": "ai_lessons"},
@@ -411,6 +433,142 @@ def analyze_key(key):
                   "on_demand": True}},
         upsert=True)
     return {"ok": True, "text": res["text"], "provider": res["provider"]}
+
+
+POST_BATCH = 4         # 📝 пост-мортемов за цикл (закрытые live первыми)
+
+
+def _trade_path(pair, t_open, t_close, entry, sg):
+    """MFE/MAE (%) по 1h-свечам между входом и выходом — что цена
+    реально делала внутри сделки."""
+    try:
+        from exchange import get_klines_any
+        hours = int((t_close - t_open).total_seconds() / 3600) + 3
+        c = get_klines_any(pair, "1h", min(max(hours, 5), 200))
+        o_ms = int(t_open.timestamp() * 1000)
+        c_ms = int(t_close.timestamp() * 1000)
+        bars = [b for b in c if o_ms - 3_600_000 <= b["t"] <= c_ms]
+        if not bars or not entry:
+            return None
+        if sg > 0:
+            mfe = max(b["h"] for b in bars) / entry - 1
+            mae = min(b["l"] for b in bars) / entry - 1
+        else:
+            mfe = 1 - min(b["l"] for b in bars) / entry
+            mae = 1 - max(b["h"] for b in bars) / entry
+        return {"mfe": round(mfe * 100, 2), "mae": round(mae * 100, 2),
+                "bars": len(bars)}
+    except Exception:
+        return None
+
+
+def postmortem(key, force=False):
+    """📝 Разбор ЗАКРЫТОЙ сделки после факта (sync; в to_thread): почему
+    сработало/нет, был ли прав довходовой вердикт, переносимый урок.
+    Кэш learn_ai_post; уроки идут в refresh_lessons → промпт советчика."""
+    import re
+    from database import _get_db, utcnow
+    db = _get_db()
+    ex = db.learn_ai_post.find_one({"_id": key})
+    pre_doc = db.learn_ai.find_one({"_id": key}) or {}
+    if ex and not force:
+        return {"ok": True, "text": ex["text"], "pre": pre_doc.get("text"),
+                "provider": ex.get("provider"), "cached": True}
+    t = db.academy_paper.find_one({"_id": key})
+    if not t:
+        return {"ok": False, "err": "сделка не найдена"}
+    if t.get("state") == "OPEN" or t.get("r") is None:
+        return {"ok": False, "err": "сделка ещё открыта — итог будет после закрытия"}
+    sg = 1 if t["dir"] == "LONG" else -1
+    t_open, t_close = t["opened_at"], t.get("closed_at") or utcnow()
+    dur_h = round((t_close - t_open).total_seconds() / 3600, 1)
+    path = _trade_path(t.get("pair") or (t["sym"][:-4] + "/USDT"),
+                       t_open, t_close, t.get("entry"), sg)
+    sc = _sig_ctx(db, key) or {}
+    ms, val = sc.get("ms"), sc.get("val")
+    pre = pre_doc.get("text")
+    pre_v, pre_cf = _parse_verdict(pre)
+    r = float(t["r"])
+    extra = 0.0
+    if t.get("live"):
+        try:
+            from learn_paper import LIVE_FEE_EXTRA
+            extra = LIVE_FEE_EXTRA + (t.get("fund_cost") or 0)
+        except Exception:
+            extra = 0.1
+    net = r - extra
+    prompt = (
+        "Ты трейдер-аналитик крипто-платформы. Сделка ЗАКРЫТА — дай разбор "
+        "ПОСЛЕ ФАКТА, строго в 4 строках по-русски, каждая с префиксом:\n"
+        "ИТОГ: <сухо: исход, сколько прошла цена за/против (MFE/MAE), сколько держали>\n"
+        "ПОЧЕМУ: <главная причина, почему сработало / не сработало — конкретно>\n"
+        "ВЕРДИКТ ДО ВХОДА: <был ли прав довходовой разбор; в чём именно попал или ошибся>\n"
+        "УРОК: <ОДНА переносимая фраза для будущих сделок этого типа "
+        "(источник/направление/режим/серия) — без воды>\n"
+        "Опирайся ТОЛЬКО на данные ниже.\n\n"
+        f"Сделка: {t['sym']} {t['dir']}, источник {t.get('src')}, правило "
+        f"«{t.get('rule')}» (EV {t.get('ev')}), размер {t.get('size')}"
+        f"{', 💎 live-срез' if t.get('live') else ''}"
+        f"{', 🔬 проба-разведка' if t.get('probe') else ''}.\n"
+        f"Вход {t.get('entry')} в {t_open.strftime('%d.%m %H:%M')} UTC, "
+        f"исход {t.get('state')} через {dur_h}ч, результат {r:+.2f}% "
+        f"(чистыми с комиссией/фандингом {net:+.2f}%).\n"
+        + (f"Путь цены внутри сделки: максимум в пользу +{path['mfe']}%, "
+           f"максимум против {path['mae']}% ({path['bars']} часовых баров).\n"
+           if path else "")
+        + f"Серия MSO 2h на сигнале: {ms}. 🧿 валидатор: "
+          f"{'ДА' if val is True else 'нет'}.\n"
+        + (f"Довходовой разбор AI (вердикт {pre_v} {pre_cf}/10):\n{pre}\n"
+           if pre else "Довходового разбора не было.\n")
+        + "Законы платформы: лучшие входы — против режима; зелёная серия "
+          "27+ для лонга — обрыв; красная для шорта — запрет; одобренные "
+          "лонги бегут дальше +10%; защитные ранние выходы проигрывают.")
+    res = _ask_gemini(prompt) or _ask_groq(prompt)
+    if not res:
+        return {"ok": False, "err": "AI-провайдеры не ответили"}
+    m = re.search(r"УРОК:\s*(.+)", res["text"])
+    lesson = m.group(1).strip() if m else None
+    db.learn_ai_post.update_one(
+        {"_id": key},
+        {"$set": {"sym": t["sym"], "dir": t["dir"], "src": t.get("src"),
+                  "rule_id": t.get("rule_id"), "state": t.get("state"),
+                  "r": r, "net": round(net, 2), "live": bool(t.get("live")),
+                  "mfe": path and path["mfe"], "mae": path and path["mae"],
+                  "pre_verdict": pre_v, "pre_conf": pre_cf,
+                  "text": res["text"], "lesson": lesson,
+                  "provider": res["provider"], "closed_at": t_close,
+                  "at": utcnow()}},
+        upsert=True)
+    return {"ok": True, "text": res["text"], "pre": pre,
+            "provider": res["provider"]}
+
+
+def run_postmortems(max_n=POST_BATCH):
+    """Автопост-мортемы: закрытые за 48ч без разбора, live первыми."""
+    from database import _get_db, utcnow
+    from datetime import timedelta
+    db = _get_db()
+    since = utcnow() - timedelta(hours=48)
+    done = 0
+    for live_first in (True, False):
+        q = {"state": {"$in": ["TP", "SL", "TIMEOUT"]},
+             "closed_at": {"$gte": since}}
+        if live_first:
+            q["live"] = True
+        for t in db.academy_paper.find(q, {"_id": 1}).sort("closed_at", -1).limit(60):
+            if done >= max_n:
+                return done
+            if db.learn_ai_post.find_one({"_id": t["_id"]}, {"_id": 1}):
+                continue
+            res = postmortem(str(t["_id"]))
+            if not res.get("ok"):
+                if "провайдеры" in str(res.get("err")):
+                    return done
+                continue
+            done += 1
+    if done:
+        logger.info(f"[ai] пост-мортемов: {done}")
+    return done
 
 
 def run_batch(max_n=BATCH):

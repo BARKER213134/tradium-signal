@@ -9536,6 +9536,13 @@ async def api_live():
     return await asyncio.to_thread(_q)
 
 
+@app.get("/api/academy/postmortem")
+async def api_academy_postmortem(key: str):
+    """📝 Разбор закрытой сделки после факта (почему сработало/нет + урок)."""
+    import learn_ai as _lai
+    return await asyncio.to_thread(_lai.postmortem, key)
+
+
 @app.get("/api/academy/analyze")
 async def api_academy_analyze(key: str):
     """🧠 On-demand AI-разбор одной сделки из ленты Академии."""
