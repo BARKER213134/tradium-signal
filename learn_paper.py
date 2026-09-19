@@ -12,6 +12,7 @@ from datetime import timedelta
 logger = logging.getLogger(__name__)
 
 SIG_MAX_AGE_H = 2      # открываем только по свежим сигналам
+PROBE_DAY_CAP = 2      # 🔬 разведка: paper-проб/день на живо-выключенное правило
 LIVE_DAY_CAP = 10      # 💎 live-tier: входов в день
 LIVE_CONC_CAP = 15     # 💎 одновременных позиций
 LIVE_FEE_EXTRA = 0.1   # 💎 доп. штраф лайва к R (%): проскальзывание BingX
@@ -193,8 +194,23 @@ def _open_new(db, model, now):
             break
         status, rule = le.score_signal(model, c["src"], c["dir"],
                                        c["val"], c["ms"])
+        probe = False
         if status != "ACTIVE_SHOW":
-            continue
+            # 🔬 разведка боем: живо-выключенное правило продолжаем
+            # пробовать малыми дозами (только школа-paper, НЕ лайв) —
+            # иначе при смене режима оно никогда не реабилитируется
+            if (status == "ACTIVE_HIDE" and rule
+                    and rule.get("live_demoted") is not None):
+                from datetime import datetime as _dtp
+                d0 = _dtp(now.year, now.month, now.day)
+                n_pr = db.academy_paper.count_documents(
+                    {"probe": True, "rule_id": rule.get("id"),
+                     "opened_at": {"$gte": d0}})
+                if n_pr >= PROBE_DAY_CAP:
+                    continue
+                probe = True
+            else:
+                continue
         if db.academy_paper.find_one({"_id": key}, {"_id": 1}):
             continue
         px = _last_close(pair or (c["sym"][:-4] + "/USDT"))
@@ -208,7 +224,8 @@ def _open_new(db, model, now):
         # 💎 live-tier: LONG × ×2 × BingX × капы дня/одновременных
         live = False
         try:
-            if (c["dir"] == "LONG" and le.size_tier(rule) == "2x"
+            if (not probe and c["dir"] == "LONG"
+                    and le.size_tier(rule) == "2x"
                     and c["sym"] in bingx_set(db)):
                 from datetime import datetime as _dt
                 day0 = _dt(now.year, now.month, now.day)
@@ -220,7 +237,7 @@ def _open_new(db, model, now):
         except Exception:
             pass
         db.academy_paper.update_one({"_id": key}, {"$set": {
-            "live": live,
+            "live": live, "probe": probe,
             "sym": c["sym"], "pair": pair, "dir": c["dir"], "src": c["src"],
             "rule": rule.get("label") if rule else None,
             "rule_id": rule.get("id") if rule else None,
@@ -319,6 +336,7 @@ def lists(db):
     for d in db.academy_paper.find({"state": "OPEN"}).sort(
             "opened_at", -1).limit(60):
         op.append({"key": str(d["_id"]), "live": bool(d.get("live")),
+                   "probe": bool(d.get("probe")),
                    "sym": d["sym"], "dir": d["dir"], "src": d.get("src"),
                    "entry": d.get("entry"), "size": d.get("size"),
                    "rule": d.get("rule"),

@@ -7413,7 +7413,7 @@ async function acLoad() {
       <b style="min-width:70px;">${t.sym.replace('USDT', '')}</b>
       <span style="color:${t.dir === 'LONG' ? '#00e5a0' : '#ff5e9c'};font-weight:800;font-size:10px;">${t.dir === 'LONG' ? '▲ЛОНГ' : '▼ШОРТ'}</span>
       <span style="color:#ffd23e;font-size:10px;">×${(t.size || '1x').replace('x', '')}</span>
-      ${t.live ? `<span title="💎 сделка пошла в лайв-срез (вкладка 💎 Лайв)">💎</span>` : ''}
+      ${t.live ? `<span title="💎 сделка пошла в лайв-срез (вкладка 💎 Лайв)">💎</span>` : ''}${t.probe ? `<span title="🔬 проба-разведка: правило живо-выключено, школа пробует его малыми дозами, чтобы заметить смену режима">🔬</span>` : ''}
       <span style="margin-left:auto;font-weight:800;color:${uc};">${t.upnl == null ? '…' : (t.upnl > 0 ? '+' : '') + t.upnl + '%'}</span>
       <span onclick="event.stopPropagation();acAskAiKey('${t.key}', 'acPAi_o${ti}');" title="🧠 спросить AI об этой сделке" style="cursor:pointer;">🧠</span>
     </div>

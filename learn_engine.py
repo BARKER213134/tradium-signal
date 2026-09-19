@@ -152,10 +152,11 @@ EXIT_VARIANTS = {
     "sl35": "узкий стоп −3.5%",
     "tp15": "дальний тейк +15%",
     "h48": "короткий горизонт 48ч",
+    "reg65": "выход по режиму: широта 4h ≥65% (лонг) / ≤35% (шорт)",
 }
 
 
-def _outcome_variants(c1, i, sg):
+def _outcome_variants(c1, i, sg, bgrid=None):
     """Исход сделки при 7 вариантах выхода. Внутри бара SL приоритетнее
     TP (как в каноне); активация BE/трейла применяется со СЛЕДУЮЩЕГО
     бара (консервативно, без внутрибарного чуда)."""
@@ -206,6 +207,15 @@ def _outcome_variants(c1, i, sg):
                     rr = 0.5 * (5.0 - FEE) + 0.5 * rr
                 r = rr
                 break
+            if name == "reg65" and bgrid is not None:
+                g_, b_ = bgrid
+                gi = int(min(len(g_) - 1, max(0, np.searchsorted(
+                    g_ + 14_400_000, c1[m]["t"] + 1) - 1)))
+                brm = b_[gi]
+                if not math.isnan(brm) and (
+                        (sg > 0 and brm >= 0.65) or (sg < 0 and brm <= 0.35)):
+                    r = px(sg, cl)
+                    break
             if sg > 0:
                 peak = max(peak, cl)
             else:
@@ -420,7 +430,7 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
         dawn_f = bool(sg > 0 and val is not True and dawn and streak < 27)
         heat_f = bool(sg < 0 and streak >= 27)
         fresh = s.get("_prev") is None or (ts - s["_prev"]) > 7 * 86_400_000
-        vr = (_outcome_variants(p["c1"], i1, sg)
+        vr = (_outcome_variants(p["c1"], i1, sg, (grid, breadth))
               if (gold_f or silver_f or dawn_f or heat_f) else None)
         _age = ages.get(s["pair"])
         _fund = None
@@ -695,14 +705,22 @@ def tune_thresholds(rows):
     return out
 
 
-def paper_live_map():
-    """{rule_id: {n, wr, avg}} из закрытых paper-сделок (sync)."""
-    from database import _get_db
+LIVE_WINDOW_DAYS = 21   # живая статистика — скользящее окно (19.09:
+                        # иначе правило, выключенное в ралли, никогда не
+                        # реабилитируется при смене режима)
+
+
+def paper_live_map(window_days=LIVE_WINDOW_DAYS):
+    """{rule_id: {n, wr, avg}} из закрытых paper-сделок за окно (sync)."""
+    from database import _get_db, utcnow
+    from datetime import timedelta as _td
     agg = {}
     try:
         for d in _get_db().academy_paper.find(
                 {"state": {"$in": ["TP", "SL", "TIMEOUT"]},
-                 "rule_id": {"$ne": None}}, {"rule_id": 1, "r": 1}):
+                 "rule_id": {"$ne": None},
+                 "closed_at": {"$gte": utcnow() - _td(days=window_days)}},
+                {"rule_id": 1, "r": 1}):
             if d.get("r") is None:
                 continue
             agg.setdefault(d["rule_id"], []).append(float(d["r"]))
