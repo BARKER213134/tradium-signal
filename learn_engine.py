@@ -151,6 +151,8 @@ EXIT_VARIANTS = {
     "half5": "на +5% фикс половины, остаток по канону",
     "sl35": "узкий стоп −3.5%",
     "tp15": "дальний тейк +15%",
+    "tp20": "дальний тейк +20%",
+    "hold": "без тейка: стоп −5 и держать до 96ч",
     "h48": "короткий горизонт 48ч",
     "reg65": "выход по режиму: широта 4h ≥65% (лонг) / ≤35% (шорт)",
 }
@@ -167,7 +169,7 @@ def _outcome_variants(c1, i, sg, bgrid=None):
         return (p / entry - 1) * 100 * sig - FEE
 
     for name in EXIT_VARIANTS:
-        tp_pct = 0.15 if name == "tp15" else 0.10
+        tp_pct = {"tp15": 0.15, "tp20": 0.20, "hold": 9.0}.get(name, 0.10)
         sl_pct = 0.035 if name == "sl35" else 0.05
         hor = 48 if name == "h48" else HORIZON_H
         tp = entry * (1 + sg * tp_pct)
@@ -613,7 +615,9 @@ def aggregate(rows, prev_rules=None, live_map=None):
 def exits_table(rows):
     """🚪 Самообучаемые выходы: статистика вариантов по супер-клеткам,
     рекомендация — лучший стабильный вариант (обе половины одного знака,
-    n>=100), иначе канон."""
+    n>=100) И обыгрывающий канон в ОБЕИХ половинах окна (допуск 0.05 —
+    19.09: «hold» для 🥇 давал +5.4 vs +3.5 только за счёт августа, в
+    свежей половине был хуже канона), иначе канон."""
     tmid = float(np.median([x["ts"] for x in rows]))
     out = {}
     for bk, label in (("gold", "🥇"), ("silver", "🥈"),
@@ -633,7 +637,13 @@ def exits_table(rows):
                       "h1": round(float(h1.mean()), 2) if len(h1) else None,
                       "h2": round(float(h2.mean()), 2) if len(h2) else None,
                       "stable": stable}
-        best = max((v for v in tab if tab[v]["stable"]),
+        b1, b2 = tab["base"]["h1"], tab["base"]["h2"]
+
+        def beats_base(v):
+            t = tab[v]
+            return (t["stable"] and t["h1"] is not None and b1 is not None
+                    and t["h1"] >= b1 - 0.05 and t["h2"] >= b2 - 0.05)
+        best = max((v for v in tab if v == "base" or beats_base(v)),
                    key=lambda v: tab[v]["avg"], default="base")
         out[bk] = {"n": len(sel), "table": tab, "best": best,
                    "best_label": EXIT_VARIANTS[best],
