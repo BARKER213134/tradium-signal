@@ -9461,7 +9461,7 @@ async def api_live():
         import learn_paper as lp
         db = _get_db()
         st = lp.stats(db)
-        marks = (_ACADEMY_MKT.get("mark") or {})
+        marks = (_academy_mkt_refresh(db).get("mark") or {})
         op = []
         for d in db.academy_paper.find(
                 {"live": True, "state": "OPEN"}).sort(
@@ -9568,6 +9568,83 @@ async def api_academy_recompute():
 
 _ACADEMY_MKT: dict = {"t": 0.0}
 
+def _academy_mkt_refresh(db):
+    """🌐 Рыночный кэш (фандинг/mark-цены/BTC-режим), общий для
+    /api/academy и /api/live (19.09: Лайв без Академии оставался
+    без uPnL после рестарта — кэш прогревала только Академия)."""
+    # 🌐 рыночный контекст (кэш 10 мин): фандинг всех перпов + BTC-режим
+    import time as _time
+    mkt = _ACADEMY_MKT
+    # пустая карта фандинга: ретрай 2 мин, НО при 418/429 (бан за
+    # лимиты) уважаем бан — пауза 15 мин, иначе продлеваем его сами
+    _retry = 120
+    if mkt.get("fund_err") and any(
+            c in str(mkt["fund_err"]) for c in ("418", "429")):
+        _retry = 900
+    if _time.time() - mkt.get("t", 0) > (600 if mkt.get("fund") else _retry):
+        fund = {}
+        mark = {}
+        fund_err = None
+        try:
+            import requests as _rq
+            rr = _rq.get("https://fapi.binance.com/fapi/v1/premiumIndex",
+                         timeout=25)
+            if rr.status_code == 200:
+                for it in rr.json():
+                    try:
+                        fund[it["symbol"]] = float(
+                            it.get("lastFundingRate") or 0)
+                        mark[it["symbol"]] = float(
+                            it.get("markPrice") or 0)
+                    except Exception:
+                        pass
+            else:
+                fund_err = f"http {rr.status_code}"
+        except Exception as e:
+            fund_err = str(e)[:120]
+        if not mark:
+            # 🥈 fallback: spot-тикеры одним запросом (data-api не
+            # банится) — uPnL живёт даже под fapi-баном; спот-цена
+            # ≈ фьючерсной для целей uPnL
+            try:
+                rr2 = _rq.get(
+                    "https://data-api.binance.vision/api/v3/ticker/price",
+                    timeout=20)
+                if rr2.status_code == 200:
+                    for it in rr2.json():
+                        try:
+                            mark[it["symbol"]] = float(it["price"])
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        btc = {}
+        try:
+            from exchange import get_klines_any as _gk
+            c1b = _gk("BTC/USDT", "1h", 1000)
+            if c1b and len(c1b) >= 200:
+                rngs = [(b["h"] - b["l"]) / b["c"] * 100 for b in c1b]
+                wins = [sum(rngs[i:i + 24]) / 24
+                        for i in range(0, len(rngs) - 24, 6)]
+                cur_v = sum(rngs[-24:]) / 24
+                btc["vol_pct"] = round(
+                    sum(1 for w in wins if w < cur_v)
+                    / max(1, len(wins)) * 100)
+            tmx = (db.market_state.find_one({"_id": "trend_matrix"})
+                   or {}).get("rows") or []
+            brow = next((r for r in tmx if r.get("s") == "BTCUSDT"), None)
+            if brow:
+                btc["d"] = brow.get("d") or {}
+        except Exception:
+            pass
+        mkt.update({"t": _time.time(),
+                    "fund": fund or mkt.get("fund") or {},
+                    "mark": mark or mkt.get("mark") or {},
+                    "fund_err": fund_err, "btc": btc})
+    return mkt
+
+
+
 
 @app.get("/api/academy")
 async def api_academy():
@@ -9578,75 +9655,7 @@ async def api_academy():
         import learn_engine as le
         db = _get_db()
         model = db.learn_model.find_one({"_id": "active"})
-        # 🌐 рыночный контекст (кэш 10 мин): фандинг всех перпов + BTC-режим
-        import time as _time
-        mkt = _ACADEMY_MKT
-        # пустая карта фандинга: ретрай 2 мин, НО при 418/429 (бан за
-        # лимиты) уважаем бан — пауза 15 мин, иначе продлеваем его сами
-        _retry = 120
-        if mkt.get("fund_err") and any(
-                c in str(mkt["fund_err"]) for c in ("418", "429")):
-            _retry = 900
-        if _time.time() - mkt.get("t", 0) > (600 if mkt.get("fund") else _retry):
-            fund = {}
-            mark = {}
-            fund_err = None
-            try:
-                import requests as _rq
-                rr = _rq.get("https://fapi.binance.com/fapi/v1/premiumIndex",
-                             timeout=25)
-                if rr.status_code == 200:
-                    for it in rr.json():
-                        try:
-                            fund[it["symbol"]] = float(
-                                it.get("lastFundingRate") or 0)
-                            mark[it["symbol"]] = float(
-                                it.get("markPrice") or 0)
-                        except Exception:
-                            pass
-                else:
-                    fund_err = f"http {rr.status_code}"
-            except Exception as e:
-                fund_err = str(e)[:120]
-            if not mark:
-                # 🥈 fallback: spot-тикеры одним запросом (data-api не
-                # банится) — uPnL живёт даже под fapi-баном; спот-цена
-                # ≈ фьючерсной для целей uPnL
-                try:
-                    rr2 = _rq.get(
-                        "https://data-api.binance.vision/api/v3/ticker/price",
-                        timeout=20)
-                    if rr2.status_code == 200:
-                        for it in rr2.json():
-                            try:
-                                mark[it["symbol"]] = float(it["price"])
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-            btc = {}
-            try:
-                from exchange import get_klines_any as _gk
-                c1b = _gk("BTC/USDT", "1h", 1000)
-                if c1b and len(c1b) >= 200:
-                    rngs = [(b["h"] - b["l"]) / b["c"] * 100 for b in c1b]
-                    wins = [sum(rngs[i:i + 24]) / 24
-                            for i in range(0, len(rngs) - 24, 6)]
-                    cur_v = sum(rngs[-24:]) / 24
-                    btc["vol_pct"] = round(
-                        sum(1 for w in wins if w < cur_v)
-                        / max(1, len(wins)) * 100)
-                tmx = (db.market_state.find_one({"_id": "trend_matrix"})
-                       or {}).get("rows") or []
-                brow = next((r for r in tmx if r.get("s") == "BTCUSDT"), None)
-                if brow:
-                    btc["d"] = brow.get("d") or {}
-            except Exception:
-                pass
-            mkt.update({"t": _time.time(),
-                        "fund": fund or mkt.get("fund") or {},
-                        "mark": mark or mkt.get("mark") or {},
-                        "fund_err": fund_err, "btc": btc})
+        mkt = _academy_mkt_refresh(db)
         since = utcnow() - _td(hours=48)
         feed = []
         for d in db.new_strategy_signals.find(
