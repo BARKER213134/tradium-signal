@@ -72,6 +72,14 @@ def build_text(db):
         + (f" · живых исходов в обучении: {model.get('live_n')}"
            if model.get("live_n") else ""),
     ]
+    _if = (model.get("inflight") or {}).get("all") or {}
+    if _if.get("n"):
+        _ip = (model.get("inflight") or {}).get("port") or {}
+        lines.append(
+            f"✈ В полёте {_if['n']} сигналов: тек. {_if['avg']:+.2f}"
+            + (f" · корзины {_ip['n']}: {_ip['avg']:+.2f}"
+               if _ip.get("n") else "")
+            + " (не в статистике — пульс режима)")
     if top:
         lines.append("\n<b>Топ одобренных за 12ч:</b>")
         for ev, c, rule in top[:5]:

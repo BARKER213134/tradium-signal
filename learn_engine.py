@@ -130,18 +130,49 @@ def _last_closed(t_arr, ts_ms, tf_ms):
     return int(np.searchsorted(t_arr + tf_ms, ts_ms + 1) - 1)
 
 
+def _last_closed_idx(c1):
+    """Индекс последнего ЗАКРЫТОГО 1h-бара (формирующийся не считаем)."""
+    now_ms = int(time.time() * 1000)
+    j = len(c1) - 1
+    while j >= 0 and c1[j]["t"] + 3_600_000 > now_ms:
+        j -= 1
+    return j
+
+
 def _outcome(c1, i, sg):
+    """Исход по канону → (R%, resolved). resolved=False = сделка «в полёте»:
+    ни TP, ни SL не коснулись и окно 96ч ещё не закрыто — R тогда по
+    текущей цене и в статистику НЕ идёт (только в пульс режима)."""
     entry = c1[i]["c"]
     tp = entry * (1 + sg * 0.10)
     sl = entry * (1 - sg * 0.05)
     for m in range(i + 1, min(i + HORIZON_H + 1, len(c1))):
         hi, lo = c1[m]["h"], c1[m]["l"]
         if (lo <= sl) if sg > 0 else (hi >= sl):
-            return -5.0 - FEE
+            return -5.0 - FEE, True
         if (hi >= tp) if sg > 0 else (lo <= tp):
-            return 10.0 - FEE
+            return 10.0 - FEE, True
     m = min(i + HORIZON_H, len(c1) - 1)
-    return (c1[m]["c"] / entry - 1) * 100 * sg - FEE
+    return ((c1[m]["c"] / entry - 1) * 100 * sg - FEE,
+            bool(i + HORIZON_H <= _last_closed_idx(c1)))
+
+
+def inflight_pulse(rows):
+    """✈ Пульс «в полёте»: сигналы последних ~96ч с нерешённым исходом,
+    оценка по текущей цене — самый свежий индикатор режима. В статистику
+    НЕ входит (ни в EV, ни в выходы, ни в LightGBM)."""
+    def st(sel):
+        if not sel:
+            return {"n": 0, "avg": None, "wr": None}
+        a = np.array([x["r"] for x in sel])
+        return {"n": int(len(a)), "avg": round(float(a.mean()), 2),
+                "wr": int(round(float((a > 0).mean() * 100)))}
+    port = [x for x in rows
+            if x["gold"] or x["silver"] or x["dawn"] or x["heat"]]
+    return {"all": st(rows),
+            "long": st([x for x in rows if x["sg"] > 0]),
+            "short": st([x for x in rows if x["sg"] < 0]),
+            "port": st(port)}
 
 
 EXIT_VARIANTS = {
@@ -164,6 +195,8 @@ def _outcome_variants(c1, i, sg, bgrid=None):
     бара (консервативно, без внутрибарного чуда)."""
     entry = c1[i]["c"]
     out = {}
+    last = _last_closed_idx(c1)
+    vres = True   # все варианты решены (иначе строка не идёт в exits_table)
 
     def px(sig, p):
         return (p / entry - 1) * 100 * sig - FEE
@@ -223,13 +256,15 @@ def _outcome_variants(c1, i, sg, bgrid=None):
             else:
                 peak = min(peak, cl)
         if r is None:
+            if i + hor > last:
+                vres = False   # окно не закрыто — исход этого варианта не решён
             m = min(i + hor, len(c1) - 1)
             rr = px(sg, c1[m]["c"])
             if name == "half5" and half_booked:
                 rr = 0.5 * (5.0 - FEE) + 0.5 * rr
             r = rr
         out[name] = r
-    return out
+    return out, vres
 
 
 # ────────────────────────── датасет ──────────────────────────
@@ -391,8 +426,9 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
         if p is None or p["st2"] is None:
             continue
         ts = s["ts"]
-        if now_ms - ts < (HORIZON_H + 2) * 3_600_000:
-            continue  # исход ещё не дозрел
+        # 20.09: свежие сигналы НЕ выбрасываем (раньше — минус 98ч = модель
+        # отставала на 4 дня). Исход берём, если он уже РЕШЁН (TP/SL);
+        # «в полёте» помечаем res=False — в статистику не идут, только пульс.
         i1 = _last_closed(p["t1"], ts, 3_600_000)
         if i1 < 60 or i1 >= len(p["c1"]) - 2:
             continue
@@ -432,8 +468,10 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
         dawn_f = bool(sg > 0 and val is not True and dawn and streak < 27)
         heat_f = bool(sg < 0 and streak >= 27)
         fresh = s.get("_prev") is None or (ts - s["_prev"]) > 7 * 86_400_000
-        vr = (_outcome_variants(p["c1"], i1, sg, (grid, breadth))
-              if (gold_f or silver_f or dawn_f or heat_f) else None)
+        vr, vres = (_outcome_variants(p["c1"], i1, sg, (grid, breadth))
+                    if (gold_f or silver_f or dawn_f or heat_f)
+                    else (None, True))
+        _r, _res = _outcome(p["c1"], i1, sg)
         _age = ages.get(s["pair"])
         _fund = None
         fh = fund_hist.get(s["pair"])
@@ -455,12 +493,13 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
             "age": _age,
             "dmin": dmin, "young": (None if _age is None else bool(_age < 70)),
             "fresh": fresh, "dvol": p.get("dvol") or 0.0, "vr": vr,
+            "vres": vres, "res": _res,
             "src": s["src"], "sg": sg, "val": val, "streak": streak,
             "bk": bucket(streak), "tr4": tr4,
             "br": None if math.isnan(br) else float(br),
             "gold": gold_f, "silver": silver_f,
             "dawn": dawn_f, "heat": heat_f,
-            "r": _outcome(p["c1"], i1, sg), "ts": ts, "sym": s["pair"],
+            "r": _r, "ts": ts, "sym": s["pair"],
         })
     return rows
 
@@ -618,12 +657,13 @@ def exits_table(rows):
     n>=100) И обыгрывающий канон в ОБЕИХ половинах окна (допуск 0.05 —
     19.09: «hold» для 🥇 давал +5.4 vs +3.5 только за счёт августа, в
     свежей половине был хуже канона), иначе канон."""
-    import time as _time
-    # только ДОЗРЕВШИЕ сигналы: окно 96ч закрыто. Иначе незакрытые сделки
-    # ралли считаются по текущей цене и «hold» выигрывает у любого тейка
-    # (20.09: hold 🥇 +5.46 — весь перевес из незакрытых окон).
-    mature_ms = _time.time() * 1000 - HORIZON_H * 3_600_000
-    rows = [x for x in rows if x["ts"] <= mature_ms]
+    # только ПОЛНОСТЬЮ дозревшие окна (ts ≤ now − 98ч) И решённые все
+    # варианты (vres). Свежий хвост по одному vres — одни стопы (у hold
+    # окно ещё не закрыто) → занижает все варианты (v15: канон 🥇 +2.39
+    # vs +2.95). Таблица выходов стратегическая — лаг 4 дня ей не мешает.
+    mature_ms = time.time() * 1000 - (HORIZON_H + 2) * 3_600_000
+    rows = [x for x in rows if x["vr"] and x.get("vres", True)
+            and x["ts"] <= mature_ms]
     if not rows:
         return {}
     tmid = float(np.median([x["ts"] for x in rows]))
@@ -912,10 +952,13 @@ def recompute(days=WINDOW_DAYS, progress=None):
     _loop_state(phase="building", host=_sock.gethostname(),
                 pid=_os.getpid(), started=utcnow().isoformat(), error=None)
     try:
-        rows = build_rows(days=days, progress=progress)
+        rows_all = build_rows(days=days, progress=progress)
     except Exception as e:
         _loop_state(phase="failed", error=f"build: {type(e).__name__}: {e}"[:300])
         raise
+    # ✈ «в полёте» (исход не решён) — вне статистики, только пульс режима
+    inflight = [x for x in rows_all if not x.get("res", True)]
+    rows = [x for x in rows_all if x.get("res", True)]
     if len(rows) < 500:
         logger.warning(f"[academy] мало строк: {len(rows)} — модель не обновляю")
         _loop_state(phase="failed", error=f"мало строк: {len(rows)}")
@@ -943,6 +986,7 @@ def recompute(days=WINDOW_DAYS, progress=None):
             "version": int(prev.get("version", 0)) + 1,
             "window_days": days, "rows_n": len(rows),
             "syms_n": len({x["sym"] for x in rows}),
+            "inflight": inflight_pulse(inflight),
             "built_at": utcnow().isoformat(),
             "build_sec": int(time.time() - t0),
             "rules": rules, "lgbm": lgbm,

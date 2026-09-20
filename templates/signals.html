@@ -7387,7 +7387,10 @@ async function acLoad() {
   const m = _acD.meta;
   if (m) {
     document.getElementById('acVer').textContent = 'v' + m.version;
-    document.getElementById('acData').textContent = (m.rows_n || 0).toLocaleString('ru') + ' · ' + (m.syms_n || 0) + ' пар';
+    const _if = (m.inflight && m.inflight.all && m.inflight.all.n) ? m.inflight : null;
+    const _fp = s => (s && s.n) ? ((s.avg > 0 ? '+' : '') + s.avg + ' (n=' + s.n + ', WR ' + s.wr + '%)') : '—';
+    document.getElementById('acData').textContent = (m.rows_n || 0).toLocaleString('ru') + ' · ' + (m.syms_n || 0) + ' пар' + (_if ? ' · ✈ ' + _if.all.n + ' в полёте ' + (_if.all.avg > 0 ? '+' : '') + _if.all.avg : '');
+    if (_if) document.getElementById('acData').title = '✈ В ПОЛЁТЕ: сигналы последних ~96ч, исход ещё не решён (ни TP, ни SL) — оценка по текущей цене. В статистику НЕ входят (ни EV, ни выходы, ни LightGBM), это пульс режима без отставания.\nЛонги ' + _fp(_if.long) + '\nШорты ' + _fp(_if.short) + '\nПортфель корзин ' + _fp(_if.port) + '\nРешённые исходы (TP/SL) попадают в модель сразу, без ожидания 96ч.';
     document.getElementById('acShow').textContent = m.n_show;
     document.getElementById('acHide').textContent = m.n_hide;
     document.getElementById('acShadow').textContent = m.n_shadow;

@@ -9784,7 +9784,8 @@ async def api_academy():
                     out_rules.append(r)
         meta = ({k: model.get(k) for k in (
             "version", "built_at", "window_days", "rows_n", "syms_n",
-            "build_sec", "n_show", "n_hide", "n_shadow", "brief", "degraded")}
+            "build_sec", "n_show", "n_hide", "n_shadow", "brief", "degraded",
+            "inflight")}
             if model else None)
         if meta is not None:
             meta["exits"] = model.get("exits")
