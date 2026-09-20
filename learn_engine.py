@@ -618,6 +618,14 @@ def exits_table(rows):
     n>=100) И обыгрывающий канон в ОБЕИХ половинах окна (допуск 0.05 —
     19.09: «hold» для 🥇 давал +5.4 vs +3.5 только за счёт августа, в
     свежей половине был хуже канона), иначе канон."""
+    import time as _time
+    # только ДОЗРЕВШИЕ сигналы: окно 96ч закрыто. Иначе незакрытые сделки
+    # ралли считаются по текущей цене и «hold» выигрывает у любого тейка
+    # (20.09: hold 🥇 +5.46 — весь перевес из незакрытых окон).
+    mature_ms = _time.time() * 1000 - HORIZON_H * 3_600_000
+    rows = [x for x in rows if x["ts"] <= mature_ms]
+    if not rows:
+        return {}
     tmid = float(np.median([x["ts"] for x in rows]))
     out = {}
     for bk, label in (("gold", "🥇"), ("silver", "🥈"),
@@ -642,7 +650,8 @@ def exits_table(rows):
         def beats_base(v):
             t = tab[v]
             return (t["stable"] and t["h1"] is not None and b1 is not None
-                    and t["h1"] >= b1 - 0.05 and t["h2"] >= b2 - 0.05)
+                    and t["h1"] >= b1 - 0.05 and t["h2"] >= b2 - 0.05
+                    and t["avg"] >= tab["base"]["avg"] + 0.1)
         best = max((v for v in tab if v == "base" or beats_base(v)),
                    key=lambda v: tab[v]["avg"], default="base")
         out[bk] = {"n": len(sel), "table": tab, "best": best,
