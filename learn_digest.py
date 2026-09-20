@@ -51,11 +51,20 @@ def build_text(db):
                       "src": "supertrend_" + (d.get("tier") or "?"),
                       "dir": d["direction"], "val": d.get("validator_ok"),
                       "ms": d.get("mso_streak2h")})
+    for d in db.academy_signals.find(
+            {"created_at": {"$gte": since},
+             "direction": {"$in": ["LONG", "SHORT"]}},
+            {"symbol": 1, "pair": 1, "direction": 1, "strategy": 1,
+             "validator_ok": 1, "mso_streak2h": 1, "created_at": 1}):
+        cands.append({"sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
+                      "src": d.get("strategy") or "?", "dir": d["direction"],
+                      "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
     top = []
     seen = set()
+    _rg = le.btc_regime_now()
     for c in cands:
         status, rule = le.score_signal(model, c["src"], c["dir"],
-                                       c["val"], c["ms"])
+                                       c["val"], c["ms"], rg=_rg[1])
         if status != "ACTIVE_SHOW" or not rule:
             continue
         k = c["sym"] + c["dir"]
@@ -72,6 +81,14 @@ def build_text(db):
         + (f" · живых исходов в обучении: {model.get('live_n')}"
            if model.get("live_n") else ""),
     ]
+    if _rg[1]:
+        _rm = model.get("regime_meta") or {}
+        lines.append(f"₿ Режим: {le.REGIME_LABEL.get(_rg[1], _rg[1])} "
+                     f"({_rg[0]:+.1f}% от 30д-макс)"
+                     + (" — шорты допущены в live-срез" if _rg[1] == "corr" else "")
+                     + (f" · память режима {_rm.get('days')}д: "
+                        f"{len(model.get('regime_rules') or [])} клеток"
+                        if _rm else ""))
     _if = (model.get("inflight") or {}).get("all") or {}
     if _if.get("n"):
         _ip = (model.get("inflight") or {}).get("port") or {}

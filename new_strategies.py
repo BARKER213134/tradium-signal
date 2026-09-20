@@ -516,12 +516,20 @@ async def run_detectors_on_flip(pair: str, direction: str, entry: float,
 
     # ✂ 13.08: выключенные стратегии режем ДО сохранения и ДО TG-алертов
     # (раньше гейт стоял только на insert — alert мог уйти без дока)
+    _acad = []
     try:
         from config import DISABLED_STRATEGIES
+        _acad = [s for s in triggered if s.get('strategy') in DISABLED_STRATEGIES]
         triggered = [s for s in triggered
                      if s.get('strategy') not in DISABLED_STRATEGIES]
     except Exception:
         pass
+    # 🎓 20.09: выключенные (аудит 180д) стратегии живут для Академии в
+    # отдельной коллекции academy_signals — журнал/TG/графики их не видят.
+    # Бэктест коррекции: volume_surge SHORT +3.61, second_flip +2.20 и т.д.
+    if _acad:
+        await _save_strategy_signals(_acad, flip_ts, signal_id, tier,
+                                     collection="academy_signals")
     # Persist all triggered to Mongo
     if triggered:
         await _save_strategy_signals(triggered, flip_ts, signal_id, tier)
@@ -612,7 +620,8 @@ async def _auto_paper_for_strategies(triggered: list[dict], pair: str,
 
 
 async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,
-                                 signal_id: Optional[int], tier: Optional[str]) -> None:
+                                 signal_id: Optional[int], tier: Optional[str],
+                                 collection: str = "new_strategy_signals") -> None:
     """Save strategy signals to new_strategy_signals collection (via to_thread).
     Дедупликация: для каждой (pair, direction, strategy) разрешён только 1
     сигнал в окне 60 мин. Это защищает от стакания эмодзи когда ST flip
@@ -621,7 +630,7 @@ async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,
         try:
             from database import _get_db, utcnow
             from datetime import timedelta
-            col = _get_db().new_strategy_signals
+            col = _get_db()[collection]
             dedup_window = timedelta(minutes=60)
             cutoff = utcnow() - dedup_window
             for sig in triggered:
@@ -641,7 +650,8 @@ async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,
                 # ✂ 13.08: выключенные стратегии (аудит 180д) не пишутся
                 try:
                     from config import DISABLED_STRATEGIES
-                    if sig.get('strategy') in DISABLED_STRATEGIES:
+                    if (collection == "new_strategy_signals"
+                            and sig.get('strategy') in DISABLED_STRATEGIES):
                         continue
                 except Exception:
                     pass
@@ -662,7 +672,7 @@ async def _save_strategy_signals(triggered: list[dict], flip_ts: datetime,
                 try:
                     col.insert_one(doc)
                     try:
-                        if doc.get('hot'):
+                        if doc.get('hot') and collection == "new_strategy_signals":
                             from hot_engine import combo_alert
                             combo_alert(doc)
                     except Exception:

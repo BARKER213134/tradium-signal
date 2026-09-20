@@ -347,6 +347,14 @@ def _sig_ctx(db, key):
                 "src": d.get("strategy") or "?", "dir": d.get("direction"),
                 "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
                 "at": d.get("created_at")}
+    if col == "as":
+        d = db.academy_signals.find_one({"_id": oid})
+        if not d:
+            return None
+        return {"sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
+                "src": d.get("strategy") or "?", "dir": d.get("direction"),
+                "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
+                "at": d.get("created_at")}
     if col == "st":
         d = db.supertrend_signals.find_one({"_id": oid})
         if not d:
@@ -373,7 +381,7 @@ def analyze_key(key):
         return {"ok": False, "err": "сигнал не найден"}
     model = db.learn_model.find_one({"_id": "active"}) or {}
     status, rule = le.score_signal(model, c["src"], c["dir"],
-                                   c["val"], c["ms"])
+                                   c["val"], c["ms"], rg=le.btc_regime_now()[1])
     if rule is None:
         rules = {r["id"]: r for r in model.get("rules") or []}
         dl = "LONG" if c["dir"] == "LONG" else "SHORT"
@@ -602,6 +610,16 @@ def run_batch(max_n=BATCH):
             "src": "supertrend_" + (d.get("tier") or "?"),
             "dir": d["direction"], "val": d.get("validator_ok"),
             "ms": d.get("mso_streak2h"), "at": d["created_at"]}))
+    for d in db.academy_signals.find(
+            {"created_at": {"$gte": since},
+             "direction": {"$in": ["LONG", "SHORT"]}},
+            {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}):
+        cands.append(("as_" + str(d["_id"]), {
+            "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
+            "src": d.get("strategy") or "?", "dir": d["direction"],
+            "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
+            "at": d["created_at"]}))
     cands.sort(key=lambda x: x[1]["at"], reverse=True)
     # рыночный контекст один на батч
     breadth = trends_map = None

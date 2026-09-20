@@ -126,6 +126,69 @@ def _streak_series(t2, o2, h2, l2, c2):
     return st
 
 
+# ₿ РЕЖИМ BTC (20.09): просадка от 30д-макс по ДНЕВНЫМ закрытиям до вчера
+# (без look-ahead). Бэктест коррекции 20.05→08.07: шорты +3.97 (WR 65)
+# при −8..−15%, лонги 🥇 −0.18; у максимума шорты +0.09, лонги +1.88.
+REGIME_BINS = ["top", "dip", "corr", "capit"]
+REGIME_LABEL = {"top": "₿ у максимума", "dip": "₿ −3..−8%",
+                "corr": "₿ −8..−15% коррекция", "capit": "₿ ≤−15% капитуляция"}
+REGIME_DAYS = 180
+
+
+def regime_bin(dd):
+    if dd is None:
+        return None
+    if dd <= -15:
+        return "capit"
+    if dd <= -8:
+        return "corr"
+    if dd <= -3:
+        return "dip"
+    return "top"
+
+
+def btc_dd_by_day(c1b):
+    """{день: dd%} — закрытие последнего бара ДО начала дня / макс.
+    закрытий за предыдущие 30 дней − 1. Только прошлое."""
+    if not c1b:
+        return {}
+    t = np.array([b["t"] for b in c1b], dtype=np.int64)
+    c = np.array([b["c"] for b in c1b])
+    out = {}
+    d0 = int(t[0] // 86_400_000) + 1
+    d1 = int(t[-1] // 86_400_000) + 1
+    for d in range(d0, d1 + 1):
+        end = int(np.searchsorted(t, d * 86_400_000))
+        start = int(np.searchsorted(t, (d - 30) * 86_400_000))
+        if end == 0 or end - start < 24 * 5:
+            continue
+        mx = float(c[start:end].max())
+        if mx > 0:
+            out[d] = round((float(c[end - 1]) / mx - 1) * 100, 2)
+    return out
+
+
+_REGIME_CACHE = {"t": 0.0, "v": (None, None)}
+
+
+def btc_regime_now():
+    """(dd%, bin) сейчас по дневным спот-закрытиям BTC до вчера; кэш 30 мин."""
+    if time.time() - _REGIME_CACHE["t"] < 1800:
+        return _REGIME_CACHE["v"]
+    try:
+        from exchange import get_klines_any
+        kl = get_klines_any("BTC/USDT", "1d", 40)
+        closed = [b for b in kl if b["t"] + 86_400_000 <= time.time() * 1000]
+        if len(closed) >= 20:
+            cl = [b["c"] for b in closed[-31:]]
+            dd = round((cl[-1] / max(cl) - 1) * 100, 2)
+            _REGIME_CACHE["v"] = (dd, regime_bin(dd))
+            _REGIME_CACHE["t"] = time.time()
+    except Exception:
+        logger.debug("[academy] btc_regime_now fail", exc_info=True)
+    return _REGIME_CACHE["v"]
+
+
 def _last_closed(t_arr, ts_ms, tf_ms):
     return int(np.searchsorted(t_arr + tf_ms, ts_ms + 1) - 1)
 
@@ -294,10 +357,23 @@ def _load_signals(days):
                          "src": "supertrend_" + (d.get("tier") or "?"),
                          "sv": d.get("svetofor"), "sc": d.get("svetofor_score"),
                          "ts": int(d["created_at"].timestamp() * 1000)})
+    # 🎓 academy_signals (20.09): стратегии, выключенные для журнала/TG
+    # (аудит 180д), продолжают учиться в Академии — отдельная коллекция
+    for d in db.academy_signals.find(
+            {"created_at": {"$gte": since},
+             "direction": {"$in": ["LONG", "SHORT"]}},
+            {"pair": 1, "direction": 1, "strategy": 1, "created_at": 1,
+             "svetofor": 1, "svetofor_score": 1}):
+        if d.get("pair") and d.get("strategy"):
+            sigs.append({"pair": d["pair"], "dir": d["direction"],
+                         "src": d["strategy"],
+                         "sv": d.get("svetofor"), "sc": d.get("svetofor_score"),
+                         "ts": int(d["created_at"].timestamp() * 1000)})
     return sigs
 
 
-def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
+def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
+               sigs=None, klines_fn=None, fund=True):
     """Полный пересбор датасета из свечей (sync; звать в to_thread).
 
     Возвращает rows: [{src, dir(1/-1), val, bk, streak, tr1, tr2, tr4,
@@ -313,10 +389,11 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
             ages[d["_id"]] = d.get("days")
     except Exception:
         pass
-    sigs = _load_signals(days)
+    sigs = _load_signals(days) if sigs is None else sigs
     by_sym = {}
     for s in sigs:
         by_sym.setdefault(s["pair"], []).append(s)
+    by_sym.setdefault("BTC/USDT", [])   # ₿ режим/вола BTC нужны всегда
     # 💸 история фандинга (8ч-выплаты, limit 1000 ≈ 333д) — фича обучения;
     # локально fapi 451 → fail-open (None)
     fund_hist = {}
@@ -328,7 +405,7 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
         fapi_ok = _probe.status_code == 200
     except Exception:
         fapi_ok = False
-    if fapi_ok:
+    if fapi_ok and fund:
         for k, pair in enumerate(sorted(by_sym)):
             try:
                 rr = _rq.get(
@@ -346,7 +423,7 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
     packs = {}
     for k, (pair, lst) in enumerate(sorted(by_sym.items())):
         try:
-            c1 = get_klines_any(pair, "1h", 1500)
+            c1 = (klines_fn or get_klines_any)(pair, "1h", 1500)
             if not c1 or len(c1) < 250:
                 continue
             t1 = np.array([b["t"] for b in c1], dtype=np.int64)
@@ -398,6 +475,7 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
             hist = hist[~np.isnan(hist)]
             if len(hist) >= 30:
                 btc_vp[i] = (hist < r24[i]).mean() * 100
+    btc_dd = btc_dd_by_day(bp["c1"]) if bp is not None else {}
     # ширина рынка по 4h-сетке из tr4 всех пар
     if not packs:
         return []
@@ -485,7 +563,9 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None):
             if 0 <= _bi < len(btc_vp) and not math.isnan(btc_vp[_bi]):
                 _bv = round(float(btc_vp[_bi]), 1)
         _sc = s.get("sc")
+        _dd = btc_dd.get(int(ts // 86_400_000))
         rows.append({
+            "btc_dd": _dd, "rg": regime_bin(_dd),
             "sv": s.get("sv"),
             "sc": (None if _sc is None or _sc <= -50 else _sc),
             "fund": _fund, "btc_vol": _bv,
@@ -521,7 +601,7 @@ def _stats(sel, tmid):
             "stable": stable}
 
 
-def aggregate(rows, prev_rules=None, live_map=None):
+def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
     """rows → список правил со статистикой, статусами и счётчиками.
     live_map: {rule_id: {n, wr, avg}} из закрытых paper-сделок — живые
     исходы подмешиваются в EV с тройным весом (реальное исполнение
@@ -537,7 +617,13 @@ def aggregate(rows, prev_rules=None, live_map=None):
     rules = []
 
     def add_rule(rid, label, sel, kind):
-        st = _stats(sel, tmid)
+        if len(sel) < 15:
+            return
+        # режимные клетки лежат кучно во времени (коррекция = май-июнь) —
+        # половины считаем ВНУТРИ режима, иначе «стабильность» по общей
+        # медиане окна всегда ложно-отрицательная
+        st = _stats(sel, float(np.median([x["ts"] for x in sel]))
+                    if kind == "regime" else tmid)
         if st["n"] < 15:
             return
         # shrinkage к родителю направления
@@ -624,6 +710,23 @@ def aggregate(rows, prev_rules=None, live_map=None):
             add_rule(f"sv_{_svv}_{_dl}", f"{_svl} {_dl} (светофор)",
                      [x for x in rows if x["sv"] == _svv and x["sg"] == _sg],
                      "super")
+    # ₿ режим BTC (20.09): супер-клетки режим×направление и клетки
+    # источник×направление×режим — модель сама включает шорты в коррекции
+    # и глушит лонги (бэктест 20.05→08.07); в 45д-окне коррекции может не
+    # быть — тогда работает 180д-память (build_regime_rules)
+    for _rg in REGIME_BINS:
+        for _sg, _dl in ((1, "LONG"), (-1, "SHORT")):
+            add_rule(f"rg_{_rg}_{_dl}", f"{REGIME_LABEL[_rg]} {_dl} (режим)",
+                     [x for x in rows if x.get("rg") == _rg and x["sg"] == _sg],
+                     "regime")
+    _combos_rg = {}
+    for x in rows:
+        if x.get("rg"):
+            _combos_rg.setdefault((x["src"], x["sg"], x["rg"]), []).append(x)
+    for (_src, _sg, _rg), _sel in _combos_rg.items():
+        _dl = "LONG" if _sg > 0 else "SHORT"
+        add_rule(f"cr_{_src}_{_dl}_{_rg}",
+                 f"{_src} {_dl} · {REGIME_LABEL[_rg]}", _sel, "regime")
     add_rule("sc_fresh", "🆕 LONG первое касание 7д (лонг-корзины)",
              [x for x in rows if x["fresh"]
               and (x["gold"] or x["silver"] or x["dawn"])], "super")
@@ -647,8 +750,90 @@ def aggregate(rows, prev_rules=None, live_map=None):
     for (src, sg), sel in combos2.items():
         dl = "LONG" if sg > 0 else "SHORT"
         add_rule(f"p_{src}_{dl}", f"{src} {dl} (весь)", sel, "parent")
+    if only_regime:
+        rules = [r for r in rules if r["kind"] == "regime"]
     rules.sort(key=lambda r: -(r.get("ev") or 0))
     return rules
+
+
+def _fetch_1h_range(symbol, start_ms, end_ms):
+    """Спот 1h-свечи за диапазон (пагинация по 1000, data-api)."""
+    import requests as _rq
+    from exchange import BINANCE_BASE
+    out, cur = [], start_ms
+    while cur < end_ms:
+        try:
+            r = _rq.get(f"{BINANCE_BASE}/api/v3/klines",
+                        params={"symbol": symbol, "interval": "1h",
+                                "startTime": cur, "endTime": end_ms,
+                                "limit": 1000}, timeout=20)
+        except Exception:
+            time.sleep(1)
+            continue
+        if r.status_code == 429:
+            time.sleep(10)
+            continue
+        if r.status_code != 200:
+            break
+        ks = r.json()
+        if not ks:
+            break
+        out.extend({"t": int(k[0]), "o": float(k[1]), "h": float(k[2]),
+                    "l": float(k[3]), "c": float(k[4]), "v": float(k[5])}
+                   for k in ks)
+        cur = int(ks[-1][0]) + 3_600_000
+        if len(ks) < 1000:
+            break
+    return out
+
+
+def build_regime_rules(days=REGIME_DAYS, prev_rules=None, chunk=150):
+    """₿ Долгая память режима: клетки источник×направление×режим BTC на
+    `days` днях. В 45д-окне коррекции может не быть, а знать, что в
+    коррекции шорты работают, надо ДО того, как она попадёт в окно.
+    Свечи — спот постранично, 8 потоков, пары чанками по `chunk`
+    (память контейнера); фандинг не тянем (fapi-бан). Только regime-клетки."""
+    from collections import Counter
+    from concurrent.futures import ThreadPoolExecutor
+    from database import utcnow
+    t0 = time.time()
+    sigs = _load_signals(days)
+    by_pair = Counter(s["pair"] for s in sigs)
+    pairs = [p for p, _ in by_pair.most_common()]
+    now_ms = int(utcnow().timestamp() * 1000)
+    s_ms = now_ms - (days + 35) * 86_400_000
+    rows, n_syms = [], 0
+    for ci in range(0, len(pairs), chunk):
+        part_pairs = pairs[ci:ci + chunk]
+        cache = {}
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futs = {ex.submit(_fetch_1h_range, p.replace("/", ""), s_ms, now_ms): p
+                    for p in set(part_pairs) | {"BTC/USDT"}}
+            for f, p in futs.items():
+                try:
+                    cache[p] = f.result()
+                except Exception:
+                    cache[p] = []
+        good = {p: v for p, v in cache.items() if len(v) > 500}
+        pset = set(part_pairs)
+        csigs = [s for s in sigs if s["pair"] in pset and s["pair"] in good]
+        if csigs:
+            part = build_rows(days=days, sleep_s=0, sigs=csigs, fund=False,
+                              klines_fn=lambda pair, tf, limit=50, _c=good: _c.get(pair, []))
+            rows.extend(x for x in part if x.get("res", True))
+            n_syms += len(pset & set(good))
+        del cache, good
+    if len(rows) < 2000:
+        logger.warning(f"[academy] regime: мало строк {len(rows)}")
+        return None
+    rules = aggregate(rows, prev_rules, live_map=None, only_regime=True)
+    n_rg = Counter(x.get("rg") for x in rows)
+    logger.info(f"[academy] regime: {len(rows)} строк, {n_syms} пар, "
+                f"{len(rules)} клеток, {round(time.time() - t0)}с")
+    return {"rules": rules, "rows_n": len(rows), "syms_n": n_syms,
+            "days": days, "by_regime": {str(k): v for k, v in n_rg.items()},
+            "built_at": utcnow().isoformat(),
+            "build_sec": int(time.time() - t0)}
 
 
 def exits_table(rows):
@@ -833,7 +1018,8 @@ def train_lgbm(rows):
                 -1.0 if x.get("btc_vol") is None else x["btc_vol"],
                 0.0 if x.get("fund") is None else round(x["fund"] * 1e4, 2),
                 {"ДА": 2, "МОЖНО": 1, "НЕТ": 0}.get(x.get("sv"), -1),
-                -50.0 if x.get("sc") is None else x["sc"]]
+                -50.0 if x.get("sc") is None else x["sc"],
+                -99.0 if x.get("btc_dd") is None else x["btc_dd"]]
 
     rs = sorted(rows, key=lambda x: x["ts"])
     cut = int(len(rs) * 0.75)
@@ -864,7 +1050,7 @@ def train_lgbm(rows):
     top = p >= np.percentile(p, 80)
     fi = sorted(zip(["src", "dir", "val", "streak", "tr4", "breadth",
                      "fresh", "liq", "young", "hour", "btc_vol", "fund",
-                     "svetofor", "sv_score"],
+                     "svetofor", "sv_score", "btc_dd"],
                     m.feature_importance().tolist()), key=lambda z: -z[1])
     return {"ok": True, "n_train": cut, "n_test": len(rs) - cut,
             "auc": round(auc, 3),
@@ -1000,6 +1186,15 @@ def recompute(days=WINDOW_DAYS, progress=None):
             "n_shadow": sum(1 for r in rules if r["status"] == "SHADOW"),
             "degraded": [r["id"] for r in rules
                          if r.get("degraded") is not None],
+            # ₿ режим: текущий + долгая память (переносится, пересобирается ниже)
+            "btc_regime": dict(zip(("dd", "bin"), btc_regime_now())),
+            # доля режимов в 45д-окне: память режима главнее обычных клеток,
+            # только пока режима в окне <15% (окно ещё «не знает» его)
+            "regime_share": {k: round(v / len(rows), 3) for k, v in
+                             __import__("collections").Counter(
+                                 x.get("rg") for x in rows if x.get("rg")).items()},
+            "regime_rules": prev.get("regime_rules"),
+            "regime_meta": prev.get("regime_meta"),
         }
         _loop_state(phase="brief")
         model["brief"] = groq_brief(model)
@@ -1014,10 +1209,23 @@ def recompute(days=WINDOW_DAYS, progress=None):
     hist = dict(model)
     hist["_id"] = f"v{model['version']}_{model['built_at'][:16]}"
     hist.pop("rules", None)   # история — только метаданные, без таблицы
+    hist.pop("regime_rules", None)
     try:
         db.learn_model_history.insert_one(hist)
     except Exception:
         pass
+    # ₿ долгая память режима — ПОСЛЕ сохранения основной модели (не блокирует)
+    try:
+        _loop_state(phase="regime")
+        _rg = build_regime_rules(prev_rules=prev.get("regime_rules"))
+        if _rg:
+            _meta = {k: v for k, v in _rg.items() if k != "rules"}
+            db.learn_model.update_one(
+                {"_id": "active"},
+                {"$set": {"regime_rules": _rg["rules"], "regime_meta": _meta}})
+            model["regime_rules"], model["regime_meta"] = _rg["rules"], _meta
+    except Exception:
+        logger.exception("[academy] regime build fail — оставляю прошлую память")
     logger.info(f"[academy] модель v{model['version']}: {len(rules)} правил, "
                 f"{model['n_show']} SHOW / {model['n_hide']} HIDE, "
                 f"{model['build_sec']}с")
@@ -1028,16 +1236,35 @@ def recompute(days=WINDOW_DAYS, progress=None):
 
 # ────────────────────────── live-скоринг для вкладки ──────────────────────────
 
-def score_signal(model, src, direction, validator_ok, streak):
-    """Вердикт по штампам сигнала: (status, rule) или (None, None)."""
+def score_signal(model, src, direction, validator_ok, streak, rg=None):
+    """Вердикт по штампам сигнала: (status, rule) или (None, None).
+    rg — текущий режим BTC (btc_regime_now()[1]). Если рынок НЕ у максимума
+    (dip/corr/capit), первыми смотрим клетки источник×направление×режим:
+    45д-окно, затем 180д-память (regime_rules), затем супер-клетка режима —
+    45д-окно в начале коррекции ещё «бычье» и шорты без памяти не откроет.
+    У максимума — обычный путь (серия/🧿 → родитель)."""
     if not model:
         return None, None
     rules = {r["id"]: r for r in model.get("rules") or []}
     sgl = "LONG" if direction == "LONG" else "SHORT"
     v = "T" if validator_ok is True else ("F" if validator_ok is False else "N")
     bk = bucket(streak)
-    for rid in ([f"c_{src}_{sgl}_{v}_{bk}"] if bk else []) + [f"p_{src}_{sgl}"]:
-        r = rules.get(rid)
+    order = []
+    fine = ([(rules, f"c_{src}_{sgl}_{v}_{bk}")] if bk else []) + [(rules, f"p_{src}_{sgl}")]
+    if rg and rg != "top":
+        rules180 = {r["id"]: r for r in model.get("regime_rules") or []}
+        mem = [(rules, f"cr_{src}_{sgl}_{rg}"),
+               (rules180, f"cr_{src}_{sgl}_{rg}"),
+               (rules180, f"rg_{rg}_{sgl}")]
+        share = (model.get("regime_share") or {}).get(rg, 0.0)
+        # режим «свежий» для окна (<15% строк) — память первее тонких
+        # клеток (они ещё бычьи); режим уже в окне — тонкие клетки
+        # (серия/🧿) первее, память только как запасной ответ
+        order = mem + fine if share < 0.15 else fine + mem
+    else:
+        order = fine
+    for pool, rid in order:
+        r = pool.get(rid)
         if r and r["status"] in ("ACTIVE_SHOW", "ACTIVE_HIDE") and r["n"] >= MIN_N:
             return r["status"], r
     return None, None

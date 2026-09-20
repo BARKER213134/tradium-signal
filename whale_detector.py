@@ -573,8 +573,9 @@ def maybe_fire_whale(signal_data: dict) -> dict | None:
     try:
         # ✂ 13.08: whale выключен (аудит 180д)
         from config import DISABLED_STRATEGIES
-        if "whale" in DISABLED_STRATEGIES:
-            return None
+        # 🎓 20.09: выключен для журнала/TG, но учится в Академии
+        # (academy_signals; бэктест коррекции: whale LONG 🔴27+ +4.89 WR 70)
+        _acad = "whale" in DISABLED_STRATEGIES
         source = signal_data.get('source', '')
         if source != 'supertrend':
             return None  # only ST events trigger WHALE
@@ -660,10 +661,11 @@ def maybe_fire_whale(signal_data: dict) -> dict | None:
                 doc["hot"] = bool(is_hot(doc.get("symbol") or doc.get("pair")))
             except Exception:
                 doc["hot"] = False
-            db.new_strategy_signals.insert_one(doc)
+            (db.academy_signals if _acad else db.new_strategy_signals).insert_one(doc)
             try:
                 from cache_utils import journal_cache
-                journal_cache.invalidate("journal_all")
+                if not _acad:
+                    journal_cache.invalidate("journal_all")
             except Exception:
                 pass
             logger.info(f'[whale-live] 🐋 FIRED {pair} {tier} '
@@ -673,7 +675,7 @@ def maybe_fire_whale(signal_data: dict) -> dict | None:
                          f'amp={list(score_res["breakdown"].keys())}')
         except Exception as e:
             logger.warning(f'[whale-live] {pair} insert fail: {e}')
-        return doc
+        return None if _acad else doc
     except Exception:
         logger.exception(f'[whale-live] {pair} maybe_fire fail')
         return None

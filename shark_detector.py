@@ -533,8 +533,9 @@ def maybe_fire_shark(signal_data: dict) -> dict | None:
     try:
         # ✂ 13.08: shark выключен (аудит 180д: ≈−0.3, бэкфилл-часть −2.14)
         from config import DISABLED_STRATEGIES
-        if "shark" in DISABLED_STRATEGIES:
-            return None
+        # 🎓 20.09: выключен для журнала/TG, но учится в Академии
+        # (academy_signals; бэктест коррекции: shark SHORT +3.08 WR 64)
+        _acad = "shark" in DISABLED_STRATEGIES
         source = signal_data.get('source', '')
         if source != 'supertrend':
             return None
@@ -625,14 +626,14 @@ def maybe_fire_shark(signal_data: dict) -> dict | None:
                 doc["hot"] = bool(is_hot(doc.get("symbol") or doc.get("pair")))
             except Exception:
                 doc["hot"] = False
-            db.new_strategy_signals.insert_one(doc)
+            (db.academy_signals if _acad else db.new_strategy_signals).insert_one(doc)
             logger.info(f'[shark-live] 🦈 FIRED {pair} {tier} '
                          f'score={score_res["score"]} '
                          f'multi_top={ind.get("multi_top_count")} '
                          f'amp={list(score_res["breakdown"].keys())}')
         except Exception as e:
             logger.warning(f'[shark-live] {pair} insert fail: {e}')
-        return doc
+        return None if _acad else doc
     except Exception:
         logger.exception(f'[shark-live] {pair} maybe_fire fail')
         return None

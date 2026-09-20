@@ -9526,7 +9526,8 @@ async def api_live():
             pass
         return {"ok": True, "stats": st.get("live"),
                 "throttle": {k: thr.get(k) for k in
-                             ("level", "cap", "reason", "breadth", "wr20")},
+                             ("level", "cap", "reason", "breadth", "wr20",
+                              "regime", "btc_dd", "cap_short")},
                 "open_n": st.get("live_open"),
                 "today_n": st.get("live_today"),
                 "caps": {"day": lp.LIVE_DAY_CAP, "conc": lp.LIVE_CONC_CAP},
@@ -9689,8 +9690,21 @@ async def api_academy():
                 "src": "supertrend_" + (d.get("tier") or "?"),
                 "dir": d["direction"], "at": d["created_at"].isoformat(),
                 "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
+        for d in db.academy_signals.find(
+                {"created_at": {"$gte": since},
+                 "direction": {"$in": ["LONG", "SHORT"]}},
+                {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
+                 "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}
+                ).sort("created_at", -1).limit(200):
+            feed.append({
+                "key": "as_" + str(d["_id"]), "_dt": d["created_at"],
+                "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
+                "src": d.get("strategy") or "?", "dir": d["direction"],
+                "at": d["created_at"].isoformat(), "academy_only": True,
+                "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
         feed.sort(key=lambda x: x["at"], reverse=True)
         feed = feed[:400]
+        _rg_now = le.btc_regime_now()
         # 🚪 выходы корзин + текущие тренды (для silver/dawn-принадлежности)
         _exits = (model or {}).get("exits") or {}
         try:
@@ -9710,7 +9724,7 @@ async def api_academy():
             pass
         for f in feed:
             status, rule = le.score_signal(
-                model, f["src"], f["dir"], f["val"], f["ms"])
+                model, f["src"], f["dir"], f["val"], f["ms"], rg=_rg_now[1])
             f["verdict"] = status
             if rule:
                 f["rule"] = {"label": rule["label"], "ev": rule.get("ev"),
@@ -9782,12 +9796,18 @@ async def api_academy():
             for r in model.get("rules") or []:
                 if r["status"] != "NEUTRAL" or r.get("degraded") is not None:
                     out_rules.append(r)
+            # ₿ долгая память режима (180д) — отдельно помечена
+            for r in model.get("regime_rules") or []:
+                if r["status"] != "NEUTRAL":
+                    out_rules.append({**r, "label": "🧠180д " + r["label"]})
         meta = ({k: model.get(k) for k in (
             "version", "built_at", "window_days", "rows_n", "syms_n",
             "build_sec", "n_show", "n_hide", "n_shadow", "brief", "degraded",
-            "inflight")}
+            "inflight", "regime_meta")}
             if model else None)
         if meta is not None:
+            meta["btc_regime"] = {"dd": _rg_now[0], "bin": _rg_now[1],
+                                  "label": le.REGIME_LABEL.get(_rg_now[1])}
             meta["exits"] = model.get("exits")
             meta["liq"] = model.get("liq")
             meta["tuning"] = model.get("tuning")

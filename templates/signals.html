@@ -7133,7 +7133,8 @@ async function lvLoad() {
   if (thr.level === 2) { te.textContent = '🔴 СТОП'; te.style.color = '#ff5e9c'; tb.style.borderColor = 'rgba(255,77,109,0.6)'; }
   else if (thr.level === 1) { te.textContent = '🟡 КАП 3'; te.style.color = '#ffd23e'; tb.style.borderColor = 'rgba(255,210,62,0.55)'; }
   else { te.textContent = '🟢 НОРМА'; te.style.color = '#00e5a0'; tb.style.borderColor = 'var(--border)'; }
-  tb.title = '🛑 режимный тормоз: ' + (thr.reason || 'норма') + (thr.breadth != null ? ' · широта ' + thr.breadth + '%' : '') + (thr.wr20 != null ? ' · WR20 ' + thr.wr20 + '%' : '');
+  tb.title = '🛑 режимный тормоз: ' + (thr.reason || 'норма') + (thr.breadth != null ? ' · широта ' + thr.breadth + '%' : '') + (thr.wr20 != null ? ' · WR20 ' + thr.wr20 + '%' : '') + (thr.regime ? '\n₿ режим: ' + thr.regime + ' (' + (thr.btc_dd > 0 ? '+' : '') + thr.btc_dd + '% от 30д-макс) · шорты в live: ' + (thr.cap_short ? 'ОТКРЫТЫ, кап ' + thr.cap_short : 'закрыты (только при коррекции −8..−15%)') : '');
+  if (thr.regime) te.textContent += (thr.regime === 'corr' ? ' · ₿📉 шорты' : thr.regime === 'top' ? ' · ₿▲' : ' · ₿' + (thr.btc_dd > 0 ? '+' : '') + Math.round(thr.btc_dd) + '%');
   document.getElementById('lvOpenN').textContent = (d.open_n == null ? '—' : d.open_n) + ' / ' + ((d.caps || {}).conc || 15);
   document.getElementById('lvWr').textContent = st.wr != null ? st.wr + '%' : '—';
   const avgEl = document.getElementById('lvAvg');
@@ -7390,6 +7391,7 @@ async function acLoad() {
     const _if = (m.inflight && m.inflight.all && m.inflight.all.n) ? m.inflight : null;
     const _fp = s => (s && s.n) ? ((s.avg > 0 ? '+' : '') + s.avg + ' (n=' + s.n + ', WR ' + s.wr + '%)') : '—';
     document.getElementById('acData').textContent = (m.rows_n || 0).toLocaleString('ru') + ' · ' + (m.syms_n || 0) + ' пар' + (_if ? ' · ✈ ' + _if.all.n + ' в полёте ' + (_if.all.avg > 0 ? '+' : '') + _if.all.avg : '');
+    if (m.btc_regime && m.btc_regime.bin) document.getElementById('acVer').textContent += ' · ' + m.btc_regime.label + ' ' + (m.btc_regime.dd > 0 ? '+' : '') + m.btc_regime.dd + '%' + (m.regime_meta ? ' · 🧠' + m.regime_meta.days + 'д' : '');
     if (_if) document.getElementById('acData').title = '✈ В ПОЛЁТЕ: сигналы последних ~96ч, исход ещё не решён (ни TP, ни SL) — оценка по текущей цене. В статистику НЕ входят (ни EV, ни выходы, ни LightGBM), это пульс режима без отставания.\nЛонги ' + _fp(_if.long) + '\nШорты ' + _fp(_if.short) + '\nПортфель корзин ' + _fp(_if.port) + '\nРешённые исходы (TP/SL) попадают в модель сразу, без ожидания 96ч.';
     document.getElementById('acShow').textContent = m.n_show;
     document.getElementById('acHide').textContent = m.n_hide;

@@ -87,12 +87,35 @@ def live_throttle(db):
         level = max(level, 1)
         reasons.append(f"скользящий WR live {wr20}% < 45")
     cap = {0: LIVE_DAY_CAP, 1: 3, 2: 0}[level]
-    st = {"level": level, "cap": cap,
+    # ₿ режим BTC (20.09): шорты в live-срезе только в коррекции −8..−15%
+    # (бэктест 20.05→08.07: шорты WR 65 +3.97 в этой зоне)
+    dd, rg = None, None
+    try:
+        import learn_engine as _le
+        dd, rg = _le.btc_regime_now()
+        if rg:
+            reasons.append(f"{_le.REGIME_LABEL[rg]} ({dd:+.1f}%)"
+                           + (" — шорты в live-срезе ОТКРЫТЫ" if rg == "corr" else ""))
+    except Exception:
+        pass
+    cap_short = LIVE_DAY_CAP if rg == "corr" else 0
+    st = {"level": level, "cap": cap, "cap_short": cap_short,
+          "regime": rg, "btc_dd": dd,
           "reason": " · ".join(reasons) if reasons else "норма",
           "breadth": breadth, "wr20": wr20,
           "at": utcnow().isoformat()}
     try:
         prev = db.system_config.find_one({"_id": "live_throttle"}) or {}
+        if "regime" in prev and prev.get("regime") != rg and rg:
+            try:
+                import learn_digest
+                learn_digest.send(
+                    f"₿ <b>Режим BTC сменился: {prev.get('regime')} → {rg}</b>\n"
+                    f"{_le.REGIME_LABEL.get(rg, rg)} ({dd:+.1f}% от 30д-макс)"
+                    + ("\nШорты ×2 допущены в live-срез" if rg == "corr"
+                       else "\nШорты в live-срезе закрыты"))
+            except Exception:
+                logger.debug("[live] regime tg fail", exc_info=True)
         if prev.get("level") != level:
             logger.info(f"[live] 🛑 тормоз: уровень {prev.get('level')} → "
                         f"{level} (кап {cap}) — {st['reason']}")
@@ -187,13 +210,25 @@ def _open_new(db, model, now):
             "src": "supertrend_" + (d.get("tier") or "?"),
             "dir": d["direction"], "val": d.get("validator_ok"),
             "ms": d.get("mso_streak2h"), "at": d["created_at"]}))
+    # 🎓 academy_signals: выключенные для журнала стратегии (20.09)
+    for d in db.academy_signals.find(
+            {"created_at": {"$gte": since},
+             "direction": {"$in": ["LONG", "SHORT"]}},
+            {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}):
+        cands.append(("as_" + str(d["_id"]), d.get("pair"), {
+            "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
+            "src": d.get("strategy") or "?", "dir": d["direction"],
+            "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
+            "at": d["created_at"]}))
     thr = live_throttle(db)
+    rg = thr.get("regime")
     opened = 0
     for key, pair, c in sorted(cands, key=lambda x: x[2]["at"], reverse=True):
         if opened >= OPEN_BATCH:
             break
         status, rule = le.score_signal(model, c["src"], c["dir"],
-                                       c["val"], c["ms"])
+                                       c["val"], c["ms"], rg=rg)
         probe = False
         if status != "ACTIVE_SHOW":
             # 🔬 разведка боем: живо-выключенное правило продолжаем
@@ -221,10 +256,13 @@ def _open_new(db, model, now):
                   and (ms is None or ms < 27)
                   else "heat" if c["dir"] == "SHORT" and ms is not None
                   and ms >= 27 else None)
-        # 💎 live-tier: LONG × ×2 × BingX × капы дня/одновременных
+        # 💎 live-tier: LONG × ×2 × BingX × капы дня/одновременных;
+        # SHORT — только при ₿ коррекции (−8..−15%, cap_short>0; 20.09)
         live = False
         try:
-            if (not probe and c["dir"] == "LONG"
+            _is_long = c["dir"] == "LONG"
+            _short_ok = c["dir"] == "SHORT" and (thr.get("cap_short") or 0) > 0
+            if (not probe and (_is_long or _short_ok)
                     and le.size_tier(rule) == "2x"
                     and c["sym"] in bingx_set(db)):
                 from datetime import datetime as _dt
@@ -233,7 +271,8 @@ def _open_new(db, model, now):
                     {"live": True, "opened_at": {"$gte": day0}})
                 conc_n = db.academy_paper.count_documents(
                     {"live": True, "state": "OPEN"})
-                live = today_n < thr["cap"] and conc_n < LIVE_CONC_CAP
+                _cap = thr["cap"] if _is_long else thr.get("cap_short", 0)
+                live = today_n < _cap and conc_n < LIVE_CONC_CAP
         except Exception:
             pass
         db.academy_paper.update_one({"_id": key}, {"$set": {
