@@ -7105,6 +7105,7 @@ function lvOpenChart(i, closed) {
   const rows = closed ? ((_lvD || {}).closed || []) : ((_lvD || {}).open || []);
   window._kcQmList = rows.map(r => r.sym);
   const t = rows[i];
+  window._kcPaperKey = t ? t.key : null;   // 📜 линии именно этой сделки
   if (t) { try { openPairChart(t.sym, '2h'); } catch (e) {} }
 }
 async function lvAskAi(key, elId, closed) {
@@ -7333,6 +7334,7 @@ function acOpenPaper(i) {
   const rows = window._acPaperRows || [];
   window._kcQmList = rows.map(r => r.sym);
   const t = rows[i];
+  window._kcPaperKey = t ? t.key : null;   // 📜 линии именно этой сделки
   if (t) { try { openPairChart(t.sym, '2h'); } catch (e) {} }
 }
 async function acAskAiKey(key, elId, closed) {

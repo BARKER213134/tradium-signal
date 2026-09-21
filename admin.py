@@ -11019,6 +11019,7 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
                     + (f" · {pt.get('rule')}" if pt.get("rule") else ""))
             items.append({
                 "source": "academy_paper",
+                "paper_key": str(pt["_id"]),
                 "symbol": sym_clean, "pair": pair_slash,
                 "direction": pt.get("dir"),
                 "entry": pt.get("entry"),

@@ -5047,10 +5047,15 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       if (!window._kcPaperLines) return;
       const r = await fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=5`);
       const d = await r.json();
-      const pts = (d.items || []).filter(x => x.source === 'academy_paper' && x.paper_state === 'OPEN' && x.entry > 0);
+      // 21.09: линии — для сделки, по которой кликнули (window._kcPaperKey,
+      // ставят acOpenPaper/lvOpenChart), иначе самая свежая ОТКРЫТАЯ.
+      // Раньше шорт терялся за более свежими открытыми лонгами той же монеты.
+      const wantKey = window._kcPaperKey || null;
+      const pts = (d.items || []).filter(x => x.source === 'academy_paper' && x.entry > 0
+        && (x.paper_state === 'OPEN' || (wantKey && x.paper_key === wantKey)));
       if (!pts.length) return;
       pts.sort((a, b) => (b.at_ts || 0) - (a.at_ts || 0));
-      const t = pts[0];
+      const t = (wantKey && pts.find(x => x.paper_key === wantKey)) || pts.find(x => x.paper_state === 'OPEN') || pts[0];
       const sg = t.direction === 'LONG' ? 1 : -1;
       const tp = t.entry * (1 + sg * 0.10);
       const sl = t.entry * (1 - sg * 0.05);
@@ -5069,7 +5074,8 @@ window.renderKChart = async function(container, symbol, tf, opts) {
             extendData: { text: label, color, dx: 62, size: 13 } });
         }
       };
-      mk(t.entry, '#ffd23e', false, `📜 ВХОД ${fmtP(t.entry)} ${t.direction === 'LONG' ? '▲ЛОНГ' : '▼ШОРТ'}`);
+      const stTxt = t.paper_state === 'OPEN' ? '' : ` · ${t.paper_state}${t.paper_r != null ? ' ' + (t.paper_r > 0 ? '+' : '') + t.paper_r + '%' : ''}`;
+      mk(t.entry, '#ffd23e', false, `📜 ВХОД ${fmtP(t.entry)} ${t.direction === 'LONG' ? '▲ЛОНГ' : '▼ШОРТ'}${stTxt}`);
       mk(tp, '#00e5a0', true, `🎯 TP ${fmtP(tp)} (+10%)`);
       mk(sl, '#ff4d6d', true, `🛑 SL ${fmtP(sl)} (−5%)`);
     } catch (e) {}
