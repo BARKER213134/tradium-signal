@@ -15,6 +15,8 @@ SIG_MAX_AGE_H = 2      # открываем только по свежим си�
 PROBE_DAY_CAP = 2      # 🔬 разведка: paper-проб/день на живо-выключенное правило
 LIVE_DAY_CAP = 10      # 💎 live-tier: входов в день
 LIVE_CONC_CAP = 15     # 💎 одновременных позиций
+LIVE2_DAY_CAP = 10     # 🧪 тень (21.09): ×2+×1, ≤1 сделки/2ч-слот, ≤1 монеты/день
+LIVE2_SLOT_H = 2
 LIVE_FEE_EXTRA = 0.1   # 💎 доп. штраф лайва к R (%): проскальзывание BingX
                        # (канонная сетка уже вычитает 0.1 комиссии)
 
@@ -99,7 +101,29 @@ def live_throttle(db):
     except Exception:
         pass
     cap_short = LIVE_DAY_CAP if rg == "corr" else 0
+    # 🧪 кап тени: уровень 0 → 10, 1-2 → 5; ноль — только если ШКОЛА за
+    # сутки в минусе по одобренным лонгам (широта — не приговор: 18-21.09
+    # при широте 90%+ школа давала лонгам WR 55 +3.2)
+    school24 = None
+    try:
+        from datetime import timedelta as _td24
+        _rs = [d.get("r") for d in db.academy_paper.find(
+            {"dir": "LONG", "probe": {"$ne": True},
+             "state": {"$in": ["TP", "SL", "TIMEOUT"]},
+             "closed_at": {"$gte": utcnow() - _td24(hours=24)}}, {"r": 1})]
+        _rs = [r for r in _rs if r is not None]
+        if len(_rs) >= 20:
+            school24 = {"n": len(_rs),
+                        "wr": round(sum(1 for r in _rs if r > 0) / len(_rs) * 100),
+                        "avg": round(sum(_rs) / len(_rs), 2)}
+    except Exception:
+        pass
+    cap2 = {0: LIVE2_DAY_CAP, 1: 5, 2: 5}[level]
+    if school24 and (school24["wr"] < 45 or school24["avg"] < 0):
+        cap2 = 0
+        reasons.append(f"школа за сутки: WR {school24['wr']}% {school24['avg']:+.2f} — тень закрыта")
     st = {"level": level, "cap": cap, "cap_short": cap_short,
+          "cap2": cap2, "school24": school24,
           "regime": rg, "btc_dd": dd,
           "reason": " · ".join(reasons) if reasons else "норма",
           "breadth": breadth, "wr20": wr20,
@@ -259,9 +283,9 @@ def _open_new(db, model, now):
         # 💎 live-tier: LONG × ×2 × BingX × капы дня/одновременных;
         # SHORT — только при ₿ коррекции (−8..−15%, cap_short>0; 20.09)
         live = False
+        _is_long = c["dir"] == "LONG"
+        _short_ok = c["dir"] == "SHORT" and (thr.get("cap_short") or 0) > 0
         try:
-            _is_long = c["dir"] == "LONG"
-            _short_ok = c["dir"] == "SHORT" and (thr.get("cap_short") or 0) > 0
             if (not probe and (_is_long or _short_ok)
                     and le.size_tier(rule) == "2x"
                     and c["sym"] in bingx_set(db)):
@@ -275,8 +299,35 @@ def _open_new(db, model, now):
                 live = today_n < _cap and conc_n < LIVE_CONC_CAP
         except Exception:
             pass
+        # 🧪 ТЕНЬ live2 (21.09, по замечанию юзера «упускаем лонги»):
+        # ×2 И ×1 · не больше 1 сделки в 2ч-слот и 1 монеты в день (первые
+        # 10 по времени = один эпизод: WR 25 −1.45; разнесение: WR 54 +2.93)
+        # · тормоз сжимает кап до 5, ноль — только если школа за сутки в
+        # минусе. Ничего не торгует — помечает; сравнить с 💎 через неделю.
+        live2 = False
+        try:
+            if (not probe and (_is_long or _short_ok)
+                    and le.size_tier(rule) in ("2x", "1x")
+                    and c["sym"] in bingx_set(db)):
+                from datetime import datetime as _dt2
+                day0 = _dt2(now.year, now.month, now.day)
+                slot0 = _dt2(now.year, now.month, now.day,
+                             (now.hour // LIVE2_SLOT_H) * LIVE2_SLOT_H)
+                cap2 = (thr.get("cap2") or 0) if _is_long else (thr.get("cap_short") or 0)
+                today2 = db.academy_paper.count_documents(
+                    {"live2": True, "opened_at": {"$gte": day0}})
+                slot_n = db.academy_paper.count_documents(
+                    {"live2": True, "opened_at": {"$gte": slot0}})
+                coin_n = db.academy_paper.count_documents(
+                    {"live2": True, "sym": c["sym"], "opened_at": {"$gte": day0}})
+                conc2 = db.academy_paper.count_documents(
+                    {"live2": True, "state": "OPEN"})
+                live2 = (today2 < cap2 and slot_n < 1 and coin_n < 1
+                         and conc2 < LIVE_CONC_CAP)
+        except Exception:
+            pass
         db.academy_paper.update_one({"_id": key}, {"$set": {
-            "live": live, "probe": probe,
+            "live": live, "live2": live2, "probe": probe,
             "sym": c["sym"], "pair": pair, "dir": c["dir"], "src": c["src"],
             "rule": rule.get("label") if rule else None,
             "rule_id": rule.get("id") if rule else None,
@@ -340,7 +391,7 @@ def _close_open(db, now):
                 if res:
                     upd = {"state": res[0], "r": round(res[1], 2),
                            "closed_at": now}
-                    if t.get("live"):
+                    if t.get("live") or t.get("live2"):
                         fc = _funding_cost(t["sym"], t["opened_at"],
                                            now, t["dir"])
                         if fc is not None:
@@ -440,6 +491,26 @@ def stats(db):
     out["live"] = lv
     out["live_open"] = db.academy_paper.count_documents(
         {"live": True, "state": "OPEN"})
+    # 🧪 тень новой политики (live2)
+    try:
+        l2 = list(db.academy_paper.find(
+            {"live2": True, "state": {"$in": ["TP", "SL", "TIMEOUT"]}},
+            {"r": 1, "closed_at": 1, "opened_at": 1, "fund_cost": 1}))
+        lv2 = _st(l2)
+        if lv2:
+            net2 = [d["r"] - LIVE_FEE_EXTRA - (d.get("fund_cost") or 0)
+                    for d in l2 if d.get("r") is not None]
+            lv2["avg_adj"] = round(sum(net2) / len(net2), 2) if net2 else None
+            lv2["sum_adj"] = round(sum(net2), 1) if net2 else None
+        out["live2"] = lv2
+        out["live2_open"] = db.academy_paper.count_documents(
+            {"live2": True, "state": "OPEN"})
+        from datetime import datetime as _dt3
+        _n2 = utcnow()
+        out["live2_today"] = db.academy_paper.count_documents(
+            {"live2": True, "opened_at": {"$gte": _dt3(_n2.year, _n2.month, _n2.day)}})
+    except Exception:
+        pass
     try:
         from datetime import datetime as _dt2
         _n = utcnow()

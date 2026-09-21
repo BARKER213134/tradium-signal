@@ -9532,6 +9532,9 @@ async def api_live():
                 "today_n": st.get("live_today"),
                 "caps": {"day": lp.LIVE_DAY_CAP, "conc": lp.LIVE_CONC_CAP},
                 "fee_extra": lp.LIVE_FEE_EXTRA,
+                "stats2": st.get("live2"), "open2_n": st.get("live2_open"),
+                "today2_n": st.get("live2_today"), "cap2": thr.get("cap2"),
+                "school24": thr.get("school24"),
                 "bingx_n": bx.get("n"), "goal": goal,
                 "open": op, "closed": cl}
     return await asyncio.to_thread(_q)
