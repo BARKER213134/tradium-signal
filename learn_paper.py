@@ -386,6 +386,17 @@ def _close_open(db, now):
                 db.academy_paper.update_one(
                     {"_id": t["_id"]}, {"$set": {"chk": now}})
                 if not c1:
+                    # 22.09: делист/нет свечей — не висеть вечно (STEEMUSDT
+                    # с 18.09): старше 120ч закрываем по входу как таймаут
+                    _age = (now - t["opened_at"]).total_seconds() / 3600
+                    if _age >= 120:
+                        db.academy_paper.update_one(
+                            {"_id": t["_id"]},
+                            {"$set": {"state": "TIMEOUT", "r": -0.1,
+                                      "closed_at": now, "no_candles": True}})
+                        closed += 1
+                        logger.info(f"[paper] {t.get('sym')}: нет свечей "
+                                    f"{round(_age)}ч — закрыт по входу")
                     continue
                 age_h = (now - t["opened_at"]).total_seconds() / 3600
                 o_ms = int(t["opened_at"].timestamp() * 1000)

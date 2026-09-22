@@ -123,6 +123,18 @@ def build_text(db):
                 thr["level"], "?")
             lines.append(f"\n🛑 Режимный тормоз лайва: {lvl} — "
                          f"{thr.get('reason')}")
+            # 💎 кап лайва и 🧪 тень (22.09)
+            import learn_paper as _lp2
+            _st2 = _lp2.stats(db)
+            _l2 = _st2.get("live2") or {}
+            lines.append(
+                f"💎 Кап лайва {thr.get('cap')}/день (сегодня "
+                f"{_st2.get('live_today', 0)}, открыто {_st2.get('live_open', 0)})"
+                + (f" · 🧪 тень (×2+×1, кап {thr.get('cap2')}): n={_l2.get('n')} "
+                   f"WR {_l2.get('wr')}% avg {_l2.get('avg_adj'):+.2f} "
+                   f"(открыто {_st2.get('live2_open', 0)})"
+                   if _l2.get("n") and _l2.get("avg_adj") is not None
+                   else f" · 🧪 тень: копим (кап {thr.get('cap2')})"))
     except Exception:
         pass
     # 🎯 цель $20k/мес: подтверждённый темп по закрытым live
