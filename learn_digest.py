@@ -118,9 +118,11 @@ def build_text(db):
         pass
     try:
         thr = db.system_config.find_one({"_id": "live_throttle"}) or {}
-        if thr.get("level"):
-            lvl = {1: "🟡 ОСТОРОЖНО (кап 3)", 2: "🔴 СТОП (кап 0)"}.get(
-                thr["level"], "?")
+        if thr.get("level") or thr.get("cap") == 0:
+            _cap = thr.get("cap")
+            lvl = ("🔴 СТОП (кап 0)" if _cap == 0 else
+                   {1: f"🟡 ОСТОРОЖНО (кап {_cap})",
+                    2: f"🟠 ЭЙФОРИЯ (кап {_cap})"}.get(thr.get("level"), "?"))
             lines.append(f"\n🛑 Режимный тормоз лайва: {lvl} — "
                          f"{thr.get('reason')}")
             # 💎 кап лайва и 🧪 тень (22.09)
