@@ -78,17 +78,26 @@ def live_throttle(db):
     reasons = []
     if breadth is not None and breadth > 60:
         level = 2
-        reasons.append(f"широта {breadth}% > 60 — эйфория, лонги от дна не работают")
+        reasons.append(f"широта {breadth}% > 60 — эйфория, кап 5")
     elif breadth is not None and breadth > 50:
         level = max(level, 1)
-        reasons.append(f"широта {breadth}% > 50 — режим против контрарианских лонгов")
+        reasons.append(f"широта {breadth}% > 50 — режим против контрарианских лонгов, кап 5")
+    hard_stop = False
     if wr20 is not None and wr20 < 30:
         level = 2
-        reasons.append(f"скользящий WR live {wr20}% < 30 — система в просадке")
+        hard_stop = True
+        reasons.append(f"скользящий WR live {wr20}% < 30 — система в просадке, СТОП")
     elif wr20 is not None and wr20 < 45:
         level = max(level, 1)
         reasons.append(f"скользящий WR live {wr20}% < 45")
-    cap = {0: LIVE_DAY_CAP, 1: 3, 2: 0}[level]
+    # 22.09 (юзер: «рост и широта могут быть месяцами — не открываем сделок»):
+    # широта >60 больше НЕ обнуляет лайв — школа при широте >80 давала
+    # лонгам +3.8 (n=687), 60-80 +2.1; в бычьем месяце тормоз был закрыт
+    # ~70% времени. Уровни 1-2 → кап 5; ноль — только живая просадка
+    # (WR20<30) или школа за сутки в минусе по одобренным лонгам (ниже)
+    cap = {0: LIVE_DAY_CAP, 1: 5, 2: 5}[level]
+    if hard_stop:
+        cap = 0
     # ₿ режим BTC (20.09): шорты в live-срезе только в коррекции −8..−15%
     # (бэктест 20.05→08.07: шорты WR 65 +3.97 в этой зоне)
     dd, rg = None, None
@@ -121,7 +130,8 @@ def live_throttle(db):
     cap2 = {0: LIVE2_DAY_CAP, 1: 5, 2: 5}[level]
     if school24 and (school24["wr"] < 45 or school24["avg"] < 0):
         cap2 = 0
-        reasons.append(f"школа за сутки: WR {school24['wr']}% {school24['avg']:+.2f} — тень закрыта")
+        cap = 0
+        reasons.append(f"школа за сутки: WR {school24['wr']}% {school24['avg']:+.2f} — СТОП (лайв и тень)")
     st = {"level": level, "cap": cap, "cap_short": cap_short,
           "cap2": cap2, "school24": school24,
           "regime": rg, "btc_dd": dd,
@@ -146,8 +156,9 @@ def live_throttle(db):
             if "level" in prev:   # не спамить на первом создании дока
                 try:
                     import learn_digest
-                    ico = {0: "🟢 НОРМА", 1: "🟡 ОСТОРОЖНО",
-                           2: "🔴 СТОП"}.get(level, "?")
+                    ico = ("🔴 СТОП" if cap == 0 else
+                           {0: "🟢 НОРМА", 1: "🟡 ОСТОРОЖНО",
+                            2: "🟠 ЭЙФОРИЯ"}.get(level, "?"))
                     learn_digest.send(
                         f"🛑 <b>Режимный тормоз лайва: {ico}</b> "
                         f"(кап {cap}/день)\n{st['reason']}"

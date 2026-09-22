@@ -7060,7 +7060,7 @@ setInterval(trLoad, 60000);
     <div id="lvOpenN" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">позиций сейчас / кап</div>
   </div>
-  <div id="lvThrBox" style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;" title="🛑 режимный тормоз: сжимает дневной кап лайва при широте 4h >50/60% или падении скользящего WR (20 закрытий) <45/30. Школу-paper не трогает.">
+  <div id="lvThrBox" style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;" title="🛑 режимный тормоз (с 22.09): при широте 4h >50% кап лайва 5 вместо 10 (эйфория — лонги от дна хуже, но в плюсе: школа при широте >80 давала +3.8). Ноль (СТОП) — только живая просадка (WR20 <30) или школа за сутки в минусе по одобренным лонгам. Школу-paper не трогает.">
     <div id="lvThr" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">🛑 режимный тормоз</div>
   </div>
@@ -7135,8 +7135,9 @@ async function lvLoad() {
   document.getElementById('lvToday').textContent = (d.today_n == null ? '—' : d.today_n) + ' / ' + thrCap;
   const te = document.getElementById('lvThr');
   const tb = document.getElementById('lvThrBox');
-  if (thr.level === 2) { te.textContent = '🔴 СТОП'; te.style.color = '#ff5e9c'; tb.style.borderColor = 'rgba(255,77,109,0.6)'; }
-  else if (thr.level === 1) { te.textContent = '🟡 КАП 3'; te.style.color = '#ffd23e'; tb.style.borderColor = 'rgba(255,210,62,0.55)'; }
+  if (thr.cap === 0) { te.textContent = '🔴 СТОП'; te.style.color = '#ff5e9c'; tb.style.borderColor = 'rgba(255,77,109,0.6)'; }
+  else if (thr.level === 2) { te.textContent = '🟠 ЭЙФОРИЯ · кап ' + thr.cap; te.style.color = '#ffb347'; tb.style.borderColor = 'rgba(255,179,71,0.6)'; }
+  else if (thr.level === 1) { te.textContent = '🟡 КАП ' + thr.cap; te.style.color = '#ffd23e'; tb.style.borderColor = 'rgba(255,210,62,0.55)'; }
   else { te.textContent = '🟢 НОРМА'; te.style.color = '#00e5a0'; tb.style.borderColor = 'var(--border)'; }
   tb.title = '🛑 режимный тормоз: ' + (thr.reason || 'норма') + (thr.breadth != null ? ' · широта ' + thr.breadth + '%' : '') + (thr.wr20 != null ? ' · WR20 ' + thr.wr20 + '%' : '') + (thr.regime ? '\n₿ режим: ' + thr.regime + ' (' + (thr.btc_dd > 0 ? '+' : '') + thr.btc_dd + '% от 30д-макс) · шорты в live: ' + (thr.cap_short ? 'ОТКРЫТЫ, кап ' + thr.cap_short : 'закрыты (только при коррекции −8..−15%)') : '');
   if (thr.regime) te.textContent += (thr.regime === 'corr' ? ' · ₿📉 шорты' : thr.regime === 'top' ? ' · ₿▲' : ' · ₿' + (thr.btc_dd > 0 ? '+' : '') + Math.round(thr.btc_dd) + '%');
