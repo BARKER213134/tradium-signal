@@ -312,11 +312,24 @@ def refresh_lessons():
                   "(каждое с '- ', одна строка, конкретно: источник/"
                   "направление/режим → что делать). Только правила, "
                   "повторяющиеся в данных; без воды.\n\n" + raw)
-            dist = _ask_gemini(dp) or _ask_groq(dp)
+            dist = None
+            for _try in range(3):   # 21-22.09: LLM в 04:3x молчал — блок пропадал
+                dist = _ask_gemini(dp) or _ask_groq(dp)
+                if dist and dist.get("text"):
+                    break
+                import time as _tm
+                _tm.sleep(20)
             if dist and dist.get("text"):
                 lines.append("Уроки из разборов закрытых сделок "
                              f"(выжимка из {len(pm)}):")
                 lines.append(dist["text"].strip())
+            else:
+                # не теряем прошлую выжимку, если провайдеры не ответили
+                _prev = (db.system_config.find_one({"_id": "ai_lessons"}) or {}).get("text") or ""
+                _i = _prev.find("Уроки из разборов")
+                if _i >= 0:
+                    lines.append(_prev[_i:].strip() + "\n(выжимка не обновилась — LLM не ответил)")
+                    logger.warning("[ai-lessons] выжимка пост-мортемов: LLM не ответил, оставил прошлую")
     except Exception:
         logger.debug("[ai-lessons] postmortem distill fail", exc_info=True)
     text = "\n".join(lines)

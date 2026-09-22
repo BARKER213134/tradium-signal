@@ -311,9 +311,13 @@ def _open_new(db, model, now):
                     and c["sym"] in bingx_set(db)):
                 from datetime import datetime as _dt2
                 day0 = _dt2(now.year, now.month, now.day)
-                slot0 = _dt2(now.year, now.month, now.day,
-                             (now.hour // LIVE2_SLOT_H) * LIVE2_SLOT_H)
                 cap2 = (thr.get("cap2") or 0) if _is_long else (thr.get("cap_short") or 0)
+                # слот = 24ч / кап (мин. 2ч): при капе 5 слоты по 4ч — иначе
+                # кап кончался к 08 UTC, а лучшие часы лонгов 12-20 UTC
+                # оставались пустыми (22.09)
+                _slot_h = max(LIVE2_SLOT_H, 24 // max(1, cap2)) if cap2 else LIVE2_SLOT_H
+                slot0 = _dt2(now.year, now.month, now.day,
+                             (now.hour // _slot_h) * _slot_h)
                 today2 = db.academy_paper.count_documents(
                     {"live2": True, "opened_at": {"$gte": day0}})
                 slot_n = db.academy_paper.count_documents(
