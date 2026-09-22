@@ -9463,11 +9463,14 @@ async def api_live():
         st = lp.stats(db)
         marks = (_academy_mkt_refresh(db).get("mark") or {})
         op = []
+        # 22.09: в списках и сделки тени 🧪 (live2), статистика — только live
         for d in db.academy_paper.find(
-                {"live": True, "state": "OPEN"}).sort(
-                "opened_at", -1).limit(40):
+                {"$or": [{"live": True}, {"live2": True}], "state": "OPEN"}).sort(
+                "opened_at", -1).limit(60):
             t = {"key": str(d["_id"]), "sym": d["sym"], "dir": d["dir"],
-                 "entry": d.get("entry"), "ev": d.get("ev"),
+                 "entry": d.get("entry"), "ev": d.get("ev"), "size": d.get("size"),
+                 "live": bool(d.get("live")),
+                 "shadow": bool(d.get("live2")) and not bool(d.get("live")),
                  "rule": d.get("rule"), "at": d["opened_at"].isoformat()}
             mp = marks.get(d["sym"])
             if mp and t["entry"]:
@@ -9476,11 +9479,13 @@ async def api_live():
             op.append(t)
         cl = []
         for d in db.academy_paper.find(
-                {"live": True,
+                {"$or": [{"live": True}, {"live2": True}],
                  "state": {"$in": ["TP", "SL", "TIMEOUT"]}}).sort(
-                "closed_at", -1).limit(30):
+                "closed_at", -1).limit(50):
             cl.append({"key": str(d["_id"]), "sym": d["sym"],
-                       "dir": d["dir"], "state": d["state"],
+                       "dir": d["dir"], "state": d["state"], "size": d.get("size"),
+                       "live": bool(d.get("live")),
+                       "shadow": bool(d.get("live2")) and not bool(d.get("live")),
                        "r": d.get("r"), "fund": d.get("fund_cost"),
                        "r_adj": (round(d["r"] - lp.LIVE_FEE_EXTRA
                                        - (d.get("fund_cost") or 0), 2)

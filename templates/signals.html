@@ -7170,10 +7170,12 @@ async function lvLoad() {
   document.getElementById('lvOpen').innerHTML = op.map((t, i) => {
     const dt = new Date(t.at + (t.at.endsWith('Z') ? '' : 'Z'));
     const uc = t.upnl == null ? 'var(--muted)' : t.upnl > 0 ? '#00e5a0' : '#ff5e9c';
-    return `<div onclick="lvOpenChart(${i}, false)" style="display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);" title="${t.rule || ''}">
+    const sh = t.shadow ? '<span title="🧪 сделка тени: взяла бы новая политика (×2+×1 с разнесением); в статистику лайва НЕ входит" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px dashed rgba(0,212,255,0.5);border-radius:4px;padding:0 5px;font-size:10px;font-weight:800;">🧪 ' + (t.size || '') + '</span>' : '';
+    const dirB = t.dir === 'SHORT' ? '<span style="background:rgba(255,94,156,0.14);color:#ff5e9c;border:1px solid rgba(255,94,156,0.4);border-radius:4px;padding:0 6px;font-size:10px;font-weight:800;">▼ ШОРТ</span>' : '<span style="background:rgba(0,229,160,0.14);color:#00e5a0;border:1px solid rgba(0,229,160,0.4);border-radius:4px;padding:0 6px;font-size:10px;font-weight:800;">▲ ЛОНГ</span>';
+    return `<div onclick="lvOpenChart(${i}, false)" style="display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);${t.shadow ? 'opacity:0.82;' : ''}" title="${t.rule || ''}">
       <span style="color:var(--muted);font-size:10px;white-space:nowrap;">${dt.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
       <b style="min-width:76px;">${t.sym.replace('USDT', '')}</b>
-      <span style="background:rgba(0,229,160,0.14);color:#00e5a0;border:1px solid rgba(0,229,160,0.4);border-radius:4px;padding:0 6px;font-size:10px;font-weight:800;">▲ ЛОНГ</span>
+      ${dirB}${sh}
       <span style="color:var(--muted);font-size:10px;">вход ${t.entry}</span>
       <span style="font-size:10px;color:var(--muted);">EV ${t.ev != null ? (t.ev > 0 ? '+' : '') + t.ev : '—'}</span>
       <span style="margin-left:auto;font-weight:800;color:${uc};">${t.upnl == null ? '…' : (t.upnl > 0 ? '+' : '') + t.upnl + '%'}</span>
@@ -7181,20 +7183,23 @@ async function lvLoad() {
     </div>
     <div id="lvAi_o${i}" style="display:none;padding:7px 14px 9px 30px;border-bottom:1px solid rgba(42,49,64,0.4);background:rgba(123,92,255,0.06);font-size:11px;line-height:1.5;white-space:pre-wrap;"></div>`;
   }).join('') || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">открытых нет — фильтр ждёт сигналов ×2 на монетах BingX</div>';
-  document.getElementById('lvOpN2').textContent = op.length ? '· ' + op.length : '';
+  const opSh = op.filter(t => t.shadow).length;
+  document.getElementById('lvOpN2').textContent = op.length ? '· ' + (op.length - opSh) + (opSh ? ' + 🧪' + opSh : '') : '';
   const cl = d.closed || [];
   document.getElementById('lvClosed').innerHTML = cl.map((t, i) => {
     const dt = new Date(t.at + (t.at.endsWith('Z') ? '' : 'Z'));
     return `<div onclick="lvOpenChart(${i}, true)" title="${t.fund != null ? 'фандинг за удержание: ' + (t.fund > 0 ? '−' : '+') + Math.abs(t.fund) + '%' : 'фандинг: н/д'}" style="display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.4);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
       <span style="color:var(--muted);font-size:10px;white-space:nowrap;">${dt.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
       <b style="min-width:76px;">${t.sym.replace('USDT', '')}</b>
+      ${t.shadow ? '<span title="🧪 сделка тени — в статистику лайва не входит" style="color:#00d4ff;border:1px dashed rgba(0,212,255,0.5);border-radius:4px;padding:0 5px;font-size:10px;font-weight:800;">🧪 ' + (t.size || '') + '</span>' : ''}${t.dir === 'SHORT' ? '<span style="font-size:10px;color:#ff5e9c;font-weight:800;">▼</span>' : ''}
       <span style="font-size:10px;color:var(--muted);">${t.state}</span>
       <span style="margin-left:auto;font-weight:800;color:${t.r_adj > 0 ? '#00e5a0' : '#ff5e9c'};">${t.r_adj > 0 ? '+' : ''}${t.r_adj}%</span>
       <span onclick="event.stopPropagation();lvAskAi('${t.key}', 'lvAi_c${i}', true);" title="📝 итог сделки: почему сработало/нет, был ли прав довходовой вердикт, урок" style="cursor:pointer;">📝</span>
     </div>
     <div id="lvAi_c${i}" style="display:none;padding:7px 14px 9px 30px;border-bottom:1px solid rgba(42,49,64,0.3);background:rgba(123,92,255,0.06);font-size:11px;line-height:1.5;white-space:pre-wrap;"></div>`;
   }).join('') || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">закрытых пока нет</div>';
-  document.getElementById('lvClN').textContent = cl.length ? '· ' + cl.length : '';
+  const clSh = cl.filter(t => t.shadow).length;
+  document.getElementById('lvClN').textContent = cl.length ? '· ' + (cl.length - clSh) + (clSh ? ' + 🧪' + clSh : '') : '';
 }
 lvLoad();
 setInterval(lvLoad, 30000);
