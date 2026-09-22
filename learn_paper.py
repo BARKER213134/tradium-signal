@@ -353,6 +353,9 @@ def _open_new(db, model, now):
             "size": le.size_tier(rule), "bucket": bucket,
             "entry": px, "state": "OPEN",
             "sig_at": c["at"], "opened_at": now,
+            # 22.09: контекст входа для значка ⛰ «не у дна» на 💎
+            "ms_open": c.get("ms"), "val_open": c.get("val"),
+            "br_open": thr.get("breadth"),
         }}, upsert=True)
         opened += 1
     return opened

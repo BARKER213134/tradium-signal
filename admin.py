@@ -9463,6 +9463,19 @@ async def api_live():
         st = lp.stats(db)
         marks = (_academy_mkt_refresh(db).get("mark") or {})
         op = []
+
+        def _top(d):
+            """⛰ «не у дна»: зелёная серия MSO ≥5 на входе или широта >60.
+            Для старых доков без штампов — по лейблу правила (🟢5-9 и выше)."""
+            ms, br = d.get("ms_open"), d.get("br_open")
+            if ms is None:
+                lbl = d.get("rule") or ""
+                for tag in ("🟢5-9", "🟢10-15", "🟢16-26", "🟢27+"):
+                    if tag in lbl:
+                        ms = 5
+                        break
+            top = bool((ms is not None and ms >= 5) or (br is not None and br > 60))
+            return top, ms, br
         # 22.09: в списках и сделки тени 🧪 (live2), статистика — только live
         for d in db.academy_paper.find(
                 {"$or": [{"live": True}, {"live2": True}], "state": "OPEN"}).sort(
@@ -9472,6 +9485,8 @@ async def api_live():
                  "live": bool(d.get("live")),
                  "shadow": bool(d.get("live2")) and not bool(d.get("live")),
                  "rule": d.get("rule"), "at": d["opened_at"].isoformat()}
+            t["top"], t["ms"], t["br"] = _top(d)
+            t["val"] = d.get("val_open")
             mp = marks.get(d["sym"])
             if mp and t["entry"]:
                 sgn = 1 if d["dir"] == "LONG" else -1
@@ -9486,6 +9501,7 @@ async def api_live():
                        "dir": d["dir"], "state": d["state"], "size": d.get("size"),
                        "live": bool(d.get("live")),
                        "shadow": bool(d.get("live2")) and not bool(d.get("live")),
+                       "top": _top(d)[0], "ms": _top(d)[1], "br": _top(d)[2],
                        "r": d.get("r"), "fund": d.get("fund_cost"),
                        "r_adj": (round(d["r"] - lp.LIVE_FEE_EXTRA
                                        - (d.get("fund_cost") or 0), 2)

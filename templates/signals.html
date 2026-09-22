@@ -7175,7 +7175,7 @@ async function lvLoad() {
     return `<div onclick="lvOpenChart(${i}, false)" style="display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);${t.shadow ? 'opacity:0.82;' : ''}" title="${t.rule || ''}">
       <span style="color:var(--muted);font-size:10px;white-space:nowrap;">${dt.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
       <b style="min-width:76px;">${t.sym.replace('USDT', '')}</b>
-      ${dirB}${sh}
+      ${dirB}${sh}${t.top ? '<span title="⛰ НЕ У ДНА: вход при зелёной серии MSO' + (t.ms != null ? ' ' + t.ms : '') + (t.br != null ? ' · широта ' + t.br + '%' : '') + ' — не контрарианский вход (закон: лучшие входы от дна/против режима)" style="color:#ffb347;font-size:12px;">⛰</span>' : ''}
       <span style="color:var(--muted);font-size:10px;">вход ${t.entry}</span>
       <span style="font-size:10px;color:var(--muted);">EV ${t.ev != null ? (t.ev > 0 ? '+' : '') + t.ev : '—'}</span>
       <span style="margin-left:auto;font-weight:800;color:${uc};">${t.upnl == null ? '…' : (t.upnl > 0 ? '+' : '') + t.upnl + '%'}</span>
@@ -7191,7 +7191,7 @@ async function lvLoad() {
     return `<div onclick="lvOpenChart(${i}, true)" title="${t.fund != null ? 'фандинг за удержание: ' + (t.fund > 0 ? '−' : '+') + Math.abs(t.fund) + '%' : 'фандинг: н/д'}" style="display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.4);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
       <span style="color:var(--muted);font-size:10px;white-space:nowrap;">${dt.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}</span>
       <b style="min-width:76px;">${t.sym.replace('USDT', '')}</b>
-      ${t.shadow ? '<span title="🧪 сделка тени — в статистику лайва не входит" style="color:#00d4ff;border:1px dashed rgba(0,212,255,0.5);border-radius:4px;padding:0 5px;font-size:10px;font-weight:800;">🧪 ' + (t.size || '') + '</span>' : ''}${t.dir === 'SHORT' ? '<span style="font-size:10px;color:#ff5e9c;font-weight:800;">▼</span>' : ''}
+      ${t.shadow ? '<span title="🧪 сделка тени — в статистику лайва не входит" style="color:#00d4ff;border:1px dashed rgba(0,212,255,0.5);border-radius:4px;padding:0 5px;font-size:10px;font-weight:800;">🧪 ' + (t.size || '') + '</span>' : ''}${t.dir === 'SHORT' ? '<span style="font-size:10px;color:#ff5e9c;font-weight:800;">▼</span>' : ''}${t.top ? '<span title="⛰ НЕ У ДНА: вход при зелёной серии MSO' + (t.ms != null ? ' ' + t.ms : '') + (t.br != null ? ' · широта ' + t.br + '%' : '') + '" style="color:#ffb347;font-size:12px;">⛰</span>' : ''}
       <span style="font-size:10px;color:var(--muted);">${t.state}</span>
       <span style="margin-left:auto;font-weight:800;color:${t.r_adj > 0 ? '#00e5a0' : '#ff5e9c'};">${t.r_adj > 0 ? '+' : ''}${t.r_adj}%</span>
       <span onclick="event.stopPropagation();lvAskAi('${t.key}', 'lvAi_c${i}', true);" title="📝 итог сделки: почему сработало/нет, был ли прав довходовой вердикт, урок" style="cursor:pointer;">📝</span>
