@@ -78,10 +78,10 @@ def live_throttle(db):
     reasons = []
     if breadth is not None and breadth > 60:
         level = 2
-        reasons.append(f"широта {breadth}% > 60 — эйфория, кап 5")
+        reasons.append(f"широта {breadth}% > 60 — эйфория (тормоз по широте снят 22.09)")
     elif breadth is not None and breadth > 50:
         level = max(level, 1)
-        reasons.append(f"широта {breadth}% > 50 — режим против контрарианских лонгов, кап 5")
+        reasons.append(f"широта {breadth}% > 50 — режим против контрарианских лонгов")
     hard_stop = False
     if wr20 is not None and wr20 < 30:
         level = 2
@@ -95,7 +95,10 @@ def live_throttle(db):
     # лонгам +3.8 (n=687), 60-80 +2.1; в бычьем месяце тормоз был закрыт
     # ~70% времени. Уровни 1-2 → кап 5; ноль — только живая просадка
     # (WR20<30) или школа за сутки в минусе по одобренным лонгам (ниже)
-    cap = {0: LIVE_DAY_CAP, 1: 5, 2: 5}[level]
+    # 22.09 бэктест (bt_throttle): для ×2 широта как тормоз не нужна —
+    # без него ΣR выше в обоих окнах (45д +1274 vs +970 vs старый +526;
+    # апр-июл +270 vs +104 vs −18). Кап 10 всегда; ноль — только по факту.
+    cap = LIVE_DAY_CAP
     if hard_stop:
         cap = 0
     # ₿ режим BTC (20.09): шорты в live-срезе только в коррекции −8..−15%
