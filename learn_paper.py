@@ -321,8 +321,16 @@ def _open_new(db, model, now):
         live = False
         _is_long = c["dir"] == "LONG"
         _short_ok = c["dir"] == "SHORT" and (thr.get("cap_short") or 0) > 0
+        # ⛰ 23.09: лайв берёт лонги только ОТ ДНА — школа: от дна ×2 WR 93
+        # +8.16 (n=396), не у дна WR 41 +0.83 (n=58); на развороте 23.09
+        # не у дна WR 15 −2.86. Не у дна = серия MSO ≥5 или широта >60.
+        _ms0 = c.get("ms")
+        _br0 = thr.get("breadth")
+        _top = ((_ms0 is not None and _ms0 >= 5)
+                or (_br0 is not None and _br0 > 60))
         try:
             if (not probe and (_is_long or _short_ok)
+                    and not (_is_long and _top)
                     and le.size_tier(rule) == "2x"
                     and c["sym"] in bingx_set(db)):
                 from datetime import datetime as _dt
