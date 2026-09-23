@@ -17,6 +17,9 @@ LIVE_DAY_CAP = 10      # 💎 live-tier: входов в день
 LIVE_CONC_CAP = 15     # 💎 одновременных позиций
 LIVE2_DAY_CAP = 10     # 🧪 тень (21.09): ×2+×1, ≤1 сделки/2ч-слот, ≤1 монеты/день
 LIVE2_SLOT_H = 2
+LIVE2_ENABLED = False  # 23.09: тень выключена — ответы получены (×1 нет, разнесение да)
+LIVE_SLOT_H = 2        # 💎 23.09: разнесение входов лайва — ≤3 сделок в 2ч-слот
+LIVE_SLOT_CAP = 3      #   (пакет 9 сделок в 04:31 = один эпизод → 7 стопов из 8)
 LIVE_FEE_EXTRA = 0.1   # 💎 доп. штраф лайва к R (%): проскальзывание BingX
                        # (канонная сетка уже вычитает 0.1 комиссии)
 
@@ -134,9 +137,28 @@ def live_throttle(db):
     if school24 and (school24["wr"] < 45 or school24["avg"] < 0):
         cap2 = 0
         cap = 0
-        reasons.append(f"школа за сутки: WR {school24['wr']}% {school24['avg']:+.2f} — СТОП (лайв и тень)")
+        reasons.append(f"школа за сутки: WR {school24['wr']}% {school24['avg']:+.2f} — СТОП")
+    # 23.09: дневной стоп — школа за 4ч (сутки не видят разворота дня:
+    # 23.09 в 15:00 UTC 258 лонгов закрылись по −4.4, а суточный WR был 58)
+    school4h = None
+    try:
+        from datetime import timedelta as _td4
+        _rs4 = [d.get("r") for d in db.academy_paper.find(
+            {"dir": "LONG", "probe": {"$ne": True},
+             "state": {"$in": ["TP", "SL", "TIMEOUT"]},
+             "closed_at": {"$gte": utcnow() - _td4(hours=4)}}, {"r": 1})]
+        _rs4 = [r for r in _rs4 if r is not None]
+        if len(_rs4) >= 30:
+            school4h = {"n": len(_rs4),
+                        "wr": round(sum(1 for r in _rs4 if r > 0) / len(_rs4) * 100),
+                        "avg": round(sum(_rs4) / len(_rs4), 2)}
+    except Exception:
+        pass
+    if school4h and (school4h["wr"] < 35 or school4h["avg"] < -2):
+        cap = 0
+        reasons.append(f"школа за 4ч: WR {school4h['wr']}% {school4h['avg']:+.2f} (n={school4h['n']}) — СТОП лонгов")
     st = {"level": level, "cap": cap, "cap_short": cap_short,
-          "cap2": cap2, "school24": school24,
+          "cap2": cap2, "school24": school24, "school4h": school4h,
           "regime": rg, "btc_dd": dd,
           "reason": " · ".join(reasons) if reasons else "норма",
           "breadth": breadth, "wr20": wr20,
@@ -310,7 +332,15 @@ def _open_new(db, model, now):
                 conc_n = db.academy_paper.count_documents(
                     {"live": True, "state": "OPEN"})
                 _cap = thr["cap"] if _is_long else thr.get("cap_short", 0)
-                live = today_n < _cap and conc_n < LIVE_CONC_CAP
+                # 23.09: разнесение — ≤3 сделок в 2ч-слот, 1 монета в день
+                slot0 = _dt(now.year, now.month, now.day,
+                            (now.hour // LIVE_SLOT_H) * LIVE_SLOT_H)
+                slot_n = db.academy_paper.count_documents(
+                    {"live": True, "opened_at": {"$gte": slot0}})
+                coin_n = db.academy_paper.count_documents(
+                    {"live": True, "sym": c["sym"], "opened_at": {"$gte": day0}})
+                live = (today_n < _cap and conc_n < LIVE_CONC_CAP
+                        and slot_n < LIVE_SLOT_CAP and coin_n < 1)
         except Exception:
             pass
         # 🧪 ТЕНЬ live2 (21.09, по замечанию юзера «упускаем лонги»):
@@ -320,7 +350,7 @@ def _open_new(db, model, now):
         # минусе. Ничего не торгует — помечает; сравнить с 💎 через неделю.
         live2 = False
         try:
-            if (not probe and (_is_long or _short_ok)
+            if (LIVE2_ENABLED and not probe and (_is_long or _short_ok)
                     and le.size_tier(rule) in ("2x", "1x")
                     and c["sym"] in bingx_set(db)):
                 from datetime import datetime as _dt2

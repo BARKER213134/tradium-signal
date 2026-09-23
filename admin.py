@@ -9478,7 +9478,7 @@ async def api_live():
             return top, ms, br
         # 22.09: в списках и сделки тени 🧪 (live2), статистика — только live
         for d in db.academy_paper.find(
-                {"$or": [{"live": True}, {"live2": True}], "state": "OPEN"}).sort(
+                {"live": True, "state": "OPEN"}).sort(
                 "opened_at", -1).limit(60):
             t = {"key": str(d["_id"]), "sym": d["sym"], "dir": d["dir"],
                  "entry": d.get("entry"), "ev": d.get("ev"), "size": d.get("size"),
@@ -9494,7 +9494,7 @@ async def api_live():
             op.append(t)
         cl = []
         for d in db.academy_paper.find(
-                {"$or": [{"live": True}, {"live2": True}],
+                {"live": True,
                  "state": {"$in": ["TP", "SL", "TIMEOUT"]}}).sort(
                 "closed_at", -1).limit(50):
             cl.append({"key": str(d["_id"]), "sym": d["sym"],
@@ -9548,7 +9548,7 @@ async def api_live():
         return {"ok": True, "stats": st.get("live"),
                 "throttle": {k: thr.get(k) for k in
                              ("level", "cap", "reason", "breadth", "wr20",
-                              "regime", "btc_dd", "cap_short")},
+                              "regime", "btc_dd", "cap_short", "school24", "school4h")},
                 "open_n": st.get("live_open"),
                 "today_n": st.get("live_today"),
                 "caps": {"day": lp.LIVE_DAY_CAP, "conc": lp.LIVE_CONC_CAP},

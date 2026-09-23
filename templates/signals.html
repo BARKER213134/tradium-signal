@@ -7060,7 +7060,7 @@ setInterval(trLoad, 60000);
     <div id="lvOpenN" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">позиций сейчас / кап</div>
   </div>
-  <div id="lvThrBox" style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;" title="🛑 тормоз лайва (с 22.09): широта больше НЕ режет кап (бэктест: для ×2 без тормоза лучше в обоих окнах) — кап 10 всегда, уровень показывает режим. Ноль (СТОП) — только живая просадка (WR20 <30) или школа за сутки в минусе по одобренным лонгам. Тень 🧪 по-прежнему с капом 5 в эйфории. Школу-paper не трогает.">
+  <div id="lvThrBox" style="background:var(--dark);border:1px solid var(--border);border-radius:10px;padding:10px 16px;" title="🛑 тормоз лайва (с 23.09): кап 10, широта — только индикатор. СТОП (кап 0): живая просадка WR20 <30, школа за сутки в минусе по одобренным лонгам, или школа за 4 часа WR <35 / avg <−2 при n≥30 (дневной разворот). Входы разнесены: не больше 3 сделок в 2-часовой слот и 1 монета в день. Школу-paper не трогает.">
     <div id="lvThr" style="font-size:22px;font-weight:900;font-family:var(--font-mono);">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">🛑 режимный тормоз</div>
   </div>
@@ -7080,13 +7080,9 @@ setInterval(trLoad, 60000);
     <div id="lvGoal" style="font-size:15px;font-weight:900;font-family:var(--font-mono);line-height:1.4;">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">🎯 цель $20 000/мес</div>
   </div>
-  <div id="lv2Box" style="background:var(--dark);border:1px dashed rgba(0,212,255,0.55);border-radius:10px;padding:10px 16px;" title="🧪 ТЕНЬ новой политики лайва (с 21.09): берёт правила ×2 И ×1 · не больше 1 сделки в 2 часа и 1 монеты в день (первые 10 сделок дня = один эпизод: WR 25, −1.45; с разнесением WR 54, +2.93) · тормоз сжимает кап до 5, ноль — только если школа за сутки в минусе по лонгам. Ничего не торгует — помечает сделки школы, которые взяла бы. Сравнение с 💎 через неделю (28.09).">
-    <div id="lv2Stat" style="font-size:15px;font-weight:900;font-family:var(--font-mono);line-height:1.4;">&mdash;</div>
-    <div style="font-size:10px;color:var(--muted);">🧪 тень: ×2+×1 с разнесением · <span id="lv2Meta">—</span></div>
-  </div>
 </div>
 <div style="font-size:10.5px;color:var(--muted);margin:-4px 0 12px;line-height:1.6;">
-  💎 Фильтр лайва: <b>только ЛОНГ</b> · только правила сайзинга <b>×2</b> (EV≥3, WR≥60) · монета торгуется на <b>BingX</b> (<span id="lvBx">—</span> перпов, ~93% наших) · капы: <b>10 входов/день, 15 позиций</b> · показанные R уже включают −0.2% на комиссию и проскальзывание. Это ровно те сделки, которые пойдут в реальный лайв — статистика копится отдельно от общего пейпера. Клик по монете — график с уровнями.
+  💎 Фильтр лайва: <b>только ЛОНГ</b> (шорты — при ₿ коррекции −8..−15%) · только правила сайзинга <b>×2</b> (EV≥3, WR≥60) · монета торгуется на <b>BingX</b> (<span id="lvBx">—</span> перпов, ~93% наших) · капы: <b>10 входов/день, ≤3 в 2ч-слот, 1 монета/день, 15 позиций</b> · показанные R уже включают −0.2% на комиссию и проскальзывание. Это ровно те сделки, которые пойдут в реальный лайв — статистика копится отдельно от общего пейпера. Клик по монете — график с уровнями.
 </div>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px;align-items:start;">
   <div>
@@ -7160,12 +7156,6 @@ async function lvLoad() {
   } else {
     ge.textContent = 'копим закрытия…';
   }
-  const s2 = d.stats2, e2 = document.getElementById('lv2Stat');
-  if (s2 && s2.n) {
-    e2.innerHTML = `n=${s2.n} · WR <b>${s2.wr}%</b> · avg <b style="color:${s2.avg_adj > 0 ? '#00e5a0' : '#ff5e9c'};">${s2.avg_adj > 0 ? '+' : ''}${s2.avg_adj}</b> · Σ ${s2.sum_adj > 0 ? '+' : ''}${s2.sum_adj}` +
-      (st && st.n ? `<br><span style="font-size:10px;color:var(--muted);">💎 сейчас: n=${st.n} · WR ${st.wr}% · avg ${st.avg_adj > 0 ? '+' : ''}${st.avg_adj}</span>` : '');
-  } else { e2.textContent = 'копим сделки тени…'; }
-  document.getElementById('lv2Meta').textContent = `открыто ${d.open2_n == null ? '—' : d.open2_n} · сегодня ${d.today2_n == null ? '—' : d.today2_n}/${d.cap2 == null ? '—' : d.cap2}` + (d.school24 && d.school24.n ? ` · школа 24ч: WR ${d.school24.wr}% ${d.school24.avg > 0 ? '+' : ''}${d.school24.avg}` : '');
   const op = d.open || [];
   document.getElementById('lvOpen').innerHTML = op.map((t, i) => {
     const dt = new Date(t.at + (t.at.endsWith('Z') ? '' : 'Z'));
