@@ -308,6 +308,14 @@ def _open_new(db, model, now):
                 continue
         if db.academy_paper.find_one({"_id": key}, {"_id": 1}):
             continue
+        # 23.09: одна сделка на (монета × направление × источник) в 2ч —
+        # защита от повторов одного сигнала (ST-дубли давали по 17 открытых
+        # на монету). Разные источники и повторы позже — по-прежнему можно.
+        if db.academy_paper.find_one(
+                {"sym": c["sym"], "dir": c["dir"], "src": c["src"],
+                 "opened_at": {"$gte": now - timedelta(hours=2)}},
+                {"_id": 1}):
+            continue
         px = _last_close(pair or (c["sym"][:-4] + "/USDT"))
         if not px:
             continue

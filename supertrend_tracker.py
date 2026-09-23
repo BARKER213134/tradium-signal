@@ -206,6 +206,10 @@ def _compute_sl(flip_bar: dict, direction: str, atr_mult: float = 1.5) -> float:
     return sl
 
 
+class _DupFlip(Exception):
+    """Флип уже записан (дедуп ST-сигналов)."""
+
+
 async def _save_signal(pair_norm: str, flip_bar: dict, tier: str, extras: dict,
                        st_period: int, st_mult: float) -> Optional[dict]:
     """Пишет в БД, возвращает созданный dict или None если уже есть (дубликат)."""
@@ -250,6 +254,15 @@ async def _save_signal(pair_norm: str, flip_bar: dict, tier: str, extras: dict,
     # Insert через to_thread — в горячем 5-минутном цикле обрабатывается
     # ~486 пар, sync insert вешал event loop пока Atlas отвечает.
     def _do_insert():
+        # 23.09: ЯВНАЯ проверка дубля — полагаться на уникальный индекс
+        # uniq_flip нельзя (на проде он не создан: create_index падает,
+        # если дубли уже есть, и ошибка глотается). Один флип
+        # переоткрывался каждый цикл ~8 мин: 350 лишних доков из 624/сут,
+        # школа открывала по 17 сделок на монету (PUNDIX 21.09).
+        if _supertrend_signals().find_one(
+                {"pair_norm": pair_norm, "tier": tier, "flip_at": flip_at},
+                {"_id": 1}):
+            raise _DupFlip("duplicate flip")   # ловит общий except ниже
         # ⏳/🧿 16.09: штампы серии MSO и валидатора (как store_signal)
         try:
             from mso_retest import green_streak_2h

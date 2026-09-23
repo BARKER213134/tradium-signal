@@ -347,12 +347,20 @@ def _load_signals(days):
                          "src": d["strategy"],
                          "sv": d.get("svetofor"), "sc": d.get("svetofor_score"),
                          "ts": int(d["created_at"].timestamp() * 1000)})
+    # 23.09: дедуп по флипу — один флип писался каждые ~8 мин (дедуп-индекс
+    # на проде отсутствовал), иначе клетки ST раздуты повторами одной сделки
+    _seen_flip = set()
     for d in db.supertrend_signals.find(
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "direction": 1, "tier": 1, "created_at": 1,
-             "svetofor": 1, "svetofor_score": 1}):
+             "flip_at": 1, "svetofor": 1, "svetofor_score": 1}
+            ).sort("created_at", 1):
         if d.get("pair"):
+            _k = (d["pair"], d.get("tier"), d.get("flip_at") or d["created_at"])
+            if _k in _seen_flip:
+                continue
+            _seen_flip.add(_k)
             sigs.append({"pair": d["pair"], "dir": d["direction"],
                          "src": "supertrend_" + (d.get("tier") or "?"),
                          "sv": d.get("svetofor"), "sc": d.get("svetofor_score"),
