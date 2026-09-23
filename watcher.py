@@ -367,6 +367,8 @@ async def _academy_digest_loop():
         try:
             import learn_digest as _ld
             await _asyncio.to_thread(_ld.maybe_send)
+            import learn_ai as _lai2
+            await _asyncio.to_thread(_lai2.retry_pm_if_stale)
         except Exception:
             logger.exception("[digest] loop crashed")
         await _asyncio.sleep(600)

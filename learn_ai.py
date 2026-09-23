@@ -232,6 +232,67 @@ def _parse_verdict(text):
     return None, cf
 
 
+def _distill_pm(db):
+    """Выжимка УРОКов из пост-мортемов (21д) в 3-5 правил. Порциями
+    60 → 25 → 12 (23.09: на 60 уроках LLM три ночи подряд молчал —
+    квота Gemini к 04:xx исчерпана, у Groq лимит на длинный промпт).
+    Возвращает готовый блок текста или None."""
+    import time as _tm
+    from datetime import timedelta as _td
+    from database import utcnow as _now
+    pm = list(db.learn_ai_post.find(
+        {"at": {"$gte": _now() - _td(days=21)}, "lesson": {"$ne": None}},
+        {"lesson": 1, "r": 1, "dir": 1, "src": 1, "state": 1}))
+    if len(pm) < 5:
+        return None
+    for take in (60, 25, 12):
+        raw = "\n".join(
+            f"- [{d.get('src')} {d.get('dir')} {d.get('state')} {(d.get('r') or 0):+.1f}%] {d['lesson']}"
+            for d in pm[-take:])
+        dp = ("Ниже уроки, которые ты сам вывел из разборов закрытых "
+              "сделок. Сожми их в 3-5 ОБОБЩЁННЫХ правил по-русски "
+              "(каждое с '- ', одна строка, конкретно: источник/"
+              "направление/режим → что делать). Только правила, "
+              "повторяющиеся в данных; без воды.\n\n" + raw)
+        dist = _ask_gemini(dp) or _ask_groq(dp)
+        if dist and dist.get("text"):
+            return ("Уроки из разборов закрытых сделок "
+                    f"(выжимка из {len(pm)}, порция {take}):\n" + dist["text"].strip())
+        _tm.sleep(15)
+    return None
+
+
+def retry_pm_if_stale():
+    """Повтор выжимки после 07:00 UTC (сброс квоты Gemini), не чаще раза
+    в 2 часа; зовётся из 10-минутного цикла дайджеста (sync; в to_thread)."""
+    from database import _get_db, utcnow
+    db = _get_db()
+    al = db.system_config.find_one({"_id": "ai_lessons"}) or {}
+    if not al.get("pm_stale"):
+        return False
+    now = utcnow()
+    if now.hour < 7:
+        return False
+    try:
+        from datetime import datetime as _dt
+        last = _dt.fromisoformat(al.get("pm_last_try") or "2000-01-01T00:00:00")
+        if (now - last).total_seconds() < 7200:
+            return False
+    except Exception:
+        pass
+    block = _distill_pm(db)
+    upd = {"pm_last_try": now.isoformat()}
+    if block:
+        text = al.get("text") or ""
+        i = text.find("Уроки из разборов")
+        text = (text[:i].rstrip() + "\n" + block) if i >= 0 else (text + "\n" + block)
+        upd.update({"text": text, "pm_stale": False})
+        _LESSONS_CACHE["t"] = 0.0
+        logger.info("[ai-lessons] выжимка пост-мортемов обновлена повтором")
+    db.system_config.update_one({"_id": "ai_lessons"}, {"$set": upd})
+    return bool(block)
+
+
 def refresh_lessons():
     """🧠→🎓 Самообучение советчика (ночной вызов): сверка вердиктов AI
     с фактическими исходами paper-сделок (join по общему ключу ns_/st_),
@@ -299,44 +360,28 @@ def refresh_lessons():
             lines.append(f"- Уверенность калибрована: 7+/10 → {hi['avg']:+.2f} "
                          f"vs 5-/10 → {lo['avg']:+.2f}.")
     # 📝 уроки из пост-мортемов закрытых сделок (21д) — выжимка LLM
+    pm_stale = False
     try:
-        from datetime import timedelta as _td
-        pm = list(db.learn_ai_post.find(
-            {"at": {"$gte": utcnow() - _td(days=21)}, "lesson": {"$ne": None}},
-            {"lesson": 1, "r": 1, "dir": 1, "src": 1, "state": 1}))
-        if len(pm) >= 5:
-            raw = "\n".join(
-                f"- [{d.get('src')} {d.get('dir')} {d.get('state')} {(d.get('r') or 0):+.1f}%] {d['lesson']}"
-                for d in pm[-60:])
-            dp = ("Ниже уроки, которые ты сам вывел из разборов закрытых "
-                  "сделок. Сожми их в 3-5 ОБОБЩЁННЫХ правил по-русски "
-                  "(каждое с '- ', одна строка, конкретно: источник/"
-                  "направление/режим → что делать). Только правила, "
-                  "повторяющиеся в данных; без воды.\n\n" + raw)
-            dist = None
-            for _try in range(3):   # 21-22.09: LLM в 04:3x молчал — блок пропадал
-                dist = _ask_gemini(dp) or _ask_groq(dp)
-                if dist and dist.get("text"):
-                    break
-                import time as _tm
-                _tm.sleep(20)
-            if dist and dist.get("text"):
-                lines.append("Уроки из разборов закрытых сделок "
-                             f"(выжимка из {len(pm)}):")
-                lines.append(dist["text"].strip())
-            else:
-                # не теряем прошлую выжимку, если провайдеры не ответили
-                _prev = (db.system_config.find_one({"_id": "ai_lessons"}) or {}).get("text") or ""
-                _i = _prev.find("Уроки из разборов")
-                if _i >= 0:
-                    lines.append(_prev[_i:].strip() + "\n(выжимка не обновилась — LLM не ответил)")
-                    logger.warning("[ai-lessons] выжимка пост-мортемов: LLM не ответил, оставил прошлую")
+        block = _distill_pm(db)
+        if block:
+            lines.append(block)
+        else:
+            # не теряем прошлую выжимку, если провайдеры не ответили;
+            # повтор — retry_pm_if_stale() после 07:00 UTC (квота Gemini)
+            pm_stale = True
+            _prev = (db.system_config.find_one({"_id": "ai_lessons"}) or {}).get("text") or ""
+            _i = _prev.find("Уроки из разборов")
+            if _i >= 0:
+                lines.append(_prev[_i:].split("\n(выжимка не обновилась")[0].strip()
+                             + "\n(выжимка не обновилась — LLM не ответил, повтор после 07:00 UTC)")
+            logger.warning("[ai-lessons] выжимка пост-мортемов: LLM не ответил, оставил прошлую")
     except Exception:
         logger.debug("[ai-lessons] postmortem distill fail", exc_info=True)
     text = "\n".join(lines)
     db.system_config.update_one(
         {"_id": "ai_lessons"},
-        {"$set": {"text": text, "n": len(rows),
+        {"$set": {"text": text, "n": len(rows), "pm_stale": pm_stale,
+                  "pm_last_try": utcnow().isoformat(),
                   "by_verdict": by_v, "updated": utcnow().isoformat()}},
         upsert=True)
     _LESSONS_CACHE["t"] = 0.0
