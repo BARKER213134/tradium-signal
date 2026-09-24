@@ -11117,7 +11117,17 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int, academy: int = 0) ->
     # 🧩 Семейная группировка для chart markers — один 🧩 вместо колонны
     try:
         from signal_families import collapse_stacks
-        items = collapse_stacks(items)
+        if academy:
+            # 24.09: с Академии/Лайва источники as_ и daily-ST не прячем в 🧩 —
+            # юзер проверяет глазами вход каждого источника события
+            _keep = [x for x in items if x.get("academy_only")
+                     or (x.get("source") == "supertrend"
+                         and "Daily" in str(x.get("pattern") or ""))]
+            _rest = [x for x in items if x not in _keep]
+            items = collapse_stacks(_rest) + _keep
+            items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
+        else:
+            items = collapse_stacks(items)
     except Exception:
         pass
 
