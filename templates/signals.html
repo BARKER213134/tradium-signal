@@ -7294,7 +7294,26 @@ function acRenderFeed() {
   });
   const rows = (d.feed || []).filter(f => f.verdict === map[_acF] || (map[_acF] === null && !f.verdict));
   window._acRows = rows;
-  const html = rows.slice(0, 250).map((f, fi) => {
+  // 24.09: группировка для глаз — одна монета+направление в окне 5 мин =
+  // одна строка (один флип запускает 3-6 детекторов + as_-источники);
+  // головная строка — лучший вердикт/EV, остальные источники значками
+  const groups = [];
+  const seenG = new Map();
+  rows.forEach((f, fi) => {
+    const tms = new Date(f.at + (f.at.endsWith('Z') ? '' : 'Z')).getTime();
+    const k = f.sym + '|' + f.dir;
+    const g = seenG.get(k);
+    if (g && Math.abs(g.tms - tms) <= 5 * 60000) { g.items.push({f, fi}); return; }
+    const ng = {tms, items: [{f, fi}]};
+    seenG.set(k, ng);
+    groups.push(ng);
+  });
+  const rankG = x => ((x.f.verdict === 'ACTIVE_SHOW' ? 2 : x.f.verdict === 'ACTIVE_HIDE' ? 1 : 0) * 100 + ((x.f.rule && x.f.rule.ev) || 0));
+  const html = groups.slice(0, 250).map(g => {
+    const head = g.items.slice().sort((a, b) => rankG(b) - rankG(a))[0];
+    const f = head.f, fi = head.fi;
+    const srcs = g.items.map(x => `<span title="${x.f.src}${x.f.rule ? ' · EV ' + (x.f.rule.ev > 0 ? '+' : '') + x.f.rule.ev + ' · ' + (x.f.verdict || 'без вердикта') : ''}">${AC_EMO[x.f.src] || '✨'}</span>`).join('');
+    const more = g.items.length > 1 ? `<span style="font-size:10px;color:var(--muted);" title="${g.items.length} источников на одном событии: ${g.items.map(x => x.f.src).join(', ')}">×${g.items.length}</span>` : '';
     const t = new Date(f.at + (f.at.endsWith('Z') ? '' : 'Z'));
     const tt = t.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
     const dirCol = f.dir === 'LONG' ? '#00e5a0' : '#ff5e9c';
@@ -7307,7 +7326,7 @@ function acRenderFeed() {
       ${f.fresh ? `<span title="🆕 первое касание платформой за 7 дней — первый вход исторически сильнее повторных">🆕</span>` : ''}
       ${f.squeeze ? `<span title="💸 экстремальный фандинг ${f.fund}%/8ч против направления сделки — толпа зажата, топливо сквиза">💸</span>` : ''}
       ${f.live_ok ? `<span title="💎 проходит лайв-фильтр: ЛОНГ × правило ×2 × монета есть на BingX — кандидат в реальную торговлю (вкладка 💎 Лайв)">💎</span>` : ''}
-      <span title="${f.src}">${AC_EMO[f.src] || '✨'}</span>
+      ${srcs}${more}
       ${f.val === true ? '<span title="🧿 валидный">🧿</span>' : ''}
       ${acMsSpan(f.ms)}
       ${rl}
@@ -7317,7 +7336,7 @@ function acRenderFeed() {
     <div id="acAi_${fi}" style="display:none;padding:8px 14px 10px 34px;border-bottom:1px solid rgba(42,49,64,0.5);background:rgba(123,92,255,0.06);font-size:11.5px;line-height:1.55;white-space:pre-wrap;">${(f.ai || '').replace(/</g, '&lt;')}</div>`;
   }).join('');
   document.getElementById('acFeed').innerHTML = html || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">пусто в этой группе за 48ч</div>';
-  document.getElementById('acFeedN').textContent = '· ' + rows.length;
+  document.getElementById('acFeedN').textContent = '· ' + groups.length + ' событий / ' + rows.length + ' сигналов';
 }
 function acOpenChart(i) {
   const rows = window._acRows || [];
