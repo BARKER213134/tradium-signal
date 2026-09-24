@@ -5045,7 +5045,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   (async () => {
     try {
       if (!window._kcPaperLines) return;
-      const r = await fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=5`);
+      const r = await fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=5&academy=1`);
       const d = await r.json();
       // 21.09: линии — для сделки, по которой кликнули (window._kcPaperKey,
       // ставят acOpenPaper/lvOpenChart), иначе самая свежая ОТКРЫТАЯ.
@@ -5134,7 +5134,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     (async () => {
       try {
         const [r] = await Promise.all([
-          fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=62`),
+          fetch(`/api/journal/by-symbol?symbol=${encodeURIComponent(sym)}&days=62${window._kcPaperLines ? '&academy=1' : ''}`),
           window._loadPhaseFlips(),
         ]);
         const d = await r.json();

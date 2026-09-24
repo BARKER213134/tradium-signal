@@ -10578,7 +10578,7 @@ async def api_market_events(since_ts: int = 0, until_ts: int = 0, types: str = "
 
 
 @app.get("/api/journal/by-symbol")
-async def api_journal_by_symbol(symbol: str, days: int = 30):
+async def api_journal_by_symbol(symbol: str, days: int = 30, academy: int = 0):
     """Все сигналы по конкретной монете из всех источников — для ручного
     поиска. Формат ответа идентичен /api/journal.
     Кеш 60с по (symbol, days) — окно графика каждой монеты дергает этот
@@ -10586,12 +10586,12 @@ async def api_journal_by_symbol(symbol: str, days: int = 30):
     from cache_utils import journal_by_symbol_cache
 
     async def _compute():
-        return await asyncio.to_thread(_compute_journal_by_symbol_sync, symbol, days)
+        return await asyncio.to_thread(_compute_journal_by_symbol_sync, symbol, days, academy)
 
-    return await journal_by_symbol_cache.get_or_compute(f"{symbol}|{days}", _compute)
+    return await journal_by_symbol_cache.get_or_compute(f"{symbol}|{days}|{academy}", _compute)
 
 
-def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
+def _compute_journal_by_symbol_sync(symbol: str, days: int, academy: int = 0) -> dict:
     from database import _signals, _anomalies, _confluence, _clusters
     from datetime import timedelta
     from database import utcnow as _utcnow
@@ -10715,7 +10715,9 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
         for s in _sts().find({
             "pair_norm": sym_clean,
             "flip_at": {"$gte": since},
-            "tier": {"$in": ["vip", "mtf"]},
+            # 24.09: с Академии/Лайва (academy=1) показываем и daily-флипы —
+            # supertrend_daily — главный ST-источник школы
+            "tier": {"$in": (["vip", "mtf", "daily"] if academy else ["vip", "mtf"])},
         }).sort("flip_at", -1):
             at_dt = s.get("flip_at")
             tier = s.get("tier", "mtf")
@@ -11052,6 +11054,36 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int) -> dict:
         items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
     except Exception:
         pass
+
+    # 🎓 academy_signals — источники, выключенные для журнала (аудит 180д),
+    # но живущие в Академии: маркеры ТОЛЬКО когда график открыт с вкладок
+    # Академии/Лайва (academy=1). Обычные вкладки их по-прежнему не видят.
+    if academy:
+        try:
+            from database import _get_db as _gdb_as
+            for n in _gdb_as().academy_signals.find(
+                    {"created_at": {"$gte": since}, **pair_or},
+                    {"strategy": 1, "pair": 1, "direction": 1, "entry": 1,
+                     "tp": 1, "sl": 1, "created_at": 1, "state": 1,
+                     "validator_ok": 1, "mso_streak2h": 1, "svetofor": 1}
+                    ).sort("created_at", -1).limit(60):
+                at_dt = n.get("created_at")
+                items.append({
+                    "source": n.get("strategy") or "academy",
+                    "symbol": sym_clean, "pair": n.get("pair") or pair_slash,
+                    "direction": n.get("direction", ""),
+                    "entry": n.get("entry"), "tp1": n.get("tp"), "sl": n.get("sl"),
+                    "pattern": f"🎓 {n.get('strategy')} · только Академия (для журнала выключен)",
+                    "score": 0, "academy_only": True,
+                    "validator_ok": n.get("validator_ok"),
+                    "mso_streak2h": n.get("mso_streak2h"),
+                    "svetofor": n.get("svetofor"),
+                    "at": at_dt.isoformat() if at_dt else None,
+                    "at_ts": int(at_dt.timestamp()) if at_dt else 0,
+                })
+            items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
+        except Exception:
+            pass
 
     # ✨ Verified Entries per-coin (для chart markers; было только в главном журнале)
     try:
