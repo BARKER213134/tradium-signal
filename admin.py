@@ -9465,7 +9465,8 @@ async def api_live():
         op = []
 
         def _top(d):
-            """⛰ «не у дна»: зелёная серия MSO ≥5 на входе или широта >60.
+            """⛰ «не у дна»: зелёная серия MSO ≥5 на входе (25.09: широта
+            из критерия убрана — школа показала, что вредит серия, не широта).
             Для старых доков без штампов — по лейблу правила (🟢5-9 и выше)."""
             ms, br = d.get("ms_open"), d.get("br_open")
             if ms is None:
@@ -9474,7 +9475,7 @@ async def api_live():
                     if tag in lbl:
                         ms = 5
                         break
-            top = bool((ms is not None and ms >= 5) or (br is not None and br > 60))
+            top = bool(ms is not None and ms >= 5)
             return top, ms, br
         # 22.09: в списках и сделки тени 🧪 (live2), статистика — только live
         for d in db.academy_paper.find(
