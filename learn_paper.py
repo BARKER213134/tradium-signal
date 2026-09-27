@@ -336,6 +336,16 @@ def _open_new(db, model, now):
         # (×2 при широте 60-80 +3.93). Вредит СЕРИЯ (закон 2), не широта →
         # «не у дна» = зелёная серия MSO ≥5; широта — только индикатор.
         _ms0 = c.get("ms")
+        if (_ms0 is None and not probe and c["dir"] == "LONG"
+                and le.size_tier(rule) == "2x"):
+            # 27.09: у части ns-сигналов (volcano, triple_confluence) штампа
+            # серии нет на момент открытия — фильтр их пропускал вслепую
+            # (оба volcano-лайва → стоп). Для кандидатов лайва считаем на лету.
+            try:
+                from mso_retest import green_streak_2h
+                _ms0 = green_streak_2h(pair or (c["sym"][:-4] + "/USDT"))
+            except Exception:
+                _ms0 = None
         _top = (_ms0 is not None and _ms0 >= 5)
         try:
             if (not probe and (_is_long or _short_ok)
@@ -401,7 +411,8 @@ def _open_new(db, model, now):
             "entry": px, "state": "OPEN",
             "sig_at": c["at"], "opened_at": now,
             # 22.09: контекст входа для значка ⛰ «не у дна» на 💎
-            "ms_open": c.get("ms"), "val_open": c.get("val"),
+            "ms_open": _ms0 if c.get("ms") is None else c.get("ms"),
+            "val_open": c.get("val"),
             "br_open": thr.get("breadth"),
         }}, upsert=True)
         opened += 1
