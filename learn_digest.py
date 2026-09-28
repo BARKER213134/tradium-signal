@@ -191,9 +191,40 @@ def send(text):
             json={"chat_id": NEW_STRATEGY_CHAT_ID, "text": text,
                   "parse_mode": "HTML", "disable_web_page_preview": True},
             timeout=15)
-        return r.status_code == 200
+        if r.status_code == 200:
+            return True
+        # 28.09: причину отказа — в Mongo (логов прода не видно), при 400
+        # (сломанный HTML) — повтор простым текстом без тегов
+        _err = r.text[:300]
+        try:
+            from database import _get_db, utcnow
+            _get_db().system_config.update_one(
+                {"_id": "academy_digest_error"},
+                {"$set": {"at": utcnow().isoformat(), "code": r.status_code,
+                          "err": _err, "len": len(text)}}, upsert=True)
+        except Exception:
+            pass
+        logger.warning(f"[digest] TG {r.status_code}: {_err}")
+        if r.status_code == 400:
+            import re as _re
+            plain = _re.sub(r"</?[a-z][^>]*>", "", text)
+            r2 = requests.post(
+                f"https://api.telegram.org/bot{tok}/sendMessage",
+                json={"chat_id": NEW_STRATEGY_CHAT_ID, "text": plain,
+                      "disable_web_page_preview": True}, timeout=15)
+            return r2.status_code == 200
+        return False
     except Exception:
         logger.warning("[digest] send fail", exc_info=True)
+        try:
+            import traceback as _tb
+            from database import _get_db, utcnow
+            _get_db().system_config.update_one(
+                {"_id": "academy_digest_error"},
+                {"$set": {"at": utcnow().isoformat(), "code": None,
+                          "err": _tb.format_exc()[-300:]}}, upsert=True)
+        except Exception:
+            pass
         return False
 
 
@@ -202,13 +233,23 @@ def maybe_send():
     from database import _get_db, utcnow
     db = _get_db()
     now = utcnow()
-    if now.hour != 8:
+    # 28.09: окно догона — если в 08:xx не ушёл (TG/сборка), пробуем до 13:59
+    if not (8 <= now.hour <= 13):
         return False
     today = now.strftime("%Y-%m-%d")
     mark = db.system_config.find_one({"_id": "academy_digest_sent"}) or {}
     if mark.get("date") == today:
         return False
-    text = build_text(db)
+    try:
+        text = build_text(db)
+    except Exception:
+        import traceback as _tb
+        db.system_config.update_one(
+            {"_id": "academy_digest_error"},
+            {"$set": {"at": now.isoformat(), "code": "build",
+                      "err": _tb.format_exc()[-300:]}}, upsert=True)
+        logger.exception("[digest] build_text fail")
+        return False
     ok = send(text)
     if ok:
         db.system_config.update_one(
