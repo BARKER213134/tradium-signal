@@ -9747,6 +9747,7 @@ async def api_academy():
                 ai_map[a["_id"]] = a
         except Exception:
             pass
+        _thr_doc = db.system_config.find_one({"_id": "live_throttle"}) or {}
         for f in feed:
             status, rule = le.score_signal(
                 model, f["src"], f["dir"], f["val"], f["ms"], rg=_rg_now[1])
@@ -9790,6 +9791,45 @@ async def api_academy():
                     f["live_ok"] = f["sym"] in _lpx.bingx_set(db)
                 except Exception:
                     pass
+            # ✋ памятка ручного входа (28.09): автопроверка строки по чек-листу
+            if status == "ACTIVE_SHOW" and f["dir"] == "LONG":
+                _why = []
+                _ok = True
+                if (_thr_doc.get("cap") or 0) <= 0:
+                    _ok = False; _why.append("СТОП по школе (кап 0)")
+                if _rg_now[1] == "corr":
+                    _ok = False; _why.append("режим ₿ коррекция — лонги от дна умирают")
+                if f.get("size") != "2x":
+                    _ok = False; _why.append(f"размер {f.get('size')}, нужен ×2")
+                _msv = f.get("ms")
+                if _msv is None:
+                    _ok = False; _why.append("серия MSO неизвестна")
+                elif _msv >= 5:
+                    _ok = False; _why.append(f"серия 🟢{_msv} ≥5 — не у дна")
+                try:
+                    _age_h = (utcnow() - f["_dt"]).total_seconds() / 3600
+                except Exception:
+                    _age_h = 0
+                if _age_h > 2:
+                    _ok = False; _why.append(f"сигналу {round(_age_h, 1)}ч (>2ч)")
+                _dd = _tmx.get(f["sym"]) or {}
+                _t1, _t2, _t4 = _dd.get("1h"), _dd.get("2h"), _dd.get("4h")
+                if _t1 == -1 and _t2 == 1 and _t4 == 1:
+                    _setup = "лучший: 1h▼ при 2h/4h▲ (+3.66)"
+                elif _t1 == -1 and _t2 == -1 and _t4 == -1:
+                    _setup = "дно: всё ▼ (+2.9)"
+                elif _t1 == 1 and _t2 == 1 and _t4 == 1:
+                    _setup = "поздний: всё ▲ (+1.82)"
+                else:
+                    _setup = "прочее"
+                f["hand"] = bool(_ok)
+                f["hand_setup"] = _setup
+                f["hand_why"] = (("✋ ПАМЯТКА: все пункты пройдены — кандидат на ручной вход"
+                                  if _ok else "✋ памятка НЕ пройдена: " + "; ".join(_why))
+                                 + f" · тренды: {_setup}"
+                                 + (" · 🧿" if f.get("val") is True else "")
+                                 + (f" · правило n={f['rule']['n']}" if f.get("rule") else "")
+                                 + " · выход по канону TP+10/SL−5/96ч, вход по сигналу")
             fr = (mkt.get("fund") or {}).get(f["sym"])
             if fr is not None:
                 f["fund"] = round(fr * 100, 4)
