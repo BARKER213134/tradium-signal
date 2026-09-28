@@ -176,9 +176,18 @@ def build_text(db):
     return "\n".join(x for x in lines if x)
 
 
+def _tg_safe(text):
+    """HTML-режим TG: '<' и '&' вне наших тегов <b>/<i> → сущности
+    (28.09: '<' в динамическом тексте ронял весь дайджест кодом 400)."""
+    import re as _re
+    text = _re.sub(r"&(?!(amp|lt|gt|quot|#\d+);)", "&amp;", text)
+    return _re.sub(r"<(?!/?(b|i)>)", "&lt;", text)
+
+
 def send(text):
     if not text:
         return False
+    text = _tg_safe(text)
     try:
         import requests
         from new_strategies import _bot13_token_sync
