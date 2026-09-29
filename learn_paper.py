@@ -50,6 +50,16 @@ def _funding_cost(sym, t_open, t_close, direction):
         return None
 
 
+def school_release_ok(s4):
+    """29.09: школа за 4ч здорова (закрытые одобренные лонги n≥30, WR≥55,
+    avg>+1) → стопы лайва по WR20 и по школе за сутки снимаются.
+    Без этого лайв запирался навсегда: WR20 считается по последним 20
+    live-закрытиям без окна времени, а при кап 0 новых закрытий нет
+    (28.09: 17 SL из 20 → даже 3 TP по открытым дали бы 15% < 30)."""
+    return bool(s4 and (s4.get("n") or 0) >= 30
+                and (s4.get("wr") or 0) >= 55 and (s4.get("avg") or 0) > 1)
+
+
 def live_throttle(db):
     """🛑 Режимный тормоз live-среза (18.09): сжимает дневной кап при
     перегреве рынка (широта 4h) или просадке скользящего WR последних
@@ -157,7 +167,21 @@ def live_throttle(db):
     if school4h and (school4h["wr"] < 35 or school4h["avg"] < -2):
         cap = 0
         reasons.append(f"школа за 4ч: WR {school4h['wr']}% {school4h['avg']:+.2f} (n={school4h['n']}) — СТОП лонгов")
+    # 29.09 (юзер: «делай по школе, чтобы лайв сам вышел из стопа»): школа
+    # решает — здоровое 4ч-окно снимает стопы WR20 и school24 (см.
+    # school_release_ok). Стоп по школе за 4ч с этим не пересекается.
+    released = False
+    if cap == 0 and school_release_ok(school4h):
+        cap = LIVE_DAY_CAP
+        hard_stop = False
+        released = True
+        level = (2 if (breadth is not None and breadth > 60)
+                 else 1 if (breadth is not None and breadth > 50) else 0)
+        reasons.append(f"школа за 4ч здорова: WR {school4h['wr']}% "
+                       f"{school4h['avg']:+.2f} (n={school4h['n']}) — "
+                       f"стоп снят, кап {LIVE_DAY_CAP}")
     st = {"level": level, "cap": cap, "cap_short": cap_short,
+          "released": released, "hard_stop": hard_stop,
           "cap2": cap2, "school24": school24, "school4h": school4h,
           "regime": rg, "btc_dd": dd,
           "reason": " · ".join(reasons) if reasons else "норма",
@@ -175,7 +199,10 @@ def live_throttle(db):
                        else "\nШорты в live-срезе закрыты"))
             except Exception:
                 logger.debug("[live] regime tg fail", exc_info=True)
-        if prev.get("level") != level:
+        # 29.09: алерт и при смене кап 0 ↔ >0 без смены уровня (снятие
+        # стопа школой при той же широте)
+        _capflip = ("cap" in prev and (prev.get("cap") == 0) != (cap == 0))
+        if prev.get("level") != level or _capflip:
             logger.info(f"[live] 🛑 тормоз: уровень {prev.get('level')} → "
                         f"{level} (кап {cap}) — {st['reason']}")
             if "level" in prev:   # не спамить на первом создании дока
