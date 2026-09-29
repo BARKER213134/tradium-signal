@@ -7276,7 +7276,21 @@ const AC_EMO = {supertrend_vip: '🌀', supertrend_mtf: '🌀', supertrend_daily
   potok: '🌊', rocket_pullback: '🪃', support_defense: '🧱', channel_top: '📐',
   corridor: '🎈', level_touch: '📏', flip_retest: '🪜', full_stack: '🧗',
   struct_top: '🏚', st_touch: '🏓', mso_retest: '🧲', mso_obexit: '🌡',
-  rsi_deepos: '🤿', rev_candle: '🕯'};
+  rsi_deepos: '🤿', rev_candle: '🕯',
+  // 29.09: источники academy_signals (as_: whale/shark/TC/vol_accum/second_flip/
+  // volcano) рисовались безликой ✨ — «последние сигналы академии без эмодзи»
+  whale: '🐋', shark: '🦈', triple_confluence: '🐉', vol_accum: '🔋',
+  second_flip: '♻️', volcano: '🌋', capitulation: '🛟', rsi_cross_12h: '⚡',
+  anomaly: '⚠', confluence: '🎯', cluster: '💠', stack: '🧩', accum: '🧊'};
+// значок источника: своя карта → общий sigIconCompact платформы → ✨
+function acEmo(src) {
+  if (AC_EMO[src]) return AC_EMO[src];
+  try {
+    const s = window.sigIconCompact ? window.sigIconCompact(src) : '';
+    if (s && s !== '•') return s;
+  } catch (e) {}
+  return '✨';
+}
 const AC_EXIT_S = {base: 'TP10/SL5', tp15: 'TP+15', tp20: 'TP+20', hold: 'держать 96ч', be5: 'БУ@+5',
   trail4: 'трейл4%', half5: '½@+5', sl35: 'SL3.5', h48: '48ч', reg65: 'по режиму'};
 const AC_EXIT_F = {base: 'канон: TP+10% / SL−5% / до 96ч',
@@ -7324,7 +7338,7 @@ function acRenderFeed() {
   const html = groups.slice(0, 250).map(g => {
     const head = g.items.slice().sort((a, b) => rankG(b) - rankG(a))[0];
     const f = head.f, fi = head.fi;
-    const srcs = g.items.map(x => `<span title="${x.f.src}${x.f.rule ? ' · EV ' + (x.f.rule.ev > 0 ? '+' : '') + x.f.rule.ev + ' · ' + (x.f.verdict || 'без вердикта') : ''}">${AC_EMO[x.f.src] || '✨'}</span>`).join('');
+    const srcs = g.items.map(x => `<span title="${x.f.src}${x.f.rule ? ' · EV ' + (x.f.rule.ev > 0 ? '+' : '') + x.f.rule.ev + ' · ' + (x.f.verdict || 'без вердикта') : ''}">${acEmo(x.f.src)}</span>`).join('');
     const more = g.items.length > 1 ? `<span style="font-size:10px;color:var(--muted);" title="${g.items.length} источников на одном событии: ${g.items.map(x => x.f.src).join(', ')}">×${g.items.length}</span>` : '';
     const t = new Date(f.at + (f.at.endsWith('Z') ? '' : 'Z'));
     const tt = t.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
