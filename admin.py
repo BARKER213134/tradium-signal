@@ -9679,6 +9679,56 @@ def _academy_mkt_refresh(db):
 
 
 
+# бэктест 30.09 (45д, одобренные ×2 LONG n=2071, база WR 67 +3.94):
+# нижние 15% коридора WR 71 +4.76 (обе половины +4.5/+5.1), 15-30% хуже
+# базы; сопротивление ≤0.5% WR 56 +2.78, 0.5-1% +3.78; выше всех зон
+# (нет сопротивления) WR 56 +2.80 — все одобренные WR 47 +1.56 vs +2.74
+RP_BOTTOM = 0.15  # 🪨 позиция входа в ЛОКАЛЬНОМ коридоре 4h-зон ≤ 15% высоты
+RP_RES = 1.0      # 🧱 сопротивление выше не дальше 1% (вплотную = ≤0.5%)
+
+
+def _range_pos(px, zones):
+    """🪨/🧱 (30.09): где вход относительно 4h-зон levels_engine.
+    pos — доля высоты диапазона [нижняя поддержка .. верхнее сопротивление]
+    (0 = низ, 1 = верх); res/sup — % до ближайшего сопротивления выше /
+    поддержки ниже; inside — цена внутри зоны. Зоны переклассифицируются
+    относительно ЦЕНЫ ВХОДА (в кэше kind — относительно текущей цены)."""
+    if not px or not zones:
+        return None
+    sup, res, inside = [], [], False
+    for z in zones:
+        lo, hi = z.get("low"), z.get("high")
+        if lo is None or hi is None:
+            continue
+        if lo <= px <= hi:
+            inside = True
+        elif (z.get("mid") or (lo + hi) / 2) > px:
+            res.append(z)
+        else:
+            sup.append(z)
+    out = {"pos": None, "res": None, "sup": None, "inside": inside,
+           "res_z": None, "sup_z": None}
+    if res:
+        zr = min(res, key=lambda z: z["low"])
+        out["res"] = round((zr["low"] - px) / px * 100, 2)
+        out["res_z"] = [zr["low"], zr["high"], zr.get("strength"), zr.get("touches")]
+    if sup:
+        zs = max(sup, key=lambda z: z["high"])
+        out["sup"] = round((px - zs["high"]) / px * 100, 2)
+        out["sup_z"] = [zs["low"], zs["high"], zs.get("strength"), zs.get("touches")]
+    if sup and res:
+        bot = min(z["low"] for z in sup)
+        top = max(z["high"] for z in res)
+        if top > bot:
+            out["pos"] = round((px - bot) / (top - bot), 3)
+            out["bot"], out["top"] = bot, top
+        # локальный коридор: верх ближайшей поддержки → низ ближайшего сопротивления
+        lo, hi = zs["high"], zr["low"]
+        if hi > lo:
+            out["pos_l"] = round((px - lo) / (hi - lo), 3)
+    return out
+
+
 @app.get("/api/academy")
 async def api_academy():
     """🎓 Академия: активная модель + скоринг ленты 48ч по её правилам."""
@@ -9695,37 +9745,42 @@ async def api_academy():
                 {"created_at": {"$gte": since},
                  "direction": {"$in": ["LONG", "SHORT"]}},
                 {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
-                 "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}
+                 "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+                 "entry": 1}
                 ).sort("created_at", -1).limit(400):
             feed.append({
                 "key": "ns_" + str(d["_id"]), "_dt": d["created_at"],
                 "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
                 "src": d.get("strategy") or "?", "dir": d["direction"],
-                "at": d["created_at"].isoformat(),
+                "at": d["created_at"].isoformat(), "px": d.get("entry"),
                 "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
         for d in db.supertrend_signals.find(
                 {"created_at": {"$gte": since},
                  "direction": {"$in": ["LONG", "SHORT"]}},
                 {"pair": 1, "pair_norm": 1, "direction": 1, "tier": 1,
-                 "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}
+                 "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+                 "entry_price": 1}
                 ).sort("created_at", -1).limit(400):
             feed.append({
                 "key": "st_" + str(d["_id"]), "_dt": d["created_at"],
                 "sym": d.get("pair_norm") or (d.get("pair") or "").replace("/", ""),
                 "src": "supertrend_" + (d.get("tier") or "?"),
                 "dir": d["direction"], "at": d["created_at"].isoformat(),
+                "px": d.get("entry_price"),
                 "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
         for d in db.academy_signals.find(
                 {"created_at": {"$gte": since},
                  "direction": {"$in": ["LONG", "SHORT"]}},
                 {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
-                 "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}
+                 "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+                 "entry": 1}
                 ).sort("created_at", -1).limit(200):
             feed.append({
                 "key": "as_" + str(d["_id"]), "_dt": d["created_at"],
                 "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
                 "src": d.get("strategy") or "?", "dir": d["direction"],
                 "at": d["created_at"].isoformat(), "academy_only": True,
+                "px": d.get("entry"),
                 "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
         feed.sort(key=lambda x: x["at"], reverse=True)
         feed = feed[:400]
@@ -9738,6 +9793,23 @@ async def api_academy():
                  ).get("rows") or [])}
         except Exception:
             _tmx = {}
+        # 🪨/🧱 (30.09): позиция входа в диапазоне 4h-зон (кэш computed_levels)
+        try:
+            _zmap = {z.get("pair"): (z.get("zones") or []) for z in
+                     db.computed_levels.find({"tf": "4h"}, {"pair": 1, "zones": 1})}
+        except Exception:
+            _zmap = {}
+        for f in feed:
+            try:
+                _rp = _range_pos(f.get("px"), _zmap.get(f["sym"][:-4] + "/USDT"))
+            except Exception:
+                _rp = None
+            if _rp:
+                f["rp"] = _rp
+                f["at_bottom"] = _rp.get("pos_l") is not None and _rp["pos_l"] <= RP_BOTTOM
+                f["at_res"] = _rp["res"] is not None and _rp["res"] <= RP_RES
+                # 🏔 выше всех 4h-зон (сопротивления нет, поддержка есть) — у максимумов
+                f["at_top"] = _rp["res"] is None and _rp["sup"] is not None
         # 🧠 кэш AI-разборов одобренных позиций (learn_ai, цикл watcher)
         ai_map = {}
         try:
@@ -9824,6 +9896,12 @@ async def api_academy():
                     _setup = "прочее"
                 f["hand"] = bool(_ok)
                 f["hand_setup"] = _setup
+                if f.get("at_bottom"):
+                    _setup += " · 🪨 у нижней границы диапазона"
+                if f.get("at_res"):
+                    _setup += " · 🧱 у сопротивления"
+                if f.get("at_top"):
+                    _setup += " · 🏔 выше всех 4h-зон (у максимумов)"
                 f["hand_why"] = (("✋ ПАМЯТКА: все пункты пройдены — кандидат на ручной вход"
                                   if _ok else "✋ памятка НЕ пройдена: " + "; ".join(_why))
                                  + f" · тренды: {_setup}"

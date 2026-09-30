@@ -3294,7 +3294,8 @@ async def _levels_refresher_loop():
             since = _dt.now(_tz.utc) - _td(hours=24)
             pairs = set()
             for col_name, ts_field in (('supertrend_signals', 'flip_at'),
-                                        ('new_strategy_signals', 'created_at')):
+                                        ('new_strategy_signals', 'created_at'),
+                                        ('academy_signals', 'created_at')):
                 try:
                     for s in db[col_name].find({ts_field: {'$gte': since}},
                                                 {'pair': 1}).limit(300):
