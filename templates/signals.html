@@ -7362,13 +7362,13 @@ function acRenderFeed() {
     return `<div onclick="acOpenChart(${fi})" style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
       <span style="color:var(--muted);font-size:10px;white-space:nowrap;">${tt}</span>
       ${f.hand ? `<span title="${(f.hand_why || '').replace(/"/g, '&quot;')}" style="font-size:18px;line-height:1;filter:drop-shadow(0 0 4px rgba(255,210,62,0.9));">✋</span>` : (f.hand_why ? `<span title="${(f.hand_why || '').replace(/"/g, '&quot;')}" style="font-size:15px;line-height:1;opacity:0.55;filter:grayscale(1);">✋</span>` : '')}
+      ${f.at_bottom ? `<span title="${acRpTip(f, 'bottom')}">🪨</span>` : ''}
+      ${f.at_res ? `<span title="${acRpTip(f, 'res')}" style="${(f.rp && f.rp.res != null && f.rp.res <= 0.5) ? '' : 'opacity:0.6;'}">🧱</span>` : ''}
+      ${f.at_top ? `<span title="${acRpTip(f, 'top')}">🏔</span>` : ''}
       <b style="min-width:72px;">${f.sym.replace('USDT', '')}</b>
       <span style="background:${f.dir === 'LONG' ? 'rgba(0,229,160,0.14)' : 'rgba(255,77,109,0.14)'};color:${dirCol};border:1px solid ${f.dir === 'LONG' ? 'rgba(0,229,160,0.4)' : 'rgba(255,77,109,0.4)'};border-radius:4px;padding:0 6px;font-size:10px;font-weight:800;white-space:nowrap;">${f.dir === 'LONG' ? '▲ ЛОНГ' : '▼ ШОРТ'}</span>
       ${f.size ? `<span style="color:#ffd23e;font-weight:900;font-size:10.5px;" title="размер позиции от силы правила (Kelly-лайт: EV≥3 и WR≥60 → ×2, EV≥1 → ×1, иначе ×0.5)">×${f.size.replace('x', '')}</span>` : ''}
       ${f.fresh ? `<span title="🆕 первое касание платформой за 7 дней — первый вход исторически сильнее повторных">🆕</span>` : ''}
-      ${f.at_bottom ? `<span title="${acRpTip(f, 'bottom')}">🪨</span>` : ''}
-      ${f.at_res ? `<span title="${acRpTip(f, 'res')}" style="${(f.rp && f.rp.res != null && f.rp.res <= 0.5) ? '' : 'opacity:0.6;'}">🧱</span>` : ''}
-      ${f.at_top ? `<span title="${acRpTip(f, 'top')}">🏔</span>` : ''}
       ${f.squeeze ? `<span title="💸 экстремальный фандинг ${f.fund}%/8ч против направления сделки — толпа зажата, топливо сквиза">💸</span>` : ''}
       ${f.live_ok ? `<span title="💎 проходит лайв-фильтр: ЛОНГ × правило ×2 × монета есть на BingX — кандидат в реальную торговлю (вкладка 💎 Лайв)">💎</span>` : ''}
       ${srcs}${more}
