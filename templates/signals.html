@@ -7349,7 +7349,7 @@ function acRenderFeed() {
     seenG.set(k, ng);
     groups.push(ng);
   });
-  const rankG = x => ((x.f.hand ? 1000 : 0) + (x.f.verdict === 'ACTIVE_SHOW' ? 2 : x.f.verdict === 'ACTIVE_HIDE' ? 1 : 0) * 100 + ((x.f.rule && x.f.rule.ev) || 0));
+  const rankG = x => ((x.f.hand ? 1000 : 0) + (x.f.best ? 500 : 0) + (x.f.verdict === 'ACTIVE_SHOW' ? 2 : x.f.verdict === 'ACTIVE_HIDE' ? 1 : 0) * 100 + ((x.f.rule && x.f.rule.ev) || 0));
   const html = groups.slice(0, 250).map(g => {
     const head = g.items.slice().sort((a, b) => rankG(b) - rankG(a))[0];
     const f = head.f, fi = head.fi;
@@ -7359,8 +7359,9 @@ function acRenderFeed() {
     const tt = t.toLocaleString('ru', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
     const dirCol = f.dir === 'LONG' ? '#00e5a0' : '#ff5e9c';
     const rl = f.rule ? `<span style="font-size:10px;color:var(--muted);" title="${f.rule.label}: n=${f.rule.n} WR=${f.rule.wr} avgR=${f.rule.avg}">EV ${f.rule.ev > 0 ? '+' : ''}${f.rule.ev} <i>n${f.rule.n}</i></span>` : '';
-    return `<div onclick="acOpenChart(${fi})" style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);">
+    return `<div onclick="acOpenChart(${fi})" style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.5);cursor:pointer;font-size:12px;font-family:var(--font-mono);${f.best ? 'background:linear-gradient(90deg,rgba(255,210,62,0.18),rgba(255,210,62,0.03));border-left:3px solid #ffd23e;' : ''}">
       <span style="color:var(--muted);font-size:10px;white-space:nowrap;">${tt}</span>
+      ${f.best ? `<span title="🏆 ЛУЧШИЙ СРЕЗ ШКОЛЫ (бэктест 30.09, 45д): одобрен ×2 + 🪨 вход у нижней границы коридора 4h-зон + серия MSO <5 → WR 71-72, +4.8..+5.1 при базе ×2 +3.9; с красной серией +5.14 (n=105), с 🧿 +5.28 (n=58). Рука ✋ отдельно проверяет стоп школы и свежесть." style="font-size:16px;line-height:1;filter:drop-shadow(0 0 3px rgba(255,210,62,0.8));">🏆</span>` : ''}
       ${f.hand ? `<span title="${(f.hand_why || '').replace(/"/g, '&quot;')}" style="font-size:18px;line-height:1;filter:drop-shadow(0 0 4px rgba(255,210,62,0.9));">✋</span>` : (f.hand_why ? `<span title="${(f.hand_why || '').replace(/"/g, '&quot;')}" style="font-size:15px;line-height:1;opacity:0.55;filter:grayscale(1);">✋</span>` : '')}
       ${f.at_bottom ? `<span title="${acRpTip(f, 'bottom')}">🪨</span>` : ''}
       ${f.at_res ? `<span title="${acRpTip(f, 'res')}" style="${(f.rp && f.rp.res != null && f.rp.res <= 0.5) ? '' : 'opacity:0.6;'}">🧱</span>` : ''}
@@ -7382,9 +7383,10 @@ function acRenderFeed() {
   }).join('');
   document.getElementById('acFeed').innerHTML = html || '<div style="padding:14px;color:var(--muted);font-size:11.5px;">пусто в этой группе за 48ч</div>';
   const handN = rows.filter(f => f.hand).length;
+  const bestN = rows.filter(f => f.best).length;
   const anyWhy = rows.find(f => f.hand_why && !f.hand);
   const stopWhy = anyWhy && /СТОП по школе/.test(anyWhy.hand_why) ? ' · ✋ 0: СТОП по школе' : (anyWhy && /коррекция/.test(anyWhy.hand_why) ? ' · ✋ 0: режим коррекция' : '');
-  document.getElementById('acFeedN').textContent = '· ' + groups.length + ' событий / ' + rows.length + ' сигналов' + (handN ? ' · ✋ ' + handN + ' по памятке' : stopWhy);
+  document.getElementById('acFeedN').textContent = '· ' + groups.length + ' событий / ' + rows.length + ' сигналов' + (bestN ? ' · 🏆 ' + bestN + ' лучших' : '') + (handN ? ' · ✋ ' + handN + ' по памятке' : stopWhy);
 }
 function acOpenChart(i) {
   const rows = window._acRows || [];
