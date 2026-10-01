@@ -9685,6 +9685,12 @@ def _academy_mkt_refresh(db):
 # (нет сопротивления) WR 56 +2.80 — все одобренные WR 47 +1.56 vs +2.74
 RP_BOTTOM = 0.15  # 🪨 позиция входа в ЛОКАЛЬНОМ коридоре 4h-зон ≤ 15% высоты
 RP_RES = 1.0      # 🧱 сопротивление выше не дальше 1% (вплотную = ≤0.5%)
+# 🛫 взлёт (бэктест 01.10, ×2 LONG база +3.75): сопротивления нет ближе
+# 10% (свободно до TP) И цена ≤3% над последней 4h-зоной (свежий пробой)
+# → WR 71 +4.59; + красная серия WR 73 +5.38 [+5.70/+5.14]; растянуто
+# 3-6% над зоной — WR 37 +0.34, >12% +3.67
+RP_FREE_RES = 10.0
+RP_FREE_SUP = 3.0
 
 
 def _range_pos(px, zones):
@@ -9808,8 +9814,12 @@ async def api_academy():
                 f["rp"] = _rp
                 f["at_bottom"] = _rp.get("pos_l") is not None and _rp["pos_l"] <= RP_BOTTOM
                 f["at_res"] = _rp["res"] is not None and _rp["res"] <= RP_RES
-                # 🏔 выше всех 4h-зон (сопротивления нет, поддержка есть) — у максимумов
-                f["at_top"] = _rp["res"] is None and _rp["sup"] is not None
+                # 🛫 свежий пробой со свободным местом (01.10)
+                f["at_free"] = bool((_rp["res"] is None or _rp["res"] >= RP_FREE_RES)
+                                    and _rp["sup"] is not None and _rp["sup"] <= RP_FREE_SUP)
+                # 🏔 выше всех 4h-зон и растянуто (>3% над последней) — у максимумов
+                f["at_top"] = bool(_rp["res"] is None and _rp["sup"] is not None
+                                   and not f["at_free"])
         # 🧠 кэш AI-разборов одобренных позиций (learn_ai, цикл watcher)
         ai_map = {}
         try:
@@ -9902,10 +9912,13 @@ async def api_academy():
                     _setup += " · 🧱 у сопротивления"
                 if f.get("at_top"):
                     _setup += " · 🏔 выше всех 4h-зон (у максимумов)"
+                if f.get("at_free"):
+                    _setup += " · 🛫 свежий пробой, свободно до TP"
                 # 🏆 лучшее (30.09): ×2 + 🪨 + не ⛰ — WR 71-72 +4.8..+5.1
                 # при базе ×2 +3.9 (с красной серией +5.14, с 🧿 +5.28)
-                f["best"] = bool(f.get("size") == "2x" and f.get("at_bottom")
-                                 and (_msv is None or _msv < 5))
+                f["best"] = bool(f.get("size") == "2x" and (
+                    (f.get("at_bottom") and (_msv is None or _msv < 5))
+                    or (f.get("at_free") and _msv is not None and _msv <= 0)))
                 if f["best"]:
                     _setup += " · 🏆 лучший срез школы"
                 f["hand_why"] = (("✋ ПАМЯТКА: все пункты пройдены — кандидат на ручной вход"
