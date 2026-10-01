@@ -9694,45 +9694,10 @@ RP_FREE_SUP = 3.0
 
 
 def _range_pos(px, zones):
-    """🪨/🧱 (30.09): где вход относительно 4h-зон levels_engine.
-    pos — доля высоты диапазона [нижняя поддержка .. верхнее сопротивление]
-    (0 = низ, 1 = верх); res/sup — % до ближайшего сопротивления выше /
-    поддержки ниже; inside — цена внутри зоны. Зоны переклассифицируются
-    относительно ЦЕНЫ ВХОДА (в кэше kind — относительно текущей цены)."""
-    if not px or not zones:
-        return None
-    sup, res, inside = [], [], False
-    for z in zones:
-        lo, hi = z.get("low"), z.get("high")
-        if lo is None or hi is None:
-            continue
-        if lo <= px <= hi:
-            inside = True
-        elif (z.get("mid") or (lo + hi) / 2) > px:
-            res.append(z)
-        else:
-            sup.append(z)
-    out = {"pos": None, "res": None, "sup": None, "inside": inside,
-           "res_z": None, "sup_z": None}
-    if res:
-        zr = min(res, key=lambda z: z["low"])
-        out["res"] = round((zr["low"] - px) / px * 100, 2)
-        out["res_z"] = [zr["low"], zr["high"], zr.get("strength"), zr.get("touches")]
-    if sup:
-        zs = max(sup, key=lambda z: z["high"])
-        out["sup"] = round((px - zs["high"]) / px * 100, 2)
-        out["sup_z"] = [zs["low"], zs["high"], zs.get("strength"), zs.get("touches")]
-    if sup and res:
-        bot = min(z["low"] for z in sup)
-        top = max(z["high"] for z in res)
-        if top > bot:
-            out["pos"] = round((px - bot) / (top - bot), 3)
-            out["bot"], out["top"] = bot, top
-        # локальный коридор: верх ближайшей поддержки → низ ближайшего сопротивления
-        lo, hi = zs["high"], zr["low"]
-        if hi > lo:
-            out["pos_l"] = round((px - lo) / (hi - lo), 3)
-    return out
+    """🪨/🧱 (30.09) → общий levels_engine.zone_pos (01.10: та же функция
+    нужна школе при открытии paper и ночной сборке)."""
+    from levels_engine import zone_pos
+    return zone_pos(px, zones)
 
 
 @app.get("/api/academy")
@@ -9830,9 +9795,13 @@ async def api_academy():
         except Exception:
             pass
         _thr_doc = db.system_config.find_one({"_id": "live_throttle"}) or {}
+        from levels_engine import zone_bucket as _zone_bucket
         for f in feed:
+            # 🪨🛫🧱🏔 (01.10): клетка зоны участвует в вердикте (вето/×2)
+            f["zb"] = _zone_bucket(f.get("rp"))
             status, rule = le.score_signal(
-                model, f["src"], f["dir"], f["val"], f["ms"], rg=_rg_now[1])
+                model, f["src"], f["dir"], f["val"], f["ms"], rg=_rg_now[1],
+                zb=f["zb"])
             f["verdict"] = status
             if rule:
                 f["rule"] = {"label": rule["label"], "ev": rule.get("ev"),

@@ -168,6 +168,7 @@ def analyze(ctx):
         f"Сигнал: {sym} {ctx.get('dir')}, источник {ctx.get('src')}.\n"
         f"{drift_txt}"
         f"Серия MSO 2h: {ser} ({ms}).\n"
+        f"{_zone_line(ctx)}"
         f"🧿 валидатор (у ST-уровня И против режима): "
         f"{'ДА' if ctx.get('val') is True else 'нет'}.\n"
         f"Правило модели: {rule.get('label')} — n={rule.get('n')}, "
@@ -390,6 +391,28 @@ def refresh_lessons():
     return text
 
 
+def _zone_line(c):
+    """🪨🛫🧱🏔 строка контекста для промпта: положение у 4h-зон на сигнале."""
+    try:
+        from levels_engine import ZB_LABEL
+        zb = c.get("zb")
+        rp = c.get("rp") or {}
+        if not zb:
+            return ""
+        parts = [ZB_LABEL.get(zb, zb)]
+        if rp.get("res") is not None:
+            parts.append(f"до сопротивления +{rp['res']}%")
+        else:
+            parts.append("сопротивления выше нет")
+        if rp.get("sup") is not None:
+            parts.append(f"над поддержкой {rp['sup']}%")
+        if rp.get("pos_l") is not None:
+            parts.append(f"позиция в коридоре {round(rp['pos_l'] * 100)}%")
+        return "Положение у 4h-зон на сигнале: " + ", ".join(parts) + ".\n"
+    except Exception:
+        return ""
+
+
 def _sig_ctx(db, key):
     """Достать сигнал по ключу ленты (ns_/st_ + ObjectId) → ctx-словарь."""
     from bson import ObjectId
@@ -405,7 +428,7 @@ def _sig_ctx(db, key):
         return {"sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
                 "src": d.get("strategy") or "?", "dir": d.get("direction"),
                 "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-                "at": d.get("created_at")}
+                "px": d.get("entry"), "at": d.get("created_at")}
     if col == "as":
         d = db.academy_signals.find_one({"_id": oid})
         if not d:
@@ -413,7 +436,7 @@ def _sig_ctx(db, key):
         return {"sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
                 "src": d.get("strategy") or "?", "dir": d.get("direction"),
                 "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-                "at": d.get("created_at")}
+                "px": d.get("entry"), "at": d.get("created_at")}
     if col == "st":
         d = db.supertrend_signals.find_one({"_id": oid})
         if not d:
@@ -421,7 +444,8 @@ def _sig_ctx(db, key):
         return {"sym": d.get("pair_norm") or (d.get("pair") or "").replace("/", ""),
                 "src": "supertrend_" + (d.get("tier") or "?"),
                 "dir": d.get("direction"), "val": d.get("validator_ok"),
-                "ms": d.get("mso_streak2h"), "at": d.get("created_at")}
+                "ms": d.get("mso_streak2h"), "px": d.get("entry_price"),
+                "at": d.get("created_at")}
     return None
 
 
@@ -439,8 +463,16 @@ def analyze_key(key):
     if not c:
         return {"ok": False, "err": "сигнал не найден"}
     model = db.learn_model.find_one({"_id": "active"}) or {}
+    # 🪨🛫🧱🏔 (01.10): положение у 4h-зон по цене сигнала
+    try:
+        from levels_engine import zone_pos_cached, zone_bucket
+        c["rp"] = zone_pos_cached(db, c["sym"][:-4] + "/USDT", c.get("px"))
+        c["zb"] = zone_bucket(c["rp"])
+    except Exception:
+        c["rp"], c["zb"] = None, None
     status, rule = le.score_signal(model, c["src"], c["dir"],
-                                   c["val"], c["ms"], rg=le.btc_regime_now()[1])
+                                   c["val"], c["ms"], rg=le.btc_regime_now()[1],
+                                   zb=c.get("zb"))
     if rule is None:
         rules = {r["id"]: r for r in model.get("rules") or []}
         dl = "LONG" if c["dir"] == "LONG" else "SHORT"
@@ -585,6 +617,9 @@ def postmortem(key, force=False):
            if path else "")
         + f"Серия MSO 2h на сигнале: {ms}. 🧿 валидатор: "
           f"{'ДА' if val is True else 'нет'}.\n"
+        + _zone_line({"zb": t.get("zb_open"),
+                      "rp": {"pos_l": t.get("zp_open"), "res": t.get("zres_open"),
+                             "sup": t.get("zsup_open")} if t.get("zb_open") else None})
         + (f"Довходовой разбор AI (вердикт {pre_v} {pre_cf}/10):\n{pre}\n"
            if pre else "Довходового разбора не было.\n")
         + "Законы платформы: лучшие входы — против режима; зелёная серия "
@@ -654,33 +689,44 @@ def run_batch(max_n=BATCH):
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}):
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "entry": 1}):
         cands.append(("ns_" + str(d["_id"]), {
             "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
             "src": d.get("strategy") or "?", "dir": d["direction"],
             "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-            "at": d["created_at"]}))
+            "px": d.get("entry"), "at": d["created_at"]}))
     for d in db.supertrend_signals.find(
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "pair_norm": 1, "direction": 1, "tier": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}):
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "entry_price": 1}):
         cands.append(("st_" + str(d["_id"]), {
             "sym": d.get("pair_norm") or (d.get("pair") or "").replace("/", ""),
             "src": "supertrend_" + (d.get("tier") or "?"),
             "dir": d["direction"], "val": d.get("validator_ok"),
-            "ms": d.get("mso_streak2h"), "at": d["created_at"]}))
+            "ms": d.get("mso_streak2h"), "px": d.get("entry_price"),
+            "at": d["created_at"]}))
     for d in db.academy_signals.find(
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}):
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "entry": 1}):
         cands.append(("as_" + str(d["_id"]), {
             "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
             "src": d.get("strategy") or "?", "dir": d["direction"],
             "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-            "at": d["created_at"]}))
+            "px": d.get("entry"), "at": d["created_at"]}))
     cands.sort(key=lambda x: x[1]["at"], reverse=True)
+    # 🪨🛫🧱🏔 (01.10): зоны один раз на батч
+    try:
+        import levels_engine as _lvz
+        _zmap = {z.get("pair"): (z.get("zones") or []) for z in
+                 db.computed_levels.find({"tf": "4h"}, {"pair": 1, "zones": 1})}
+    except Exception:
+        _lvz, _zmap = None, {}
     # рыночный контекст один на батч
     breadth = trends_map = None
     try:
@@ -696,8 +742,13 @@ def run_batch(max_n=BATCH):
     for key, c in cands:
         if done >= max_n:
             break
+        try:
+            c["rp"] = _lvz.zone_pos(c.get("px"), _zmap.get(c["sym"][:-4] + "/USDT")) if _lvz else None
+            c["zb"] = _lvz.zone_bucket(c["rp"]) if _lvz else None
+        except Exception:
+            c["rp"], c["zb"] = None, None
         status, rule = le.score_signal(model, c["src"], c["dir"],
-                                       c["val"], c["ms"])
+                                       c["val"], c["ms"], zb=c.get("zb"))
         if status != "ACTIVE_SHOW":
             continue
         if db.learn_ai.find_one({"_id": key}, {"_id": 1}):

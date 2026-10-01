@@ -281,41 +281,60 @@ def _open_new(db, model, now):
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}):
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "entry": 1}):
         cands.append(("ns_" + str(d["_id"]), d.get("pair"), {
             "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
             "src": d.get("strategy") or "?", "dir": d["direction"],
             "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-            "at": d["created_at"]}))
+            "px0": d.get("entry"), "at": d["created_at"]}))
     for d in db.supertrend_signals.find(
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "pair_norm": 1, "direction": 1, "tier": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}):
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "entry_price": 1}):
         cands.append(("st_" + str(d["_id"]), d.get("pair"), {
             "sym": d.get("pair_norm") or (d.get("pair") or "").replace("/", ""),
             "src": "supertrend_" + (d.get("tier") or "?"),
             "dir": d["direction"], "val": d.get("validator_ok"),
-            "ms": d.get("mso_streak2h"), "at": d["created_at"]}))
+            "ms": d.get("mso_streak2h"), "px0": d.get("entry_price"),
+            "at": d["created_at"]}))
     # 🎓 academy_signals: выключенные для журнала стратегии (20.09)
     for d in db.academy_signals.find(
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1}):
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "entry": 1}):
         cands.append(("as_" + str(d["_id"]), d.get("pair"), {
             "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
             "src": d.get("strategy") or "?", "dir": d["direction"],
             "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-            "at": d["created_at"]}))
+            "px0": d.get("entry"), "at": d["created_at"]}))
     thr = live_throttle(db)
     rg = thr.get("regime")
     opened = 0
+    # 🪨🛫🧱🏔 (01.10): положение у 4h-зон по цене сигнала — в скоринг
+    # (клетка z_<src>_<dir>_<zone>) и в штамп сделки; кэш зон один на цикл
+    import levels_engine as _lv
+    try:
+        _zmap = {z.get("pair"): (z.get("zones") or []) for z in
+                 db.computed_levels.find({"tf": "4h"}, {"pair": 1, "zones": 1})}
+    except Exception:
+        _zmap = {}
     for key, pair, c in sorted(cands, key=lambda x: x[2]["at"], reverse=True):
         if opened >= OPEN_BATCH:
             break
+        _zrp = None
+        try:
+            _zrp = _lv.zone_pos(c.get("px0"),
+                                _zmap.get(pair or (c["sym"][:-4] + "/USDT")))
+        except Exception:
+            _zrp = None
+        _zb = _lv.zone_bucket(_zrp)
         status, rule = le.score_signal(model, c["src"], c["dir"],
-                                       c["val"], c["ms"], rg=rg)
+                                       c["val"], c["ms"], rg=rg, zb=_zb)
         probe = False
         if status != "ACTIVE_SHOW":
             # 🔬 разведка боем: живо-выключенное правило продолжаем
@@ -441,6 +460,11 @@ def _open_new(db, model, now):
             "ms_open": _ms0 if c.get("ms") is None else c.get("ms"),
             "val_open": c.get("val"),
             "br_open": thr.get("breadth"),
+            # 🪨🛫🧱🏔 (01.10): положение у 4h-зон по цене сигнала
+            "zb_open": _zb,
+            "zp_open": (_zrp or {}).get("pos_l"),
+            "zres_open": (_zrp or {}).get("res"),
+            "zsup_open": (_zrp or {}).get("sup"),
         }}, upsert=True)
         opened += 1
     return opened

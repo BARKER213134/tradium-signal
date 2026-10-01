@@ -242,6 +242,85 @@ def get_levels_cached(pair: str, tf: str, max_age_min: int = 30) -> Optional[dic
         return None
 
 
+# ────────────────────────── положение цены у зон (01.10) ──────────────────────────
+# Общий расчёт для ленты 🎓 (admin), школы (learn_paper при открытии) и
+# ночной сборки (learn_engine.build_rows → клетки z_<src>_<dir>_<zone>).
+ZB_LABEL = {"bottom": "🪨 низ коридора", "free": "🛫 свежий пробой",
+            "res": "🧱 у сопротивления", "top": "🏔 растянуто",
+            "mid": "середина"}
+ZB_INDEX = {"mid": 0, "bottom": 1, "free": 2, "res": 3, "top": 4}
+ZB_BOTTOM = 0.15    # 🪨: позиция в локальном коридоре ≤ 15% высоты
+ZB_RES = 1.0        # 🧱: сопротивление выше не дальше 1%
+ZB_FREE_RES = 10.0  # 🛫: сопротивления нет ближе 10% (свободно до TP) …
+ZB_FREE_SUP = 3.0   # … и цена ≤3% над последней зоной (свежий пробой)
+
+
+def zone_pos(px, zones):
+    """Где цена относительно 4h-зон (classify относительно px, не текущей цены).
+    pos — доля высоты широкого диапазона [нижняя поддержка .. верхнее
+    сопротивление]; pos_l — локального коридора [верх ближайшей поддержки ..
+    низ ближайшего сопротивления]; res/sup — % до ближайших зон; inside."""
+    if not px or not zones:
+        return None
+    sup, res, inside = [], [], False
+    for z in zones:
+        lo, hi = z.get("low"), z.get("high")
+        if lo is None or hi is None:
+            continue
+        if lo <= px <= hi:
+            inside = True
+        elif (z.get("mid") or (lo + hi) / 2) > px:
+            res.append(z)
+        else:
+            sup.append(z)
+    out = {"pos": None, "pos_l": None, "res": None, "sup": None,
+           "inside": inside, "res_z": None, "sup_z": None}
+    zr = zs = None
+    if res:
+        zr = min(res, key=lambda z: z["low"])
+        out["res"] = round((zr["low"] - px) / px * 100, 2)
+        out["res_z"] = [zr["low"], zr["high"], zr.get("strength"), zr.get("touches")]
+    if sup:
+        zs = max(sup, key=lambda z: z["high"])
+        out["sup"] = round((px - zs["high"]) / px * 100, 2)
+        out["sup_z"] = [zs["low"], zs["high"], zs.get("strength"), zs.get("touches")]
+    if sup and res:
+        bot = min(z["low"] for z in sup)
+        top = max(z["high"] for z in res)
+        if top > bot:
+            out["pos"] = round((px - bot) / (top - bot), 3)
+            out["bot"], out["top"] = bot, top
+        lo, hi = zs["high"], zr["low"]
+        if hi > lo:
+            out["pos_l"] = round((px - lo) / (hi - lo), 3)
+    return out
+
+
+def zone_bucket(rp):
+    """Взаимоисключающая корзина (приоритет 🪨 → 🛫 → 🧱 → 🏔 → середина)."""
+    if not rp:
+        return None
+    pos_l, res, sup = rp.get("pos_l"), rp.get("res"), rp.get("sup")
+    if pos_l is not None and pos_l <= ZB_BOTTOM:
+        return "bottom"
+    if (res is None or res >= ZB_FREE_RES) and sup is not None and sup <= ZB_FREE_SUP:
+        return "free"
+    if res is not None and res <= ZB_RES:
+        return "res"
+    if res is None and sup is not None:
+        return "top"
+    return "mid"
+
+
+def zone_pos_cached(db, pair, px):
+    """zone_pos по кэшу Mongo computed_levels (4h). pair — 'ABC/USDT'."""
+    try:
+        doc = db.computed_levels.find_one({"pair": pair, "tf": "4h"}, {"zones": 1})
+        return zone_pos(px, (doc or {}).get("zones"))
+    except Exception:
+        return None
+
+
 if __name__ == "__main__":
     import json
     logging.basicConfig(level=logging.INFO)

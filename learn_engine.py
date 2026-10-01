@@ -21,6 +21,8 @@ from datetime import timedelta
 
 import numpy as np
 
+import levels_engine as _lv
+
 logger = logging.getLogger(__name__)
 
 FEE = 0.1                 # той же сеткой считают все бэктесты платформы
@@ -381,7 +383,7 @@ def _load_signals(days):
 
 
 def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
-               sigs=None, klines_fn=None, fund=True):
+               sigs=None, klines_fn=None, fund=True, zones=True):
     """Полный пересбор датасета из свечей (sync; звать в to_thread).
 
     Возвращает rows: [{src, dir(1/-1), val, bk, streak, tr1, tr2, tr4,
@@ -451,7 +453,7 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
             except Exception:
                 pass
             packs[pair] = {
-                "c1": c1, "t1": t1, "dvol": dvol,
+                "c1": c1, "t1": t1, "dvol": dvol, "b4": b4,
                 "tr1": _ema_trend_series(cl1),
                 "t2": t2, "tr2": _ema_trend_series(c2),
                 "st2": _streak_series(t2, o2, h2, l2, c2) if len(t2) >= 130 else None,
@@ -507,6 +509,7 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
         s["_prev"] = pr
         prev_ts[s["pair"]] = s["ts"]
     rows = []
+    _zcache = {}   # 🪨🛫🧱🏔 зоны по (пара, число закрытых 4h-баров)
     for s in sigs:
         p = packs.get(s["pair"])
         if p is None or p["st2"] is None:
@@ -572,7 +575,27 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                 _bv = round(float(btc_vp[_bi]), 1)
         _sc = s.get("sc")
         _dd = btc_dd.get(int(ts // 86_400_000))
+        # 🪨🛫🧱🏔 положение у 4h-зон на момент сигнала (01.10): зоны
+        # прод-движка по барам, ЗАКРЫТЫМ до сигнала; px — последний 1h close
+        _zb = _zp = _zres = _zsup = None
+        if zones and p.get("b4"):
+            try:
+                _n4 = int(np.searchsorted(p["t4"] + 14_400_000, ts, side="right"))
+                _zk = (s["pair"], _n4)
+                _zs = _zcache.get(_zk)
+                if _zs is None:
+                    _win = p["b4"][max(0, _n4 - 400):_n4]
+                    _zs = (_lv.compute_levels(s["pair"], "4h", candles=_win)
+                           if len(_win) >= 60 else [])
+                    _zcache[_zk] = _zs
+                _rp = _lv.zone_pos(px, _zs)
+                if _rp:
+                    _zb = _lv.zone_bucket(_rp)
+                    _zp, _zres, _zsup = _rp.get("pos_l"), _rp.get("res"), _rp.get("sup")
+            except Exception:
+                pass
         rows.append({
+            "zb": _zb, "zp": _zp, "zres": _zres, "zsup": _zsup,
             "btc_dd": _dd, "rg": regime_bin(_dd),
             "sv": s.get("sv"),
             "sc": (None if _sc is None or _sc <= -50 else _sc),
@@ -735,6 +758,23 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         _dl = "LONG" if _sg > 0 else "SHORT"
         add_rule(f"cr_{_src}_{_dl}_{_rg}",
                  f"{_src} {_dl} · {REGIME_LABEL[_rg]}", _sel, "regime")
+    # 🪨🛫🧱🏔 положение у 4h-зон (01.10, бэктест bt_range_pos/bt_free_space):
+    # супер-клетки зона×направление и клетки источник×направление×зона —
+    # школа сама решает, где 🛫/🪨 работают (vol_anomaly у дна в минусе,
+    # ST-семейство в плюсе), а где 🧱/🏔 выключают источник
+    for _zb in _lv.ZB_LABEL:
+        for _sg, _dl in ((1, "LONG"), (-1, "SHORT")):
+            add_rule(f"zb_{_zb}_{_dl}", f"{_lv.ZB_LABEL[_zb]} {_dl} (зоны)",
+                     [x for x in rows if x.get("zb") == _zb and x["sg"] == _sg],
+                     "zone")
+    _combos_z = {}
+    for x in rows:
+        if x.get("zb"):
+            _combos_z.setdefault((x["src"], x["sg"], x["zb"]), []).append(x)
+    for (_src, _sg, _zb), _sel in _combos_z.items():
+        _dl = "LONG" if _sg > 0 else "SHORT"
+        add_rule(f"z_{_src}_{_dl}_{_zb}",
+                 f"{_src} {_dl} · {_lv.ZB_LABEL[_zb]}", _sel, "zone")
     add_rule("sc_fresh", "🆕 LONG первое касание 7д (лонг-корзины)",
              [x for x in rows if x["fresh"]
               and (x["gold"] or x["silver"] or x["dawn"])], "super")
@@ -826,7 +866,7 @@ def build_regime_rules(days=REGIME_DAYS, prev_rules=None, chunk=150):
         pset = set(part_pairs)
         csigs = [s for s in sigs if s["pair"] in pset and s["pair"] in good]
         if csigs:
-            part = build_rows(days=days, sleep_s=0, sigs=csigs, fund=False,
+            part = build_rows(days=days, sleep_s=0, sigs=csigs, fund=False, zones=False,
                               klines_fn=lambda pair, tf, limit=50, _c=good: _c.get(pair, []))
             rows.extend(x for x in part if x.get("res", True))
             n_syms += len(pset & set(good))
@@ -1027,7 +1067,12 @@ def train_lgbm(rows):
                 0.0 if x.get("fund") is None else round(x["fund"] * 1e4, 2),
                 {"ДА": 2, "МОЖНО": 1, "НЕТ": 0}.get(x.get("sv"), -1),
                 -50.0 if x.get("sc") is None else x["sc"],
-                -99.0 if x.get("btc_dd") is None else x["btc_dd"]]
+                -99.0 if x.get("btc_dd") is None else x["btc_dd"],
+                # 🪨🛫🧱🏔 (01.10)
+                -1 if x.get("zb") is None else _lv.ZB_INDEX.get(x["zb"], -1),
+                -1.0 if x.get("zp") is None else round(min(x["zp"], 5.0), 3),
+                -1.0 if x.get("zres") is None else round(min(x["zres"], 50.0), 2),
+                -1.0 if x.get("zsup") is None else round(min(x["zsup"], 50.0), 2)]
 
     rs = sorted(rows, key=lambda x: x["ts"])
     cut = int(len(rs) * 0.75)
@@ -1058,7 +1103,8 @@ def train_lgbm(rows):
     top = p >= np.percentile(p, 80)
     fi = sorted(zip(["src", "dir", "val", "streak", "tr4", "breadth",
                      "fresh", "liq", "young", "hour", "btc_vol", "fund",
-                     "svetofor", "sv_score", "btc_dd"],
+                     "svetofor", "sv_score", "btc_dd",
+                     "zone", "zone_pos", "zone_res", "zone_sup"],
                     m.feature_importance().tolist()), key=lambda z: -z[1])
     return {"ok": True, "n_train": cut, "n_test": len(rs) - cut,
             "auc": round(auc, 3),
@@ -1192,6 +1238,9 @@ def recompute(days=WINDOW_DAYS, progress=None):
             "n_show": sum(1 for r in rules if r["status"] == "ACTIVE_SHOW"),
             "n_hide": sum(1 for r in rules if r["status"] == "ACTIVE_HIDE"),
             "n_shadow": sum(1 for r in rules if r["status"] == "SHADOW"),
+            "n_zone": sum(1 for r in rules if r.get("kind") == "zone"),
+            "n_zone_active": sum(1 for r in rules if r.get("kind") == "zone"
+                                 and r["status"].startswith("ACTIVE")),
             "degraded": [r["id"] for r in rules
                          if r.get("degraded") is not None],
             # ₿ режим: текущий + долгая память (переносится, пересобирается ниже)
@@ -1244,7 +1293,7 @@ def recompute(days=WINDOW_DAYS, progress=None):
 
 # ────────────────────────── live-скоринг для вкладки ──────────────────────────
 
-def score_signal(model, src, direction, validator_ok, streak, rg=None):
+def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None):
     """Вердикт по штампам сигнала: (status, rule) или (None, None).
     rg — текущий режим BTC (btc_regime_now()[1]). Если рынок НЕ у максимума
     (dip/corr/capit), первыми смотрим клетки источник×направление×режим:
@@ -1258,7 +1307,16 @@ def score_signal(model, src, direction, validator_ok, streak, rg=None):
     v = "T" if validator_ok is True else ("F" if validator_ok is False else "N")
     bk = bucket(streak)
     order = []
-    fine = ([(rules, f"c_{src}_{sgl}_{v}_{bk}")] if bk else []) + [(rules, f"p_{src}_{sgl}")]
+    # 🪨🛫🧱🏔 (01.10): клетка источник×направление×положение у 4h-зон —
+    # ВЕТО, если школа её выключила (ACTIVE_HIDE, n≥40: vol_anomaly у дна
+    # и т.п.); иначе после клетки серии, до родителя (может дать ×2 сама)
+    zone = [(rules, f"z_{src}_{sgl}_{zb}")] if zb else []
+    if zone:
+        _zr = rules.get(zone[0][1])
+        if _zr and _zr["status"] == "ACTIVE_HIDE" and _zr["n"] >= MIN_N:
+            return _zr["status"], _zr
+    fine = (([(rules, f"c_{src}_{sgl}_{v}_{bk}")] if bk else []) + zone
+            + [(rules, f"p_{src}_{sgl}")])
     if rg and rg != "top":
         rules180 = {r["id"]: r for r in model.get("regime_rules") or []}
         mem = [(rules, f"cr_{src}_{sgl}_{rg}"),
