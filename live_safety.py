@@ -23,6 +23,19 @@ logger = logging.getLogger(__name__)
 # ═════ Пресеты безопасности ═════
 # Пользователь переключает через 3 кнопки в UI.
 SAFETY_PRESETS = {
+    # 💵 Академия (03.10): фикс. маржа на сделку задаётся в academy_live
+    # (margin_usd), здесь только потолки и стопы аккаунта
+    "academy": {
+        "label": "🎓 Академия — микро-лайв 💎",
+        "max_positions": 15,         # = LIVE_CONC_CAP
+        "max_size_pct": 100.0,       # размер считает academy_live (маржа $)
+        "max_leverage": 3,
+        "daily_loss_limit_pct": -10.0,
+        "max_drawdown_pct": -20.0,
+        "min_interval_minutes": 0,
+        "max_position_usd": 50,      # маржа на сделку не больше $50
+        "min_balance_usd": 20,
+    },
     "conservative": {
         "label": "🛡️ Консервативный",
         "max_positions": 1,
@@ -434,9 +447,11 @@ def get_account(account_id: str) -> dict | None:
 def get_enabled_accounts() -> list[dict]:
     """Все enabled аккаунты — для watcher iteration по сигналу."""
     from database import _live_accounts
+    # 03.10: аккаунты Академии (academy=True) ПОТОК-зеркалу не отдаём
     return list(_live_accounts().find({
         "enabled": True,
         "kill_switch": {"$ne": True},
+        "academy": {"$ne": True},
     }))
 
 
@@ -478,6 +493,7 @@ def add_account(payload: dict) -> dict:
         "daily_start_balance": None,
         "daily_reset_at": None,
         "confirmation_required": bool(payload.get("confirmation_required", False)),
+        "academy": bool(payload.get("academy", False)),   # 💵 аккаунт Академии
         "last_trade_at": None,
         "created_at": _utcnow(),
         "updated_at": _utcnow(),
@@ -493,7 +509,7 @@ def update_account(account_id: str, update: dict) -> dict:
     from database import _live_accounts
     allowed = {"enabled", "kill_switch", "mode", "owner", "label",
                "safety_preset", "confirmation_required", "api_key", "api_secret",
-               "balance", "exchange"}
+               "balance", "exchange", "academy"}
     upd = {k: v for k, v in update.items() if k in allowed}
     if "safety_preset" in upd and upd["safety_preset"] not in SAFETY_PRESETS:
         return {"ok": False, "error": f"unknown preset: {upd['safety_preset']}"}

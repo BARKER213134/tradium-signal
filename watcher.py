@@ -2846,6 +2846,30 @@ async def _paper_to_live_mirror_loop():
         await _asyncio.sleep(15)
 
 
+async def _academy_live_loop():
+    """💵 Исполнитель Академии (03.10): каждые 20с зеркалит 💎 live-срез
+    academy_paper на биржу (academy_live.tick: sync → open → close).
+    Мастер-выключатель system_config.academy_live.enabled (default ВЫКЛ)."""
+    import asyncio as _asyncio
+    await _asyncio.sleep(70)
+    _hb_last = 0.0
+    while True:
+        try:
+            import time as _t
+            if _t.time() - _hb_last > 60:
+                _hb_last = _t.time()
+                await _asyncio.to_thread(_hb, "academy_live")
+            import academy_live as _al
+            st = await _asyncio.wait_for(_al.tick(), timeout=110.0)
+            if st.get("opened") or st.get("closed") or st.get("errors"):
+                logger.info(f"[academy-live] tick: {st}")
+        except _asyncio.TimeoutError:
+            logger.warning("[academy-live] tick timeout")
+        except Exception:
+            logger.debug("[academy-live] loop error", exc_info=True)
+        await _asyncio.sleep(20)
+
+
 async def _ui_prewarm_loop():
     """Прогреваем кеши endpoint'ов параллельно (gather) каждые 5 мин.
     Все taski wrapped в timeout — не блокируют worker.
@@ -4317,6 +4341,12 @@ async def start_watcher():
         logger.info("[paper→live] background loop started")
     except Exception:
         logger.exception("[paper→live] failed to start loop")
+    # 💵 Исполнитель Академии (03.10) — зеркало 💎 live-среза на биржу
+    try:
+        asyncio.create_task(_academy_live_loop())
+        logger.info("[academy-live] background loop started")
+    except Exception:
+        logger.exception("[academy-live] failed to start loop")
     # Exchange symbols refresh — каждый час подтягиваем актуальные списки
     # пар по всем поддерживаемым биржам (Binance + BingX)
     try:

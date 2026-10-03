@@ -7137,6 +7137,11 @@ async function lvLoad() {
   else { te.textContent = '🟢 НОРМА'; te.style.color = '#00e5a0'; tb.style.borderColor = 'var(--border)'; }
   tb.title = '🛑 режимный тормоз: ' + (thr.reason || 'норма') + (thr.breadth != null ? ' · широта ' + thr.breadth + '%' : '') + (thr.wr20 != null ? ' · WR20 ' + thr.wr20 + '%' : '') + (thr.regime ? '\n₿ режим: ' + thr.regime + ' (' + (thr.btc_dd > 0 ? '+' : '') + thr.btc_dd + '% от 30д-макс) · шорты в live: ' + (thr.cap_short ? 'ОТКРЫТЫ, кап ' + thr.cap_short : 'закрыты (только при коррекции −8..−15%)') : '');
   if (thr.regime) te.textContent += (thr.regime === 'corr' ? ' · ₿📉 шорты' : thr.regime === 'top' ? ' · ₿▲' : ' · ₿' + (thr.btc_dd > 0 ? '+' : '') + Math.round(thr.btc_dd) + '%');
+  // 💵 исполнитель Академии (03.10): статус из /api/live.exec — видимая метка
+  // только когда ВКЛ; полный статус в тултипе карточки тормоза
+  const ex = d.exec || {};
+  if (ex.enabled) te.textContent += ' · 💵 ' + (ex.open_n || 0) + ' на бирже';
+  tb.title += '\n💵 исполнитель: ' + (ex.enabled ? 'ВКЛ' : 'выкл') + (ex.accounts && ex.accounts.length ? ' · аккаунты ' + ex.accounts.map(a => a.id + (a.enabled ? '' : '(off)')).join(', ') : ' · аккаунтов нет') + (ex.enabled ? ' · маржа $' + ex.margin_usd + ' ×' + ex.leverage + ' · открыто ' + ex.open_n + ' · сегодня ' + ex.today_n + ' (' + (ex.today_pnl_usdt > 0 ? '+' : '') + ex.today_pnl_usdt + '$)' : '');
   document.getElementById('lvOpenN').textContent = (d.open_n == null ? '—' : d.open_n) + ' / ' + ((d.caps || {}).conc || 15);
   document.getElementById('lvWr').textContent = st.wr != null ? st.wr + '%' : '—';
   const avgEl = document.getElementById('lvAvg');

@@ -3057,6 +3057,7 @@ async def api_health():
         add("st_tracker", "🌀 SuperTrend tracker", age_min(hb.get("st_tracker")), 15, 45)
         add("outcomes", "🎯 Трекер исходов TP/SL", age_min(hb.get("outcomes")), 15, 45)
         add("live_mirror", "💵 Paper→Live зеркало", age_min(hb.get("live_mirror")), 5, 15)
+        add("academy_live", "🎓💵 Исполнитель Академии", age_min(hb.get("academy_live")), 5, 15)
         add("market_side", "🔄 Слежение за стороной рынка", age_min(hb.get("market_side")), 15, 45)
         # данные (артефакты сборщиков)
         ms = db.market_state.find_one({"_id": "breadth"}) or {}
@@ -9453,6 +9454,25 @@ def _setup_check_batch_sync(hours: int, max_pairs: int):
             "setups": n_setup, "items": items}
 
 
+@app.get("/api/academy/exec")
+async def api_academy_exec():
+    """💵 Исполнитель Академии: статус + конфиг (03.10)."""
+    import academy_live as _al
+    return await asyncio.to_thread(lambda: {"ok": True, **_al.status(), "cfg": _al.get_cfg()})
+
+
+@app.post("/api/academy/exec")
+async def api_academy_exec_set(payload: dict | None = None):
+    """Переключить/настроить исполнителя: {enabled, margin_usd, leverage,
+    max_open, fresh_min, max_try}. Включение — осознанное действие юзера."""
+    import academy_live as _al
+    p = payload or {}
+    kw = {k: p.get(k) for k in ("enabled", "margin_usd", "leverage", "max_open",
+                                "fresh_min", "max_try") if k in p}
+    cfg = await asyncio.to_thread(lambda: _al.set_cfg(None, **kw))
+    return {"ok": True, "cfg": cfg}
+
+
 @app.get("/api/live")
 async def api_live():
     """💎 Лайв-симуляция: что реально торговали бы на BingX и как."""
@@ -9546,10 +9566,16 @@ async def api_live():
                         "reliable": days >= 14 and len(lcl2) >= 60}
         except Exception:
             pass
-        return {"ok": True, "stats": st.get("live"),
+        try:
+            import academy_live as _al
+            _exec = _al.status()
+        except Exception:
+            _exec = None
+        return {"ok": True, "stats": st.get("live"), "exec": _exec,
                 "throttle": {k: thr.get(k) for k in
                              ("level", "cap", "reason", "breadth", "wr20",
-                              "regime", "btc_dd", "cap_short", "school24", "school4h")},
+                              "regime", "btc_dd", "cap_short", "school24", "school4h",
+                              "released", "hard_stop")},
                 "open_n": st.get("live_open"),
                 "today_n": st.get("live_today"),
                 "caps": {"day": lp.LIVE_DAY_CAP, "conc": lp.LIVE_CONC_CAP},

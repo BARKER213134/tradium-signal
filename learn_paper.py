@@ -331,6 +331,15 @@ def _open_new(db, model, now):
                  db.computed_levels.find({"tf": "4h"}, {"pair": 1, "zones": 1})}
     except Exception:
         _zmap = {}
+    # 🚪 выход по школе (03.10): корзина сигнала как в ленте → лучший выход из
+    # exits_table модели (штамп exit_open; для 💎 live по нему закрывает
+    # _close_open и ставит TP исполнитель)
+    try:
+        _tmx = {r.get("s"): (r.get("d") or {}) for r in (
+            (db.market_state.find_one({"_id": "trend_matrix"}) or {}).get("rows") or [])}
+    except Exception:
+        _tmx = {}
+    _exits = (model or {}).get("exits") or {}
     for key, pair, c in sorted(cands, key=lambda x: x[2]["at"], reverse=True):
         if opened >= OPEN_BATCH:
             break
@@ -455,7 +464,19 @@ def _open_new(db, model, now):
                          and conc2 < LIVE_CONC_CAP)
         except Exception:
             pass
+        # 🚪 выход по школе (03.10): корзина как в ленте → best из exits_table
+        _bk2 = bucket   # gold / heat / None
+        if _bk2 is None and c["dir"] == "LONG":
+            _dd = _tmx.get(c["sym"]) or {}
+            if (_dd.get("1h") == -1 and _dd.get("2h") == -1 and _dd.get("4h") == -1
+                    and ms is not None and ms <= -27):
+                _bk2 = "silver"
+            elif _dd.get("1h") == 1 and _dd.get("4h") == -1:
+                _bk2 = "dawn"
+        _ex = _exits.get(_bk2) if _bk2 else None
+        _exit_open = (_ex or {}).get("best") or "base"
         db.academy_paper.update_one({"_id": key}, {"$set": {
+            "exit_open": _exit_open, "exit_bk": _bk2,
             "live": live, "live2": live2, "probe": probe,
             "sym": c["sym"], "pair": pair, "dir": c["dir"], "src": c["src"],
             "rule": rule.get("label") if rule else None,
@@ -522,7 +543,14 @@ def _close_open(db, now):
                 o_ms = int(t["opened_at"].timestamp() * 1000)
                 entry = float(t["entry"])
                 sg = 1 if t["dir"] == "LONG" else -1
-                tp = entry * (1 + sg * 0.10)
+                # 🚪 выход по школе (03.10): 💎 live-сделки закрываются по
+                # exit_open (base +10 / tp15 / tp20 / hold = без TP; стоп −5;
+                # 96ч); школа (не live) остаётся на каноне — её мера не меняется
+                _tpp = 0.10
+                if t.get("live"):
+                    _tpp = {"base": 0.10, "tp15": 0.15, "tp20": 0.20,
+                            "hold": None}.get(t.get("exit_open") or "base", 0.10)
+                tp = entry * (1 + sg * _tpp) if _tpp else None
                 sl = entry * (1 - sg * 0.05)
                 res = None
                 for b in c1:
@@ -531,8 +559,8 @@ def _close_open(db, now):
                     if (b["l"] <= sl) if sg > 0 else (b["h"] >= sl):
                         res = ("SL", -5.0 - 0.1)
                         break
-                    if (b["h"] >= tp) if sg > 0 else (b["l"] <= tp):
-                        res = ("TP", 10.0 - 0.1)
+                    if tp is not None and ((b["h"] >= tp) if sg > 0 else (b["l"] <= tp)):
+                        res = ("TP", _tpp * 100 - 0.1)
                         break
                 if res is None and age_h >= 96:
                     res = ("TIMEOUT",
