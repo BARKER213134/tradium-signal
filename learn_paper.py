@@ -170,8 +170,16 @@ def live_throttle(db):
     # 29.09 (юзер: «делай по школе, чтобы лайв сам вышел из стопа»): школа
     # решает — здоровое 4ч-окно снимает стопы WR20 и school24 (см.
     # school_release_ok). Стоп по школе за 4ч с этим не пересекается.
+    # 03.10 (юзер: «делай оба»): снятие требует И сутки не в минусе —
+    # 4ч-окно перекрывало суточный стоп → входы после горячего окна перед
+    # обвалом (30.09, 02.10, 03.10: все три снятия при суточном стопе,
+    # −16..−21 за день каждое)
+    _s24_stop = bool(school24 and (school24["wr"] < 45 or school24["avg"] < 0))
     released = False
-    if cap == 0 and school_release_ok(school4h):
+    if cap == 0 and school_release_ok(school4h) and _s24_stop:
+        reasons.append(f"школа за 4ч здорова (WR {school4h['wr']}% {school4h['avg']:+.2f}), "
+                       f"но сутки в минусе — стоп держим")
+    if cap == 0 and school_release_ok(school4h) and not _s24_stop:
         cap = LIVE_DAY_CAP
         hard_stop = False
         released = True

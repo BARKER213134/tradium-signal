@@ -82,6 +82,11 @@ def build_text(db):
            if model.get("live_n") else ""),
     ]
     if _rg[1]:
+        # 🏫 режим по школе (03.10)
+        _smd = model.get("school_mode") or {}
+        if _smd.get("bin"):
+            lines.append(f"🏫 Школа 7д (лаг 4д): {_smd.get('label')} — "
+                         f"WR {_smd.get('wr')}% {_smd.get('avg'):+.2f} (n={_smd.get('n')})")
         _rm = model.get("regime_meta") or {}
         lines.append(f"₿ Режим: {le.REGIME_LABEL.get(_rg[1], _rg[1])} "
                      f"({_rg[0]:+.1f}% от 30д-макс)"

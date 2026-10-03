@@ -61,6 +61,65 @@ def bucket(v):
     return "z0"
 
 
+# 🏫 режим по школе (03.10): «когда школа неделю в минусе — лонги не
+# работают» — ось, которой не видит режим по BTC (28.09-03.10: BTC «у
+# максимума», альты рушатся сериями, школа 8 дней в минусе). Считается
+# как «что школа знала на момент ts»: LONG-входы за последние 7д, чей
+# исход уже наступил к ts (ts_x ≤ ts) — стопы в обвал решаются за часы,
+# заглядывания вперёд нет. (v1 с окном входов [ts−11д, ts−4д] лагала на
+# неделю: 29.09 показывала «hot +4.8» при школе в минусе с 26.09.)
+SCHOOL_WIN_D = 7
+SCHOOL_MIN_N = 30
+SCHOOL_LABEL = {"cold": "❄ школа в минусе", "warm": "🌤 школа около нуля",
+                "hot": "🔥 школа в плюсе"}
+
+
+def school_bin(avg):
+    if avg is None:
+        return None
+    return "cold" if avg < 0 else ("warm" if avg < 2 else "hot")
+
+
+def _school_known(rows, ts_ms):
+    """LONG-строки с входом за последние SCHOOL_WIN_D дней до ts, чей исход
+    уже наступил к ts → (n, wr, avg) или (n, None, None)."""
+    sel = [x["r"] for x in rows
+           if x["sg"] > 0 and x.get("res", True) and x.get("ts_x") is not None
+           and ts_ms - SCHOOL_WIN_D * 86_400_000 <= x["ts"] <= ts_ms
+           and x["ts_x"] <= ts_ms]
+    if len(sel) < SCHOOL_MIN_N:
+        return len(sel), None, None
+    return (len(sel), round(sum(1 for r in sel if r > 0) / len(sel) * 100),
+            round(float(np.mean(sel)), 2))
+
+
+def school_mode_now(rows):
+    """Текущий режим школы по строкам сборки (известные к now исходы LONG
+    за 7д). Хранится в модели (school_mode)."""
+    from database import utcnow
+    now_ms = int(utcnow().timestamp() * 1000)
+    n, wr, avg = _school_known(rows, now_ms)
+    b = school_bin(avg)
+    return {"n": n, "wr": wr, "avg": avg, "bin": b, "label": SCHOOL_LABEL.get(b),
+            "win": f"{SCHOOL_WIN_D}д по известным исходам",
+            "at": utcnow().isoformat()}
+
+
+def _outcome_exit(c1, i, sg):
+    """Момент (мс), когда исход канона стал известен: бар касания TP/SL
+    (закрытие бара) или конец окна 96ч; None — ещё в полёте."""
+    entry = c1[i]["c"]
+    tp = entry * (1 + sg * 0.10)
+    sl = entry * (1 - sg * 0.05)
+    for m in range(i + 1, min(i + HORIZON_H + 1, len(c1))):
+        hi, lo = c1[m]["h"], c1[m]["l"]
+        if ((lo <= sl) if sg > 0 else (hi >= sl)) or ((hi >= tp) if sg > 0 else (lo <= tp)):
+            return int(c1[m]["t"]) + 3_600_000
+    if i + HORIZON_H <= _last_closed_idx(c1):
+        return int(c1[min(i + HORIZON_H, len(c1) - 1)]["t"]) + 3_600_000
+    return None
+
+
 # ────────────────────────── индикаторы (как в бэктестах) ──────────────────────────
 
 def _resample(c1, tf_h):
@@ -383,7 +442,8 @@ def _load_signals(days):
 
 
 def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
-               sigs=None, klines_fn=None, fund=True, zones=True):
+               sigs=None, klines_fn=None, fund=True, zones=True,
+               school_mode=True):
     """Полный пересбор датасета из свечей (sync; звать в to_thread).
 
     Возвращает rows: [{src, dir(1/-1), val, bk, streak, tr1, tr2, tr4,
@@ -561,6 +621,7 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                     if (gold_f or silver_f or dawn_f or heat_f)
                     else (None, True))
         _r, _res = _outcome(p["c1"], i1, sg)
+        _tsx = _outcome_exit(p["c1"], i1, sg) if _res else None
         _age = ages.get(s["pair"])
         _fund = None
         fh = fund_hist.get(s["pair"])
@@ -610,8 +671,29 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
             "br": None if math.isnan(br) else float(br),
             "gold": gold_f, "silver": silver_f,
             "dawn": dawn_f, "heat": heat_f,
-            "r": _r, "ts": ts, "sym": s["pair"],
+            "r": _r, "ts": ts, "ts_x": _tsx, "sym": s["pair"],
         })
+    # 🏫 режим по школе (03.10): второй проход — для каждой строки среднее R
+    # LONG-строк с входом за 7д до ts, чей исход уже известен к ts
+    if school_mode and rows:
+        try:
+            _L = [(x["ts"], x["ts_x"], x["r"]) for x in rows
+                  if x["sg"] > 0 and x.get("res", True) and x.get("ts_x") is not None]
+            _lt = np.array([a for a, _, _ in _L], dtype=np.int64)
+            _lx = np.array([b for _, b, _ in _L], dtype=np.int64)
+            _lr = np.array([c for _, _, c in _L], dtype=float)
+            _win = SCHOOL_WIN_D * 86_400_000
+            for x in rows:
+                ts_ = x["ts"]
+                mk = (_lx <= ts_) & (_lt >= ts_ - _win) & (_lt <= ts_)
+                n = int(mk.sum())
+                if n >= SCHOOL_MIN_N:
+                    avg = float(_lr[mk].mean())
+                    x["sm7"], x["sm7n"] = round(avg, 2), n
+                    x["sm7wr"] = round(float((_lr[mk] > 0).mean() * 100))
+                    x["smb"] = school_bin(avg)
+        except Exception:
+            logger.debug("[academy] school mode fail", exc_info=True)
     return rows
 
 
@@ -654,7 +736,7 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         # половины считаем ВНУТРИ режима, иначе «стабильность» по общей
         # медиане окна всегда ложно-отрицательная
         st = _stats(sel, float(np.median([x["ts"] for x in sel]))
-                    if kind == "regime" else tmid)
+                    if kind in ("regime", "school") else tmid)
         if st["n"] < 15:
             return
         # shrinkage к родителю направления
@@ -775,6 +857,21 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         _dl = "LONG" if _sg > 0 else "SHORT"
         add_rule(f"z_{_src}_{_dl}_{_zb}",
                  f"{_src} {_dl} · {_lv.ZB_LABEL[_zb]}", _sel, "zone")
+    # 🏫 режим по школе (03.10): супер-клетки режим-школы×направление
+    # (справочно) и клетки источник×направление×режим-школы (вето/клетка)
+    for _sb in SCHOOL_LABEL:
+        for _sg, _dl in ((1, "LONG"), (-1, "SHORT")):
+            add_rule(f"sm_{_sb}_{_dl}", f"{SCHOOL_LABEL[_sb]} {_dl} (режим школы)",
+                     [x for x in rows if x.get("smb") == _sb and x["sg"] == _sg],
+                     "school")
+    _combos_s = {}
+    for x in rows:
+        if x.get("smb"):
+            _combos_s.setdefault((x["src"], x["sg"], x["smb"]), []).append(x)
+    for (_src, _sg, _sb), _sel in _combos_s.items():
+        _dl = "LONG" if _sg > 0 else "SHORT"
+        add_rule(f"csm_{_src}_{_dl}_{_sb}",
+                 f"{_src} {_dl} · {SCHOOL_LABEL[_sb]}", _sel, "school")
     add_rule("sc_fresh", "🆕 LONG первое касание 7д (лонг-корзины)",
              [x for x in rows if x["fresh"]
               and (x["gold"] or x["silver"] or x["dawn"])], "super")
@@ -867,6 +964,7 @@ def build_regime_rules(days=REGIME_DAYS, prev_rules=None, chunk=150):
         csigs = [s for s in sigs if s["pair"] in pset and s["pair"] in good]
         if csigs:
             part = build_rows(days=days, sleep_s=0, sigs=csigs, fund=False, zones=False,
+                              school_mode=False,
                               klines_fn=lambda pair, tf, limit=50, _c=good: _c.get(pair, []))
             rows.extend(x for x in part if x.get("res", True))
             n_syms += len(pset & set(good))
@@ -1072,7 +1170,10 @@ def train_lgbm(rows):
                 -1 if x.get("zb") is None else _lv.ZB_INDEX.get(x["zb"], -1),
                 -1.0 if x.get("zp") is None else round(min(x["zp"], 5.0), 3),
                 -1.0 if x.get("zres") is None else round(min(x["zres"], 50.0), 2),
-                -1.0 if x.get("zsup") is None else round(min(x["zsup"], 50.0), 2)]
+                -1.0 if x.get("zsup") is None else round(min(x["zsup"], 50.0), 2),
+                # 🏫 режим по школе (03.10)
+                -99.0 if x.get("sm7") is None else x["sm7"],
+                0 if x.get("sm7n") is None else min(int(x["sm7n"]), 5000)]
 
     rs = sorted(rows, key=lambda x: x["ts"])
     cut = int(len(rs) * 0.75)
@@ -1104,7 +1205,8 @@ def train_lgbm(rows):
     fi = sorted(zip(["src", "dir", "val", "streak", "tr4", "breadth",
                      "fresh", "liq", "young", "hour", "btc_vol", "fund",
                      "svetofor", "sv_score", "btc_dd",
-                     "zone", "zone_pos", "zone_res", "zone_sup"],
+                     "zone", "zone_pos", "zone_res", "zone_sup",
+                     "school7", "school7_n"],
                     m.feature_importance().tolist()), key=lambda z: -z[1])
     return {"ok": True, "n_train": cut, "n_test": len(rs) - cut,
             "auc": round(auc, 3),
@@ -1241,6 +1343,11 @@ def recompute(days=WINDOW_DAYS, progress=None):
             "n_zone": sum(1 for r in rules if r.get("kind") == "zone"),
             "n_zone_active": sum(1 for r in rules if r.get("kind") == "zone"
                                  and r["status"].startswith("ACTIVE")),
+            # 🏫 режим по школе (03.10): текущий бин + клетки
+            "school_mode": school_mode_now(rows_all),
+            "n_school": sum(1 for r in rules if r.get("kind") == "school"),
+            "n_school_active": sum(1 for r in rules if r.get("kind") == "school"
+                                   and r["status"].startswith("ACTIVE")),
             "degraded": [r["id"] for r in rules
                          if r.get("degraded") is not None],
             # ₿ режим: текущий + долгая память (переносится, пересобирается ниже)
@@ -1315,7 +1422,18 @@ def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None):
         _zr = rules.get(zone[0][1])
         if _zr and _zr["status"] == "ACTIVE_HIDE" and _zr["n"] >= MIN_N:
             return _zr["status"], _zr
-    fine = (([(rules, f"c_{src}_{sgl}_{v}_{bk}")] if bk else []) + zone
+    # 🏫 режим по школе (03.10): текущий бин берём из модели (ночной);
+    # клетка источник×направление×режим-школы — ВЕТО при ACTIVE_HIDE
+    # («школа неделю в минусе — этот источник не работает»), иначе после
+    # клетки зоны до родителя
+    sm = (model.get("school_mode") or {}).get("bin")
+    smc = []
+    if sm:
+        _sr = rules.get(f"csm_{src}_{sgl}_{sm}")
+        if _sr and _sr["status"] == "ACTIVE_HIDE" and _sr["n"] >= MIN_N:
+            return _sr["status"], _sr
+        smc = [(rules, f"csm_{src}_{sgl}_{sm}")]
+    fine = (([(rules, f"c_{src}_{sgl}_{v}_{bk}")] if bk else []) + zone + smc
             + [(rules, f"p_{src}_{sgl}")])
     if rg and rg != "top":
         rules180 = {r["id"]: r for r in model.get("regime_rules") or []}

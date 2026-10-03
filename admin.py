@@ -9937,6 +9937,7 @@ async def api_academy():
             "inflight", "regime_meta")}
             if model else None)
         if meta is not None:
+            meta["school_mode"] = (model or {}).get("school_mode")
             meta["btc_regime"] = {"dd": _rg_now[0], "bin": _rg_now[1],
                                   "label": le.REGIME_LABEL.get(_rg_now[1])}
             meta["exits"] = model.get("exits")
