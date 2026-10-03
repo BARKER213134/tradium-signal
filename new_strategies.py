@@ -947,10 +947,39 @@ def _bot13_token_sync():
     return tok
 
 
+_ns_alerts_cache = {"on": None, "ts": 0.0}
+
+
+def _ns_alerts_enabled_sync() -> bool:
+    """03.10: выключатель TG-оповещений стратегий — system_config
+    ns_tg_alerts.enabled (default True), кэш 10 мин. Сигналы в Mongo/журнал/
+    Академию идут независимо от него."""
+    import time as _t
+    now = _t.time()
+    if _ns_alerts_cache["on"] is not None and now - _ns_alerts_cache["ts"] < 600:
+        return _ns_alerts_cache["on"]
+    on = True
+    try:
+        from database import _get_db
+        doc = _get_db().system_config.find_one({"_id": "ns_tg_alerts"}) or {}
+        on = bool(doc.get("enabled", True))
+    except Exception:
+        pass
+    _ns_alerts_cache["on"] = on
+    _ns_alerts_cache["ts"] = now
+    return on
+
+
 async def _send_strategy_alert(sig: dict) -> None:
     """Send Telegram alert via BOT13. Strategy emoji + pair + dir + entry/sl/tp."""
     # 🧿-гейт 16.09: невалидный сигнал в TG не шлём (журнал полный)
     if sig.get("validator_ok") is False:
+        return
+    # 03.10: общий выключатель оповещений стратегий (Mongo, без деплоя)
+    try:
+        if not await asyncio.to_thread(_ns_alerts_enabled_sync):
+            return
+    except Exception:
         return
     try:
         from config import NEW_STRATEGY_CHAT_ID
