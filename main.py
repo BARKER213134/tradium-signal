@@ -127,7 +127,10 @@ async def main():
     # BOT2 (Cryptovizor) удалён вместе с CV подпиской
     bot2 = None
     bot4 = None
-    if BOT4_BOT_TOKEN:
+    # 04.10: BOT4 (@aitradiumbot) не инициализируем — юзер: в этот бот
+    # ничего не должно приходить вообще (единственный отправитель был
+    # market-side broadcast; он тоже исключён)
+    if False and BOT4_BOT_TOKEN:
         try:
             from aiogram import Bot as _B4
             from aiogram.client.default import DefaultBotProperties as _DP4

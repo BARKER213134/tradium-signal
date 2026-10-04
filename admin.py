@@ -273,7 +273,7 @@ async def lifespan(app):
             bot2 = None  # BOT2 (Cryptovizor) удалён
             if _wb is None:
                 bot4 = None
-                if BOT4_BOT_TOKEN:
+                if False and BOT4_BOT_TOKEN:   # 04.10: @aitradiumbot отключён
                     try:
                         from aiogram import Bot as _B4
                         from aiogram.client.default import DefaultBotProperties as _DP4

@@ -1807,7 +1807,9 @@ async def _market_side_broadcast(txt: str):
         try: _setup_bot16()
         except Exception: pass
     targets = [(_bot, _admin_chat_id), (_bot2, _admin_chat_id),
-               (_bot4, _admin_chat_id), (_bot5, _admin_chat_id),
+               # 04.10: BOT4 (@aitradiumbot) исключён — юзер: в этот бот
+               # ничего не должно приходить вообще
+               (_bot5, _admin_chat_id),
                (_bot9, _admin_chat_id),
                (_bot10, _admin_chat_id), (_bot16, WHALE_CHAT_ID)]
     sent = 0
