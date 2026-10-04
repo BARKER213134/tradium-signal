@@ -2814,17 +2814,13 @@ async def api_bots_status():
         "bot10 (supertrend)": bool(getattr(_w, "_bot10", None)),
     }
     # Tokens present in env
-    from config import (BOT_TOKEN, BOT4_BOT_TOKEN,
-                        BOT5_BOT_TOKEN, BOT7_BOT_TOKEN, BOT9_BOT_TOKEN,
-                        BOT10_BOT_TOKEN)
-    tokens = {
-        "BOT_TOKEN":        bool(BOT_TOKEN),
-        "BOT4_BOT_TOKEN":   bool(BOT4_BOT_TOKEN),
-        "BOT5_BOT_TOKEN":   bool(BOT5_BOT_TOKEN),
-        "BOT7_BOT_TOKEN":   bool(BOT7_BOT_TOKEN),
-        "BOT9_BOT_TOKEN":   bool(BOT9_BOT_TOKEN),
-        "BOT10_BOT_TOKEN":  bool(BOT10_BOT_TOKEN),
-    }
+    # 04.10: BOT7 из config удалён (кластеры) — эндпоинт падал ImportError
+    # с июля; берём токены через getattr
+    import config as _cfg
+    tokens = {k: bool(getattr(_cfg, k, "")) for k in
+              ("BOT_TOKEN", "BOT4_BOT_TOKEN", "BOT5_BOT_TOKEN", "BOT7_BOT_TOKEN",
+               "BOT9_BOT_TOKEN", "BOT10_BOT_TOKEN")}
+    tokens["bot4_disabled_04_10"] = True
     # Recent DB activity — 8 count_documents параллельно через gather(to_thread) вместо последовательно
     from database import _supertrend_signals as _sts
 
