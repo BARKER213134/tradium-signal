@@ -176,18 +176,37 @@ def live_throttle(db):
     # −16..−21 за день каждое)
     _s24_stop = bool(school24 and (school24["wr"] < 45 or school24["avg"] < 0))
     released = False
+    _rel_ok = school_release_ok(school4h) and not _s24_stop
+    # 04.10 гистерезис: снятый стоп держится, пока 4ч-окно не стало ПЛОХИМ
+    # (n≥30 и не здорово) или сутки не ушли в минус. Тонкое окно (n<30 →
+    # school4h None) — не повод вернуть стоп: 04.10 09:23/09:29 два
+    # противоположных алерта за 6 минут при n 29↔32
+    try:
+        _prev_rel = bool((db.system_config.find_one(
+            {"_id": "live_throttle"}, {"released": 1}) or {}).get("released"))
+    except Exception:
+        _prev_rel = False
+    _hyst = False
+    if (not _rel_ok and _prev_rel and cap == 0 and not _s24_stop
+            and school4h is None):
+        _rel_ok = True
+        _hyst = True
     if cap == 0 and school_release_ok(school4h) and _s24_stop:
         reasons.append(f"школа за 4ч здорова (WR {school4h['wr']}% {school4h['avg']:+.2f}), "
                        f"но сутки в минусе — стоп держим")
-    if cap == 0 and school_release_ok(school4h) and not _s24_stop:
+    if cap == 0 and _rel_ok:
         cap = LIVE_DAY_CAP
         hard_stop = False
         released = True
         level = (2 if (breadth is not None and breadth > 60)
                  else 1 if (breadth is not None and breadth > 50) else 0)
-        reasons.append(f"школа за 4ч здорова: WR {school4h['wr']}% "
-                       f"{school4h['avg']:+.2f} (n={school4h['n']}) — "
-                       f"стоп снят, кап {LIVE_DAY_CAP}")
+        if _hyst:
+            reasons.append("4ч-окно тонкое (n<30), сутки не в минусе — "
+                           f"снятый стоп держим, кап {LIVE_DAY_CAP}")
+        else:
+            reasons.append(f"школа за 4ч здорова: WR {school4h['wr']}% "
+                           f"{school4h['avg']:+.2f} (n={school4h['n']}) — "
+                           f"стоп снят, кап {LIVE_DAY_CAP}")
     st = {"level": level, "cap": cap, "cap_short": cap_short,
           "released": released, "hard_stop": hard_stop,
           "cap2": cap2, "school24": school24, "school4h": school4h,
