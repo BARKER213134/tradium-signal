@@ -308,37 +308,37 @@ def _open_new(db, model, now):
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1, "svetofor": 1,
              "entry": 1}):
         cands.append(("ns_" + str(d["_id"]), d.get("pair"), {
             "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
             "src": d.get("strategy") or "?", "dir": d["direction"],
             "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-            "px0": d.get("entry"), "at": d["created_at"]}))
+            "px0": d.get("entry"), "sv": d.get("svetofor"), "at": d["created_at"]}))
     for d in db.supertrend_signals.find(
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "pair_norm": 1, "direction": 1, "tier": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1, "svetofor": 1,
              "entry_price": 1}):
         cands.append(("st_" + str(d["_id"]), d.get("pair"), {
             "sym": d.get("pair_norm") or (d.get("pair") or "").replace("/", ""),
             "src": "supertrend_" + (d.get("tier") or "?"),
             "dir": d["direction"], "val": d.get("validator_ok"),
             "ms": d.get("mso_streak2h"), "px0": d.get("entry_price"),
-            "at": d["created_at"]}))
+            "sv": d.get("svetofor"), "at": d["created_at"]}))
     # 🎓 academy_signals: выключенные для журнала стратегии (20.09)
     for d in db.academy_signals.find(
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1, "svetofor": 1,
              "entry": 1}):
         cands.append(("as_" + str(d["_id"]), d.get("pair"), {
             "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
             "src": d.get("strategy") or "?", "dir": d["direction"],
             "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-            "px0": d.get("entry"), "at": d["created_at"]}))
+            "px0": d.get("entry"), "sv": d.get("svetofor"), "at": d["created_at"]}))
     thr = live_throttle(db)
     rg = thr.get("regime")
     opened = 0
@@ -359,6 +359,11 @@ def _open_new(db, model, now):
     except Exception:
         _tmx = {}
     _exits = (model or {}).get("exits") or {}
+    # ₿ вола (07.10): текущий бин один на цикл
+    try:
+        _bvb = le.btc_vol_now()[1]
+    except Exception:
+        _bvb = None
     for key, pair, c in sorted(cands, key=lambda x: x[2]["at"], reverse=True):
         if opened >= OPEN_BATCH:
             break
@@ -370,7 +375,9 @@ def _open_new(db, model, now):
             _zrp = None
         _zb = _lv.zone_bucket(_zrp)
         status, rule = le.score_signal(model, c["src"], c["dir"],
-                                       c["val"], c["ms"], rg=rg, zb=_zb)
+                                       c["val"], c["ms"], rg=rg, zb=_zb,
+                                       bvb=_bvb, tst=le.tst_from_dirs(_tmx.get(c["sym"])),
+                                       sv=c.get("sv"))
         probe = False
         if status != "ACTIVE_SHOW":
             # 🔬 разведка боем: живо-выключенное правило продолжаем
@@ -528,6 +535,15 @@ def _close_open(db, now):
     closed = 0
     batch = list(db.academy_paper.find({"state": "OPEN"})
                  .sort("chk", 1).limit(CLOSE_BATCH))
+    # 🚪 reg65 (07.10): текущая широта 4h для выхода «по режиму»
+    _br_now = None
+    try:
+        _rows_tm = (db.market_state.find_one({"_id": "trend_matrix"}) or {}).get("rows") or []
+        _n4 = [r for r in _rows_tm if (r.get("d") or {}).get("4h")]
+        if len(_n4) >= 50:
+            _br_now = sum(1 for r in _n4 if r["d"]["4h"] > 0) / len(_n4) * 100
+    except Exception:
+        _br_now = None
     by_pair = {}
     for t in batch:
         by_pair.setdefault(t.get("pair") or (t["sym"][:-4] + "/USDT"),
@@ -581,12 +597,23 @@ def _close_open(db, now):
                     if tp is not None and ((b["h"] >= tp) if sg > 0 else (b["l"] <= tp)):
                         res = ("TP", _tpp * 100 - 0.1)
                         break
+                _exit_reason = None
+                # 🚪 reg65 (07.10): 💎 live с выходом «по режиму» — закрыть по
+                # рынку при широте 4h ≥65% (лонг) / ≤35% (шорт); TP/SL выше
+                if (res is None and t.get("live") and t.get("exit_open") == "reg65"
+                        and _br_now is not None
+                        and ((sg > 0 and _br_now >= 65) or (sg < 0 and _br_now <= 35))):
+                    res = ("TIMEOUT",
+                           (float(c1[-1]["c"]) / entry - 1) * 100 * sg - 0.1)
+                    _exit_reason = f"reg65 широта {_br_now:.0f}%"
                 if res is None and age_h >= 96:
                     res = ("TIMEOUT",
                            (float(c1[-1]["c"]) / entry - 1) * 100 * sg - 0.1)
                 if res:
                     upd = {"state": res[0], "r": round(res[1], 2),
                            "closed_at": now}
+                    if _exit_reason:
+                        upd["exit_reason"] = _exit_reason
                     if t.get("live") or t.get("live2"):
                         fc = _funding_cost(t["sym"], t["opened_at"],
                                            now, t["dir"])

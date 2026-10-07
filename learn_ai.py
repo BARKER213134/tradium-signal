@@ -428,7 +428,7 @@ def _sig_ctx(db, key):
         return {"sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
                 "src": d.get("strategy") or "?", "dir": d.get("direction"),
                 "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-                "px": d.get("entry"), "at": d.get("created_at")}
+                "px": d.get("entry"), "sv": d.get("svetofor"), "at": d.get("created_at")}
     if col == "as":
         d = db.academy_signals.find_one({"_id": oid})
         if not d:
@@ -436,7 +436,7 @@ def _sig_ctx(db, key):
         return {"sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
                 "src": d.get("strategy") or "?", "dir": d.get("direction"),
                 "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-                "px": d.get("entry"), "at": d.get("created_at")}
+                "px": d.get("entry"), "sv": d.get("svetofor"), "at": d.get("created_at")}
     if col == "st":
         d = db.supertrend_signals.find_one({"_id": oid})
         if not d:
@@ -445,7 +445,7 @@ def _sig_ctx(db, key):
                 "src": "supertrend_" + (d.get("tier") or "?"),
                 "dir": d.get("direction"), "val": d.get("validator_ok"),
                 "ms": d.get("mso_streak2h"), "px": d.get("entry_price"),
-                "at": d.get("created_at")}
+                "sv": d.get("svetofor"), "at": d.get("created_at")}
     return None
 
 
@@ -470,9 +470,15 @@ def analyze_key(key):
         c["zb"] = zone_bucket(c["rp"])
     except Exception:
         c["rp"], c["zb"] = None, None
+    try:
+        _tmr = next((r.get("d") for r in ((db.market_state.find_one({"_id": "trend_matrix"}) or {})
+                                          .get("rows") or []) if r.get("s") == c["sym"]), None)
+    except Exception:
+        _tmr = None
     status, rule = le.score_signal(model, c["src"], c["dir"],
                                    c["val"], c["ms"], rg=le.btc_regime_now()[1],
-                                   zb=c.get("zb"))
+                                   zb=c.get("zb"), bvb=le.btc_vol_now()[1],
+                                   tst=le.tst_from_dirs(_tmr), sv=c.get("sv"))
     if rule is None:
         rules = {r["id"]: r for r in model.get("rules") or []}
         dl = "LONG" if c["dir"] == "LONG" else "SHORT"
@@ -689,36 +695,36 @@ def run_batch(max_n=BATCH):
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1, "svetofor": 1,
              "entry": 1}):
         cands.append(("ns_" + str(d["_id"]), {
             "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
             "src": d.get("strategy") or "?", "dir": d["direction"],
             "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-            "px": d.get("entry"), "at": d["created_at"]}))
+            "px": d.get("entry"), "sv": d.get("svetofor"), "at": d["created_at"]}))
     for d in db.supertrend_signals.find(
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "pair_norm": 1, "direction": 1, "tier": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1, "svetofor": 1,
              "entry_price": 1}):
         cands.append(("st_" + str(d["_id"]), {
             "sym": d.get("pair_norm") or (d.get("pair") or "").replace("/", ""),
             "src": "supertrend_" + (d.get("tier") or "?"),
             "dir": d["direction"], "val": d.get("validator_ok"),
             "ms": d.get("mso_streak2h"), "px": d.get("entry_price"),
-            "at": d["created_at"]}))
+            "sv": d.get("svetofor"), "at": d["created_at"]}))
     for d in db.academy_signals.find(
             {"created_at": {"$gte": since},
              "direction": {"$in": ["LONG", "SHORT"]}},
             {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
-             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
+             "created_at": 1, "validator_ok": 1, "mso_streak2h": 1, "svetofor": 1,
              "entry": 1}):
         cands.append(("as_" + str(d["_id"]), {
             "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
             "src": d.get("strategy") or "?", "dir": d["direction"],
             "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
-            "px": d.get("entry"), "at": d["created_at"]}))
+            "px": d.get("entry"), "sv": d.get("svetofor"), "at": d["created_at"]}))
     cands.sort(key=lambda x: x[1]["at"], reverse=True)
     # 🪨🛫🧱🏔 (01.10): зоны один раз на батч
     try:
@@ -748,7 +754,10 @@ def run_batch(max_n=BATCH):
         except Exception:
             c["rp"], c["zb"] = None, None
         status, rule = le.score_signal(model, c["src"], c["dir"],
-                                       c["val"], c["ms"], zb=c.get("zb"))
+                                       c["val"], c["ms"], zb=c.get("zb"),
+                                       bvb=le.btc_vol_now()[1],
+                                       tst=le.tst_from_dirs((trends_map or {}).get(c["sym"])),
+                                       sv=c.get("sv"))
         if status != "ACTIVE_SHOW":
             continue
         if db.learn_ai.find_one({"_id": key}, {"_id": 1}):

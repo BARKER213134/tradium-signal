@@ -232,6 +232,64 @@ def btc_dd_by_day(c1b):
 _REGIME_CACHE = {"t": 0.0, "v": (None, None)}
 
 
+# ₿ вола (07.10): перцентиль среднего 24ч-диапазона BTC (как btc_vol в
+# build_rows: только прошлое). Бины для клеток модели.
+BV_LABEL = {"lo": "₿ вола низкая", "mid": "₿ вола средняя", "hi": "₿ вола высокая"}
+_BV_CACHE = {"t": 0.0, "v": (None, None)}
+
+
+def bv_bin(v):
+    if v is None:
+        return None
+    return "lo" if v < 33 else ("mid" if v < 66 else "hi")
+
+
+def btc_vol_now():
+    """(перцентиль, бин) по последнему закрытому 1h-бару BTC; кэш 30 мин."""
+    if time.time() - _BV_CACHE["t"] < 1800:
+        return _BV_CACHE["v"]
+    try:
+        from exchange import get_klines_any
+        kl = get_klines_any("BTC/USDT", "1h", 1000) or []
+        j = _last_closed_idx(kl)
+        if j >= 120:
+            rng = np.array([(b["h"] - b["l"]) / b["c"] * 100 for b in kl[:j + 1]])
+            r24 = np.array([rng[i - 24:i].mean() for i in range(24, len(rng))])
+            hist = r24[:-1]
+            if len(hist) >= 30:
+                v = round(float((hist < r24[-1]).mean() * 100), 1)
+                _BV_CACHE["v"] = (v, bv_bin(v))
+                _BV_CACHE["t"] = time.time()
+    except Exception:
+        logger.debug("[academy] btc_vol_now fail", exc_info=True)
+    return _BV_CACHE["v"]
+
+
+# 📈 сетап трендов (07.10): направления SuperTrend(10,3) 1h/2h/4h — как в
+# trend_matrix (accum_detector._trend_dirs), чтобы скорить вживую по нему
+TS_LABEL = {"U": "▲", "D": "▼"}
+SV_KEY = {"ДА": "da", "МОЖНО": "mozhno", "НЕТ": "net"}
+SV_LABEL = {"da": "🚦ДА", "mozhno": "🚦МОЖНО", "net": "🚦НЕТ"}
+
+
+def tst_from_dirs(d):
+    """{'1h': ±1, '2h': ±1, '4h': ±1} (trend_matrix) → 'DUU' или None."""
+    try:
+        out = ""
+        for tf in ("1h", "2h", "4h"):
+            v = int((d or {}).get(tf) or 0)
+            if v == 0:
+                return None
+            out += "U" if v > 0 else "D"
+        return out
+    except Exception:
+        return None
+
+
+def tst_label(s):
+    return "".join(TS_LABEL.get(ch, "·") for ch in (s or ""))
+
+
 def btc_regime_now():
     """(dd%, bin) сейчас по дневным спот-закрытиям BTC до вчера; кэш 30 мин."""
     if time.time() - _REGIME_CACHE["t"] < 1800:
@@ -443,7 +501,7 @@ def _load_signals(days):
 
 def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                sigs=None, klines_fn=None, fund=True, zones=True,
-               school_mode=True):
+               school_mode=True, trend_st=True):
     """Полный пересбор датасета из свечей (sync; звать в to_thread).
 
     Возвращает rows: [{src, dir(1/-1), val, bk, streak, tr1, tr2, tr4,
@@ -522,6 +580,15 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                 "t12": t12,
                 "st12": compute_st_series(b12, 10, 3.0) if len(b12) >= 20 else None,
             }
+            # 📈 07.10: ST(10,3) 1h/2h для сетапа трендов (как trend_matrix)
+            if trend_st:
+                try:
+                    b2 = [{"t": int(t2[i]), "o": float(o2[i]), "h": float(h2[i]),
+                           "l": float(l2[i]), "c": float(c2[i])} for i in range(len(t2))]
+                    packs[pair]["sx1"] = compute_st_series(c1, 10, 3.0) if len(c1) >= 30 else None
+                    packs[pair]["sx2"] = compute_st_series(b2, 10, 3.0) if len(b2) >= 30 else None
+                except Exception:
+                    pass
         except Exception:
             logger.debug(f"[academy] pack fail {pair}", exc_info=True)
         if sleep_s and k % 10 == 9:
@@ -589,6 +656,22 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
         tr2 = p["tr2"][i2] if 0 <= i2 < len(p["tr2"]) else "NA"
         i4 = _last_closed(p["t4"], ts, 14_400_000)
         tr4 = p["tr4"][i4] if 0 <= i4 < len(p["tr4"]) else "NA"
+        # 📈 сетап трендов ST(10,3) 1h/2h/4h на закрытых барах до сигнала
+        _tst = None
+        try:
+            _sx = []
+            for _ser, _ix in ((p.get("sx1"), i1), (p.get("sx2"), i2), (p.get("st4"), i4)):
+                if not _ser or not (0 <= _ix < len(_ser)):
+                    _sx = None
+                    break
+                _tv = int(_ser[_ix].get("trend") or 0)
+                if _tv == 0:
+                    _sx = None
+                    break
+                _sx.append("U" if _tv > 0 else "D")
+            _tst = "".join(_sx) if _sx else None
+        except Exception:
+            _tst = None
         sg = 1 if s["dir"] == "LONG" else -1
         px = p["c1"][i1]["c"]
         dmin = None
@@ -657,6 +740,7 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                 pass
         rows.append({
             "zb": _zb, "zp": _zp, "zres": _zres, "zsup": _zsup,
+            "tst": _tst, "bvb": bv_bin(_bv),
             "btc_dd": _dd, "rg": regime_bin(_dd),
             "sv": s.get("sv"),
             "sc": (None if _sc is None or _sc <= -50 else _sc),
@@ -736,7 +820,7 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         # половины считаем ВНУТРИ режима, иначе «стабильность» по общей
         # медиане окна всегда ложно-отрицательная
         st = _stats(sel, float(np.median([x["ts"] for x in sel]))
-                    if kind in ("regime", "school") else tmid)
+                    if kind in ("regime", "school", "btcvol") else tmid)
         if st["n"] < 15:
             return
         # shrinkage к родителю направления
@@ -872,6 +956,34 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         _dl = "LONG" if _sg > 0 else "SHORT"
         add_rule(f"csm_{_src}_{_dl}_{_sb}",
                  f"{_src} {_dl} · {SCHOOL_LABEL[_sb]}", _sel, "school")
+    # ₿ вола / 📈 сетап трендов / 🚦 светофор (07.10): супер-клетки
+    # (справочно) и клетки источник×направление×признак (вето/клетка)
+    for _bb in BV_LABEL:
+        for _sg, _dl in ((1, "LONG"), (-1, "SHORT")):
+            add_rule(f"bv_{_bb}_{_dl}", f"{BV_LABEL[_bb]} {_dl}",
+                     [x for x in rows if x.get("bvb") == _bb and x["sg"] == _sg], "btcvol")
+    _setups = sorted({x.get("tst") for x in rows if x.get("tst")})
+    for _ts in _setups:
+        for _sg, _dl in ((1, "LONG"), (-1, "SHORT")):
+            add_rule(f"tst_{_ts}_{_dl}", f"📈{tst_label(_ts)} {_dl} (тренды 1h2h4h)",
+                     [x for x in rows if x.get("tst") == _ts and x["sg"] == _sg], "trend")
+    _cx = {}
+    for x in rows:
+        _dl = "LONG" if x["sg"] > 0 else "SHORT"
+        if x.get("bvb"):
+            _cx.setdefault(("cbv", x["src"], _dl, x["bvb"]), []).append(x)
+        if x.get("tst"):
+            _cx.setdefault(("cts", x["src"], _dl, x["tst"]), []).append(x)
+        _svk = SV_KEY.get(x.get("sv"))
+        if _svk:
+            _cx.setdefault(("csv", x["src"], _dl, _svk), []).append(x)
+    for (_k, _src, _dl, _v), _sel in _cx.items():
+        if _k == "cbv":
+            add_rule(f"cbv_{_src}_{_dl}_{_v}", f"{_src} {_dl} · {BV_LABEL[_v]}", _sel, "btcvol")
+        elif _k == "cts":
+            add_rule(f"cts_{_src}_{_dl}_{_v}", f"{_src} {_dl} · 📈{tst_label(_v)}", _sel, "trend")
+        else:
+            add_rule(f"csv_{_src}_{_dl}_{_v}", f"{_src} {_dl} · {SV_LABEL[_v]}", _sel, "svet")
     add_rule("sc_fresh", "🆕 LONG первое касание 7д (лонг-корзины)",
              [x for x in rows if x["fresh"]
               and (x["gold"] or x["silver"] or x["dawn"])], "super")
@@ -964,7 +1076,7 @@ def build_regime_rules(days=REGIME_DAYS, prev_rules=None, chunk=150):
         csigs = [s for s in sigs if s["pair"] in pset and s["pair"] in good]
         if csigs:
             part = build_rows(days=days, sleep_s=0, sigs=csigs, fund=False, zones=False,
-                              school_mode=False,
+                              school_mode=False, trend_st=False,
                               klines_fn=lambda pair, tf, limit=50, _c=good: _c.get(pair, []))
             rows.extend(x for x in part if x.get("res", True))
             n_syms += len(pset & set(good))
@@ -1173,7 +1285,9 @@ def train_lgbm(rows):
                 -1.0 if x.get("zsup") is None else round(min(x["zsup"], 50.0), 2),
                 # 🏫 режим по школе (03.10)
                 -99.0 if x.get("sm7") is None else x["sm7"],
-                0 if x.get("sm7n") is None else min(int(x["sm7n"]), 5000)]
+                0 if x.get("sm7n") is None else min(int(x["sm7n"]), 5000),
+                # 📈 07.10: тренды 1h/2h (EMA)
+                tr_map.get(x.get("tr1"), 0), tr_map.get(x.get("tr2"), 0)]
 
     rs = sorted(rows, key=lambda x: x["ts"])
     cut = int(len(rs) * 0.75)
@@ -1206,7 +1320,7 @@ def train_lgbm(rows):
                      "fresh", "liq", "young", "hour", "btc_vol", "fund",
                      "svetofor", "sv_score", "btc_dd",
                      "zone", "zone_pos", "zone_res", "zone_sup",
-                     "school7", "school7_n"],
+                     "school7", "school7_n", "tr1", "tr2"],
                     m.feature_importance().tolist()), key=lambda z: -z[1])
     return {"ok": True, "n_train": cut, "n_test": len(rs) - cut,
             "auc": round(auc, 3),
@@ -1348,6 +1462,10 @@ def recompute(days=WINDOW_DAYS, progress=None):
             "n_school": sum(1 for r in rules if r.get("kind") == "school"),
             "n_school_active": sum(1 for r in rules if r.get("kind") == "school"
                                    and r["status"].startswith("ACTIVE")),
+            # 07.10: оси вола BTC / тренды / светофор
+            "n_axes3": sum(1 for r in rules if r.get("kind") in ("btcvol", "trend", "svet")),
+            "n_axes3_active": sum(1 for r in rules if r.get("kind") in ("btcvol", "trend", "svet")
+                                  and r["status"].startswith("ACTIVE")),
             "degraded": [r["id"] for r in rules
                          if r.get("degraded") is not None],
             # ₿ режим: текущий + долгая память (переносится, пересобирается ниже)
@@ -1400,7 +1518,8 @@ def recompute(days=WINDOW_DAYS, progress=None):
 
 # ────────────────────────── live-скоринг для вкладки ──────────────────────────
 
-def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None):
+def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None,
+                 bvb=None, tst=None, sv=None):
     """Вердикт по штампам сигнала: (status, rule) или (None, None).
     rg — текущий режим BTC (btc_regime_now()[1]). Если рынок НЕ у максимума
     (dip/corr/capit), первыми смотрим клетки источник×направление×режим:
@@ -1433,7 +1552,20 @@ def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None):
         if _sr and _sr["status"] == "ACTIVE_HIDE" and _sr["n"] >= MIN_N:
             return _sr["status"], _sr
         smc = [(rules, f"csm_{src}_{sgl}_{sm}")]
-    fine = (([(rules, f"c_{src}_{sgl}_{v}_{bk}")] if bk else []) + zone + smc
+    # ₿ вола / 📈 сетап трендов / 🚦 светофор (07.10): ВЕТО при ACTIVE_HIDE,
+    # иначе клетки после зоны/режима школы, до родителя
+    ax = []
+    _svk = SV_KEY.get(sv) if sv else None
+    for _rid in ((f"cbv_{src}_{sgl}_{bvb}" if bvb else None),
+                 (f"cts_{src}_{sgl}_{tst}" if tst else None),
+                 (f"csv_{src}_{sgl}_{_svk}" if _svk else None)):
+        if not _rid:
+            continue
+        _ar = rules.get(_rid)
+        if _ar and _ar["status"] == "ACTIVE_HIDE" and _ar["n"] >= MIN_N:
+            return _ar["status"], _ar
+        ax.append((rules, _rid))
+    fine = (([(rules, f"c_{src}_{sgl}_{v}_{bk}")] if bk else []) + zone + smc + ax
             + [(rules, f"p_{src}_{sgl}")])
     if rg and rg != "top":
         rules180 = {r["id"]: r for r in model.get("regime_rules") or []}

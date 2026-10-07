@@ -9739,20 +9739,21 @@ async def api_academy():
                  "direction": {"$in": ["LONG", "SHORT"]}},
                 {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
                  "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
-                 "entry": 1}
+                 "entry": 1, "svetofor": 1}
                 ).sort("created_at", -1).limit(400):
             feed.append({
                 "key": "ns_" + str(d["_id"]), "_dt": d["created_at"],
                 "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
                 "src": d.get("strategy") or "?", "dir": d["direction"],
                 "at": d["created_at"].isoformat(), "px": d.get("entry"),
-                "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
+                "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
+                "sv": d.get("svetofor")})
         for d in db.supertrend_signals.find(
                 {"created_at": {"$gte": since},
                  "direction": {"$in": ["LONG", "SHORT"]}},
                 {"pair": 1, "pair_norm": 1, "direction": 1, "tier": 1,
                  "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
-                 "entry_price": 1}
+                 "entry_price": 1, "svetofor": 1}
                 ).sort("created_at", -1).limit(400):
             feed.append({
                 "key": "st_" + str(d["_id"]), "_dt": d["created_at"],
@@ -9760,13 +9761,14 @@ async def api_academy():
                 "src": "supertrend_" + (d.get("tier") or "?"),
                 "dir": d["direction"], "at": d["created_at"].isoformat(),
                 "px": d.get("entry_price"),
-                "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
+                "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
+                "sv": d.get("svetofor")})
         for d in db.academy_signals.find(
                 {"created_at": {"$gte": since},
                  "direction": {"$in": ["LONG", "SHORT"]}},
                 {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
                  "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
-                 "entry": 1}
+                 "entry": 1, "svetofor": 1}
                 ).sort("created_at", -1).limit(200):
             feed.append({
                 "key": "as_" + str(d["_id"]), "_dt": d["created_at"],
@@ -9774,7 +9776,8 @@ async def api_academy():
                 "src": d.get("strategy") or "?", "dir": d["direction"],
                 "at": d["created_at"].isoformat(), "academy_only": True,
                 "px": d.get("entry"),
-                "val": d.get("validator_ok"), "ms": d.get("mso_streak2h")})
+                "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
+                "sv": d.get("svetofor")})
         feed.sort(key=lambda x: x["at"], reverse=True)
         feed = feed[:400]
         _rg_now = le.btc_regime_now()
@@ -9818,12 +9821,17 @@ async def api_academy():
             pass
         _thr_doc = db.system_config.find_one({"_id": "live_throttle"}) or {}
         from levels_engine import zone_bucket as _zone_bucket
+        try:
+            _bvb_now = le.btc_vol_now()[1]
+        except Exception:
+            _bvb_now = None
         for f in feed:
             # 🪨🛫🧱🏔 (01.10): клетка зоны участвует в вердикте (вето/×2)
             f["zb"] = _zone_bucket(f.get("rp"))
             status, rule = le.score_signal(
                 model, f["src"], f["dir"], f["val"], f["ms"], rg=_rg_now[1],
-                zb=f["zb"])
+                zb=f["zb"], bvb=_bvb_now, tst=le.tst_from_dirs(_tmx.get(f["sym"])),
+                sv=f.get("sv"))
             f["verdict"] = status
             if rule:
                 f["rule"] = {"label": rule["label"], "ev": rule.get("ev"),
