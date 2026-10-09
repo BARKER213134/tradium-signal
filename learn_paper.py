@@ -364,6 +364,11 @@ def _open_new(db, model, now):
         _bvb = le.btc_vol_now()[1]
     except Exception:
         _bvb = None
+    # 📡 деривативы (09.10): OI/funding сейчас по символам (кэш 10 мин)
+    try:
+        _dmap = le.deriv_now_map()
+    except Exception:
+        _dmap = {}
     for key, pair, c in sorted(cands, key=lambda x: x[2]["at"], reverse=True):
         if opened >= OPEN_BATCH:
             break
@@ -377,7 +382,9 @@ def _open_new(db, model, now):
         status, rule = le.score_signal(model, c["src"], c["dir"],
                                        c["val"], c["ms"], rg=rg, zb=_zb,
                                        bvb=_bvb, tst=le.tst_from_dirs(_tmx.get(c["sym"])),
-                                       sv=c.get("sv"))
+                                       sv=c.get("sv"),
+                                       dob=le.do_bin((_dmap.get(c["sym"]) or {}).get("doi24")),
+                                       frb=le.fr_bin((_dmap.get(c["sym"]) or {}).get("fr")))
         probe = False
         if status != "ACTIVE_SHOW":
             # 🔬 разведка боем: живо-выключенное правило продолжаем
@@ -517,6 +524,9 @@ def _open_new(db, model, now):
             "br_open": thr.get("breadth"),
             # 🪨🛫🧱🏔 (01.10): положение у 4h-зон по цене сигнала
             "zb_open": _zb,
+            # 📡 деривативы на входе (09.10)
+            "doi24_open": (_dmap.get(c["sym"]) or {}).get("doi24"),
+            "fr_open": (_dmap.get(c["sym"]) or {}).get("fr"),
             "zp_open": (_zrp or {}).get("pos_l"),
             "zres_open": (_zrp or {}).get("res"),
             "zsup_open": (_zrp or {}).get("sup"),

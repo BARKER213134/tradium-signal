@@ -9830,13 +9830,20 @@ async def api_academy():
             _bvb_now = le.btc_vol_now()[1]
         except Exception:
             _bvb_now = None
+        try:
+            _dmap = le.deriv_now_map()
+        except Exception:
+            _dmap = {}
         for f in feed:
+            _dv = _dmap.get(f["sym"]) or {}
+            if _dv:
+                f["dv"] = {"doi24": _dv.get("doi24"), "doi4": _dv.get("doi4"), "fr": _dv.get("fr")}
             # 🪨🛫🧱🏔 (01.10): клетка зоны участвует в вердикте (вето/×2)
             f["zb"] = _zone_bucket(f.get("rp"))
             status, rule = le.score_signal(
                 model, f["src"], f["dir"], f["val"], f["ms"], rg=_rg_now[1],
                 zb=f["zb"], bvb=_bvb_now, tst=le.tst_from_dirs(_tmx.get(f["sym"])),
-                sv=f.get("sv"))
+                sv=f.get("sv"), dob=le.do_bin(_dv.get("doi24")), frb=le.fr_bin(_dv.get("fr")))
             f["verdict"] = status
             if rule:
                 f["rule"] = {"label": rule["label"], "ev": rule.get("ev"),

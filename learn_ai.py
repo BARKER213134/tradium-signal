@@ -478,7 +478,9 @@ def analyze_key(key):
     status, rule = le.score_signal(model, c["src"], c["dir"],
                                    c["val"], c["ms"], rg=le.btc_regime_now()[1],
                                    zb=c.get("zb"), bvb=le.btc_vol_now()[1],
-                                   tst=le.tst_from_dirs(_tmr), sv=c.get("sv"))
+                                   tst=le.tst_from_dirs(_tmr), sv=c.get("sv"),
+                                   dob=le.do_bin((le.deriv_now_map().get(c["sym"]) or {}).get("doi24")),
+                                   frb=le.fr_bin((le.deriv_now_map().get(c["sym"]) or {}).get("fr")))
     if rule is None:
         rules = {r["id"]: r for r in model.get("rules") or []}
         dl = "LONG" if c["dir"] == "LONG" else "SHORT"
@@ -757,7 +759,9 @@ def run_batch(max_n=BATCH):
                                        c["val"], c["ms"], zb=c.get("zb"),
                                        bvb=le.btc_vol_now()[1],
                                        tst=le.tst_from_dirs((trends_map or {}).get(c["sym"])),
-                                       sv=c.get("sv"))
+                                       sv=c.get("sv"),
+                                       dob=le.do_bin((le.deriv_now_map().get(c["sym"]) or {}).get("doi24")),
+                                       frb=le.fr_bin((le.deriv_now_map().get(c["sym"]) or {}).get("fr")))
         if status != "ACTIVE_SHOW":
             continue
         if db.learn_ai.find_one({"_id": key}, {"_id": 1}):

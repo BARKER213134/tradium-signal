@@ -234,6 +234,100 @@ _REGIME_CACHE = {"t": 0.0, "v": (None, None)}
 
 # ₿ вола (07.10): перцентиль среднего 24ч-диапазона BTC (как btc_vol в
 # build_rows: только прошлое). Бины для клеток модели.
+# 📡 деривативы (09.10): OI/funding из oi_hourly (BingX, с 09.10 13:00 UTC)
+DO_LABEL = {"dn": "OI ↓24ч", "flat": "OI ≈24ч", "up": "OI ↑24ч"}
+FR_LABEL = {"neg": "фандинг −", "zero": "фандинг ≈0", "pos": "фандинг +"}
+_DERIV_CACHE = {"t": 0.0, "v": {}}
+
+
+def do_bin(pct):
+    if pct is None:
+        return None
+    return "dn" if pct <= -5 else ("up" if pct >= 5 else "flat")
+
+
+def fr_bin(fr):
+    if fr is None:
+        return None
+    return "neg" if fr < 0 else ("pos" if fr >= 0.00015 else "zero")
+
+
+def deriv_series(db, pairs, since_ms):
+    """{'BTC/USDT': (t_ms[], oi[], fr[])} из oi_hourly (монеты, только src bingx)."""
+    syms = {p.replace("/", ""): p for p in pairs}
+    from datetime import datetime as _dt
+    acc = {}
+    for d in db.oi_hourly.find(
+            {"symbol": {"$in": list(syms)}, "src": "bingx",
+             "at": {"$gte": _dt.utcfromtimestamp(since_ms / 1000)}},
+            {"symbol": 1, "at": 1, "oi": 1, "fr": 1}):
+        if d.get("oi") is None:
+            continue
+        acc.setdefault(syms[d["symbol"]], []).append(
+            (int(d["at"].timestamp() * 1000), float(d["oi"]), d.get("fr")))
+    out = {}
+    for p, lst in acc.items():
+        lst.sort()
+        out[p] = (np.array([a for a, _, _ in lst], dtype=np.int64),
+                  np.array([b for _, b, _ in lst], dtype=float),
+                  [c for _, _, c in lst])
+    return out
+
+
+def deriv_at(series, pair, ts_ms, tol_ms=80 * 60_000):
+    """(ΔOI24 %, ΔOI4 %, fr) на момент ts: ближайший снапшот ≤ ts (допуск tol)."""
+    s = series.get(pair)
+    if not s:
+        return None, None, None
+    t, oi, fr = s
+    i = int(np.searchsorted(t, ts_ms, side="right")) - 1
+    if i < 0 or ts_ms - t[i] > tol_ms:
+        return None, None, None
+
+    def back(h):
+        j = int(np.searchsorted(t, t[i] - h * 3_600_000, side="right")) - 1
+        if j < 0 or abs((t[i] - h * 3_600_000) - t[j]) > tol_ms or oi[j] <= 0:
+            return None
+        return round((oi[i] / oi[j] - 1) * 100, 2)
+    return back(24), back(4), fr[i]
+
+
+def deriv_now_map():
+    """{SYM: {'doi24','doi4','fr'}} по последним снапшотам (кэш 10 мин)."""
+    if time.time() - _DERIV_CACHE["t"] < 600:
+        return _DERIV_CACHE["v"]
+    out = {}
+    try:
+        from database import _get_db, utcnow
+        from datetime import timedelta as _td
+        db = _get_db()
+        now = utcnow()
+        latest, ago4, ago24 = {}, {}, {}
+        for d in db.oi_hourly.find({"src": "bingx", "at": {"$gte": now - _td(hours=26)}},
+                                   {"symbol": 1, "at": 1, "oi": 1, "fr": 1}):
+            s, at = d["symbol"], d["at"]
+            if at >= now - _td(hours=2):
+                if s not in latest or at > latest[s]["at"]:
+                    latest[s] = d
+            elif now - _td(hours=6) <= at < now - _td(hours=3):
+                if s not in ago4 or at > ago4[s]["at"]:
+                    ago4[s] = d
+            elif at < now - _td(hours=23):
+                if s not in ago24 or at > ago24[s]["at"]:
+                    ago24[s] = d
+        for s, d in latest.items():
+            o = d.get("oi") or 0
+            a24, a4 = ago24.get(s), ago4.get(s)
+            out[s] = {"doi24": round((o / a24["oi"] - 1) * 100, 2) if (a24 and a24.get("oi")) else None,
+                      "doi4": round((o / a4["oi"] - 1) * 100, 2) if (a4 and a4.get("oi")) else None,
+                      "fr": d.get("fr"), "at": d["at"].isoformat()}
+    except Exception:
+        logger.debug("[academy] deriv_now_map fail", exc_info=True)
+    _DERIV_CACHE["v"] = out
+    _DERIV_CACHE["t"] = time.time()
+    return out
+
+
 BV_LABEL = {"lo": "₿ вола низкая", "mid": "₿ вола средняя", "hi": "₿ вола высокая"}
 _BV_CACHE = {"t": 0.0, "v": (None, None)}
 
@@ -501,7 +595,7 @@ def _load_signals(days):
 
 def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                sigs=None, klines_fn=None, fund=True, zones=True,
-               school_mode=True, trend_st=True):
+               school_mode=True, trend_st=True, deriv=True):
     """Полный пересбор датасета из свечей (sync; звать в to_thread).
 
     Возвращает rows: [{src, dir(1/-1), val, bk, streak, tr1, tr2, tr4,
@@ -635,6 +729,14 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
         pr = prev_ts.get(s["pair"])
         s["_prev"] = pr
         prev_ts[s["pair"]] = s["ts"]
+    # 📡 деривативы (09.10): серии OI/funding по парам окна
+    _dser = {}
+    if deriv:
+        try:
+            from database import _get_db as _gdb_d
+            _dser = deriv_series(_gdb_d(), list(by_sym), min(s["ts"] for s in sigs) - 26 * 3_600_000)
+        except Exception:
+            logger.debug("[academy] deriv series fail", exc_info=True)
     rows = []
     _zcache = {}   # 🪨🛫🧱🏔 зоны по (пара, число закрытых 4h-баров)
     for s in sigs:
@@ -738,7 +840,15 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                     _zp, _zres, _zsup = _rp.get("pos_l"), _rp.get("res"), _rp.get("sup")
             except Exception:
                 pass
+        _d24 = _d4 = _fr8 = None
+        if deriv and _dser:
+            try:
+                _d24, _d4, _fr8 = deriv_at(_dser, s["pair"], ts)
+            except Exception:
+                pass
         rows.append({
+            "doi24": _d24, "doi4": _d4, "fr8": _fr8,
+            "dob": do_bin(_d24), "frb": fr_bin(_fr8),
             "zb": _zb, "zp": _zp, "zres": _zres, "zsup": _zsup,
             "tst": _tst, "bvb": bv_bin(_bv),
             "btc_dd": _dd, "rg": regime_bin(_dd),
@@ -820,7 +930,7 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         # половины считаем ВНУТРИ режима, иначе «стабильность» по общей
         # медиане окна всегда ложно-отрицательная
         st = _stats(sel, float(np.median([x["ts"] for x in sel]))
-                    if kind in ("regime", "school", "btcvol") else tmid)
+                    if kind in ("regime", "school", "btcvol", "deriv") else tmid)
         if st["n"] < 15:
             return
         # shrinkage к родителю направления
@@ -984,6 +1094,27 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
             add_rule(f"cts_{_src}_{_dl}_{_v}", f"{_src} {_dl} · 📈{tst_label(_v)}", _sel, "trend")
         else:
             add_rule(f"csv_{_src}_{_dl}_{_v}", f"{_src} {_dl} · {SV_LABEL[_v]}", _sel, "svet")
+    # 📡 деривативы (09.10): OI ↓/≈/↑ 24ч и фандинг −/≈0/+ (история с 09.10)
+    for _b in DO_LABEL:
+        for _sg, _dl in ((1, "LONG"), (-1, "SHORT")):
+            add_rule(f"do_{_b}_{_dl}", f"{DO_LABEL[_b]} {_dl}",
+                     [x for x in rows if x.get("dob") == _b and x["sg"] == _sg], "deriv")
+    for _b in FR_LABEL:
+        for _sg, _dl in ((1, "LONG"), (-1, "SHORT")):
+            add_rule(f"fr_{_b}_{_dl}", f"{FR_LABEL[_b]} {_dl}",
+                     [x for x in rows if x.get("frb") == _b and x["sg"] == _sg], "deriv")
+    _cd = {}
+    for x in rows:
+        _dl = "LONG" if x["sg"] > 0 else "SHORT"
+        if x.get("dob"):
+            _cd.setdefault(("cdo", x["src"], _dl, x["dob"]), []).append(x)
+        if x.get("frb"):
+            _cd.setdefault(("cfr", x["src"], _dl, x["frb"]), []).append(x)
+    for (_k, _src, _dl, _v), _sel in _cd.items():
+        if _k == "cdo":
+            add_rule(f"cdo_{_src}_{_dl}_{_v}", f"{_src} {_dl} · {DO_LABEL[_v]}", _sel, "deriv")
+        else:
+            add_rule(f"cfr_{_src}_{_dl}_{_v}", f"{_src} {_dl} · {FR_LABEL[_v]}", _sel, "deriv")
     add_rule("sc_fresh", "🆕 LONG первое касание 7д (лонг-корзины)",
              [x for x in rows if x["fresh"]
               and (x["gold"] or x["silver"] or x["dawn"])], "super")
@@ -1076,7 +1207,7 @@ def build_regime_rules(days=REGIME_DAYS, prev_rules=None, chunk=150):
         csigs = [s for s in sigs if s["pair"] in pset and s["pair"] in good]
         if csigs:
             part = build_rows(days=days, sleep_s=0, sigs=csigs, fund=False, zones=False,
-                              school_mode=False, trend_st=False,
+                              school_mode=False, trend_st=False, deriv=False,
                               klines_fn=lambda pair, tf, limit=50, _c=good: _c.get(pair, []))
             rows.extend(x for x in part if x.get("res", True))
             n_syms += len(pset & set(good))
@@ -1287,7 +1418,10 @@ def train_lgbm(rows):
                 -99.0 if x.get("sm7") is None else x["sm7"],
                 0 if x.get("sm7n") is None else min(int(x["sm7n"]), 5000),
                 # 📈 07.10: тренды 1h/2h (EMA)
-                tr_map.get(x.get("tr1"), 0), tr_map.get(x.get("tr2"), 0)]
+                tr_map.get(x.get("tr1"), 0), tr_map.get(x.get("tr2"), 0),
+                # 📡 деривативы (09.10)
+                -99.0 if x.get("doi24") is None else round(max(-80.0, min(x["doi24"], 200.0)), 2),
+                -99.0 if x.get("fr8") is None else round(x["fr8"] * 1e4, 3)]
 
     rs = sorted(rows, key=lambda x: x["ts"])
     cut = int(len(rs) * 0.75)
@@ -1320,7 +1454,7 @@ def train_lgbm(rows):
                      "fresh", "liq", "young", "hour", "btc_vol", "fund",
                      "svetofor", "sv_score", "btc_dd",
                      "zone", "zone_pos", "zone_res", "zone_sup",
-                     "school7", "school7_n", "tr1", "tr2"],
+                     "school7", "school7_n", "tr1", "tr2", "doi24", "fr8"],
                     m.feature_importance().tolist()), key=lambda z: -z[1])
     return {"ok": True, "n_train": cut, "n_test": len(rs) - cut,
             "auc": round(auc, 3),
@@ -1466,6 +1600,11 @@ def recompute(days=WINDOW_DAYS, progress=None):
             "n_axes3": sum(1 for r in rules if r.get("kind") in ("btcvol", "trend", "svet")),
             "n_axes3_active": sum(1 for r in rules if r.get("kind") in ("btcvol", "trend", "svet")
                                   and r["status"].startswith("ACTIVE")),
+            # 📡 деривативы (09.10)
+            "n_deriv": sum(1 for r in rules if r.get("kind") == "deriv"),
+            "n_deriv_active": sum(1 for r in rules if r.get("kind") == "deriv"
+                                  and r["status"].startswith("ACTIVE")),
+            "deriv_rows": sum(1 for x in rows if x.get("dob")),
             "degraded": [r["id"] for r in rules
                          if r.get("degraded") is not None],
             # ₿ режим: текущий + долгая память (переносится, пересобирается ниже)
@@ -1519,7 +1658,7 @@ def recompute(days=WINDOW_DAYS, progress=None):
 # ────────────────────────── live-скоринг для вкладки ──────────────────────────
 
 def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None,
-                 bvb=None, tst=None, sv=None):
+                 bvb=None, tst=None, sv=None, dob=None, frb=None):
     """Вердикт по штампам сигнала: (status, rule) или (None, None).
     rg — текущий режим BTC (btc_regime_now()[1]). Если рынок НЕ у максимума
     (dip/corr/capit), первыми смотрим клетки источник×направление×режим:
@@ -1558,7 +1697,9 @@ def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None,
     _svk = SV_KEY.get(sv) if sv else None
     for _rid in ((f"cbv_{src}_{sgl}_{bvb}" if bvb else None),
                  (f"cts_{src}_{sgl}_{tst}" if tst else None),
-                 (f"csv_{src}_{sgl}_{_svk}" if _svk else None)):
+                 (f"csv_{src}_{sgl}_{_svk}" if _svk else None),
+                 (f"cdo_{src}_{sgl}_{dob}" if dob else None),
+                 (f"cfr_{src}_{sgl}_{frb}" if frb else None)):
         if not _rid:
             continue
         _ar = rules.get(_rid)
