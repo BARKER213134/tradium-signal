@@ -4273,6 +4273,7 @@ async def start_watcher():
         import deriv_collector as _dc
         asyncio.create_task(_dc.run_liq_stream())
         asyncio.create_task(_dc.oi_poll_loop())
+        asyncio.create_task(_dc.deriv_pulse_loop())   # 09.10: 15-мин агрегат BingX
         asyncio.create_task(_dc.ws_probe_once())
         logger.info("[deriv] liq stream + oi poll scheduled")
         # 🌉 воскресный гэп-сканер FOREX (вс 21:26 скан, пн 21:15 итоги)

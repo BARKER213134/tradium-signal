@@ -251,69 +251,147 @@ async def run_liq_stream():
             await asyncio.sleep(15)
 
 
-def _oi_snapshot_sync(pairs: list[str]) -> int:
-    """Один проход OI по парам (sync, зовётся в thread). ~300 req,
-    пейсинг 0.45с — бюджет fapi не душим."""
+BINGX = "https://open-api.bingx.com"
+
+
+def _bx_get(path: str, params: dict | None = None, timeout: int = 15):
+    """GET публичного BingX → data или None (fail-open)."""
     import requests
-    from database import _get_db
-    db = _get_db()
-    # markPrice одним запросом
-    marks = {}
     try:
-        r = requests.get("https://fapi.binance.com/fapi/v1/premiumIndex",
-                         timeout=12)
-        if r.status_code == 200:
-            for x in r.json():
-                try:
-                    marks[x["symbol"]] = float(x.get("markPrice") or 0)
-                except Exception:
-                    pass
+        r = requests.get(BINGX + path, params=params or {}, timeout=timeout)
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        if not isinstance(j, dict) or j.get("code") not in (0, None):
+            return None
+        return j.get("data")
     except Exception:
-        pass
+        return None
+
+
+def bingx_premium() -> dict:
+    """{SYM: (mark, lastFundingRate)} одним запросом по всем perpetual."""
+    out = {}
+    for x in _bx_get("/openApi/swap/v2/quote/premiumIndex") or []:
+        try:
+            out[x["symbol"].replace("-", "")] = (
+                float(x.get("markPrice") or 0), float(x.get("lastFundingRate") or 0))
+        except Exception:
+            pass
+    return out
+
+
+def bingx_liquid_pairs(min_qv: float = 3_000_000.0, top: int = 400) -> list[str]:
+    """Пары BingX по 24ч quoteVolume (ticker одним запросом) + BTC/ETH."""
+    rows = []
+    for x in _bx_get("/openApi/swap/v2/quote/ticker") or []:
+        try:
+            s = x["symbol"]
+            qv = float(x.get("quoteVolume") or 0)
+            if s.endswith("-USDT") and qv >= min_qv:
+                rows.append((qv, s.replace("-", "")))
+        except Exception:
+            pass
+    rows.sort(reverse=True)
+    out = [s for _, s in rows[:top]]
+    for s in ("ETHUSDT", "BTCUSDT"):
+        if s not in out:
+            out.insert(0, s)
+    return out
+
+
+def bingx_oi_usd(sym: str):
+    """OI в USDT (BingX отдаёт quote-номинал: BTC 908M при 10.9k BTC)."""
+    d = _bx_get("/openApi/swap/v2/quote/openInterest",
+                {"symbol": sym[:-4] + "-USDT"}, timeout=10)
+    try:
+        v = float((d or {}).get("openInterest") or 0)
+        return v if v > 0 else None
+    except Exception:
+        return None
+
+
+def _oi_snapshot_sync(pairs: list[str], workers: int = 4) -> int:
+    """Часовой снапшот OI+funding с BingX (09.10: fapi мёртв с 01.08).
+    oi_hourly {_id 'SYM:hour_ts', symbol, at, oi (монет), oi_usd, fr, mark, src}."""
+    from concurrent.futures import ThreadPoolExecutor
+    from database import _get_db
+    from pymongo import UpdateOne
+    db = _get_db()
+    pm = bingx_premium()
     hour_ts = int(time.time() // 3600 * 3600)
     at = datetime.fromtimestamp(hour_ts, tz=timezone.utc).replace(tzinfo=None)
-    wrote = 0
-    for sym in pairs:
-        try:
-            from fapi_budget import allow
-            if not allow(tag="oi"):
-                time.sleep(2)
-                continue
-        except Exception:
-            pass
-        try:
-            r = requests.get("https://fapi.binance.com/fapi/v1/openInterest",
-                             params={"symbol": sym}, timeout=10)
-            if r.status_code != 200:
-                time.sleep(0.45)
-                continue
-            oi = float((r.json() or {}).get("openInterest") or 0)
-            if oi > 0:
-                px = marks.get(sym) or 0
-                db.oi_hourly.update_one(
-                    {"_id": f"{sym}:{hour_ts}"},
-                    {"$set": {"symbol": sym, "at": at, "oi": oi,
-                              "oi_usd": round(oi * px, 0) if px else None}},
-                    upsert=True)
-                wrote += 1
-        except Exception:
-            pass
-        time.sleep(0.45)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        ois = dict(zip(pairs, ex.map(bingx_oi_usd, pairs)))
+    ops = []
+    for sym, usd in ois.items():
+        if not usd:
+            continue
+        mark, fr = pm.get(sym, (0.0, None))
+        ops.append(UpdateOne(
+            {"_id": f"{sym}:{hour_ts}"},
+            {"$set": {"symbol": sym, "at": at,
+                      "oi": round(usd / mark, 4) if mark else None,
+                      "oi_usd": round(usd, 0), "fr": fr,
+                      "mark": mark or None, "src": "bingx"}},
+            upsert=True))
+    if ops:
+        db.oi_hourly.bulk_write(ops, ordered=False)
     _hb("oi_poll")
-    return wrote
+    _wr_status(oi_last=at.isoformat(), oi_n=len(ops), oi_pairs=len(pairs), oi_src="bingx")
+    return len(ops)
+
+
+def _pulse_sync(top: int = 60) -> dict:
+    """15-мин агрегат (deriv_pulse): BTC/ETH OI usd, Σ OI top-N, медиана
+    funding, доля отрицательных funding — таймлайн для каскадов."""
+    from database import _get_db
+    import statistics
+    db = _get_db()
+    pm = bingx_premium()
+    pairs = bingx_liquid_pairs(top=top)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        ois = dict(zip(pairs, ex.map(bingx_oi_usd, pairs)))
+    frs = [fr for (_, fr) in pm.values() if fr is not None]
+    ts15 = int(time.time() // 900 * 900)
+    at = datetime.fromtimestamp(ts15, tz=timezone.utc).replace(tzinfo=None)
+    doc = {"at": at, "btc_oi_usd": ois.get("BTCUSDT"), "eth_oi_usd": ois.get("ETHUSDT"),
+           "top_oi_usd": round(sum(v for v in ois.values() if v), 0),
+           "top_n": sum(1 for v in ois.values() if v),
+           "fr_med": round(statistics.median(frs), 6) if frs else None,
+           "fr_neg_share": round(sum(1 for f in frs if f < 0) / len(frs), 3) if frs else None,
+           "fr_n": len(frs), "src": "bingx"}
+    db.deriv_pulse.update_one({"_id": ts15}, {"$set": doc}, upsert=True)
+    _hb("deriv_pulse")
+    _wr_status(pulse_last=at.isoformat(), pulse_top_n=doc["top_n"])
+    return doc
 
 
 async def oi_poll_loop():
-    """Часовой снапшот OI по ликвидным парам."""
+    """Часовой снапшот OI+funding (BingX) по ликвидным парам, в :02."""
     await asyncio.sleep(240)          # не мешаем стартовым прогревам
     while True:
         try:
-            from futures_data import get_liquid_pairs
-            pairs = [p.replace("/", "") for p in
-                     get_liquid_pairs(min_volume_usd=5_000_000)[:300]]
+            pairs = await asyncio.to_thread(bingx_liquid_pairs)
             if pairs:
                 n = await asyncio.to_thread(_oi_snapshot_sync, pairs)
-                logger.info(f"[oi] snapshot: {n} пар")
+                logger.info(f"[oi] bingx snapshot: {n}/{len(pairs)} пар")
         except Exception:
             logger.debug("[oi] poll fail", exc_info=True)
-        await asyncio.sleep(3600)
+        # до следующего часа + 2 мин
+        wait = 3600 - (time.time() % 3600) + 120
+        await asyncio.sleep(max(300, min(wait, 3900)))
+
+
+async def deriv_pulse_loop():
+    """15-мин агрегат деривативов (BingX) → deriv_pulse."""
+    await asyncio.sleep(180)
+    while True:
+        try:
+            d = await asyncio.to_thread(_pulse_sync)
+            logger.debug(f"[deriv-pulse] {d}")
+        except Exception:
+            logger.debug("[deriv-pulse] fail", exc_info=True)
+        wait = 900 - (time.time() % 900) + 20
+        await asyncio.sleep(max(60, min(wait, 960)))

@@ -3065,7 +3065,12 @@ async def api_health():
         # данных не значит сбой; 03.08 «нет данных» был ложный красный)
         add("liq_ws", "🩸 Ликвидации (WebSocket)", age_min(hb.get("liq_ws")), 10, 30)
         oi_ = db.oi_hourly.find_one(sort=[("at", -1)]) or {}
-        add("oi_poll", "📈 OI-снапшоты (fapi)", age_min(oi_.get("at")), 90, 240)
+        add("oi_poll", "📈 OI-снапшоты (BingX)", age_min(oi_.get("at")), 90, 240)
+        try:
+            _pl = db.deriv_pulse.find_one(sort=[("at", -1)]) or {}
+            add("deriv_pulse", "📡 Пульс деривативов (BingX, 15м)", age_min(_pl.get("at")), 40, 120)
+        except Exception:
+            pass
         add("alarms", "⏰ Будильники", age_min(hb.get("alarms")), 10, 30)
         # 🌉 гэп-сканер: событие раз в неделю, но пульс каждые <=30 мин
         add("gap_scan", "🌉 Гэп-сканер FOREX (вс)", age_min(hb.get("gap_scan")), 60, 180)
