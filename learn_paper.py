@@ -50,13 +50,20 @@ def _funding_cost(sym, t_open, t_close, direction):
         return None
 
 
+SCHOOL4H_MIN_N = 20    # 12.10: порог 4ч-окна школы (было 30)
+
+
 def school_release_ok(s4):
-    """29.09: школа за 4ч здорова (закрытые одобренные лонги n≥30, WR≥55,
+    """29.09: школа за 4ч здорова (закрытые одобренные лонги n≥20, WR≥55,
     avg>+1) → стопы лайва по WR20 и по школе за сутки снимаются.
+    12.10 (бэктест рычагов, 20.09→12.10): порог n 30→20 и без условия по
+    суткам — текущие правила −152 vs оба рычага −34, лучше в обеих
+    половинах; стоп держал лайв весь отскок 09.10 (сутки в минусе от
+    обвала 08.10, потом выходные с тонким 4ч-окном n<30).
     Без этого лайв запирался навсегда: WR20 считается по последним 20
     live-закрытиям без окна времени, а при кап 0 новых закрытий нет
     (28.09: 17 SL из 20 → даже 3 TP по открытым дали бы 15% < 30)."""
-    return bool(s4 and (s4.get("n") or 0) >= 30
+    return bool(s4 and (s4.get("n") or 0) >= SCHOOL4H_MIN_N
                 and (s4.get("wr") or 0) >= 55 and (s4.get("avg") or 0) > 1)
 
 
@@ -158,7 +165,7 @@ def live_throttle(db):
              "state": {"$in": ["TP", "SL", "TIMEOUT"]},
              "closed_at": {"$gte": utcnow() - _td4(hours=4)}}, {"r": 1})]
         _rs4 = [r for r in _rs4 if r is not None]
-        if len(_rs4) >= 30:
+        if len(_rs4) >= SCHOOL4H_MIN_N:
             school4h = {"n": len(_rs4),
                         "wr": round(sum(1 for r in _rs4 if r > 0) / len(_rs4) * 100),
                         "avg": round(sum(_rs4) / len(_rs4), 2)}
@@ -170,30 +177,29 @@ def live_throttle(db):
     # 29.09 (юзер: «делай по школе, чтобы лайв сам вышел из стопа»): школа
     # решает — здоровое 4ч-окно снимает стопы WR20 и school24 (см.
     # school_release_ok). Стоп по школе за 4ч с этим не пересекается.
-    # 03.10 (юзер: «делай оба»): снятие требует И сутки не в минусе —
-    # 4ч-окно перекрывало суточный стоп → входы после горячего окна перед
-    # обвалом (30.09, 02.10, 03.10: все три снятия при суточном стопе,
-    # −16..−21 за день каждое)
-    _s24_stop = bool(school24 and (school24["wr"] < 45 or school24["avg"] < 0))
+    # 03.10 (юзер: «делай оба»): снятие требовало И сутки не в минусе.
+    # 12.10 (юзер «делай D» по бэктесту bt_release_levers): условие по
+    # суткам СНЯТО и порог 4ч-окна 30→20 — с ним стоп держал лайв весь
+    # отскок 09.10 (сутки в минусе от обвала 08.10, потом тонкое окно
+    # выходных) и снимался в дни обвалов; 20.09→12.10 текущие −152 vs
+    # оба рычага −34 (без тормоза вообще −42), лучше в обеих половинах.
+    # Суточный стоп сам (cap=0 выше) остаётся — здоровое 4ч-окно его
+    # перекрывает, как и WR20.
     released = False
-    _rel_ok = school_release_ok(school4h) and not _s24_stop
+    _rel_ok = school_release_ok(school4h)
     # 04.10 гистерезис: снятый стоп держится, пока 4ч-окно не стало ПЛОХИМ
-    # (n≥30 и не здорово) или сутки не ушли в минус. Тонкое окно (n<30 →
-    # school4h None) — не повод вернуть стоп: 04.10 09:23/09:29 два
-    # противоположных алерта за 6 минут при n 29↔32
+    # (n≥20 и не здорово). Тонкое окно (n<20 → school4h None) — не повод
+    # вернуть стоп: 04.10 09:23/09:29 два противоположных алерта за 6 минут
+    # при n 29↔32 (12.10: сутки из условия убраны)
     try:
         _prev_rel = bool((db.system_config.find_one(
             {"_id": "live_throttle"}, {"released": 1}) or {}).get("released"))
     except Exception:
         _prev_rel = False
     _hyst = False
-    if (not _rel_ok and _prev_rel and cap == 0 and not _s24_stop
-            and school4h is None):
+    if not _rel_ok and _prev_rel and cap == 0 and school4h is None:
         _rel_ok = True
         _hyst = True
-    if cap == 0 and school_release_ok(school4h) and _s24_stop:
-        reasons.append(f"школа за 4ч здорова (WR {school4h['wr']}% {school4h['avg']:+.2f}), "
-                       f"но сутки в минусе — стоп держим")
     if cap == 0 and _rel_ok:
         cap = LIVE_DAY_CAP
         hard_stop = False
@@ -201,7 +207,7 @@ def live_throttle(db):
         level = (2 if (breadth is not None and breadth > 60)
                  else 1 if (breadth is not None and breadth > 50) else 0)
         if _hyst:
-            reasons.append("4ч-окно тонкое (n<30), сутки не в минусе — "
+            reasons.append(f"4ч-окно тонкое (n<{SCHOOL4H_MIN_N}) — "
                            f"снятый стоп держим, кап {LIVE_DAY_CAP}")
         else:
             reasons.append(f"школа за 4ч здорова: WR {school4h['wr']}% "
