@@ -238,6 +238,37 @@ _REGIME_CACHE = {"t": 0.0, "v": (None, None)}
 DO_LABEL = {"dn": "OI ↓24ч", "flat": "OI ≈24ч", "up": "OI ↑24ч"}
 FR_LABEL = {"neg": "фандинг −", "zero": "фандинг ≈0", "pos": "фандинг +"}
 _DERIV_CACHE = {"t": 0.0, "v": {}}
+DO_MAX_RATIO = 3.0   # 17.10: ΔOI с отношением вне [1/3, 3] = глитч источника → None
+
+
+def _oi_ratio_pct(a, b):
+    """(a/b − 1)·100 или None, если отношение вне [1/DO_MAX_RATIO, DO_MAX_RATIO]
+    (15.10 12-14 UTC BingX отдавал OI ×0.03/×11 по ряду монет)."""
+    if not a or not b or a <= 0 or b <= 0:
+        return None
+    r = a / b
+    if r > DO_MAX_RATIO or r < 1 / DO_MAX_RATIO:
+        return None
+    return round((r - 1) * 100, 2)
+
+
+def _oi_despike(lst):
+    """lst: sorted [(t, oi, fr)] → без изолированных выбросов: точка, чей OI
+    отличается в DO_MAX_RATIO+ раз от медианы до 2 соседей с каждой стороны."""
+    n = len(lst)
+    if n < 3:
+        return lst
+    ois = [x[1] for x in lst]
+    keep = []
+    for i in range(n):
+        nb = [ois[j] for j in range(max(0, i - 2), min(n, i + 3)) if j != i and ois[j] > 0]
+        if nb and ois[i] > 0:
+            med = float(np.median(nb))
+            r = ois[i] / med
+            if r > DO_MAX_RATIO or r < 1 / DO_MAX_RATIO:
+                continue
+        keep.append(lst[i])
+    return keep
 
 
 def do_bin(pct):
@@ -268,6 +299,7 @@ def deriv_series(db, pairs, since_ms):
     out = {}
     for p, lst in acc.items():
         lst.sort()
+        lst = _oi_despike(lst)
         out[p] = (np.array([a for a, _, _ in lst], dtype=np.int64),
                   np.array([b for _, b, _ in lst], dtype=float),
                   [c for _, _, c in lst])
@@ -288,7 +320,7 @@ def deriv_at(series, pair, ts_ms, tol_ms=80 * 60_000):
         j = int(np.searchsorted(t, t[i] - h * 3_600_000, side="right")) - 1
         if j < 0 or abs((t[i] - h * 3_600_000) - t[j]) > tol_ms or oi[j] <= 0:
             return None
-        return round((oi[i] / oi[j] - 1) * 100, 2)
+        return _oi_ratio_pct(float(oi[i]), float(oi[j]))
     return back(24), back(4), fr[i]
 
 
@@ -318,8 +350,8 @@ def deriv_now_map():
         for s, d in latest.items():
             o = d.get("oi") or 0
             a24, a4 = ago24.get(s), ago4.get(s)
-            out[s] = {"doi24": round((o / a24["oi"] - 1) * 100, 2) if (a24 and a24.get("oi")) else None,
-                      "doi4": round((o / a4["oi"] - 1) * 100, 2) if (a4 and a4.get("oi")) else None,
+            out[s] = {"doi24": _oi_ratio_pct(o, a24.get("oi")) if a24 else None,
+                      "doi4": _oi_ratio_pct(o, a4.get("oi")) if a4 else None,
                       "fr": d.get("fr"), "at": d["at"].isoformat()}
     except Exception:
         logger.debug("[academy] deriv_now_map fail", exc_info=True)
