@@ -3071,6 +3071,16 @@ async def api_health():
             add("deriv_pulse", "📡 Пульс деривативов (BingX, 15м)", age_min(_pl.get("at")), 40, 120)
         except Exception:
             pass
+        # 20.10: второй источник OI (Binance futures); fapi с Railway может
+        # снова уйти в 451 → жёлтый через 3ч, красный только через неделю
+        try:
+            from datetime import datetime as _dtbn
+            _bs = db.system.find_one({"_id": "liq_ws_status"}, {"oi_bn_last": 1}) or {}
+            _bl = _bs.get("oi_bn_last")
+            add("oi_poll_bn", "📈 OI-снапшоты (Binance, 2-й источник)",
+                age_min(_dtbn.fromisoformat(_bl)) if _bl else None, 180, 10080)
+        except Exception:
+            pass
         add("alarms", "⏰ Будильники", age_min(hb.get("alarms")), 10, 30)
         # 🌉 гэп-сканер: событие раз в неделю, но пульс каждые <=30 мин
         add("gap_scan", "🌉 Гэп-сканер FOREX (вс)", age_min(hb.get("gap_scan")), 60, 180)

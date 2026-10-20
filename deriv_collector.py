@@ -342,9 +342,128 @@ def _oi_snapshot_sync(pairs: list[str], workers: int = 4) -> int:
     return len(ops)
 
 
+
+
+# ───────── 20.10: второй источник OI — Binance futures (fapi) ─────────
+# fapi с Railway отвечает с ~16.10 (до этого 418/451 два месяца); локально
+# 451 всегда. Пишем РЯДОМ с BingX: отдельный _id 'SYM:hour_ts:bn' и
+# src 'binance' — модель (deriv_series) читает только 'bingx'. Fail-open:
+# любой не-200 → None, снапшот 0 строк, статус oi_bn_n=0.
+FAPI = "https://fapi.binance.com"
+
+
+def _bn_get(path: str, params: dict | None = None, timeout: int = 15):
+    import requests
+    try:
+        r = requests.get(FAPI + path, params=params or {}, timeout=timeout)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception:
+        return None
+
+
+def bn_premium() -> dict:
+    """{SYM: (mark, lastFundingRate)} одним запросом (premiumIndex)."""
+    out = {}
+    for x in _bn_get("/fapi/v1/premiumIndex") or []:
+        try:
+            s = x["symbol"]
+            if s.endswith("USDT") and "_" not in s:
+                out[s] = (float(x.get("markPrice") or 0), float(x.get("lastFundingRate") or 0))
+        except Exception:
+            pass
+    return out
+
+
+def bn_liquid_pairs(min_qv: float = 3_000_000.0, top: int = 400) -> list[str]:
+    """USDT-perpetual Binance по 24ч quoteVolume + BTC/ETH; [] если fapi молчит."""
+    rows = []
+    for x in _bn_get("/fapi/v1/ticker/24hr") or []:
+        try:
+            s = x["symbol"]
+            qv = float(x.get("quoteVolume") or 0)
+            if s.endswith("USDT") and "_" not in s and qv >= min_qv:
+                rows.append((qv, s))
+        except Exception:
+            pass
+    if not rows:
+        return []
+    rows.sort(reverse=True)
+    out = [s for _, s in rows[:top]]
+    for s in ("ETHUSDT", "BTCUSDT"):
+        if s not in out:
+            out.insert(0, s)
+    return out
+
+
+def bn_oi(sym: str):
+    """OI в монетах (fapi openInterest)."""
+    d = _bn_get("/fapi/v1/openInterest", {"symbol": sym}, timeout=10)
+    try:
+        v = float((d or {}).get("openInterest") or 0)
+        return v if v > 0 else None
+    except Exception:
+        return None
+
+
+def _oi_snapshot_bn_sync(pairs: list[str], workers: int = 4) -> int:
+    """Часовой снапшот OI+funding с Binance futures → oi_hourly
+    {_id 'SYM:hour_ts:bn', symbol, at, oi (монет), oi_usd (oi·mark), fr,
+    mark, src:'binance'}."""
+    from concurrent.futures import ThreadPoolExecutor
+    from database import _get_db
+    from pymongo import UpdateOne
+    db = _get_db()
+    pm = bn_premium()
+    if not pm:
+        _wr_status(oi_bn_n=0)
+        return 0
+    hour_ts = int(time.time() // 3600 * 3600)
+    at = datetime.fromtimestamp(hour_ts, tz=timezone.utc).replace(tzinfo=None)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        ois = dict(zip(pairs, ex.map(bn_oi, pairs)))
+    ops = []
+    for sym, coins in ois.items():
+        if not coins:
+            continue
+        mark, fr = pm.get(sym, (0.0, None))
+        ops.append(UpdateOne(
+            {"_id": f"{sym}:{hour_ts}:bn"},
+            {"$set": {"symbol": sym, "at": at, "oi": round(coins, 4),
+                      "oi_usd": round(coins * mark, 0) if mark else None,
+                      "fr": fr, "mark": mark or None, "src": "binance"}},
+            upsert=True))
+    if ops:
+        db.oi_hourly.bulk_write(ops, ordered=False)
+    _wr_status(oi_bn_last=at.isoformat(), oi_bn_n=len(ops), oi_bn_pairs=len(pairs))
+    return len(ops)
+
+
+def _pulse_bn(top: int = 60) -> dict:
+    """Binance-часть 15-мин пульса: поля *_bn ({} если fapi молчит)."""
+    import statistics
+    from concurrent.futures import ThreadPoolExecutor
+    pm = bn_premium()
+    if not pm:
+        return {}
+    pairs = bn_liquid_pairs(top=top)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        ois = dict(zip(pairs, ex.map(bn_oi, pairs)))
+    usd = {s: v * pm[s][0] for s, v in ois.items() if v and pm.get(s, (0, 0))[0]}
+    frs = [fr for (_, fr) in pm.values() if fr is not None]
+    return {"btc_oi_usd_bn": round(usd["BTCUSDT"], 0) if usd.get("BTCUSDT") else None,
+            "eth_oi_usd_bn": round(usd["ETHUSDT"], 0) if usd.get("ETHUSDT") else None,
+            "top_oi_usd_bn": round(sum(usd.values()), 0), "top_n_bn": len(usd),
+            "fr_med_bn": round(statistics.median(frs), 6) if frs else None,
+            "fr_neg_share_bn": round(sum(1 for f in frs if f < 0) / len(frs), 3) if frs else None,
+            "fr_n_bn": len(frs)}
+
+
 def _pulse_sync(top: int = 60) -> dict:
     """15-мин агрегат (deriv_pulse): BTC/ETH OI usd, Σ OI top-N, медиана
-    funding, доля отрицательных funding — таймлайн для каскадов."""
+    funding, доля отрицательных funding — таймлайн для каскадов.
+    20.10: + поля *_bn с Binance futures (второй источник, fail-open)."""
     from database import _get_db
     import statistics
     db = _get_db()
@@ -362,9 +481,14 @@ def _pulse_sync(top: int = 60) -> dict:
            "fr_med": round(statistics.median(frs), 6) if frs else None,
            "fr_neg_share": round(sum(1 for f in frs if f < 0) / len(frs), 3) if frs else None,
            "fr_n": len(frs), "src": "bingx"}
+    try:
+        doc.update(_pulse_bn(top=top))
+    except Exception:
+        logger.debug("[deriv-pulse] binance part fail", exc_info=True)
     db.deriv_pulse.update_one({"_id": ts15}, {"$set": doc}, upsert=True)
     _hb("deriv_pulse")
-    _wr_status(pulse_last=at.isoformat(), pulse_top_n=doc["top_n"])
+    _wr_status(pulse_last=at.isoformat(), pulse_top_n=doc["top_n"],
+               pulse_bn_n=doc.get("top_n_bn"))
     return doc
 
 
@@ -379,6 +503,14 @@ async def oi_poll_loop():
                 logger.info(f"[oi] bingx snapshot: {n}/{len(pairs)} пар")
         except Exception:
             logger.debug("[oi] poll fail", exc_info=True)
+        # 20.10: второй источник — Binance futures (свой try: BingX не страдает)
+        try:
+            bn_pairs = await asyncio.to_thread(bn_liquid_pairs)
+            if bn_pairs:
+                n2 = await asyncio.to_thread(_oi_snapshot_bn_sync, bn_pairs)
+                logger.info(f"[oi] binance snapshot: {n2}/{len(bn_pairs)} пар")
+        except Exception:
+            logger.debug("[oi] binance poll fail", exc_info=True)
         # до следующего часа + 2 мин
         wait = 3600 - (time.time() % 3600) + 120
         await asyncio.sleep(max(300, min(wait, 3900)))
