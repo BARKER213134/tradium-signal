@@ -121,18 +121,23 @@ def live_throttle(db):
     cap = LIVE_DAY_CAP
     if hard_stop:
         cap = 0
-    # ₿ режим BTC (20.09): шорты в live-срезе только в коррекции −8..−15%
-    # (бэктест 20.05→08.07: шорты WR 65 +3.97 в этой зоне)
+    # ₿ режим BTC (20.09): шорты в live-срезе были только в коррекции
+    # −8..−15% (бэктест 20.05→08.07: WR 65 +3.97 — оказался in-sample).
+    # 02.11 (юзер «снимай corr-шорты», закон 16): СНЯТО — walk-forward
+    # 215д: ×2-шорты при corr n334 WR 12 −3.73, обе половины в минусе,
+    # лайв-сим шортов −81 в обоих эпизодах (май-июль, октябрь); вживую
+    # 30-31.10 — 14 SL из 16. Режим по дневному закрытию стреляет ПОСЛЕ
+    # падения: первый шорт 30.10 00:06 за 2ч до низа. Механизм cap_short
+    # оставлен (всегда 0), чтобы не трогать вход/тень/API.
     dd, rg = None, None
     try:
         import learn_engine as _le
         dd, rg = _le.btc_regime_now()
         if rg:
-            reasons.append(f"{_le.REGIME_LABEL[rg]} ({dd:+.1f}%)"
-                           + (" — шорты в live-срезе ОТКРЫТЫ" if rg == "corr" else ""))
+            reasons.append(f"{_le.REGIME_LABEL[rg]} ({dd:+.1f}%)")
     except Exception:
         pass
-    cap_short = LIVE_DAY_CAP if rg == "corr" else 0
+    cap_short = 0  # 02.11: шорты в live-срезе сняты (закон 16)
     # 🧪 кап тени: уровень 0 → 10, 1-2 → 5; ноль — только если ШКОЛА за
     # сутки в минусе по одобренным лонгам (широта — не приговор: 18-21.09
     # при широте 90%+ школа давала лонгам WR 55 +3.2)
@@ -227,9 +232,7 @@ def live_throttle(db):
                 import learn_digest
                 learn_digest.send(
                     f"₿ <b>Режим BTC сменился: {prev.get('regime')} → {rg}</b>\n"
-                    f"{_le.REGIME_LABEL.get(rg, rg)} ({dd:+.1f}% от 30д-макс)"
-                    + ("\nШорты ×2 допущены в live-срез" if rg == "corr"
-                       else "\nШорты в live-срезе закрыты"))
+                    f"{_le.REGIME_LABEL.get(rg, rg)} ({dd:+.1f}% от 30д-макс)")
             except Exception:
                 logger.debug("[live] regime tg fail", exc_info=True)
         # 29.09: алерт и при смене кап 0 ↔ >0 без смены уровня (снятие
@@ -427,7 +430,8 @@ def _open_new(db, model, now):
                   else "heat" if c["dir"] == "SHORT" and ms is not None
                   and ms >= 27 else None)
         # 💎 live-tier: LONG × ×2 × BingX × капы дня/одновременных;
-        # SHORT — только при ₿ коррекции (−8..−15%, cap_short>0; 20.09)
+        # SHORT — не берём: cap_short=0 всегда (02.11, закон 16; до того
+        # 20.09→02.11 — только при ₿ коррекции −8..−15%)
         live = False
         _is_long = c["dir"] == "LONG"
         _short_ok = c["dir"] == "SHORT" and (thr.get("cap_short") or 0) > 0
