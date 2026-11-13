@@ -7144,6 +7144,12 @@ async function lvLoad() {
   else if (thr.level === 1) { te.textContent = '🟡 КАП ' + thr.cap; te.style.color = '#ffd23e'; tb.style.borderColor = 'rgba(255,210,62,0.55)'; }
   else { te.textContent = '🟢 НОРМА'; te.style.color = '#00e5a0'; tb.style.borderColor = 'var(--border)'; }
   tb.title = '🛑 режимный тормоз: ' + (thr.reason || 'норма') + (thr.breadth != null ? ' · широта ' + thr.breadth + '%' : '') + (thr.wr20 != null ? ' · WR20 ' + thr.wr20 + '%' : '') + (thr.regime ? '\n₿ режим: ' + thr.regime + ' (' + (thr.btc_dd > 0 ? '+' : '') + thr.btc_dd + '% от 30д-макс) · шорты в live: ' + (thr.cap_short ? 'ОТКРЫТЫ, кап ' + thr.cap_short : 'закрыты (сняты 02.11: walk-forward 215д — corr-шорты в минусе в обоих эпизодах)') : '');
+  // 🌊 ширина структуры рынка (13.11): доля монет ▲ минус доля ▼; ниже порога шорты не шлём
+  const mk = d.market || null;
+  if (mk && mk.mb != null) {
+    tb.title += '\n🌊 ширина структуры рынка: ' + (mk.mb > 0 ? '+' : '') + mk.mb + ' (доля монет в канале вверх минус доля в канале вниз)' + (mk.shorts_blocked ? ' — ниже ' + mk.thr + ': ШОРТЫ НЕ ШЛЁМ (журнал, Telegram, книга)' : '');
+    te.textContent += ' · 🌊' + (mk.mb > 0 ? '+' : '') + mk.mb + (mk.shorts_blocked ? ' 🚫шорт' : '');
+  }
   if (thr.regime) te.textContent += (thr.regime === 'corr' ? ' · ₿📉 шорты' : thr.regime === 'top' ? ' · ₿▲' : ' · ₿' + (thr.btc_dd > 0 ? '+' : '') + Math.round(thr.btc_dd) + '%');
   // 💵 исполнитель Академии (03.10): статус из /api/live.exec — видимая метка
   // только когда ВКЛ; полный статус в тултипе карточки тормоза

@@ -9602,7 +9602,17 @@ async def api_live():
             _book = _lbk.stats(db)
         except Exception:
             _book = None
+        # 🌊 ширина структуры рынка и запрет шортов (13.11)
+        try:
+            import structure_engine as _sen2
+            from config import MB_SHORT_BLOCK as _mbt
+            _mb = _sen2.market_breadth(db)
+            _mbi = {"mb": _mb, "thr": _mbt,
+                    "shorts_blocked": bool(_mb is not None and _mb < _mbt)}
+        except Exception:
+            _mbi = None
         return {"ok": True, "stats": st.get("live"), "exec": _exec, "book": _book,
+                "market": _mbi,
                 "stats_s": st.get("live_s"), "open_s_n": st.get("live_s_open"),
                 "today_s_n": st.get("live_s_today"), "open_s": shorts_open,
                 "throttle": {k: thr.get(k) for k in
@@ -9815,6 +9825,32 @@ async def api_academy():
                 "px": d.get("entry"),
                 "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
                 "sv": d.get("svetofor")})
+        # 🆕 13.11: RSI-кросс 12h и Entry Checker «go» — источники школы
+        try:
+            for d in db.rsi_sma_cross_signals.find(
+                    {"detected_at": {"$gte": since},
+                     "direction": {"$in": ["LONG", "SHORT"]}},
+                    {"pair": 1, "symbol": 1, "direction": 1, "detected_at": 1,
+                     "entry": 1}).sort("detected_at", -1).limit(100):
+                feed.append({
+                    "key": "rx_" + str(d["_id"]), "_dt": d["detected_at"],
+                    "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
+                    "src": "rsi_cross_12h", "dir": d["direction"],
+                    "at": d["detected_at"].isoformat(), "px": d.get("entry"),
+                    "val": None, "ms": None, "sv": None})
+            for d in db.verified_signals.find(
+                    {"created_at": {"$gte": since}, "verdict": "go",
+                     "direction": {"$in": ["LONG", "SHORT"]}},
+                    {"pair": 1, "pair_norm": 1, "direction": 1, "created_at": 1,
+                     "entry": 1, "svetofor": 1}).sort("created_at", -1).limit(100):
+                feed.append({
+                    "key": "vf_" + str(d["_id"]), "_dt": d["created_at"],
+                    "sym": d.get("pair_norm") or (d.get("pair") or "").replace("/", ""),
+                    "src": "verified_go", "dir": d["direction"],
+                    "at": d["created_at"].isoformat(), "px": d.get("entry"),
+                    "val": None, "ms": None, "sv": d.get("svetofor")})
+        except Exception:
+            pass
         feed.sort(key=lambda x: x["at"], reverse=True)
         feed = feed[:400]
         _rg_now = le.btc_regime_now()

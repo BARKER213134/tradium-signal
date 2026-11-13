@@ -222,3 +222,42 @@ def load_map(db, tmrows=None):
     except Exception:
         pass
     return out
+
+
+# ───────────── 🌊 ширина структуры рынка (13.11, аудит сигналов) ─────────────
+# Доля монет в восходящем канале минус доля в нисходящем по карте всех монет.
+# Универсальный вывод аудита: шорты при ширине ниже −0.5 в минусе у 15
+# источников в обеих половинах периода → такие шорты не шлём (config).
+_MB = {"t": 0.0, "v": None}
+
+
+def market_breadth(db=None, ttl=300):
+    """(U − D) / N по свежим записям карты; None, если монет меньше 100."""
+    import time
+    if time.time() - _MB["t"] < ttl:
+        return _MB["v"]
+    v = None
+    try:
+        if db is None:
+            from database import _get_db
+            db = _get_db()
+        m = load_map(db)
+        n = len(m)
+        if n >= 100:
+            u = sum(1 for x in m.values() if x.get("ch") == "U")
+            d = sum(1 for x in m.values() if x.get("ch") == "D")
+            v = round((u - d) / n, 3)
+    except Exception:
+        v = None
+    _MB["t"], _MB["v"] = time.time(), v
+    return v
+
+
+def shorts_blocked(db=None):
+    """True — рынок глубоко внизу, шорты не шлём (config.MB_SHORT_BLOCK)."""
+    try:
+        from config import MB_SHORT_BLOCK
+        mb = market_breadth(db)
+        return mb is not None and mb < MB_SHORT_BLOCK
+    except Exception:
+        return False

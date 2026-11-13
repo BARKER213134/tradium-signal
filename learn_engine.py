@@ -635,6 +635,31 @@ def _load_signals(days):
                          "src": d["strategy"],
                          "sv": d.get("svetofor"), "sc": d.get("svetofor_score"),
                          "ts": int(d["created_at"].timestamp() * 1000)})
+    # 🆕 13.11 (аудит платформы): два канала без учёта исходов оказались в
+    # числе лучших по канону — заводим в школу как источники
+    #   rsi_cross_12h: LONG +2.15, SHORT +1.81, плюс в обеих половинах;
+    #   verified_go (Entry Checker, вердикт go): LONG +1.70, SHORT +2.76.
+    try:
+        for d in db.rsi_sma_cross_signals.find(
+                {"detected_at": {"$gte": since},
+                 "direction": {"$in": ["LONG", "SHORT"]}},
+                {"pair": 1, "direction": 1, "detected_at": 1}):
+            if d.get("pair"):
+                sigs.append({"pair": d["pair"], "dir": d["direction"],
+                             "src": "rsi_cross_12h", "sv": None, "sc": None,
+                             "ts": int(d["detected_at"].timestamp() * 1000)})
+        for d in db.verified_signals.find(
+                {"created_at": {"$gte": since}, "verdict": "go",
+                 "direction": {"$in": ["LONG", "SHORT"]}},
+                {"pair": 1, "direction": 1, "created_at": 1,
+                 "svetofor": 1, "svetofor_score": 1}):
+            if d.get("pair"):
+                sigs.append({"pair": d["pair"], "dir": d["direction"],
+                             "src": "verified_go",
+                             "sv": d.get("svetofor"), "sc": d.get("svetofor_score"),
+                             "ts": int(d["created_at"].timestamp() * 1000)})
+    except Exception:
+        logger.debug("[academy] extra sources fail", exc_info=True)
     return sigs
 
 

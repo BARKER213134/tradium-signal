@@ -807,6 +807,14 @@ def maybe_auto_entry_alarm(pair: str, window_h: float = 3) -> int:
     в 12ч; мёртвые монеты пропускаются. Возвращает число поставленных.
     window_h>3 используют бэкфиллы (18.08: «поставь на сигналы за
     сегодня»)."""
+    # 🔕 13.11: авто-будильники выключены (config.AUTO_ENTRY_ALARMS) —
+    # аудит: 9249 сделок, WR 37, −0.11%, минус каждый месяц
+    try:
+        from config import AUTO_ENTRY_ALARMS
+        if not AUTO_ENTRY_ALARMS:
+            return 0
+    except Exception:
+        pass
     try:
         from database import _get_db, utcnow
         from datetime import timedelta

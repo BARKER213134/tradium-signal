@@ -516,12 +516,32 @@ async def run_detectors_on_flip(pair: str, direction: str, entry: float,
 
     # ✂ 13.08: выключенные стратегии режем ДО сохранения и ДО TG-алертов
     # (раньше гейт стоял только на insert — alert мог уйти без дока)
+    # 📏 13.11: трендовым источникам — канонный выход TP+10/SL−5/96ч (до
+    # сохранения и до TG, чтобы план в алерте совпадал с трекером)
+    try:
+        from config import canon_plan
+        for _s in triggered:
+            canon_plan(_s)
+    except Exception:
+        pass
     _acad = []
     try:
         from config import DISABLED_STRATEGIES
         _acad = [s for s in triggered if s.get('strategy') in DISABLED_STRATEGIES]
         triggered = [s for s in triggered
                      if s.get('strategy') not in DISABLED_STRATEGIES]
+    except Exception:
+        pass
+    # 🚫 13.11: шорты при рынке глубоко внизу (ширина структуры < −0.5) —
+    # только в Академию, без журнала и TG
+    try:
+        import structure_engine as _sen
+        if await asyncio.to_thread(_sen.shorts_blocked):
+            for _s in triggered:
+                if _s.get('direction') == 'SHORT':
+                    _s['mb_block'] = True
+            _acad += [s for s in triggered if s.get('direction') == 'SHORT']
+            triggered = [s for s in triggered if s.get('direction') != 'SHORT']
     except Exception:
         pass
     # 🎓 20.09: выключенные (аудит 180д) стратегии живут для Академии в
@@ -718,6 +738,10 @@ async def update_waiting_outcomes() -> dict:
     waiting = await asyncio.to_thread(_load_waiting)
     if not waiting:
         return {'checked': 0, 'updated': 0}
+    try:
+        from config import LIMIT_ENTRY_STRATEGIES as _LIMIT_SET
+    except Exception:
+        _LIMIT_SET = set()
 
     # Group by pair to share klines fetch
     by_pair: dict[str, list] = {}
@@ -762,11 +786,33 @@ async def update_waiting_outcomes() -> dict:
                 outcome = None
                 outcome_price = None
                 outcome_at = None
+                # 🎯 13.11: у источников с лимитным входом (цена линии/края
+                # зоны) сделка начинается, только когда цена ВЕРНУЛАСЬ к
+                # входу после сигнала. Тейк достигнут раньше возврата или
+                # возврата не было за горизонт → MISSED («ушла без нас»),
+                # в статистику результата не идёт. В баре входа засчитываем
+                # только стоп.
+                _limit = sig.get('strategy') in _LIMIT_SET
+                _filled = not _limit
                 for c in candles:
                     if c['t'] < sig_ts:
                         continue
                     if c['t'] >= hz_end:
                         break
+                    if not _filled:
+                        _at = datetime.fromtimestamp(c['t']/1000, tz=timezone.utc)
+                        # лимитка исполнена, если цена дошла до входа (или
+                        # прошла его гэпом — тогда исполнение не хуже входа)
+                        if (c['l'] <= entry) if direction == 'LONG' else (c['h'] >= entry):
+                            _filled = True
+                            if (c['l'] <= sl) if direction == 'LONG' else (c['h'] >= sl):
+                                outcome = 'SL'; outcome_price = sl; outcome_at = _at
+                                break
+                            continue
+                        if (c['h'] >= tp) if direction == 'LONG' else (c['l'] <= tp):
+                            outcome = 'MISSED'; outcome_price = None; outcome_at = _at
+                            break
+                        continue
                     if direction == 'LONG':
                         if c['l'] <= sl:
                             outcome = 'SL'; outcome_price = sl
@@ -789,6 +835,10 @@ async def update_waiting_outcomes() -> dict:
                 age_h = (utcnow() - (created_at.replace(tzinfo=None)
                                      if created_at.tzinfo else
                                      created_at)).total_seconds() / 3600
+                if outcome is None and age_h >= hz_h and not _filled:
+                    outcome = 'MISSED'
+                    outcome_price = None
+                    outcome_at = utcnow()
                 if outcome is None and age_h >= hz_h:
                     in_hz = [c for c in candles if sig_ts <= c['t'] < hz_end]
                     outcome = 'TIMEOUT'
@@ -815,7 +865,8 @@ async def update_waiting_outcomes() -> dict:
                             'exit_price': outcome_price,
                             'exit_at': (outcome_at.replace(tzinfo=None) if outcome_at and outcome_at.tzinfo
                                         else outcome_at),
-                            'pnl_pct': round(pnl_pct, 3),
+                            'pnl_pct': (None if outcome == 'MISSED'
+                                        else round(pnl_pct, 3)),
                             'updated_at': utcnow(),
                         }}
                     )

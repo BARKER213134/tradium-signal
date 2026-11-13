@@ -335,6 +335,15 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
             _acad = academy_only(sig.get("strategy"), sig.get("direction"))
         except Exception:
             _acad = False
+        # 🚫 13.11: шорт при рынке глубоко внизу — тоже только в Академию
+        if not _acad and sig.get("direction") == "SHORT":
+            try:
+                import structure_engine as _sen
+                if _sen.shorts_blocked(db):
+                    _acad = True
+                    sig["mb_block"] = True
+            except Exception:
+                pass
         col = db.academy_signals if _acad else db.new_strategy_signals
         cutoff = utcnow() - timedelta(hours=cooldown_h or COOLDOWN_H)
         dup = col.find_one({"strategy": sig["strategy"], "pair": sig["pair"],

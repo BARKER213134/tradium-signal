@@ -349,6 +349,29 @@ def collect_candidates(db, since):
             "src": d.get("strategy") or "?", "dir": d["direction"],
             "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
             "px0": d.get("entry"), "sv": d.get("svetofor"), "at": d["created_at"]}))
+    # 🆕 13.11: RSI-кросс 12h и Entry Checker «go» — источники школы и книги
+    try:
+        for d in db.rsi_sma_cross_signals.find(
+                {"detected_at": {"$gte": since},
+                 "direction": {"$in": ["LONG", "SHORT"]}},
+                {"pair": 1, "symbol": 1, "direction": 1, "detected_at": 1, "entry": 1}):
+            cands.append(("rx_" + str(d["_id"]), d.get("pair"), {
+                "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
+                "src": "rsi_cross_12h", "dir": d["direction"],
+                "val": None, "ms": None, "px0": d.get("entry"), "sv": None,
+                "at": d["detected_at"]}))
+        for d in db.verified_signals.find(
+                {"created_at": {"$gte": since}, "verdict": "go",
+                 "direction": {"$in": ["LONG", "SHORT"]}},
+                {"pair": 1, "pair_norm": 1, "direction": 1, "created_at": 1,
+                 "entry": 1, "svetofor": 1}):
+            cands.append(("vf_" + str(d["_id"]), d.get("pair"), {
+                "sym": d.get("pair_norm") or (d.get("pair") or "").replace("/", ""),
+                "src": "verified_go", "dir": d["direction"],
+                "val": None, "ms": None, "px0": d.get("entry"),
+                "sv": d.get("svetofor"), "at": d["created_at"]}))
+    except Exception:
+        logger.debug("[paper] extra sources fail", exc_info=True)
     return cands
 
 

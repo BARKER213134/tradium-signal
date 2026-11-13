@@ -402,8 +402,8 @@ def scan_recent_flips_for_whale(pairs: list[str] | None = None,
     """
     # ✂ 13.08: whale выключен (аудит 180д: −0.82% на 1055 закрытых)
     try:
-        from config import DISABLED_STRATEGIES
-        if "whale" in DISABLED_STRATEGIES:
+        from config import DISABLED_STRATEGIES, SCANNERS_OFF
+        if "whale" in DISABLED_STRATEGIES or "whale" in SCANNERS_OFF:
             return {"scanned": 0, "flips_found": 0, "fired": 0,
                     "by_tier": {}, "errors": 0, "disabled": True}
     except Exception:
@@ -651,7 +651,10 @@ def maybe_fire_whale(signal_data: dict) -> dict | None:
             'whale_breakdown': score_res['breakdown'],
             'whale_indicators': ind,
             'created_at': utcnow(),
-            'state': 'NEW',
+            # 📏 13.11: канонный план TP+10/SL−5/96ч → трекер журнала ведёт исход
+            'state': 'WAITING',
+            'tp': entry * 1.10, 'sl': entry * 0.95, 'horizon_h': 96,
+            'canon_exit': True,
             'tp_R': 2.0,
         }
         doc.update(whale_seq_fields(db, pair, entry, doc['created_at']))

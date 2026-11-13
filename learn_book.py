@@ -24,9 +24,11 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 
 BOOK_ENABLED = True
-BOOK_LONG = {"whale", "volume_surge", "volcano", "supertrend_mtf", "ten", "combo"}
+BOOK_LONG = {"whale", "volume_surge", "volcano", "supertrend_mtf", "ten", "combo",
+             "rsi_cross_12h", "verified_go"}       # два последних — 13.11, аудит
 BOOK_SHORT = {"shark", "volume_surge", "triple_confluence", "supertrend_daily",
-              "supertrend_vip", "second_flip"}
+              "supertrend_vip", "second_flip",
+              "rsi_cross_12h", "verified_go"}
 DAY_CAP = 10       # входов в день на направление
 SLOT_H = 2
 SLOT_CAP = 3       # входов в 2ч-слот на направление
@@ -51,9 +53,17 @@ def _open(db, now):
                   db.academy_book.count_documents({"dir": d, "opened_at": {"$gte": slot0}}),
                   db.academy_book.count_documents({"dir": d, "state": "OPEN"})]
     opened = 0
+    # 🚫 13.11: шорты при рынке глубоко внизу книга не берёт (config.MB_SHORT_BLOCK)
+    try:
+        import structure_engine as _sen
+        _no_short = _sen.shorts_blocked(db)
+    except Exception:
+        _no_short = False
     for key, pair, c in sorted(cands, key=lambda x: x[2]["at"]):
         d, src, sym = c["dir"], c["src"], c["sym"]
         if src not in (BOOK_LONG if d == "LONG" else BOOK_SHORT) or sym not in bx:
+            continue
+        if d == "SHORT" and _no_short:
             continue
         n_day, n_slot, n_open = cnt[d]
         if n_day >= DAY_CAP or n_slot >= SLOT_CAP or n_open >= CONC_CAP:

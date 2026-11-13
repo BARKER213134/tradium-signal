@@ -387,9 +387,18 @@ async def _alert_signal(sig: dict) -> None:
        о входе. ST был добавлен позже основной интеграции — раньше его
        сигналы обходили paper, теперь исправлено."""
     tier = sig.get("tier", "daily")
+    # 🚫 13.11: шорт при рынке глубоко внизу в Telegram не шлём (в базе и в
+    # школе сигнал остаётся)
+    _blk = False
+    if sig.get("direction") == "SHORT":
+        try:
+            import structure_engine as _sen
+            _blk = await asyncio.to_thread(_sen.shorts_blocked)
+        except Exception:
+            _blk = False
 
     # === 1. Telegram (кроме daily) ===
-    if tier != "daily":
+    if tier != "daily" and not _blk:
         try:
             from watcher import _bot10, _admin_chat_id
             if _bot10 and _admin_chat_id:

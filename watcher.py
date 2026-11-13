@@ -2247,6 +2247,14 @@ async def _send_confluence_alert(r: dict):
     SHORT sc4 +0.63, LONG sc4 +0.54); МОЖНО/НЕТ — минус (до −1.04).
     В TG идут только ДА; остальные пишутся в базу как раньше
     (видны фильтром «Confluence» в журнале)."""
+    # 🔕 13.11: алерты Confluence выключены (config.CONFLUENCE_TG) — аудит:
+    # результат около нуля, превышение над рынком отрицательное
+    try:
+        from config import CONFLUENCE_TG
+        if not CONFLUENCE_TG:
+            return
+    except Exception:
+        pass
     if not _bot5:
         _setup_bot5()
     if not _bot5 or not _admin_chat_id:

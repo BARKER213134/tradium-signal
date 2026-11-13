@@ -536,6 +536,13 @@ def maybe_fire_shark(signal_data: dict) -> dict | None:
         # 🎓 20.09: выключен для журнала/TG, но учится в Академии
         # (academy_signals; бэктест коррекции: shark SHORT +3.08 WR 64)
         _acad = "shark" in DISABLED_STRATEGIES
+        # 🚫 13.11: шорт при рынке глубоко внизу — только в Академию
+        if not _acad:
+            try:
+                import structure_engine as _sen
+                _acad = _sen.shorts_blocked()
+            except Exception:
+                pass
         source = signal_data.get('source', '')
         if source != 'supertrend':
             return None
@@ -617,7 +624,10 @@ def maybe_fire_shark(signal_data: dict) -> dict | None:
             'shark_breakdown': score_res['breakdown'],
             'shark_indicators': ind,
             'created_at': utcnow(),
-            'state': 'NEW',
+            # 📏 13.11: канонный план TP+10/SL−5/96ч → трекер журнала ведёт исход
+            'state': 'WAITING',
+            'tp': entry * 0.90, 'sl': entry * 1.05, 'horizon_h': 96,
+            'canon_exit': True,
             'tp_R': 2.0,
         }
         try:
@@ -646,8 +656,8 @@ def scan_recent_flips_for_shark(pairs: list[str] | None = None,
     """Сканит топ пары на пропущенные SHARK flips DOWN (mirror WHALE scanner)."""
     # ✂ 13.08: shark выключен (аудит 180д)
     try:
-        from config import DISABLED_STRATEGIES
-        if "shark" in DISABLED_STRATEGIES:
+        from config import DISABLED_STRATEGIES, SCANNERS_OFF
+        if "shark" in DISABLED_STRATEGIES or "shark" in SCANNERS_OFF:
             return {"scanned": 0, "fired": 0, "disabled": True}
     except Exception:
         pass
