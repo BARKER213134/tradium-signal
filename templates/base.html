@@ -4076,7 +4076,7 @@ window._kcToolbarHtml = `
     <button data-kc="priceLine" title="Ценовая метка">💲</button>
     <button data-kc="__alarm" title="Будильник: включи и кликни по уровню на графике">⏰</button>
     <button data-kc="__fvg" title="▦ FVG-гэпы (имбалансы) текущего ТФ: 🔵 бычий (спрос ниже) / 🟠 медвежий (предложение выше). Живут, пока цена не закрыла зону; частично съеденные усечены">▦</button>
-    <button data-kc="__tl" title="📐 Авто-линии тренда: красная — нисходящее сопротивление (даунтренд), зелёная — восходящая поддержка (аптренд), пунктир — уже пробитая; жёлтая рамка — диапазон. Плашка слева: структура за 120 баров. Работает на любом ТФ">📐</button>
+    <button data-kc="__tl" title="📐 Авто-линии тренда: красная — нисходящее сопротивление (даунтренд), зелёная — восходящая поддержка (аптренд), СПЛОШНАЯ — линия уже была известна (яркая живая, бледная пробитая); тонкий ПУНКТИР — построено задним числом, в тот момент линии ещё не было; ТОЧКИ — касания уже известной линии, только их реально можно было взять. Жёлтая рамка — диапазон. Плашка слева: структура за 120 баров. Работает на любом ТФ">📐</button>
     <button data-kc="__clear" title="Удалить построения" style="color:#ff6b6b;">🗑</button>
   </div>
   <style>.kc-toolbar button{background:none;border:none;color:#aab3c2;font-size:14px;cursor:pointer;padding:2px 5px;border-radius:5px;}
@@ -5308,11 +5308,11 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       const h = bars[i].h, l = bars[i].l, thr = 3 * A[i];
       if (d >= 0) {
         if (h > hi) { hi = h; hiI = i; }
-        if (l < hi - thr && i > hiI) { piv.push({ k: 'H', i: hiI, p: hi }); d = -1; lo = l; loI = i; continue; }
+        if (l < hi - thr && i > hiI) { piv.push({ k: 'H', i: hiI, p: hi, ci: i }); d = -1; lo = l; loI = i; continue; }
       }
       if (d <= 0) {
         if (l < lo) { lo = l; loI = i; }
-        if (h > lo + thr && i > loI) { piv.push({ k: 'L', i: loI, p: lo }); d = 1; hi = h; hiI = i; }
+        if (h > lo + thr && i > loI) { piv.push({ k: 'L', i: loI, p: lo, ci: i }); d = 1; hi = h; hiI = i; }
       }
     }
     const mk = function(kind) {
@@ -5321,26 +5321,47 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       const byI = {};
       P.forEach(function(p) { byI[p.i] = p; });
       const res = [];
+      // реальные проверки: касания линии ПОСЛЕ того, как она стала известна
+      // (бары подряд = одно касание)
+      const tests = function(an, kk, known, end) {
+        const t = [];
+        let lastT = -99;
+        for (let i = known + 1; i <= end; i++) {
+          const lv = an.p + kk * (i - an.i);
+          if (up ? bars[i].l <= lv + 0.25 * A[i] : bars[i].h >= lv - 0.25 * A[i]) {
+            if (i - lastT >= 3) t.push(i);
+            lastT = i;
+          }
+        }
+        return t;
+      };
       for (let x = 0; x < P.length - 1; x++) {
         const an = P[x];
         // k === null → ищем точку касания; линия живёт, пока цена не закрылась
         // за самим основанием (веер: после пробоя перестраиваем от того же
         // основания через следующий разворот, как рисуют руками)
+        // kKnown — бар, с которого линия ИЗВЕСТНА: разворот виден только после
+        // отскока на 3·ATR (ci), до этого бара линии на живом графике не было
         let k = null, touches = 1, lastBrk = null, lastK = null, dead = null, refits = 0;
+        let kKnown = null, lastKnown = null;
         for (let i = an.i + 1; i < n; i++) {
           if (up ? bars[i].c < an.p : bars[i].c > an.p) { dead = i; break; }
           const pv = byI[i];
           if (k === null) {
             if (pv && i - an.i >= 5 && (up ? pv.p > an.p : pv.p < an.p)) {
               k = (pv.p - an.p) / (i - an.i); touches = 2;
+              kKnown = Math.max(an.ci, pv.ci);
               if (lastK !== null) refits++;
             }
             continue;
           }
           const lv = an.p + k * (i - an.i), tol = 0.25 * A[i];
-          if (up ? bars[i].c < lv - tol : bars[i].c > lv + tol) { lastBrk = i; lastK = k; k = null; continue; }
+          if (up ? bars[i].c < lv - tol : bars[i].c > lv + tol) { lastBrk = i; lastK = k; lastKnown = kKnown; k = null; continue; }
           if (pv) {
-            if (up ? pv.p < lv : pv.p > lv) { k = (pv.p - an.p) / (i - an.i); touches++; }
+            if (up ? pv.p < lv : pv.p > lv) {
+              k = (pv.p - an.p) / (i - an.i); touches++;
+              kKnown = Math.max(an.ci, pv.ci);
+            }
             else if (Math.abs(pv.p - lv) <= 0.5 * A[i]) touches++;
           }
         }
@@ -5349,11 +5370,13 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         if (k !== null && dead === null) {
           if (n - 1 - an.i >= 12 && (up ? k > 0 : k < 0))
             res.push({ up: up, a: an.i, ap: an.p, k: k, end: n - 1, broken: false,
-                       touches: touches, len: n - 1 - an.i, refits: refits });
+                       touches: touches, len: n - 1 - an.i, refits: refits,
+                       known: kKnown, tests: tests(an, k, kKnown, n - 1) });
         } else if (lastK !== null && (up ? lastK > 0 : lastK < 0)) {
           const end = lastBrk;
           if (end - an.i >= 12) res.push({ up: up, a: an.i, ap: an.p, k: lastK, end: end, broken: true,
-                                           touches: touches, len: end - an.i, refits: refits });
+                                           touches: touches, len: end - an.i, refits: refits,
+                                           known: lastKnown, tests: tests(an, lastK, lastKnown, end - 1) });
         }
       }
       return res;
@@ -5410,16 +5433,55 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     if (!bars || bars.length < 60) return;
     const r = window._kcTrendLines(bars);
     const last = bars.length - 1;
+    // точка «реальное касание»: свой оверлей (кружок на линии)
+    if (!window._kcTlDotReg) {
+      try {
+        klinecharts.registerOverlay({
+          name: 'tlDot', totalStep: 2,
+          needDefaultPointFigure: false, needDefaultXAxisFigure: false, needDefaultYAxisFigure: false,
+          createPointFigures: function(o) {
+            const c = o.coordinates || [];
+            if (!c.length) return [];
+            const e = (o.overlay && o.overlay.extendData) || {};
+            return [{ type: 'circle', attrs: { x: c[0].x, y: c[0].y, r: 4.5 }, ignoreEvent: true,
+                      styles: { style: 'stroke_fill', color: e.color || '#00e5a0',
+                                borderColor: '#0a0e14', borderSize: 1.5 } }];
+          },
+        });
+        window._kcTlDotReg = true;
+      } catch (e) {}
+    }
     r.lines.forEach(function(l) {
       try {
-        const col = l.up ? (l.broken ? 'rgba(0,229,160,0.45)' : '#00e5a0')
-                         : (l.broken ? 'rgba(255,77,109,0.45)' : '#ff4d6d');
-        chart.createOverlay({
-          name: 'segment', groupId: 'tl', lock: true,
-          points: [{ timestamp: bars[l.a].t, value: l.ap },
-                   { timestamp: bars[l.end].t, value: l.ap + l.k * (l.end - l.a) }],
-          styles: { line: { color: col, size: l.broken ? 1 : 2,
-                            style: l.broken ? 'dashed' : 'solid', dashedValue: [6, 4] } },
+        // 13.11 (юзер: «отскоков от линии куча»): отскоки на графике были
+        // точками ПОСТРОЕНИЯ линии — она проведена через них задним числом.
+        // Честно: до бара, когда линия стала известна, — тонкий пунктир;
+        // после — сплошная (яркая живая, бледная пробитая); точки — касания
+        // уже известной линии, то есть те, что реально можно было взять.
+        const dim = l.up ? 'rgba(0,229,160,0.45)' : 'rgba(255,77,109,0.45)';
+        const col = l.broken ? dim : (l.up ? '#00e5a0' : '#ff4d6d');
+        const at = function(i) { return l.ap + l.k * (i - l.a); };
+        const kn = Math.min(Math.max(l.known == null ? l.end : l.known, l.a), l.end);
+        if (kn > l.a) {
+          chart.createOverlay({
+            name: 'segment', groupId: 'tl', lock: true,
+            points: [{ timestamp: bars[l.a].t, value: l.ap }, { timestamp: bars[kn].t, value: at(kn) }],
+            styles: { line: { color: dim, size: 1, style: 'dashed', dashedValue: [2, 5] } },
+          });
+        }
+        if (l.end > kn) {
+          chart.createOverlay({
+            name: 'segment', groupId: 'tl', lock: true,
+            points: [{ timestamp: bars[kn].t, value: at(kn) }, { timestamp: bars[l.end].t, value: at(l.end) }],
+            styles: { line: { color: col, size: l.broken ? 1 : 2, style: 'solid' } },
+          });
+        }
+        (l.tests || []).forEach(function(i) {
+          chart.createOverlay({
+            name: 'tlDot', groupId: 'tl', lock: true,
+            points: [{ timestamp: bars[i].t, value: at(i) }],
+            extendData: { color: l.up ? '#00e5a0' : '#ff4d6d' },
+          });
         });
       } catch (e) {}
     });
