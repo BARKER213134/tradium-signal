@@ -180,9 +180,11 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                 k = None
                 found = []
                 px = None
+                lev = []
+                bt = None
                 try:
                     pair = sym[:-4] + "/USDT"
-                    kd = klines_fn(pair, "2h", 400)
+                    kd = klines_fn(pair, "2h", 520)     # 500 закрытых — окно графика
                     closed = [b for b in (kd or []) if b["t"] + _BAR_MS <= now_ms]
                     if len(closed) >= N:
                         k = channel([b["c"] for b in closed], [b["h"] for b in closed],
@@ -192,12 +194,19 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                             import new_setups as _ns
                             found = _ns.detect(closed)
                             px = float(closed[-1]["c"])
+                            # 📐 касание линий графика (line_touch / line_dash)
+                            try:
+                                import line_touch as _lt
+                                lev = _lt.events(closed)
+                                bt = int(closed[-1]["t"])
+                            except Exception:
+                                lev = []
                     else:
                         kd1 = klines_fn(pair, "1h", 250)
                         k = channel_from_1h(kd1) if kd1 and len(kd1) >= 245 else None
                 except Exception:
                     pass
-                return sym, k, found, px
+                return sym, k, found, px, lev, bt
 
             ex = ThreadPoolExecutor(max_workers=workers)
             futs = [ex.submit(_one, s) for s in todo]
@@ -205,9 +214,15 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
             ex.shutdown(wait=False)
             for f in done:
                 try:
-                    sym, k, _found, _px = f.result()
+                    sym, k, _found, _px, _lev, _bt = f.result()
                 except Exception:
                     continue
+                if _lev and _px and _bt:
+                    try:
+                        import line_touch as _lt
+                        _lt.store(db, sym, _lev, _px, _bt, utcnow())
+                    except Exception:
+                        pass
                 # 🆕 13.11: новые источники range_bottom / low_break → academy_signals
                 if _found and _px:
                     try:

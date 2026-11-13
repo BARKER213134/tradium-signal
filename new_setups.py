@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 PLAN = {
     "range_bottom": {"dir": "LONG", "tp": 0.10, "sl": 0.15, "hz": 336},
     "low_break": {"dir": "SHORT", "tp": 0.10, "sl": 0.15, "hz": 336},
+    # 13.11, поиск «80%» (отбор на первых 55% года, проверка на остальном):
+    # бар с максимальным объёмом за 5 дней закрылся в нижних 10% суточного
+    # диапазона → LONG +5% / −15% / 30 дней. Проверка: 624 сигнала, 97 дней,
+    # WR 82.5%, +2.04% (любой бар того же периода: 77%, +0.78%).
+    "vol_climax": {"dir": "LONG", "tp": 0.05, "sl": 0.15, "hz": 720},
 }
 DEDUP_H = 48        # один сигнал источника на монету за 48ч (как в поиске)
 MIN_BARS = 375      # 360 баров (30 дней) + прогрев индикаторов
@@ -76,6 +81,17 @@ def detect(bars):
             out.append(("range_bottom", ind))
         if atrp >= 3.0 and up30 <= 0.03:
             out.append(("low_break", ind))
+        try:
+            v = np.array([b.get("v") or 0.0 for b in bars[-60:]], dtype=float)
+            lo12 = float(l[-12:].min())
+            hi12 = float(h[-12:].max())
+            if v[-1] > 0 and v[-1] >= v.max() and hi12 > lo12:
+                pos24 = (px - lo12) / (hi12 - lo12)
+                if pos24 <= 0.10:
+                    out.append(("vol_climax", dict(ind, pos24=round(pos24, 3),
+                                                   vol_x=round(float(v[-1] / max(np.median(v), 1e-12)), 1))))
+        except Exception:
+            pass
         return out
     except Exception:
         logger.debug("[setups] detect fail", exc_info=True)

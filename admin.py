@@ -9816,7 +9816,7 @@ async def api_academy():
                 {"pair": 1, "symbol": 1, "direction": 1, "strategy": 1,
                  "created_at": 1, "validator_ok": 1, "mso_streak2h": 1,
                  "entry": 1, "svetofor": 1}
-                ).sort("created_at", -1).limit(200):
+                ).sort("created_at", -1).limit(600):
             feed.append({
                 "key": "as_" + str(d["_id"]), "_dt": d["created_at"],
                 "sym": d.get("symbol") or (d.get("pair") or "").replace("/", ""),
@@ -11293,7 +11293,8 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int, academy: int = 0) ->
         try:
             from database import _get_db as _gdb_as
             for n in _gdb_as().academy_signals.find(
-                    {"created_at": {"$gte": since}, **pair_or},
+                    {"created_at": {"$gte": since}, **pair_or,
+                     "strategy": {"$nin": ["line_touch", "line_dash"]}},
                     {"strategy": 1, "pair": 1, "direction": 1, "entry": 1,
                      "tp": 1, "sl": 1, "created_at": 1, "state": 1,
                      "validator_ok": 1, "mso_streak2h": 1, "svetofor": 1}
@@ -11345,6 +11346,30 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int, academy: int = 0) ->
     except Exception:
         pass
 
+    # 📐 касания линий графика (line_signals, 13.11) — на ВСЕХ графиках, вне
+    # 🧩-группировки: юзер отслеживает их сам. Маркер ставим на бар касания.
+    _line_items = []
+    try:
+        from database import _get_db as _gdb_ln
+        for n in _gdb_ln().line_signals.find(
+                {"symbol": sym_clean, "created_at": {"$gte": since}},
+                {"strategy": 1, "direction": 1, "entry": 1, "tp": 1, "sl": 1,
+                 "created_at": 1, "note": 1, "bar_t": 1, "indicators.touches": 1}
+                ).sort("bar_t", -1).limit(160):
+            at_dt = n.get("created_at")
+            _line_items.append({
+                "source": n.get("strategy") or "line_touch",
+                "symbol": sym_clean, "pair": pair_slash,
+                "direction": n.get("direction", ""),
+                "entry": n.get("entry"), "tp1": n.get("tp"), "sl": n.get("sl"),
+                "pattern": (n.get("note") or "📐 касание линии") + " · линии 2h",
+                "score": 0, "academy_only": True, "line": True,
+                "at": at_dt.isoformat() if at_dt else None,
+                "at_ts": int((n.get("bar_t") or 0) // 1000),
+            })
+    except Exception:
+        pass
+
     # 🧩 Семейная группировка для chart markers — один 🧩 вместо колонны
     try:
         from signal_families import collapse_stacks
@@ -11361,6 +11386,9 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int, academy: int = 0) ->
             items = collapse_stacks(items)
     except Exception:
         pass
+    if _line_items:
+        items = items + _line_items
+        items.sort(key=lambda x: x.get("at_ts", 0), reverse=True)
 
     # 🎰 Inject setup_verdict из pair_verdicts (single pair lookup)
     try:
