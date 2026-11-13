@@ -1254,8 +1254,18 @@ def scan_universe(max_pairs: int = 300):
                     _td = _trend_dirs(kd)
                     if _td:
                         _td_cur = _td
-                        trend_rows.append(
-                            {"s": pair.replace("/", "").upper(), "d": _td})
+                        _trow = {"s": pair.replace("/", "").upper(), "d": _td}
+                        # 📐 структура (13.11): регрессионный канал 10д на 2h
+                        # из тех же 1h-свечей — в скоринг школы и на график
+                        try:
+                            import structure_engine as _sen
+                            _kc = _sen.channel_from_1h(kd)
+                            if _kc:
+                                _trow["k"] = {"ch": _kc["ch"], "mv": _kc["mv"],
+                                              "pos": _kc["pos"], "kp": _kc["kp"]}
+                        except Exception:
+                            pass
+                        trend_rows.append(_trow)
                 except Exception:
                     pass
                 # 🧭 зонный радар: ближайшая поддержка/сопротивление в 4% —

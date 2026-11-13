@@ -9815,11 +9815,14 @@ async def api_academy():
         # 🚪 выходы корзин + текущие тренды (для silver/dawn-принадлежности)
         _exits = (model or {}).get("exits") or {}
         try:
-            _tmx = {r.get("s"): (r.get("d") or {}) for r in (
-                (db.market_state.find_one({"_id": "trend_matrix"}) or {}
-                 ).get("rows") or [])}
+            _tmrows = ((db.market_state.find_one({"_id": "trend_matrix"}) or {}
+                        ).get("rows") or [])
+            _tmx = {r.get("s"): (r.get("d") or {}) for r in _tmrows}
+            # 📐 структура (13.11): канал 10д на 2h — в вердикт и в ленту
+            _kmap = {r.get("s"): r.get("k") for r in _tmrows if r.get("k")}
         except Exception:
             _tmx = {}
+            _kmap = {}
         # 🪨/🧱 (30.09): позиция входа в диапазоне 4h-зон (кэш computed_levels)
         try:
             _zmap = {z.get("pair"): (z.get("zones") or []) for z in
@@ -9866,10 +9869,14 @@ async def api_academy():
                 f["dv"] = {"doi24": _dv.get("doi24"), "doi4": _dv.get("doi4"), "fr": _dv.get("fr")}
             # 🪨🛫🧱🏔 (01.10): клетка зоны участвует в вердикте (вето/×2)
             f["zb"] = _zone_bucket(f.get("rp"))
+            _kk = _kmap.get(f["sym"]) or {}
+            if _kk:
+                f["k"] = {"ch": _kk.get("ch"), "mv": _kk.get("mv"), "kp": _kk.get("kp")}
             status, rule = le.score_signal(
                 model, f["src"], f["dir"], f["val"], f["ms"], rg=_rg_now[1],
                 zb=f["zb"], bvb=_bvb_now, tst=le.tst_from_dirs(_tmx.get(f["sym"])),
-                sv=f.get("sv"), dob=le.do_bin(_dv.get("doi24")), frb=le.fr_bin(_dv.get("fr")))
+                sv=f.get("sv"), dob=le.do_bin(_dv.get("doi24")), frb=le.fr_bin(_dv.get("fr")),
+                kch=_kk.get("ch"))
             f["verdict"] = status
             if rule:
                 f["rule"] = {"label": rule["label"], "ev": rule.get("ev"),

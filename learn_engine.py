@@ -22,6 +22,7 @@ from datetime import timedelta
 import numpy as np
 
 import levels_engine as _lv
+import structure_engine as _se
 
 logger = logging.getLogger(__name__)
 
@@ -700,6 +701,7 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                 "c1": c1, "t1": t1, "dvol": dvol, "b4": b4,
                 "tr1": _ema_trend_series(cl1),
                 "t2": t2, "tr2": _ema_trend_series(c2),
+                "h2": h2, "l2": l2, "c2": c2,   # 📐 канал структуры (13.11)
                 "st2": _streak_series(t2, o2, h2, l2, c2) if len(t2) >= 130 else None,
                 "t4": t4, "tr4": _ema_trend_series(c4),
                 "st4": compute_st_series(b4, 10, 3.0) if len(b4) >= 30 else None,
@@ -771,6 +773,7 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
             logger.debug("[academy] deriv series fail", exc_info=True)
     rows = []
     _zcache = {}   # 🪨🛫🧱🏔 зоны по (пара, число закрытых 4h-баров)
+    _kcache = {}   # 📐 канал структуры по (пара, индекс закрытого 2h-бара)
     for s in sigs:
         p = packs.get(s["pair"])
         if p is None or p["st2"] is None:
@@ -878,7 +881,21 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                 _d24, _d4, _fr8 = deriv_at(_dser, s["pair"], ts)
             except Exception:
                 pass
+        # 📐 структура (13.11): регрессионный канал 10д по 2h-барам,
+        # ЗАКРЫТЫМ до сигнала (i2 — последний закрытый); кэш на (пара, бар)
+        _kc = None
+        try:
+            _kk = (s["pair"], i2)
+            if _kk in _kcache:
+                _kc = _kcache[_kk]
+            else:
+                _kc = _kcache[_kk] = _se.channel(
+                    p["c2"][:i2 + 1], p["h2"][:i2 + 1], p["l2"][:i2 + 1])
+        except Exception:
+            _kc = None
         rows.append({
+            "kch": (_kc or {}).get("ch"), "kpos": (_kc or {}).get("kp"),
+            "kmv": (_kc or {}).get("mv"), "kpv": (_kc or {}).get("pos"),
             "doi24": _d24, "doi4": _d4, "fr8": _fr8,
             "dob": do_bin(_d24), "frb": fr_bin(_fr8),
             "zb": _zb, "zp": _zp, "zres": _zres, "zsup": _zsup,
@@ -962,7 +979,7 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         # половины считаем ВНУТРИ режима, иначе «стабильность» по общей
         # медиане окна всегда ложно-отрицательная
         st = _stats(sel, float(np.median([x["ts"] for x in sel]))
-                    if kind in ("regime", "school", "btcvol", "deriv") else tmid)
+                    if kind in ("regime", "school", "btcvol", "deriv", "struct") else tmid)
         if st["n"] < 15:
             return
         # shrinkage к родителю направления
@@ -1147,6 +1164,26 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
             add_rule(f"cdo_{_src}_{_dl}_{_v}", f"{_src} {_dl} · {DO_LABEL[_v]}", _sel, "deriv")
         else:
             add_rule(f"cfr_{_src}_{_dl}_{_v}", f"{_src} {_dl} · {FR_LABEL[_v]}", _sel, "deriv")
+    # 📐 структура (13.11, по графикам юзера): регрессионный канал 10д на
+    # 2h — ▲/диапазон/▼ (+место в коридоре). Школа с 20.09: LONG ▲ +1.18 /
+    # диапазон −0.05 / ▼ −2.85 в обеих половинах; ST 2h не различал ничего
+    for _b in _se.KCH_LABEL:
+        for _sg, _dl in ((1, "LONG"), (-1, "SHORT")):
+            add_rule(f"kc_{_b}_{_dl}", f"{_se.KCH_LABEL[_b]} {_dl}",
+                     [x for x in rows if x.get("kch") == _b and x["sg"] == _sg], "struct")
+            for _p in _se.KPOS_LABEL:
+                add_rule(f"kcp_{_b}{_p}_{_dl}",
+                         f"{_se.KCH_LABEL[_b]} · {_se.KPOS_LABEL[_p]} {_dl}",
+                         [x for x in rows if x.get("kch") == _b
+                          and x.get("kpos") == _p and x["sg"] == _sg], "struct")
+    _ck = {}
+    for x in rows:
+        if x.get("kch"):
+            _ck.setdefault((x["src"], "LONG" if x["sg"] > 0 else "SHORT",
+                            x["kch"]), []).append(x)
+    for (_src, _dl, _v), _sel in _ck.items():
+        add_rule(f"ckc_{_src}_{_dl}_{_v}",
+                 f"{_src} {_dl} · {_se.KCH_LABEL[_v]}", _sel, "struct")
     add_rule("sc_fresh", "🆕 LONG первое касание 7д (лонг-корзины)",
              [x for x in rows if x["fresh"]
               and (x["gold"] or x["silver"] or x["dawn"])], "super")
@@ -1453,7 +1490,10 @@ def train_lgbm(rows):
                 tr_map.get(x.get("tr1"), 0), tr_map.get(x.get("tr2"), 0),
                 # 📡 деривативы (09.10)
                 -99.0 if x.get("doi24") is None else round(max(-80.0, min(x["doi24"], 200.0)), 2),
-                -99.0 if x.get("fr8") is None else round(x["fr8"] * 1e4, 3)]
+                -99.0 if x.get("fr8") is None else round(x["fr8"] * 1e4, 3),
+                # 📐 структура (13.11): дрейф канала 2h и место в коридоре
+                -99.0 if x.get("kmv") is None else round(max(-10.0, min(x["kmv"], 10.0)), 2),
+                -1.0 if x.get("kpv") is None else round(x["kpv"], 3)]
 
     rs = sorted(rows, key=lambda x: x["ts"])
     cut = int(len(rs) * 0.75)
@@ -1486,7 +1526,8 @@ def train_lgbm(rows):
                      "fresh", "liq", "young", "hour", "btc_vol", "fund",
                      "svetofor", "sv_score", "btc_dd",
                      "zone", "zone_pos", "zone_res", "zone_sup",
-                     "school7", "school7_n", "tr1", "tr2", "doi24", "fr8"],
+                     "school7", "school7_n", "tr1", "tr2", "doi24", "fr8",
+                     "ch_move", "ch_pos"],
                     m.feature_importance().tolist()), key=lambda z: -z[1])
     return {"ok": True, "n_train": cut, "n_test": len(rs) - cut,
             "auc": round(auc, 3),
@@ -1637,6 +1678,11 @@ def recompute(days=WINDOW_DAYS, progress=None):
             "n_deriv_active": sum(1 for r in rules if r.get("kind") == "deriv"
                                   and r["status"].startswith("ACTIVE")),
             "deriv_rows": sum(1 for x in rows if x.get("dob")),
+            # 📐 структура (13.11)
+            "n_struct": sum(1 for r in rules if r.get("kind") == "struct"),
+            "n_struct_active": sum(1 for r in rules if r.get("kind") == "struct"
+                                   and r["status"].startswith("ACTIVE")),
+            "struct_rows": sum(1 for x in rows if x.get("kch")),
             "degraded": [r["id"] for r in rules
                          if r.get("degraded") is not None],
             # ₿ режим: текущий + долгая память (переносится, пересобирается ниже)
@@ -1690,7 +1736,7 @@ def recompute(days=WINDOW_DAYS, progress=None):
 # ────────────────────────── live-скоринг для вкладки ──────────────────────────
 
 def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None,
-                 bvb=None, tst=None, sv=None, dob=None, frb=None):
+                 bvb=None, tst=None, sv=None, dob=None, frb=None, kch=None):
     """Вердикт по штампам сигнала: (status, rule) или (None, None).
     rg — текущий режим BTC (btc_regime_now()[1]). Если рынок НЕ у максимума
     (dip/corr/capit), первыми смотрим клетки источник×направление×режим:
@@ -1731,7 +1777,9 @@ def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None,
                  (f"cts_{src}_{sgl}_{tst}" if tst else None),
                  (f"csv_{src}_{sgl}_{_svk}" if _svk else None),
                  (f"cdo_{src}_{sgl}_{dob}" if dob else None),
-                 (f"cfr_{src}_{sgl}_{frb}" if frb else None)):
+                 (f"cfr_{src}_{sgl}_{frb}" if frb else None),
+                 # 📐 структура (13.11): источник×направление×канал 2h
+                 (f"ckc_{src}_{sgl}_{kch}" if kch else None)):
         if not _rid:
             continue
         _ar = rules.get(_rid)

@@ -4076,6 +4076,7 @@ window._kcToolbarHtml = `
     <button data-kc="priceLine" title="Ценовая метка">💲</button>
     <button data-kc="__alarm" title="Будильник: включи и кликни по уровню на графике">⏰</button>
     <button data-kc="__fvg" title="▦ FVG-гэпы (имбалансы) текущего ТФ: 🔵 бычий (спрос ниже) / 🟠 медвежий (предложение выше). Живут, пока цена не закрыла зону; частично съеденные усечены">▦</button>
+    <button data-kc="__tl" title="📐 Авто-линии тренда: красная — нисходящее сопротивление (даунтренд), зелёная — восходящая поддержка (аптренд), пунктир — уже пробитая; жёлтая рамка — диапазон. Плашка слева: структура за 120 баров. Работает на любом ТФ">📐</button>
     <button data-kc="__clear" title="Удалить построения" style="color:#ff6b6b;">🗑</button>
   </div>
   <style>.kc-toolbar button{background:none;border:none;color:#aab3c2;font-size:14px;cursor:pointer;padding:2px 5px;border-radius:5px;}
@@ -4953,6 +4954,10 @@ window.renderKChart = async function(container, symbol, tf, opts) {
     const fb = tb.querySelector('button[data-kc="__fvg"]');
     if (fb && localStorage.getItem('kc_fvg') !== '0')
       fb.style.background = 'rgba(80,150,255,0.35)';
+    // 📐 авто-линии тренда (вкл по умолчанию), localStorage kc_tl
+    const tlb = tb.querySelector('button[data-kc="__tl"]');
+    if (tlb && localStorage.getItem('kc_tl') !== '0')
+      tlb.style.background = 'rgba(255,94,156,0.30)';
   } catch (e) {}
   tb.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-kc]');
@@ -4972,6 +4977,18 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       if (wasOn) chart.removeOverlay({ groupId: 'fvg' });
       else if (window._kcDrawFvg) {
         try { window._kcDrawFvg(chart, container._kcBars || []); } catch (e) {}
+      }
+    }
+    else if (name === '__tl') {
+      const tlOn = localStorage.getItem('kc_tl') !== '0';
+      localStorage.setItem('kc_tl', tlOn ? '0' : '1');
+      b.style.background = tlOn ? 'none' : 'rgba(255,94,156,0.30)';
+      if (tlOn) {
+        try { chart.removeOverlay({ groupId: 'tl' }); } catch (e) {}
+        const stEl = container.querySelector('.kc-struct');
+        if (stEl) stEl.remove();
+      } else if (window._kcDrawTrendLines) {
+        try { window._kcDrawTrendLines(chart, container._kcBars || [], container, tf); } catch (e) {}
       }
     }
     else chart.createOverlay({ name, groupId: 'draw' });
@@ -5262,6 +5279,177 @@ window.renderKChart = async function(container, symbol, tf, opts) {
       } catch (e) {}
     });
   };
+  // 📐 АВТО-ЛИНИИ ТРЕНДА + СТРУКТУРА (13.11, юзер: «на всех графиках линии
+  // аптренда/даунтренда на все ТФ; по индикаторам вроде аптренд, а на деле
+  // нет»). Считается в браузере из свечей графика → работает на любом ТФ.
+  //  • линии: зигзаг 3·ATR → от каждого разворота линия через следующий
+  //    более низкий максимум (сопротивление, даунтренд) / более высокий
+  //    минимум (поддержка, аптренд); тень пивота без закрытия подтягивает
+  //    наклон; закрытие за линией на 0.25·ATR = пробой (линия кончается).
+  //  • структура: регрессионный канал за 120 закрытых баров — дрейф в
+  //    ширинах ±2σ: >0.75 ▲, <−0.75 ▼, иначе диапазон (рамка коридора).
+  //    На 2h это ровно ось школы (structure_engine.py).
+  window._kcTrendLines = function(bars) {
+    const n = bars.length;
+    const out = { lines: [], box: null, st: null };
+    if (n < 60) return out;
+    const A = new Array(n);
+    let a = null;
+    for (let i = 0; i < n; i++) {
+      const b = bars[i];
+      const tr = i === 0 ? b.h - b.l
+        : Math.max(b.h - b.l, Math.abs(b.h - bars[i - 1].c), Math.abs(b.l - bars[i - 1].c));
+      a = a === null ? tr : (a * 13 + tr) / 14;
+      A[i] = a;
+    }
+    const piv = [];
+    let d = 0, hi = bars[0].h, hiI = 0, lo = bars[0].l, loI = 0;
+    for (let i = 1; i < n; i++) {
+      const h = bars[i].h, l = bars[i].l, thr = 3 * A[i];
+      if (d >= 0) {
+        if (h > hi) { hi = h; hiI = i; }
+        if (l < hi - thr && i > hiI) { piv.push({ k: 'H', i: hiI, p: hi }); d = -1; lo = l; loI = i; continue; }
+      }
+      if (d <= 0) {
+        if (l < lo) { lo = l; loI = i; }
+        if (h > lo + thr && i > loI) { piv.push({ k: 'L', i: loI, p: lo }); d = 1; hi = h; hiI = i; }
+      }
+    }
+    const mk = function(kind) {
+      const up = kind === 'L';
+      const P = piv.filter(function(p) { return p.k === kind; });
+      const byI = {};
+      P.forEach(function(p) { byI[p.i] = p; });
+      const res = [];
+      for (let x = 0; x < P.length - 1; x++) {
+        const an = P[x];
+        // k === null → ищем точку касания; линия живёт, пока цена не закрылась
+        // за самим основанием (веер: после пробоя перестраиваем от того же
+        // основания через следующий разворот, как рисуют руками)
+        let k = null, touches = 1, lastBrk = null, lastK = null, dead = null, refits = 0;
+        for (let i = an.i + 1; i < n; i++) {
+          if (up ? bars[i].c < an.p : bars[i].c > an.p) { dead = i; break; }
+          const pv = byI[i];
+          if (k === null) {
+            if (pv && i - an.i >= 5 && (up ? pv.p > an.p : pv.p < an.p)) {
+              k = (pv.p - an.p) / (i - an.i); touches = 2;
+              if (lastK !== null) refits++;
+            }
+            continue;
+          }
+          const lv = an.p + k * (i - an.i), tol = 0.25 * A[i];
+          if (up ? bars[i].c < lv - tol : bars[i].c > lv + tol) { lastBrk = i; lastK = k; k = null; continue; }
+          if (pv) {
+            if (up ? pv.p < lv : pv.p > lv) { k = (pv.p - an.p) / (i - an.i); touches++; }
+            else if (Math.abs(pv.p - lv) <= 0.5 * A[i]) touches++;
+          }
+        }
+        if (k !== null && dead === null) {
+          if (n - 1 - an.i >= 12) res.push({ up: up, a: an.i, ap: an.p, k: k, end: n - 1, broken: false,
+                                             touches: touches, len: n - 1 - an.i, refits: refits });
+        } else if (lastK !== null) {
+          const end = lastBrk;
+          if (end - an.i >= 12) res.push({ up: up, a: an.i, ap: an.p, k: lastK, end: end, broken: true,
+                                           touches: touches, len: end - an.i, refits: refits });
+        }
+      }
+      return res;
+    };
+    const pick = function(arr) {
+      const act = arr.filter(function(l) { return !l.broken; }).sort(function(x, y) { return x.a - y.a; });
+      const br = arr.filter(function(l) { return l.broken && l.len >= 20; })
+        .sort(function(x, y) { return y.end - x.end; });
+      const sel = [];
+      if (act.length) {
+        sel.push(act[0]);
+        const last = act[act.length - 1];
+        if (last !== act[0]) sel.push(last);
+      }
+      if (br.length) sel.push(br[0]);
+      return sel;
+    };
+    out.lines = pick(mk('H')).concat(pick(mk('L')));
+    // структура: регрессия закрытий по N ЗАКРЫТЫМ барам (последний бар формируется)
+    const N = Math.min(120, n - 1), e = n - 2, s = e - N + 1;
+    if (N >= 40) {
+      let mc = 0;
+      for (let i = s; i <= e; i++) mc += bars[i].c;
+      mc /= N;
+      const mx = (N - 1) / 2;
+      let sxy = 0, sxx = 0;
+      for (let i = s; i <= e; i++) { const dx = (i - s) - mx; sxy += dx * (bars[i].c - mc); sxx += dx * dx; }
+      const k = sxy / sxx;
+      let ss = 0, top = -Infinity, bot = Infinity;
+      const hs = [], ls = [];
+      for (let i = s; i <= e; i++) {
+        const r = bars[i].c - (mc + k * ((i - s) - mx));
+        ss += r * r;
+        if (bars[i].h > top) top = bars[i].h;
+        if (bars[i].l < bot) bot = bars[i].l;
+        hs.push(bars[i].h); ls.push(bars[i].l);
+      }
+      const sd = Math.sqrt(ss / N);
+      if (sd > 0 && top > bot) {
+        const mv = k * (N - 1) / (4 * sd);
+        const pos = (bars[e].c - bot) / (top - bot);
+        out.st = { ch: mv > 0.75 ? 'U' : mv < -0.75 ? 'D' : 'R', mv: mv, pos: pos, n: N, top: top, bot: bot };
+        if (out.st.ch === 'R') {
+          hs.sort(function(x, y) { return x - y; }); ls.sort(function(x, y) { return x - y; });
+          out.box = { s: s, top: hs[Math.floor((N - 1) * 0.97)], bot: ls[Math.ceil((N - 1) * 0.03)] };
+        }
+      }
+    }
+    return out;
+  };
+  window._kcDrawTrendLines = function(chart, bars, container, tf) {
+    try { chart.removeOverlay({ groupId: 'tl' }); } catch (e) {}
+    if (container) { const old = container.querySelector('.kc-struct'); if (old) old.remove(); }
+    if (!bars || bars.length < 60) return;
+    const r = window._kcTrendLines(bars);
+    const last = bars.length - 1;
+    r.lines.forEach(function(l) {
+      try {
+        const col = l.up ? (l.broken ? 'rgba(0,229,160,0.45)' : '#00e5a0')
+                         : (l.broken ? 'rgba(255,77,109,0.45)' : '#ff4d6d');
+        chart.createOverlay({
+          name: 'segment', groupId: 'tl', lock: true,
+          points: [{ timestamp: bars[l.a].t, value: l.ap },
+                   { timestamp: bars[l.end].t, value: l.ap + l.k * (l.end - l.a) }],
+          styles: { line: { color: col, size: l.broken ? 1 : 2,
+                            style: l.broken ? 'dashed' : 'solid', dashedValue: [6, 4] } },
+        });
+      } catch (e) {}
+    });
+    if (r.box) {
+      [r.box.top, r.box.bot].forEach(function(v) {
+        try {
+          chart.createOverlay({
+            name: 'segment', groupId: 'tl', lock: true,
+            points: [{ timestamp: bars[r.box.s].t, value: v }, { timestamp: bars[last].t, value: v }],
+            styles: { line: { color: 'rgba(255,210,62,0.85)', size: 1, style: 'dashed', dashedValue: [8, 5] } },
+          });
+        } catch (e) {}
+      });
+    }
+    if (container && r.st) {
+      const st = r.st;
+      const iv = bars.length > 1 ? bars[1].t - bars[0].t : 3600000;
+      const days = st.n * iv / 86400000;
+      const hor = days >= 1 ? '≈' + Math.round(days) + 'д' : '≈' + Math.round(days * 24) + 'ч';
+      const pos = st.pos < 1 / 3 ? 'у низа' : st.pos > 2 / 3 ? 'у верха' : 'в середине';
+      const fp = function(v) { return v >= 100 ? v.toFixed(2) : v >= 1 ? v.toFixed(4) : v.toPrecision(4); };
+      const el = document.createElement('div');
+      el.className = 'kc-struct';
+      el.style.cssText = 'position:absolute;top:66px;left:10px;z-index:18;' +
+        'font-family:var(--font-mono,monospace);font-size:10.5px;font-weight:700;' +
+        'background:rgba(10,14,20,0.75);border-radius:6px;padding:2px 7px;pointer-events:none;' +
+        'color:' + (st.ch === 'U' ? '#00e5a0' : st.ch === 'D' ? '#ff5e9c' : '#ffd23e') + ';';
+      el.textContent = '📐 ' + (st.ch === 'U' ? '▲ АПТРЕНД' : st.ch === 'D' ? '▼ ДАУНТРЕНД' : '▬ ДИАПАЗОН') +
+        ' · ' + st.n + ' бар. ' + hor + ' · цена ' + pos + ' коридора ' + fp(st.bot) + '–' + fp(st.top) +
+        (tf === '2h' ? ' · ось школы' : '');
+      container.appendChild(el);
+    }
+  };
   // 📏 уровни-зоны: билдер вынесен в /static/levels.js (общий с
   // кластерным графиком footprint-view) — здесь только отрисовка
   window._kcDrawZones = function(chart, bars, sym, tf) {
@@ -5410,6 +5598,10 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   container._kcBars = bars;
   if (localStorage.getItem('kc_fvg') !== '0') {
     try { window._kcDrawFvg(chart, bars); } catch (e) {}
+  }
+  // 📐 авто-линии тренда и структура — тумблер 📐 в тулбаре, localStorage kc_tl
+  if (localStorage.getItem('kc_tl') !== '0') {
+    try { window._kcDrawTrendLines(chart, bars, container, tf); } catch (e) {}
   }
   // 📈 метки смены тренда (ST-флипы текущего ТФ) — тумблер «⚡Тренд» в
   // модале, выключается localStorage kc_trend_flips='0'

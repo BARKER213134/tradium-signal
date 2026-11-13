@@ -364,10 +364,13 @@ def _open_new(db, model, now):
     # exits_table модели (штамп exit_open; для 💎 live по нему закрывает
     # _close_open и ставит TP исполнитель)
     try:
-        _tmx = {r.get("s"): (r.get("d") or {}) for r in (
-            (db.market_state.find_one({"_id": "trend_matrix"}) or {}).get("rows") or [])}
+        _tmrows = ((db.market_state.find_one({"_id": "trend_matrix"}) or {}).get("rows") or [])
+        _tmx = {r.get("s"): (r.get("d") or {}) for r in _tmrows}
+        # 📐 структура (13.11): канал 10д на 2h из скана рынка
+        _kmap = {r.get("s"): r.get("k") for r in _tmrows if r.get("k")}
     except Exception:
         _tmx = {}
+        _kmap = {}
     _exits = (model or {}).get("exits") or {}
     # ₿ вола (07.10): текущий бин один на цикл
     try:
@@ -394,7 +397,8 @@ def _open_new(db, model, now):
                                        bvb=_bvb, tst=le.tst_from_dirs(_tmx.get(c["sym"])),
                                        sv=c.get("sv"),
                                        dob=le.do_bin((_dmap.get(c["sym"]) or {}).get("doi24")),
-                                       frb=le.fr_bin((_dmap.get(c["sym"]) or {}).get("fr")))
+                                       frb=le.fr_bin((_dmap.get(c["sym"]) or {}).get("fr")),
+                                       kch=(_kmap.get(c["sym"]) or {}).get("ch"))
         probe = False
         if status != "ACTIVE_SHOW":
             # 🔬 разведка боем: живо-выключенное правило продолжаем
@@ -568,6 +572,10 @@ def _open_new(db, model, now):
             "zp_open": (_zrp or {}).get("pos_l"),
             "zres_open": (_zrp or {}).get("res"),
             "zsup_open": (_zrp or {}).get("sup"),
+            # 📐 структура на входе (13.11): канал 2h ▲/диапазон/▼, дрейф, место
+            "kch_open": (_kmap.get(c["sym"]) or {}).get("ch"),
+            "kmv_open": (_kmap.get(c["sym"]) or {}).get("mv"),
+            "kpos_open": (_kmap.get(c["sym"]) or {}).get("pos"),
         }}, upsert=True)
         opened += 1
     return opened
