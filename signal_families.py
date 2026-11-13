@@ -83,7 +83,9 @@ def collapse_stacks(items: list[dict], gap_s: int = 1800,
                 # графике, в 🧩-стеке терялся paper_state
                 "academy_paper",
                 # 16.09: rsi_deepos — точечный лонг-вход, в 🧩 не растворять
-                "rsi_deepos"}
+                "rsi_deepos",
+                # 13.11: касания линий графика — юзер отслеживает каждое
+                "line_touch", "line_dash"}
     from collections import defaultdict
 
     groupable = [it for it in items

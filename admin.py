@@ -12330,6 +12330,43 @@ def _compute_journal_sync(_fast_only: bool = False):
     except Exception as _cse:
         logging.getLogger(__name__).warning(f"[journal] collapse fail: {_cse}")
 
+    # 📐 КАСАНИЕ ЛИНИЙ ГРАФИКА в журнале (13.11, юзер: «добавь этот сигнал в
+    # журнал»). Источник — line_signals (line_touch / line_dash, линии 2h).
+    # Добавляем ПОСЛЕ подсчёта стеков и 🧩-группировки: ~500 событий в день
+    # иначе надули бы stack_count, запустили MOONSHOT-алерты и схлопнулись.
+    # Потолок 400 свежих — чтобы не вытеснить остальной журнал.
+    try:
+        from database import _get_db as _gdb_lj
+        _lj = []
+        for n in _gdb_lj().line_signals.find(
+                {"created_at": {"$gte": since_14d}},
+                {"strategy": 1, "pair": 1, "symbol": 1, "direction": 1, "entry": 1,
+                 "tp": 1, "sl": 1, "created_at": 1, "note": 1, "bar_t": 1,
+                 "indicators.touches": 1}
+                ).sort("created_at", -1).limit(400):
+            at_dt = n.get("created_at")
+            strat = n.get("strategy") or "line_touch"
+            _lj.append({
+                "source": strat,
+                "symbol": n.get("symbol") or (n.get("pair") or "").replace("/", ""),
+                "pair": n.get("pair") or "",
+                "direction": n.get("direction", ""),
+                "entry": n.get("entry"), "tp1": n.get("tp"), "sl": n.get("sl"),
+                "pattern": (n.get("note") or "📐 касание линии") + " · линии 2h",
+                "score": (n.get("indicators") or {}).get("touches") or 0,
+                "st_passed": None, "pump_score": 0,
+                "is_top_pick": False, "top_pick_confirmations_count": 0,
+                "ns_strategy": strat, "ns_state": "WAITING",
+                "stack_count": 0, "stack_distinct": 0, "line": True,
+                "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
+                "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+            })
+        if _lj:
+            items = items + _lj
+            items.sort(key=lambda x: x.get("at_ts") or 0, reverse=True)
+    except Exception as _lje:
+        logging.getLogger(__name__).warning(f"[journal] line_signals fail: {_lje}")
+
     # ⚡ FAST EXIT: для /api/journal/fast endpoint — UI получает данные мгновенно,
     # все enrichments ниже (squeeze/divergence/rsi4h/rsi12h/top_movers/delta/rsi/trend)
     # выполняются только в полном compute через /api/journal.
