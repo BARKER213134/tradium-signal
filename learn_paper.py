@@ -366,11 +366,19 @@ def _open_new(db, model, now):
     try:
         _tmrows = ((db.market_state.find_one({"_id": "trend_matrix"}) or {}).get("rows") or [])
         _tmx = {r.get("s"): (r.get("d") or {}) for r in _tmrows}
-        # 📐 структура (13.11): канал 10д на 2h из скана рынка
-        _kmap = {r.get("s"): r.get("k") for r in _tmrows if r.get("k")}
     except Exception:
+        _tmrows = []
         _tmx = {}
-        _kmap = {}
+    # 📐 структура (13.11): канал 10д на 2h. Скан рынка даёт ~174 монеты, а
+    # сигналы идут по ~535 → карта всех монет (structure_engine): перед
+    # скорингом быстро досчитываем кандидатов, у кого записи нет вовсе
+    try:
+        import structure_engine as _sen
+        _sen.refresh_map(db, priority=[c["sym"] for _, _, c in cands],
+                         budget=40, deadline_s=15, only_missing=True)
+        _kmap = _sen.load_map(db, tmrows=_tmrows)
+    except Exception:
+        _kmap = {r.get("s"): r.get("k") for r in _tmrows if r.get("k")}
     _exits = (model or {}).get("exits") or {}
     # ₿ вола (07.10): текущий бин один на цикл
     try:
@@ -696,6 +704,15 @@ def run_cycle():
     closed = _close_open(db, now)
     if opened or closed:
         logger.info(f"[paper] открыто {opened} · закрыто {closed}")
+    # 📐 карта структуры по всем монетам: порция за цикл, каждая монета —
+    # раз на 2h-бар (после открытий/закрытий, чтобы их не задерживать)
+    try:
+        import structure_engine as _sen
+        _n = _sen.refresh_map(db, budget=120, deadline_s=40)
+        if _n:
+            logger.info(f"[paper] 📐 структура: обновлено монет {_n}")
+    except Exception:
+        logger.debug("[paper] structure map fail", exc_info=True)
     return opened, closed
 
 

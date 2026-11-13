@@ -82,3 +82,143 @@ def channel_from_1h(kd, n=N):
         return channel(c2[:-1], h2[:-1], l2[:-1], n)
     except Exception:
         return None
+
+
+# ───────────── 🗺 карта структуры по ВСЕМ монетам (13.11, вечер) ─────────────
+# Скан рынка (accum_detector → trend_matrix.k) покрывает ~174 ликвидные пары,
+# а сигналы школы идут по ~535 монетам: за 3 часа штамп получили 5 сделок из
+# 33. Отдельная карта market_state.structure_map: вселенная = монеты с
+# сигналами за 30 дней + открытые сделки школы; обновление порциями из цикла
+# школы (5 мин), каждая монета — раз на 2h-бар. Запись свежа, пока ей не
+# больше MAP_MAX_AGE_BARS баров: канал за 120 баров от одного бара почти не
+# меняется, а пустой штамп хуже слегка устаревшего.
+MAP_ID = "structure_map"
+MAP_MAX_AGE_BARS = 3
+MAP_UNIVERSE_DAYS = 30
+_BAR_MS = 7_200_000
+
+
+def _bar_now():
+    import time
+    return int(time.time() * 1000) // _BAR_MS
+
+
+def _sym_ok(s):
+    return bool(s) and "." not in s and "$" not in s and s.endswith("USDT")
+
+
+def _universe(db, days=MAP_UNIVERSE_DAYS):
+    from datetime import timedelta
+    from database import utcnow
+    since = utcnow() - timedelta(days=days)
+    out = set()
+    for coll, fields in (("new_strategy_signals", ("symbol", "pair")),
+                         ("supertrend_signals", ("pair_norm", "pair")),
+                         ("academy_signals", ("symbol", "pair"))):
+        try:
+            for d in db[coll].find({"created_at": {"$gte": since}},
+                                   {f: 1 for f in fields}):
+                s = d.get(fields[0]) or (d.get(fields[1]) or "").replace("/", "")
+                if s:
+                    out.add(s.upper())
+        except Exception:
+            pass
+    try:
+        for d in db.academy_paper.find({"state": "OPEN"}, {"sym": 1}):
+            if d.get("sym"):
+                out.add(d["sym"].upper())
+    except Exception:
+        pass
+    return sorted(s for s in out if _sym_ok(s))
+
+
+def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
+                only_missing=False, klines_fn=None):
+    """Досчитать структуру порцией монет. priority — монеты текущих
+    кандидатов (первыми). only_missing — трогать только тех, у кого записи
+    нет или она старше MAP_MAX_AGE_BARS (быстрый проход перед скорингом).
+    Возвращает число обновлённых. Ошибки не роняют цикл школы."""
+    from concurrent.futures import ThreadPoolExecutor, wait
+    from database import utcnow
+    try:
+        bar = _bar_now()
+        doc = db.market_state.find_one({"_id": MAP_ID}) or {}
+        mp = doc.get("map") or {}
+        uni = doc.get("uni") or []
+        sets = {}
+        if not only_missing and (doc.get("uni_b") != bar or not uni):
+            uni = _universe(db)
+            sets["uni"] = uni
+            sets["uni_b"] = bar
+        pri = [s.upper() for s in (priority or []) if _sym_ok((s or "").upper())]
+        seen = set()
+        order = []
+        # быстрый проход — только монеты текущих кандидатов
+        for s in (pri if only_missing else pri + list(uni)):
+            if s in seen:
+                continue
+            seen.add(s)
+            b = (mp.get(s) or {}).get("b")
+            if only_missing:
+                if b is not None and b >= bar - MAP_MAX_AGE_BARS:
+                    continue
+            elif b == bar:
+                continue
+            order.append((0 if s in pri else 1, b or 0, s))
+        order.sort()
+        todo = [s for _, _, s in order[:budget]]
+        if todo:
+            if klines_fn is None:
+                from exchange import get_klines_any as klines_fn
+
+            def _one(sym):
+                try:
+                    kd = klines_fn(sym[:-4] + "/USDT", "1h", 250)
+                    k = channel_from_1h(kd) if kd and len(kd) >= 245 else None
+                except Exception:
+                    k = None
+                return sym, k
+
+            ex = ThreadPoolExecutor(max_workers=workers)
+            futs = [ex.submit(_one, s) for s in todo]
+            done, _ = wait(futs, timeout=deadline_s)
+            ex.shutdown(wait=False)
+            for f in done:
+                try:
+                    sym, k = f.result()
+                except Exception:
+                    continue
+                # нет свечей (делист/короткая история) — помечаем бар, чтобы
+                # не долбить биржу каждый цикл; ch=None → штампа нет
+                sets["map." + sym] = ({"ch": k["ch"], "mv": k["mv"], "pos": k["pos"],
+                                       "kp": k["kp"], "b": bar}
+                                      if k else {"ch": None, "b": bar})
+        if sets:
+            sets["updated"] = utcnow().isoformat()
+            db.market_state.update_one({"_id": MAP_ID}, {"$set": sets}, upsert=True)
+        return sum(1 for k in sets if k.startswith("map."))
+    except Exception:
+        return 0
+
+
+def load_map(db, tmrows=None):
+    """{SYM: {ch, mv, pos, kp}} для скоринга: карта всех монет (не старше
+    MAP_MAX_AGE_BARS баров) поверх канала из скана рынка (trend_matrix.k)."""
+    out = {}
+    try:
+        if tmrows is None:
+            tmrows = (db.market_state.find_one({"_id": "trend_matrix"}) or {}).get("rows") or []
+        for r in tmrows:
+            if r.get("k") and r.get("s"):
+                out[r["s"]] = r["k"]
+    except Exception:
+        pass
+    try:
+        bar = _bar_now()
+        mp = (db.market_state.find_one({"_id": MAP_ID}, {"map": 1}) or {}).get("map") or {}
+        for s, v in mp.items():
+            if v and v.get("ch") and (v.get("b") or 0) >= bar - MAP_MAX_AGE_BARS:
+                out[s] = {"ch": v["ch"], "mv": v.get("mv"), "pos": v.get("pos"), "kp": v.get("kp")}
+    except Exception:
+        pass
+    return out

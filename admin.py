@@ -9818,11 +9818,16 @@ async def api_academy():
             _tmrows = ((db.market_state.find_one({"_id": "trend_matrix"}) or {}
                         ).get("rows") or [])
             _tmx = {r.get("s"): (r.get("d") or {}) for r in _tmrows}
-            # 📐 структура (13.11): канал 10д на 2h — в вердикт и в ленту
-            _kmap = {r.get("s"): r.get("k") for r in _tmrows if r.get("k")}
         except Exception:
+            _tmrows = []
             _tmx = {}
-            _kmap = {}
+        # 📐 структура (13.11): канал 10д на 2h — в вердикт и в ленту; карта
+        # всех монет (structure_map) поверх канала из скана рынка
+        try:
+            import structure_engine as _sen
+            _kmap = _sen.load_map(db, tmrows=_tmrows)
+        except Exception:
+            _kmap = {r.get("s"): r.get("k") for r in _tmrows if r.get("k")}
         # 🪨/🧱 (30.09): позиция входа в диапазоне 4h-зон (кэш computed_levels)
         try:
             _zmap = {z.get("pair"): (z.get("zones") or []) for z in
