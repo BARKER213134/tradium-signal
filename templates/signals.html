@@ -7080,9 +7080,13 @@ setInterval(trLoad, 60000);
     <div id="lvGoal" style="font-size:15px;font-weight:900;font-family:var(--font-mono);line-height:1.4;">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">🎯 цель $20 000/мес</div>
   </div>
+  <div id="lvSBox" style="background:var(--dark);border:1px dashed rgba(255,94,156,0.55);border-radius:10px;padding:10px 16px;" title="🩳 тень шортов (с 13.11): ×2-шорты школы на BingX с теми же капами, что у лайва (10/день, 3 в 2ч-слот, 1 монета/день, 15 позиций). Без тормоза. В статистику лайва, стоп WR20 и исполнитель НЕ входит — копим отдельный трек, чтобы решить по цифрам, брать ли шорты.">
+    <div id="lvS" style="font-size:15px;font-weight:900;font-family:var(--font-mono);line-height:1.4;">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">🩳 тень шортов ×2 · в лайв не входит</div>
+  </div>
 </div>
 <div style="font-size:10.5px;color:var(--muted);margin:-4px 0 12px;line-height:1.6;">
-  💎 Фильтр лайва: <b>только ЛОНГ ОТ ДНА</b> (не ⛰: зелёная серия MSO &lt;5; широта — индикатор, с 25.09 не режет; шорты не берутся — сняты 02.11, провал в коррекции) · только правила сайзинга <b>×2</b> (EV≥3, WR≥60) · монета торгуется на <b>BingX</b> (<span id="lvBx">—</span> перпов, ~93% наших) · капы: <b>10 входов/день, ≤3 в 2ч-слот, 1 монета/день, 15 позиций</b> · показанные R уже включают −0.2% на комиссию и проскальзывание. Это ровно те сделки, которые пойдут в реальный лайв — статистика копится отдельно от общего пейпера. Клик по монете — график с уровнями.
+  💎 Фильтр лайва: <b>только ЛОНГ ОТ ДНА</b> (не ⛰: зелёная серия MSO &lt;5; широта — индикатор, с 25.09 не режет; шорты не берутся — сняты 02.11, провал в коррекции; с 13.11 они копятся отдельной тенью 🩳) · только правила сайзинга <b>×2</b> (EV≥3, WR≥60) · монета торгуется на <b>BingX</b> (<span id="lvBx">—</span> перпов, ~93% наших) · капы: <b>10 входов/день, ≤3 в 2ч-слот, 1 монета/день, 15 позиций</b> · показанные R уже включают −0.2% на комиссию и проскальзывание. Это ровно те сделки, которые пойдут в реальный лайв — статистика копится отдельно от общего пейпера. Клик по монете — график с уровнями.
 </div>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px;align-items:start;">
   <div>
@@ -7160,6 +7164,25 @@ async function lvLoad() {
       `<span style="font-size:10px;color:var(--muted);"> · окно ${g.window_d}д · ${g.n} закрытий · ${g.reliable ? 'достоверно' : '⚠️ мало данных'}</span>`;
   } else {
     ge.textContent = 'копим закрытия…';
+  }
+  // 🩳 тень шортов (13.11): свой срез, в лайв не входит
+  const lvsSt = d.stats_s || null;
+  const lvsEl = document.getElementById('lvS');
+  const lvsBox = document.getElementById('lvSBox');
+  if (lvsEl && lvsBox) {
+    const lvsOpen = d.open_s || [];
+    const lvsU = lvsOpen.filter(x => x.upnl != null);
+    const lvsUavg = lvsU.length ? lvsU.reduce((a, x) => a + x.upnl, 0) / lvsU.length : null;
+    lvsEl.innerHTML = (lvsSt && lvsSt.n
+      ? `<b style="color:${lvsSt.sum_adj > 0 ? '#00e5a0' : '#ff5e9c'};">${lvsSt.sum_adj > 0 ? '+' : ''}${lvsSt.sum_adj}</b> · WR ${lvsSt.wr}% · ${lvsSt.avg_adj > 0 ? '+' : ''}${lvsSt.avg_adj} · n ${lvsSt.n}`
+      : 'копим закрытия…') +
+      `<br><span style="font-size:10px;color:var(--muted);">открыто ${d.open_s_n == null ? '—' : d.open_s_n} / ${(d.caps || {}).conc || 15}` +
+      (lvsUavg != null ? ` · uPnL ${lvsUavg > 0 ? '+' : ''}${lvsUavg.toFixed(2)}%` : '') +
+      ` · сегодня ${d.today_s_n == null ? '—' : d.today_s_n} / ${(d.caps || {}).day || 10}</span>`;
+    if (lvsOpen.length) {
+      lvsBox.title = lvsBox.title.split('\n\nОткрыто:')[0] + '\n\nОткрыто:\n' +
+        lvsOpen.map(x => x.sym.replace('USDT', '') + ' ' + (x.upnl == null ? '—' : (x.upnl > 0 ? '+' : '') + x.upnl + '%')).join(' · ');
+    }
   }
   const op = d.open || [];
   document.getElementById('lvOpen').innerHTML = op.map((t, i) => {

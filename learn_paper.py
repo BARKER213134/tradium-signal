@@ -18,6 +18,7 @@ LIVE_CONC_CAP = 15     # 💎 одновременных позиций
 LIVE2_DAY_CAP = 10     # 🧪 тень (21.09): ×2+×1, ≤1 сделки/2ч-слот, ≤1 монеты/день
 LIVE2_SLOT_H = 2
 LIVE2_ENABLED = False  # 23.09: тень выключена — ответы получены (×1 нет, разнесение да)
+LIVE_S_ENABLED = True  # 🩳 13.11: тень шортов ×2 (флаг live_s) — свой трек, в 💎 не входит
 LIVE_SLOT_H = 2        # 💎 23.09: разнесение входов лайва — ≤3 сделок в 2ч-слот
 LIVE_SLOT_CAP = 3      #   (пакет 9 сделок в 04:31 = один эпизод → 7 стопов из 8)
 LIVE_FEE_EXTRA = 0.1   # 💎 доп. штраф лайва к R (%): проскальзывание BingX
@@ -507,6 +508,33 @@ def _open_new(db, model, now):
                          and conc2 < LIVE_CONC_CAP)
         except Exception:
             pass
+        # 🩳 ТЕНЬ ШОРТОВ live_s (13.11, юзер «делай теневой шортовый срез»):
+        # SHORT × ×2 × BingX с теми же капами, что у 💎 (10/день, 3 в
+        # 2ч-слот, 1 монета/день, 15 позиций), счётчики СВОИ. Без тормоза:
+        # зеркальные гейты школы шортам вредят (разбор 13.11: без гейтов
+        # +230 за 6 недель, с гейтами −80). В статистику лайва, WR20 и
+        # исполнитель НЕ входит — только помечает, копим честный трек.
+        live_s = False
+        try:
+            if (LIVE_S_ENABLED and not probe and c["dir"] == "SHORT"
+                    and le.size_tier(rule) == "2x"
+                    and c["sym"] in bingx_set(db)):
+                from datetime import datetime as _dts
+                _day0s = _dts(now.year, now.month, now.day)
+                _slot0s = _dts(now.year, now.month, now.day,
+                               (now.hour // LIVE_SLOT_H) * LIVE_SLOT_H)
+                live_s = (
+                    db.academy_paper.count_documents(
+                        {"live_s": True, "opened_at": {"$gte": _day0s}}) < LIVE_DAY_CAP
+                    and db.academy_paper.count_documents(
+                        {"live_s": True, "state": "OPEN"}) < LIVE_CONC_CAP
+                    and db.academy_paper.count_documents(
+                        {"live_s": True, "opened_at": {"$gte": _slot0s}}) < LIVE_SLOT_CAP
+                    and db.academy_paper.count_documents(
+                        {"live_s": True, "sym": c["sym"],
+                         "opened_at": {"$gte": _day0s}}) < 1)
+        except Exception:
+            pass
         # 🚪 выход по школе (03.10): корзина как в ленте → best из exits_table
         _bk2 = bucket   # gold / heat / None
         if _bk2 is None and c["dir"] == "LONG":
@@ -520,7 +548,7 @@ def _open_new(db, model, now):
         _exit_open = (_ex or {}).get("best") or "base"
         db.academy_paper.update_one({"_id": key}, {"$set": {
             "exit_open": _exit_open, "exit_bk": _bk2,
-            "live": live, "live2": live2, "probe": probe,
+            "live": live, "live2": live2, "live_s": live_s, "probe": probe,
             "sym": c["sym"], "pair": pair, "dir": c["dir"], "src": c["src"],
             "rule": rule.get("label") if rule else None,
             "rule_id": rule.get("id") if rule else None,
@@ -634,7 +662,7 @@ def _close_open(db, now):
                            "closed_at": now}
                     if _exit_reason:
                         upd["exit_reason"] = _exit_reason
-                    if t.get("live") or t.get("live2"):
+                    if t.get("live") or t.get("live2") or t.get("live_s"):
                         fc = _funding_cost(t["sym"], t["opened_at"],
                                            now, t["dir"])
                         if fc is not None:
@@ -752,6 +780,27 @@ def stats(db):
         _n2 = utcnow()
         out["live2_today"] = db.academy_paper.count_documents(
             {"live2": True, "opened_at": {"$gte": _dt3(_n2.year, _n2.month, _n2.day)}})
+    except Exception:
+        pass
+    # 🩳 тень шортов (live_s, 13.11): свой срез, в лайв не входит
+    try:
+        ls = list(db.academy_paper.find(
+            {"live_s": True, "state": {"$in": ["TP", "SL", "TIMEOUT"]}},
+            {"r": 1, "fund_cost": 1}))
+        lvs = _st(ls)
+        if lvs:
+            nets = [d["r"] - LIVE_FEE_EXTRA - (d.get("fund_cost") or 0)
+                    for d in ls if d.get("r") is not None]
+            lvs["avg_adj"] = round(sum(nets) / len(nets), 2) if nets else None
+            lvs["sum_adj"] = round(sum(nets), 1) if nets else None
+        out["live_s"] = lvs
+        out["live_s_open"] = db.academy_paper.count_documents(
+            {"live_s": True, "state": "OPEN"})
+        from datetime import datetime as _dt4
+        _n4 = utcnow()
+        out["live_s_today"] = db.academy_paper.count_documents(
+            {"live_s": True,
+             "opened_at": {"$gte": _dt4(_n4.year, _n4.month, _n4.day)}})
     except Exception:
         pass
     try:

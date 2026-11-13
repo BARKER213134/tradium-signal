@@ -9577,12 +9577,28 @@ async def api_live():
                         "reliable": days >= 14 and len(lcl2) >= 60}
         except Exception:
             pass
+        # 🩳 тень шортов (13.11): открытые с uPnL — для карточки на 💎
+        shorts_open = []
+        try:
+            for d in db.academy_paper.find(
+                    {"live_s": True, "state": "OPEN"},
+                    {"sym": 1, "entry": 1, "opened_at": 1}).sort(
+                    "opened_at", -1).limit(15):
+                mp = marks.get(d["sym"])
+                shorts_open.append({
+                    "sym": d["sym"], "at": d["opened_at"].isoformat(),
+                    "upnl": (round((1 - mp / d["entry"]) * 100, 2)
+                             if mp and d.get("entry") else None)})
+        except Exception:
+            pass
         try:
             import academy_live as _al
             _exec = _al.status()
         except Exception:
             _exec = None
         return {"ok": True, "stats": st.get("live"), "exec": _exec,
+                "stats_s": st.get("live_s"), "open_s_n": st.get("live_s_open"),
+                "today_s_n": st.get("live_s_today"), "open_s": shorts_open,
                 "throttle": {k: thr.get(k) for k in
                              ("level", "cap", "reason", "breadth", "wr20",
                               "regime", "btc_dd", "cap_short", "school24", "school4h",
