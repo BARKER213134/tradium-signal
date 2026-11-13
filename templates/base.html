@@ -5344,10 +5344,13 @@ window.renderKChart = async function(container, symbol, tf, opts) {
             else if (Math.abs(pv.p - lv) <= 0.5 * A[i]) touches++;
           }
         }
+        // наклон обязан быть «правильным»: поддержка растёт, сопротивление падает
+        // (тень пивота за основанием без закрытия могла перевернуть знак)
         if (k !== null && dead === null) {
-          if (n - 1 - an.i >= 12) res.push({ up: up, a: an.i, ap: an.p, k: k, end: n - 1, broken: false,
-                                             touches: touches, len: n - 1 - an.i, refits: refits });
-        } else if (lastK !== null) {
+          if (n - 1 - an.i >= 12 && (up ? k > 0 : k < 0))
+            res.push({ up: up, a: an.i, ap: an.p, k: k, end: n - 1, broken: false,
+                       touches: touches, len: n - 1 - an.i, refits: refits });
+        } else if (lastK !== null && (up ? lastK > 0 : lastK < 0)) {
           const end = lastBrk;
           if (end - an.i >= 12) res.push({ up: up, a: an.i, ap: an.p, k: lastK, end: end, broken: true,
                                            touches: touches, len: end - an.i, refits: refits });
