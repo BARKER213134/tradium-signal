@@ -34,7 +34,17 @@ PLAN = {
     # диапазона → LONG +5% / −15% / 30 дней. Проверка: 624 сигнала, 97 дней,
     # WR 82.5%, +2.04% (любой бар того же периода: 77%, +0.78%).
     "vol_climax": {"dir": "LONG", "tp": 0.05, "sl": 0.15, "hz": 720},
+    # 🚿 СМЫВ (13.11, юзер: «найди сигнал, в который зашёл — и он плюсовой»):
+    # та же кульминация объёма на монете, НО в момент, когда перепродана
+    # половина рынка (доля монет с RSI 2h < 30 ≥ 50%). Год, 302 монеты, вход
+    # на закрытии бара, +5% / −15% / 14 дней: 595 сделок, WR 86.7%, +2.54%
+    # (отбор 84% / +1.93, проверка 94% / +3.88; любой бар 68% / −0.41).
+    # Без капитуляции рынка та же кульминация даёт 67% / −0.33.
+    # Эпизодов 17, в плюсе 12; из 8 крупных — 6 (минусовые: 15.12.25 −3.4,
+    # 31.01.26 −5.1 — обвал продолжился). Гарантии нет: это 87%, не 100%.
+    "flush_climax": {"dir": "LONG", "tp": 0.05, "sl": 0.15, "hz": 336},
 }
+FLUSH_OS = 0.50     # доля перепроданных монет, с которой рынок считаем «смывом»
 DEDUP_H = 48        # один сигнал источника на монету за 48ч (как в поиске)
 MIN_BARS = 375      # 360 баров (30 дней) + прогрев индикаторов
 
@@ -96,6 +106,51 @@ def detect(bars):
     except Exception:
         logger.debug("[setups] detect fail", exc_info=True)
         return []
+
+
+def rsi_last(bars, n=14):
+    """RSI Уайлдера по закрытиям последнего закрытого 2h-бара (для доли перепроданных)."""
+    try:
+        c = np.array([b["c"] for b in bars[-300:]], dtype=float)
+        if len(c) < 60:
+            return None
+        d = np.diff(c, prepend=c[0])
+        up = _wilder(np.clip(d, 0, None), n)[-1]
+        dn = _wilder(np.clip(-d, 0, None), n)[-1]
+        return round(float(100.0 if dn <= 0 else 100 - 100 / (1 + up / dn)), 1)
+    except Exception:
+        return None
+
+
+def flush_from_climax(db, mos, now):
+    """Рынок в смыве (mos ≥ FLUSH_OS): свежие vol_climax → отдельный источник flush_climax."""
+    n = 0
+    try:
+        p = PLAN["flush_climax"]
+        for d in db.academy_signals.find(
+                {"strategy": "vol_climax", "created_at": {"$gte": now - timedelta(hours=3)},
+                 "backfill": {"$ne": True}}):
+            sym = d.get("symbol")
+            px = d.get("entry")
+            if not sym or not px:
+                continue
+            if db.academy_signals.find_one(
+                    {"strategy": "flush_climax", "symbol": sym,
+                     "created_at": {"$gte": now - timedelta(hours=DEDUP_H)}}, {"_id": 1}):
+                continue
+            ind = dict(d.get("indicators") or {}, mkt_os=round(float(mos), 3))
+            db.academy_signals.insert_one({
+                "strategy": "flush_climax", "direction": "LONG",
+                "pair": d.get("pair") or sym[:-4] + "/USDT", "symbol": sym,
+                "entry": px, "tp": px * (1 + p["tp"]), "sl": px * (1 - p["sl"]),
+                "horizon_h": p["hz"], "state": "WAITING", "indicators": ind, "setup": True,
+                "note": (f"🚿 СМЫВ: объёмная кульминация на дне при перепроданности "
+                         f"{mos * 100:.0f}% рынка · план +5% / −15% / 14 дней"),
+                "created_at": now, "updated_at": now})
+            n += 1
+    except Exception:
+        logger.debug("[setups] flush fail", exc_info=True)
+    return n
 
 
 def store(db, sym, found, px, now):

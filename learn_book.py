@@ -27,7 +27,8 @@ BOOK_ENABLED = True
 BOOK_LONG = {"whale", "volume_surge", "volcano", "supertrend_mtf", "ten", "combo",
              "rsi_cross_12h", "verified_go",       # 13.11, аудит
              "range_bottom",                       # 13.11, годовой поиск входов
-             "vol_climax"}                         # 13.11, поиск «80%»: +5/−15/30д
+             "vol_climax",                         # 13.11, поиск «80%»: +5/−15/30д
+             "flush_climax"}                       # 13.11, 🚿 смыв: +5/−15/14д
 BOOK_SHORT = {"shark", "volume_surge", "triple_confluence", "supertrend_daily",
               "supertrend_vip", "second_flip",
               "rsi_cross_12h", "verified_go",

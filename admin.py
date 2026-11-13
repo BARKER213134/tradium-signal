@@ -11367,6 +11367,21 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int, academy: int = 0) ->
                 "at": at_dt.isoformat() if at_dt else None,
                 "at_ts": int((n.get("bar_t") or 0) // 1000),
             })
+        # 🚿 СМЫВ: на графиках из Академии он уже есть (academy_signals) — добавляем остальным
+        if not academy:
+            for n in _gdb_ln().academy_signals.find(
+                    {"strategy": "flush_climax", "symbol": sym_clean, "created_at": {"$gte": since}},
+                    {"direction": 1, "entry": 1, "tp": 1, "sl": 1, "created_at": 1, "note": 1}
+                    ).sort("created_at", -1).limit(30):
+                at_dt = n.get("created_at")
+                _line_items.append({
+                    "source": "flush_climax", "symbol": sym_clean, "pair": pair_slash,
+                    "direction": n.get("direction", "LONG"),
+                    "entry": n.get("entry"), "tp1": n.get("tp"), "sl": n.get("sl"),
+                    "pattern": n.get("note") or "🚿 СМЫВ", "score": 0, "academy_only": True,
+                    "at": at_dt.isoformat() if at_dt else None,
+                    "at_ts": int(at_dt.timestamp()) if at_dt else 0,
+                })
     except Exception:
         pass
 
@@ -12358,6 +12373,28 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "is_top_pick": False, "top_pick_confirmations_count": 0,
                 "ns_strategy": strat, "ns_state": "WAITING",
                 "stack_count": 0, "stack_distinct": 0, "line": True,
+                "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
+                "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+            })
+        # 🚿 СМЫВ (flush_climax) — редкий сигнал, в журнал целиком
+        for n in _gdb_lj().academy_signals.find(
+                {"strategy": "flush_climax", "created_at": {"$gte": since_14d}},
+                {"pair": 1, "symbol": 1, "direction": 1, "entry": 1, "tp": 1, "sl": 1,
+                 "created_at": 1, "note": 1, "indicators.mkt_os": 1}
+                ).sort("created_at", -1).limit(300):
+            at_dt = n.get("created_at")
+            _lj.append({
+                "source": "flush_climax",
+                "symbol": n.get("symbol") or (n.get("pair") or "").replace("/", ""),
+                "pair": n.get("pair") or "",
+                "direction": n.get("direction", "LONG"),
+                "entry": n.get("entry"), "tp1": n.get("tp"), "sl": n.get("sl"),
+                "pattern": n.get("note") or "🚿 СМЫВ: кульминация объёма при капитуляции рынка",
+                "score": round(((n.get("indicators") or {}).get("mkt_os") or 0) * 100),
+                "st_passed": None, "pump_score": 0,
+                "is_top_pick": False, "top_pick_confirmations_count": 0,
+                "ns_strategy": "flush_climax", "ns_state": "WAITING",
+                "stack_count": 0, "stack_distinct": 0,
                 "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
                 "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
             })

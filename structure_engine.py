@@ -182,6 +182,7 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                 px = None
                 lev = []
                 bt = None
+                rs = None
                 try:
                     pair = sym[:-4] + "/USDT"
                     kd = klines_fn(pair, "2h", 520)     # 500 закрытых — окно графика
@@ -194,6 +195,7 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                             import new_setups as _ns
                             found = _ns.detect(closed)
                             px = float(closed[-1]["c"])
+                            rs = _ns.rsi_last(closed)
                             # 📐 касание линий графика (line_touch / line_dash)
                             try:
                                 import line_touch as _lt
@@ -206,7 +208,7 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                         k = channel_from_1h(kd1) if kd1 and len(kd1) >= 245 else None
                 except Exception:
                     pass
-                return sym, k, found, px, lev, bt
+                return sym, k, found, px, lev, bt, rs
 
             ex = ThreadPoolExecutor(max_workers=workers)
             futs = [ex.submit(_one, s) for s in todo]
@@ -214,7 +216,7 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
             ex.shutdown(wait=False)
             for f in done:
                 try:
-                    sym, k, _found, _px, _lev, _bt = f.result()
+                    sym, k, _found, _px, _lev, _bt, _rs = f.result()
                 except Exception:
                     continue
                 if _lev and _px and _bt:
@@ -233,8 +235,30 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                 # нет свечей (делист/короткая история) — помечаем бар, чтобы
                 # не долбить биржу каждый цикл; ch=None → штампа нет
                 sets["map." + sym] = ({"ch": k["ch"], "mv": k["mv"], "pos": k["pos"],
-                                       "kp": k["kp"], "b": bar}
+                                       "kp": k["kp"], "b": bar, "rsi": _rs}
                                       if k else {"ch": None, "b": bar})
+            # 🚿 доля перепроданных монет (RSI 2h < 30) по карте → источник
+            # flush_climax (new_setups): кульминация объёма в момент смыва рынка
+            try:
+                _rv = {}
+                for _s, _v in mp.items():
+                    if (_v or {}).get("rsi") is not None and (_v.get("b") or 0) >= bar - 1:
+                        _rv[_s] = _v["rsi"]
+                for _key, _v in sets.items():
+                    if _key.startswith("map.") and isinstance(_v, dict):
+                        if _v.get("rsi") is not None:
+                            _rv[_key[4:]] = _v["rsi"]
+                        else:
+                            _rv.pop(_key[4:], None)
+                if len(_rv) >= 100:
+                    _mos = sum(1 for _x in _rv.values() if _x < 30) / len(_rv)
+                    sets["mkt_os"] = round(_mos, 3)
+                    sets["mkt_os_n"] = len(_rv)
+                    import new_setups as _ns
+                    if _mos >= _ns.FLUSH_OS:
+                        _ns.flush_from_climax(db, _mos, utcnow())
+            except Exception:
+                pass
         if sets:
             sets["updated"] = utcnow().isoformat()
             db.market_state.update_one({"_id": MAP_ID}, {"$set": sets}, upsert=True)
