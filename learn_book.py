@@ -25,10 +25,28 @@ logger = logging.getLogger(__name__)
 
 BOOK_ENABLED = True
 BOOK_LONG = {"whale", "volume_surge", "volcano", "supertrend_mtf", "ten", "combo",
-             "rsi_cross_12h", "verified_go"}       # два последних — 13.11, аудит
+             "rsi_cross_12h", "verified_go",       # 13.11, аудит
+             "range_bottom"}                       # 13.11, годовой поиск входов
 BOOK_SHORT = {"shark", "volume_surge", "triple_confluence", "supertrend_daily",
               "supertrend_vip", "second_flip",
-              "rsi_cross_12h", "verified_go"}
+              "rsi_cross_12h", "verified_go",
+              "low_break"}                         # 13.11, годовой поиск входов
+# Свой план сделки у новых источников (new_setups.PLAN): +10% / −15% / 14 дней —
+# их преимущество найдено именно с широким стопом и длинным горизонтом.
+# low_break — шорт у 30-дневного минимума — берём и при рынке глубоко внизу:
+# это отдельная гипотеза, иначе трека по ней не накопить.
+SHORT_BLOCK_EXEMPT = {"low_break"}
+
+
+def _plan(src):
+    try:
+        import new_setups as _ns
+        p = _ns.PLAN.get(src)
+        if p:
+            return p["tp"], p["sl"], p["hz"]
+    except Exception:
+        pass
+    return TP_PCT, SL_PCT, TIMEOUT_H
 DAY_CAP = 10       # входов в день на направление
 SLOT_H = 2
 SLOT_CAP = 3       # входов в 2ч-слот на направление
@@ -63,7 +81,7 @@ def _open(db, now):
         d, src, sym = c["dir"], c["src"], c["sym"]
         if src not in (BOOK_LONG if d == "LONG" else BOOK_SHORT) or sym not in bx:
             continue
-        if d == "SHORT" and _no_short:
+        if d == "SHORT" and _no_short and src not in SHORT_BLOCK_EXEMPT:
             continue
         n_day, n_slot, n_open = cnt[d]
         if n_day >= DAY_CAP or n_slot >= SLOT_CAP or n_open >= CONC_CAP:
@@ -76,9 +94,11 @@ def _open(db, now):
         px = lp._last_close(pair or (sym[:-4] + "/USDT"))
         if not px:
             continue
+        _tpp, _slp, _hz = _plan(src)
         db.academy_book.insert_one({
             "_id": key, "sym": sym, "pair": pair, "dir": d, "src": src,
-            "entry": px, "state": "OPEN", "sig_at": c["at"], "opened_at": now})
+            "entry": px, "state": "OPEN", "sig_at": c["at"], "opened_at": now,
+            "tp_pct": _tpp, "sl_pct": _slp, "hz_h": _hz})
         cnt[d][0] += 1
         cnt[d][1] += 1
         cnt[d][2] += 1
@@ -100,7 +120,8 @@ def _close(db, now):
         c1 = None
         try:
             oldest = min(t["opened_at"] for t in trades)
-            need = int(min((now - oldest).total_seconds() / 3600, 100)) + 3
+            _hmax = max((t.get("hz_h") or TIMEOUT_H) for t in trades) + 4
+            need = int(min((now - oldest).total_seconds() / 3600, _hmax)) + 3
             c1 = get_klines_any(pair, "1h", max(need, 5))
         except Exception:
             logger.debug(f"[book] klines fail {pair}", exc_info=True)
@@ -109,7 +130,7 @@ def _close(db, now):
                 db.academy_book.update_one({"_id": t["_id"]}, {"$set": {"chk": now}})
                 age_h = (now - t["opened_at"]).total_seconds() / 3600
                 if not c1:
-                    if age_h >= 120:
+                    if age_h >= (t.get("hz_h") or TIMEOUT_H) + 24:
                         db.academy_book.update_one(
                             {"_id": t["_id"]},
                             {"$set": {"state": "TIMEOUT", "r": -0.1, "closed_at": now,
@@ -119,19 +140,22 @@ def _close(db, now):
                 o_ms = int(t["opened_at"].timestamp() * 1000)
                 entry = float(t["entry"])
                 sg = 1 if t["dir"] == "LONG" else -1
-                tp = entry * (1 + sg * TP_PCT)
-                sl = entry * (1 - sg * SL_PCT)
+                _tpp = t.get("tp_pct") or TP_PCT
+                _slp = t.get("sl_pct") or SL_PCT
+                _hz = t.get("hz_h") or TIMEOUT_H
+                tp = entry * (1 + sg * _tpp)
+                sl = entry * (1 - sg * _slp)
                 res = None
                 for b in c1:
                     if b["t"] <= o_ms or b["t"] + 3_600_000 > now_ms:
                         continue
                     if (b["l"] <= sl) if sg > 0 else (b["h"] >= sl):
-                        res = ("SL", -SL_PCT * 100 - 0.1)
+                        res = ("SL", -_slp * 100 - 0.1)
                         break
                     if (b["h"] >= tp) if sg > 0 else (b["l"] <= tp):
-                        res = ("TP", TP_PCT * 100 - 0.1)
+                        res = ("TP", _tpp * 100 - 0.1)
                         break
-                if res is None and age_h >= TIMEOUT_H:
+                if res is None and age_h >= _hz:
                     res = ("TIMEOUT", (float(c1[-1]["c"]) / entry - 1) * 100 * sg - 0.1)
                 if res:
                     db.academy_book.update_one(

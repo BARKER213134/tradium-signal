@@ -171,13 +171,33 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
             if klines_fn is None:
                 from exchange import get_klines_any as klines_fn
 
+            import time as _tm
+            now_ms = int(_tm.time() * 1000)
+
             def _one(sym):
+                """канал 10д + новые источники (new_setups) из одних 2h-свечей;
+                запасной путь — 1h×250 только для канала"""
+                k = None
+                found = []
+                px = None
                 try:
-                    kd = klines_fn(sym[:-4] + "/USDT", "1h", 250)
-                    k = channel_from_1h(kd) if kd and len(kd) >= 245 else None
+                    pair = sym[:-4] + "/USDT"
+                    kd = klines_fn(pair, "2h", 400)
+                    closed = [b for b in (kd or []) if b["t"] + _BAR_MS <= now_ms]
+                    if len(closed) >= N:
+                        k = channel([b["c"] for b in closed], [b["h"] for b in closed],
+                                    [b["l"] for b in closed])
+                        # сигнал — только если последний закрытый бар свежий
+                        if closed[-1]["t"] + 2 * _BAR_MS > now_ms:
+                            import new_setups as _ns
+                            found = _ns.detect(closed)
+                            px = float(closed[-1]["c"])
+                    else:
+                        kd1 = klines_fn(pair, "1h", 250)
+                        k = channel_from_1h(kd1) if kd1 and len(kd1) >= 245 else None
                 except Exception:
-                    k = None
-                return sym, k
+                    pass
+                return sym, k, found, px
 
             ex = ThreadPoolExecutor(max_workers=workers)
             futs = [ex.submit(_one, s) for s in todo]
@@ -185,9 +205,16 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
             ex.shutdown(wait=False)
             for f in done:
                 try:
-                    sym, k = f.result()
+                    sym, k, _found, _px = f.result()
                 except Exception:
                     continue
+                # 🆕 13.11: новые источники range_bottom / low_break → academy_signals
+                if _found and _px:
+                    try:
+                        import new_setups as _ns
+                        _ns.store(db, sym, _found, _px, utcnow())
+                    except Exception:
+                        pass
                 # нет свечей (делист/короткая история) — помечаем бар, чтобы
                 # не долбить биржу каждый цикл; ch=None → штампа нет
                 sets["map." + sym] = ({"ch": k["ch"], "mv": k["mv"], "pos": k["pos"],
