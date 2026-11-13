@@ -5466,7 +5466,9 @@ window.renderKChart = async function(container, symbol, tf, opts) {
           chart.createOverlay({
             name: 'segment', groupId: 'tl', lock: true,
             points: [{ timestamp: bars[l.a].t, value: l.ap }, { timestamp: bars[kn].t, value: at(kn) }],
-            styles: { line: { color: dim, size: 1, style: 'dashed', dashedValue: [2, 5] } },
+            // 13.11: пунктир «задним числом» заметнее (юзер) — ярче и толще
+            styles: { line: { color: l.up ? 'rgba(0,229,160,0.8)' : 'rgba(255,77,109,0.8)',
+                              size: 1.5, style: 'dashed', dashedValue: [5, 4] } },
           });
         }
         if (l.end > kn) {
