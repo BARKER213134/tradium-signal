@@ -15,6 +15,30 @@ DISABLED_STRATEGIES = {
     "capitulation",
 }
 
+# 🎓 13.11.26: «только для Академии» — источники со стабильно отрицательной
+# альфой (R источника минус средний R всех сигналов того же направления за
+# тот же месяц; ревизия 112k сигналов 30.03→31.10, отбор по первой половине
+# подтвердился на второй). В журнал и Telegram НЕ идут, пишутся в
+# academy_signals — школа продолжает на них учиться и сама решает.
+# Значение: None — оба направления, "LONG"/"SHORT" — только это направление.
+# Вернуть источник в журнал = убрать из словаря. vol_anomaly/vol_anomaly4h
+# 13.08 были оставлены по решению юзера; 13.11 юзер: «делай все три пункта».
+ACADEMY_ONLY = {
+    "vol_anomaly": None, "vol_anomaly4h": None, "delta_series": None,
+    "st_touch": None, "rev_candle": None, "level_touch": None,
+    "flip_retest": "LONG", "fade": "SHORT", "blowoff": "SHORT",
+    "st_break4h": "SHORT",
+}
+
+
+def academy_only(strategy, direction=None) -> bool:
+    """True — сигнал этого источника/направления идёт только в Академию."""
+    if strategy not in ACADEMY_ONLY:
+        return False
+    d = ACADEMY_ONLY[strategy]
+    return d is None or d == direction
+
+
 # Telegram Bot (Aiogram)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))

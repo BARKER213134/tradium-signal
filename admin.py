@@ -9596,7 +9596,13 @@ async def api_live():
             _exec = _al.status()
         except Exception:
             _exec = None
-        return {"ok": True, "stats": st.get("live"), "exec": _exec,
+        # ⚖ книга без ставки на рынок (13.11): своя коллекция academy_book
+        try:
+            import learn_book as _lbk
+            _book = _lbk.stats(db)
+        except Exception:
+            _book = None
+        return {"ok": True, "stats": st.get("live"), "exec": _exec, "book": _book,
                 "stats_s": st.get("live_s"), "open_s_n": st.get("live_s_open"),
                 "today_s_n": st.get("live_s_today"), "open_s": shorts_open,
                 "throttle": {k: thr.get(k) for k in
@@ -9885,7 +9891,8 @@ async def api_academy():
             f["verdict"] = status
             if rule:
                 f["rule"] = {"label": rule["label"], "ev": rule.get("ev"),
-                             "n": rule["n"], "wr": rule["wr"], "avg": rule["avg"]}
+                             "n": rule["n"], "wr": rule["wr"], "avg": rule["avg"],
+                             "alpha": rule.get("alpha")}
             a = ai_map.get(f.get("key"))
             if a:
                 f["ai"] = a.get("text")

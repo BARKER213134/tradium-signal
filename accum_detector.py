@@ -2177,10 +2177,17 @@ def scan_universe(max_pairs: int = 300):
                       if e["symbol"] not in fresh]
             if new_ev:
                 db_.anomaly_events.insert_many(new_ev)
+                # 🎓 13.11: vol_anomaly «только для Академии» → TG молчит,
+                # событие остаётся на вкладке «Аномалии объёма» и в школе
+                try:
+                    from config import academy_only as _ao_va
+                    _va_tg = not _ao_va("vol_anomaly")
+                except Exception:
+                    _va_tg = True
                 for e in new_ev:
                     if e["vol_x"] >= 8:
                         _d = e["delta"]
-                        _tg16(f"⚡ <b>АНОМАЛЬНЫЙ ОБЪЁМ · "
+                        (_tg16 if _va_tg else (lambda *_a, **_k: None))(f"⚡ <b>АНОМАЛЬНЫЙ ОБЪЁМ · "
                               f"{e['pair'].replace('/USDT', '')}</b>\n"
                               f"{'🔺 на вершине (новый 48ч-хай)' if e['loc'] == 'TOP' else '🔻 на дне (новый 48ч-лоу)'}\n"
                               f"объём ×{e['vol_x']} нормы · дельта "

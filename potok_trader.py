@@ -369,11 +369,13 @@ def try_open() -> int:
     # получает ДА в 1% — контртрендовый вход от зоны всегда «НЕТ»).
     # Гейт качества = бейджи бэктестов: 💪 absorb / 🪂 / 🪤 (+0.77..
     # +1.04R WR71-82) или 🔗 mtf / сила ≥65; «дельта против» — скип.
-    for n_ in db.new_strategy_signals.find(
-            {"created_at": {"$gte": since}, "strategy": "level_touch"},
-            {"pair": 1, "symbol": 1, "direction": 1, "created_at": 1,
-             "svetofor_score": 1, "svetofor_star": 1,
-             "indicators": 1}).limit(100):
+    # 13.11: level_touch «только для Академии» (config.ACADEMY_ONLY) —
+    # 🌊 ПОТОК читает его из обеих коллекций, чтобы не потерять источник
+    _lt_q = {"created_at": {"$gte": since}, "strategy": "level_touch"}
+    _lt_f = {"pair": 1, "symbol": 1, "direction": 1, "created_at": 1,
+             "svetofor_score": 1, "svetofor_star": 1, "indicators": 1}
+    for n_ in (list(db.new_strategy_signals.find(_lt_q, _lt_f).limit(100))
+               + list(db.academy_signals.find(_lt_q, _lt_f).limit(100))):
         _li = n_.get("indicators") or {}
         if _li.get("push_against") or not n_.get("direction"):
             continue

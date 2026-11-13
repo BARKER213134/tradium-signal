@@ -110,9 +110,10 @@ async def _pair(pair_norm: str, tf: str) -> bool:
     direction = "LONG" if sg > 0 else "SHORT"
     # дедуп 3 бара ТФ на пару+ТФ (кулдаун store_signal общий на
     # strategy+pair — короткий, чтобы 4h не глушил 12h)
-    dup = db.new_strategy_signals.find_one({
-        "strategy": "st_touch", "symbol": pair_norm, "indicators.tf": tf,
-        "created_at": {"$gte": now - timedelta(hours=DEDUP_BARS * TF_H[tf])}})
+    _dq = {"strategy": "st_touch", "symbol": pair_norm, "indicators.tf": tf,
+           "created_at": {"$gte": now - timedelta(hours=DEDUP_BARS * TF_H[tf])}}
+    # 13.11: st_touch может жить в academy_signals (config.ACADEMY_ONLY)
+    dup = db.new_strategy_signals.find_one(_dq) or db.academy_signals.find_one(_dq)
     if dup:
         return False
     depth = abs((line - (bar["l"] if sg > 0 else bar["h"])) / line) * 100

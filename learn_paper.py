@@ -310,9 +310,9 @@ def _last_close(pair):
     return float(c[-1]["c"]) if c else None
 
 
-def _open_new(db, model, now):
-    import learn_engine as le
-    since = now - timedelta(hours=SIG_MAX_AGE_H)
+def collect_candidates(db, since):
+    """Свежие сигналы всех источников → [(ключ, пара, {sym, src, dir, …})].
+    Общий вход для школы (_open_new) и книги ⚖ (learn_book)."""
     cands = []
     for d in db.new_strategy_signals.find(
             {"created_at": {"$gte": since},
@@ -349,6 +349,13 @@ def _open_new(db, model, now):
             "src": d.get("strategy") or "?", "dir": d["direction"],
             "val": d.get("validator_ok"), "ms": d.get("mso_streak2h"),
             "px0": d.get("entry"), "sv": d.get("svetofor"), "at": d["created_at"]}))
+    return cands
+
+
+def _open_new(db, model, now):
+    import learn_engine as le
+    since = now - timedelta(hours=SIG_MAX_AGE_H)
+    cands = collect_candidates(db, since)
     thr = live_throttle(db)
     rg = thr.get("regime")
     opened = 0
@@ -704,6 +711,13 @@ def run_cycle():
     closed = _close_open(db, now)
     if opened or closed:
         logger.info(f"[paper] открыто {opened} · закрыто {closed}")
+    # ⚖ книга без ставки на рынок (13.11): хорошие лонги + хорошие шорты
+    # независимо от вердикта школы, своя коллекция academy_book
+    try:
+        import learn_book as _lb
+        _lb.run(db, now)
+    except Exception:
+        logger.debug("[paper] book fail", exc_info=True)
     # 📐 карта структуры по всем монетам: порция за цикл, каждая монета —
     # раз на 2h-бар (после открытий/закрытий, чтобы их не задерживать)
     try:

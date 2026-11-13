@@ -7080,6 +7080,10 @@ setInterval(trLoad, 60000);
     <div id="lvGoal" style="font-size:15px;font-weight:900;font-family:var(--font-mono);line-height:1.4;">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">🎯 цель $20 000/мес</div>
   </div>
+  <div id="lvBBox" style="background:var(--dark);border:1px dashed rgba(255,210,62,0.55);border-radius:10px;padding:10px 16px;" title="⚖ книга без ставки на рынок (с 13.11): хорошие лонги и хорошие шорты одновременно, независимо от вердикта школы. Источники отобраны по превышению над рынком (R источника минус средний R всех сигналов того же направления за месяц): лонги — whale, volume_surge, volcano, supertrend_mtf, ten, combo; шорты — shark, volume_surge, triple_confluence, supertrend_daily, supertrend_vip, second_flip. На истории книга была в плюсе каждый месяц. Капы на каждое направление: 10/день, 3 в 2ч-слот, 1 монета/день, 15 позиций. В лайв, тормоз и исполнитель НЕ входит.">
+    <div id="lvB" style="font-size:15px;font-weight:900;font-family:var(--font-mono);line-height:1.4;">&mdash;</div>
+    <div style="font-size:10px;color:var(--muted);">⚖ книга без ставки на рынок · в лайв не входит</div>
+  </div>
   <div id="lvSBox" style="background:var(--dark);border:1px dashed rgba(255,94,156,0.55);border-radius:10px;padding:10px 16px;" title="🩳 тень шортов (с 13.11): ×2-шорты школы на BingX с теми же капами, что у лайва (10/день, 3 в 2ч-слот, 1 монета/день, 15 позиций). Без тормоза. В статистику лайва, стоп WR20 и исполнитель НЕ входит — копим отдельный трек, чтобы решить по цифрам, брать ли шорты.">
     <div id="lvS" style="font-size:15px;font-weight:900;font-family:var(--font-mono);line-height:1.4;">&mdash;</div>
     <div style="font-size:10px;color:var(--muted);">🩳 тень шортов ×2 · в лайв не входит</div>
@@ -7164,6 +7168,18 @@ async function lvLoad() {
       `<span style="font-size:10px;color:var(--muted);"> · окно ${g.window_d}д · ${g.n} закрытий · ${g.reliable ? 'достоверно' : '⚠️ мало данных'}</span>`;
   } else {
     ge.textContent = 'копим закрытия…';
+  }
+  // ⚖ книга без ставки на рынок (13.11): хорошие лонги + хорошие шорты
+  const lvbEl = document.getElementById('lvB');
+  if (lvbEl) {
+    const bk = d.book || {};
+    const bSgn = function(v) { return (v > 0 ? '+' : '') + v; };
+    const bLeg = function(x, nm) { return x ? nm + ' ' + bSgn(x.avg) + ' (n' + x.n + ')' : nm + ' —'; };
+    lvbEl.innerHTML = (bk.all && bk.all.n
+      ? `<b style="color:${bk.all.sum > 0 ? '#00e5a0' : '#ff5e9c'};">${bSgn(bk.all.sum)}</b> · WR ${bk.all.wr}% · ${bSgn(bk.all.avg)} · n ${bk.all.n}`
+      : 'копим закрытия…') +
+      `<br><span style="font-size:10px;color:var(--muted);">${bLeg(bk.long, 'лонги')} · ${bLeg(bk.short, 'шорты')} · открыто ${bk.open_long == null ? '—' : bk.open_long}▲ / ${bk.open_short == null ? '—' : bk.open_short}▼` +
+      (bk.days ? ` · дней в плюсе ${bk.days_pos}/${bk.days}` : '') + `</span>`;
   }
   // 🩳 тень шортов (13.11): свой срез, в лайв не входит
   const lvsSt = d.stats_s || null;

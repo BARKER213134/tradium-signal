@@ -326,7 +326,16 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
         from database import _get_db, utcnow
         from datetime import timedelta
         db = _get_db()
-        col = db.new_strategy_signals
+        # 🎓 13.11: источник «только для Академии» (config.ACADEMY_ONLY) —
+        # пишем в academy_signals со всеми штампами и возвращаем False:
+        # вызывающий код по False не шлёт TG и не трогает журнал
+        _acad = False
+        try:
+            from config import academy_only
+            _acad = academy_only(sig.get("strategy"), sig.get("direction"))
+        except Exception:
+            _acad = False
+        col = db.academy_signals if _acad else db.new_strategy_signals
         cutoff = utcnow() - timedelta(hours=cooldown_h or COOLDOWN_H)
         dup = col.find_one({"strategy": sig["strategy"], "pair": sig["pair"],
                             "created_at": {"$gte": cutoff}})
@@ -431,6 +440,10 @@ def store_signal(sig: dict, cooldown_h: Optional[float] = None) -> bool:
             pass
         doc = {**sig, "created_at": utcnow(), "state": "WAITING"}
         col.insert_one(doc)
+        if _acad:
+            logger.info(f"[{sig['strategy']}] 🎓 только Академия {sig['pair']} "
+                        f"{sig['direction']} @ {sig['entry']}")
+            return False
         try:
             if sig.get("hot"):
                 from hot_engine import combo_alert

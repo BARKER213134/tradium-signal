@@ -32,6 +32,18 @@ HORIZON_H = 96            # TP+10 / SL-5 / 96ч — канон
 MIN_N = 40
 SHRINK_K = 25             # подтяжка малых клеток к родителю
 CONFIRM_RUNS = 3          # пересчётов подряд до ACTIVE
+# 🧬 13.11.26: по чему школа решает «показ/вето» клетки.
+#   "alpha" — по ПРЕВЫШЕНИЮ: R сигнала минус средний R всех сигналов того же
+#             направления за ту же неделю. Сырой R клетки ≈ направление рынка
+#             (лонги в плюсе в растущие месяцы, шорты в падающие) — школа
+#             гналась за прошлым направлением. Walk-forward 14.05→31.10
+#             (недельный пересчёт, сигналы следующей недели): сырой +1.02,
+#             20 недель из 25 в плюсе, октябрь −0.61; превышение +1.15,
+#             23 из 25, в плюсе каждый месяц (bt_ev_alpha.py).
+#   "raw"   — как было до 13.11. Откат: env LEARN_EV_MODE=raw.
+# Размер позиции (size_tier) по-прежнему от сырого ev — правила лайва
+# (только ×2) этим не меняются.
+EV_MODE = (os.getenv("LEARN_EV_MODE") or "alpha").strip().lower()
 STRONG_N = 60             # bootstrap: сразу ACTIVE при очень сильной клетке
 DEGRADE_DAYS = 14
 DEGRADE_MIN_N = 25
@@ -942,8 +954,8 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
 
 # ────────────────────────── агрегация и статусы ──────────────────────────
 
-def _stats(sel, tmid):
-    a = np.array([x["r"] for x in sel]) if sel else np.array([])
+def _stats(sel, tmid, key="r"):
+    a = np.array([x[key] for x in sel]) if sel else np.array([])
     if not len(a):
         return {"n": 0}
     ts = np.array([x["ts"] for x in sel])
@@ -971,6 +983,25 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
             -1: np.mean([x["r"] for x in rows if x["sg"] < 0] or [0])}
     cut14 = max(x["ts"] for x in rows) - DEGRADE_DAYS * 86_400_000
     rules = []
+    # 🧬 превышение (13.11): база = средний R направления за ту же неделю
+    # (мало сигналов в неделе → средний по окну); x["ra"] = r − база
+    _alpha = EV_MODE == "alpha"
+    _bw = {}
+    for x in rows:
+        _bw.setdefault((x["sg"], int(x["ts"] // 604_800_000)), []).append(x["r"])
+    _bm = {k: (float(np.mean(v)) if len(v) >= 30 else float(glob[k[0]]))
+           for k, v in _bw.items()}
+    for x in rows:
+        x["ra"] = x["r"] - _bm[(x["sg"], int(x["ts"] // 604_800_000))]
+    # база живых paper-исходов по направлению — для живой деградации
+    _lvs = {1: [0.0, 0], -1: [0.0, 0]}
+    for _rid, _l in live_map.items():
+        _s = 1 if "LONG" in _rid else (-1 if "SHORT" in _rid else 0)
+        if _s:
+            _lvs[_s][0] += _l["avg"] * _l["n"]
+            _lvs[_s][1] += _l["n"]
+    _lvb = {s: (v[0] / v[1] if (_alpha and v[1] >= 100) else 0.0)
+            for s, v in _lvs.items()}
 
     def add_rule(rid, label, sel, kind):
         if len(sel) < 15:
@@ -978,17 +1009,20 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         # режимные клетки лежат кучно во времени (коррекция = май-июнь) —
         # половины считаем ВНУТРИ режима, иначе «стабильность» по общей
         # медиане окна всегда ложно-отрицательная
-        st = _stats(sel, float(np.median([x["ts"] for x in sel]))
-                    if kind in ("regime", "school", "btcvol", "deriv", "struct") else tmid)
+        _tm = (float(np.median([x["ts"] for x in sel]))
+               if kind in ("regime", "school", "btcvol", "deriv", "struct") else tmid)
+        st = _stats(sel, _tm)
         if st["n"] < 15:
             return
+        # sa — по чему решаем показ/вето: превышение (alpha) или сырой R
+        sa = _stats(sel, _tm, "ra") if _alpha else st
         # shrinkage к родителю направления
         sgn = 1 if "LONG" in label else -1
         parent = float(glob[sgn])
         ev = round((st["n"] * st["avg"] + SHRINK_K * parent) / (st["n"] + SHRINK_K), 3)
         cand = None
-        if st["n"] >= MIN_N and st["stable"]:
-            cand = "show" if st["avg"] > 0.3 else ("hide" if st["avg"] < -0.1 else None)
+        if sa["n"] >= MIN_N and sa["stable"]:
+            cand = "show" if sa["avg"] > 0.3 else ("hide" if sa["avg"] < -0.1 else None)
         # 📈 спарклайн жизни: WR по 6 последним неделям (свежая слева)
         wk = []
         for w in range(6):
@@ -1006,7 +1040,7 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         pv = prev.get(rid) or {}
         runs = (pv.get("runs", 0) + 1) if cand and cand == pv.get("cand") else (1 if cand else 0)
         status = pv.get("status", "NEUTRAL")
-        strong = st["n"] >= STRONG_N and st["stable"] and abs(st["avg"]) > 0.6
+        strong = sa["n"] >= STRONG_N and sa["stable"] and abs(sa["avg"]) > 0.6
         if cand and (runs >= CONFIRM_RUNS or strong):
             status = "ACTIVE_SHOW" if cand == "show" else "ACTIVE_HIDE"
         elif cand:
@@ -1017,7 +1051,7 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         recent = [x for x in sel if x["ts"] >= cut14]
         deg = None
         if status.startswith("ACTIVE") and len(recent) >= DEGRADE_MIN_N:
-            ra = float(np.mean([x["r"] for x in recent]))
+            ra = float(np.mean([x["ra" if _alpha else "r"] for x in recent]))
             want_pos = status == "ACTIVE_SHOW"
             if (ra > 0) != want_pos:
                 deg = round(ra, 2)
@@ -1031,17 +1065,24 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         # катастрофа (avg<-2.5, WR<15) выключается уже с n>=15 — ждать 30
         # сверок для редких правил значило травить паперу неделями (18.09:
         # vip SHORT 🔴1-26 давал ~2 сигнала/день при live 22×−5.1)
+        # 🧬 в режиме превышения живой исход сравниваем с живой базой
+        # направления: иначе в падающем рынке гасились бы все лонги подряд
+        _lva = (lv["avg"] - _lvb[sgn]) if lv else None
         if lv and status == "ACTIVE_SHOW" and (
-                (lv["n"] >= 30 and lv["avg"] < -1.0)
-                or (lv["n"] >= 15 and lv["avg"] < -2.5 and lv["wr"] < 15)):
+                (lv["n"] >= 30 and _lva < -1.0)
+                or (lv["n"] >= 15 and _lva < -2.5 and lv["wr"] < 15)):
             live_dem = lv["avg"]
-            status = "ACTIVE_HIDE" if lv["avg"] < -2.5 else "SHADOW"
+            status = "ACTIVE_HIDE" if _lva < -2.5 else "SHADOW"
             runs = 0
             if deg is None:
                 deg = round(lv["avg"], 2)
         rules.append({"id": rid, "label": label, "kind": kind, **st,
                       "wk": wk, "live": lv, "live_demoted": live_dem,
                       "ev": ev, "cand": cand, "runs": runs, "status": status,
+                      # 🧬 превышение над неделей направления и его половины
+                      "alpha": sa["avg"] if _alpha else None,
+                      "a_h1": sa.get("h1") if _alpha else None,
+                      "a_h2": sa.get("h2") if _alpha else None,
                       "degraded": deg,
                       "recent_n": len(recent),
                       "updated": utcnow().isoformat()})
