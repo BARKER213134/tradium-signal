@@ -8770,7 +8770,8 @@ async def api_journal(limit: int = 1500, refresh: int = 0, debug: int = 0):
                      "support_defense", "channel_top", "corridor",
                      "level_touch", "flip_retest", "full_stack",
                      "struct_top", "rev_candle", "st_touch",
-                     "mso_retest", "mso_obexit", "rsi_deepos"}
+                     "mso_retest", "mso_obexit", "rsi_deepos",
+                     "flush_climax"}     # 🚿 редкий сигнал — под фильтром виден весь
         head = items[:limit]
         tail_special = [x for x in items[limit:]
                         if x.get("source") in _DEEP_SRC]
@@ -12378,7 +12379,8 @@ def _compute_journal_sync(_fast_only: bool = False):
             })
         # 🚿 СМЫВ (flush_climax) — редкий сигнал, в журнал целиком
         for n in _gdb_lj().academy_signals.find(
-                {"strategy": "flush_climax", "created_at": {"$gte": since_14d}},
+                {"strategy": "flush_climax",
+                 "created_at": {"$gte": _utcnow() - timedelta(days=60)}},
                 {"pair": 1, "symbol": 1, "direction": 1, "entry": 1, "tp": 1, "sl": 1,
                  "created_at": 1, "note": 1, "indicators.mkt_os": 1}
                 ).sort("created_at", -1).limit(300):
