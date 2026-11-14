@@ -3754,6 +3754,10 @@ setTimeout(() => { try { window._kcEnsureLib(); } catch (e) {} }, 2000);
 // Клиентский кэш свечей: TTL 45с — повторное открытие/переключение ТФ
 // туда-обратно и навигация стрелками рендерятся мгновенно.
 window._kcBarsCache = window._kcBarsCache || new Map();
+// 14.11 (юзер: «больше свечей высчитывать для МА 200»): график грузит на столько свечей
+// больше, чем раньше, — MA 200 рисуется через всё прежнее окно, а не только по правой половине.
+// Авто-линии тренда считаются по прежнему окну (container._kcTlBars) — как у детектора касаний.
+window._kcMaExtra = 200;
 window._kcFetchBars = async function(sym, tf, limit) {
   const key = sym + '|' + tf + '|' + limit;
   const c = window._kcBarsCache.get(key);
@@ -3776,7 +3780,7 @@ window._kcFetchBars = async function(sym, tf, limit) {
 window._kcPrefetch = function(sym, tf, limit) {
   try {
     const s = (sym || '').toUpperCase().replace('/', '').replace(/USDT$/, '') + 'USDT';
-    window._kcFetchBars(s, tf, limit || 400);
+    window._kcFetchBars(s, tf, (limit || 400) + (window._kcMaExtra || 0));
   } catch (e) {}
 };
 
@@ -4792,7 +4796,8 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   container.style.position = 'relative';
 
   const sym = (symbol || 'BTC').toUpperCase().replace('/', '').replace(/USDT$/, '') + 'USDT';
-  const bars = await window._kcFetchBars(sym, tf, opts.limit || 500);
+  const _kcBase = opts.limit || 500;
+  const bars = await window._kcFetchBars(sym, tf, _kcBase + (window._kcMaExtra || 0));
   if (!bars) {
     container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ff6b6b;">Нет данных: ${sym}</div>`;
     return null;
@@ -4999,7 +5004,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
         const stEl = container.querySelector('.kc-struct');
         if (stEl) stEl.remove();
       } else if (window._kcDrawTrendLines) {
-        try { window._kcDrawTrendLines(chart, container._kcBars || [], container, tf); } catch (e) {}
+        try { window._kcDrawTrendLines(chart, container._kcTlBars || container._kcBars || [], container, tf); } catch (e) {}
       }
     }
     else chart.createOverlay({ name, groupId: 'draw' });
@@ -5674,12 +5679,13 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   }
   // ▦ FVG-гэпы всех ТФ — тумблер в тулбаре, localStorage kc_fvg
   container._kcBars = bars;
+  container._kcTlBars = bars.slice(-_kcBase);   // окно авто-линий — без добавочных свечей под MA 200
   if (localStorage.getItem('kc_fvg') !== '0') {
     try { window._kcDrawFvg(chart, bars); } catch (e) {}
   }
   // 📐 авто-линии тренда и структура — тумблер 📐 в тулбаре, localStorage kc_tl
   if (localStorage.getItem('kc_tl') !== '0') {
-    try { window._kcDrawTrendLines(chart, bars, container, tf); } catch (e) {}
+    try { window._kcDrawTrendLines(chart, container._kcTlBars, container, tf); } catch (e) {}
   }
   // 📈 метки смены тренда (ST-флипы текущего ТФ) — тумблер «⚡Тренд» в
   // модале, выключается localStorage kc_trend_flips='0'
