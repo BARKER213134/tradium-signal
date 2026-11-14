@@ -201,7 +201,7 @@ function fpAnalyze() {
   // 🧠 выводы по ВИДИМОМУ окну (пересчёт при зуме/прокрутке)
   const box = document.getElementById('fpAnalysis');
   if (!box || !_fpData) return;
-  const { bars, phases } = fpSlice();
+  const { bars, phases, cphases } = fpSlice();
   const n = bars.length;
   if (n < 5) { box.style.display = 'none'; return; }
   const last = bars[n - 1];
@@ -251,9 +251,19 @@ function fpAnalyze() {
                     Math.abs(distHvn) > 7 ? 'warn' : 'mute'));
   const ph = phases[n - 1];
   if (ph) {
-    const PE = { LONG: ['🟢 фаза LONG', 'good'], SHORT: ['🔴 фаза SHORT', 'bad'],
-                 NEUTRAL: ['⚪ без стороны', 'mute'] }[ph];
+    const PE = { LONG: ['🟢 рынок: фаза LONG', 'good'], SHORT: ['🔴 рынок: фаза SHORT', 'bad'],
+                 NEUTRAL: ['⚪ рынок: без стороны', 'mute'] }[ph];
     if (PE) chips.push(fpChip(PE[0], PE[1]));
+  }
+  // 🧭 фаза МОНЕТЫ (14.11): EMA200 на 2h + цвет MSO на 4h — своя у каждой монеты
+  const cph = (cphases || [])[n - 1];
+  if (cph) {
+    const cn = (_fpData && _fpData.coin_now) || null;
+    const det = (cn && cn.phase === cph)
+      ? ` · EMA200 2h ${cn.e2 > 0 ? '+' : ''}${cn.e2}% · MSO 4h ${Math.round(cn.m4)}` : '';
+    const CE = { LONG: ['🟢 монета: фаза LONG' + det, 'good'], SHORT: ['🔴 монета: фаза SHORT' + det, 'bad'],
+                 NEUTRAL: ['⚪ монета: без стороны' + det, 'mute'] }[cph];
+    if (CE) chips.push(fpChip(CE[0], CE[1]));
   }
   // 🪧 сигналы платформы в видимом окне (грузятся из журнала по-монетно)
   try {
@@ -287,9 +297,11 @@ function fpSlice() {
   const cnt = Math.max(10, Math.min(_fpView.cnt || nAll, nAll));
   const off = Math.max(0, Math.min(_fpView.off, nAll - cnt));
   const i0 = nAll - cnt - off;
-  return { bars: d.bars.slice(i0, i0 + cnt), phases: (d.phases || []).slice(i0, i0 + cnt), i0, cnt };
+  return { bars: d.bars.slice(i0, i0 + cnt), phases: (d.phases || []).slice(i0, i0 + cnt),
+           cphases: (d.cphases || []).slice(i0, i0 + cnt), i0, cnt };
 }
-const FP_AXIS = 80, FP_DELTA = 64, FP_PHASE = 14, FP_TIME = 18;
+// FP_PHASE — две полосы по FP_PH1: фаза рынка и (14.11) фаза монеты
+const FP_AXIS = 80, FP_DELTA = 64, FP_PH1 = 14, FP_PHASE = 28, FP_TIME = 18;
 function fpGeom(cv) {
   const W = cv.clientWidth || cv.parentElement.clientWidth - 16;
   // 05.08 «растяни график на свободную зону»: потолок 720 оставлял
@@ -308,7 +320,7 @@ function fpRender() {
   const g = cv.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, W, H);
-  const { bars, phases, i0 } = fpSlice();
+  const { bars, phases, cphases, i0 } = fpSlice();
   const n = bars.length;
   const bw = chartW / n;
   const gMin = d.p_min, tick = d.tick;
@@ -699,10 +711,16 @@ function fpRender() {
   const PC = { LONG: 'rgba(0,229,160,0.65)', SHORT: 'rgba(255,77,109,0.65)', NEUTRAL: 'rgba(154,164,181,0.4)' };
   phases.forEach((ph, i) => {
     g.fillStyle = PC[ph] || 'rgba(60,66,80,0.3)';
-    g.fillRect(i * bw + 1, phTop, Math.max(2, bw - 2), FP_PHASE - 3);
+    g.fillRect(i * bw + 1, phTop, Math.max(2, bw - 2), FP_PH1 - 3);
+  });
+  // фаза монеты — вторая полоса (EMA200 2h + MSO 4h); пусто = не хватило истории
+  (cphases || []).forEach((ph, i) => {
+    g.fillStyle = PC[ph] || 'rgba(60,66,80,0.3)';
+    g.fillRect(i * bw + 1, phTop + FP_PH1, Math.max(2, bw - 2), FP_PH1 - 3);
   });
   g.fillStyle = 'rgba(154,164,181,0.6)';
-  g.fillText('Фаза', chartW + 6, phTop + 9);
+  g.fillText('Рынок', chartW + 6, phTop + 9);
+  g.fillText('Монета', chartW + 6, phTop + FP_PH1 + 9);
   // время
   g.fillStyle = 'rgba(154,164,181,0.65)';
   g.textAlign = 'center';
@@ -775,7 +793,7 @@ function fpRender() {
     const dt = new Date(b.t);
     const E = { LONG: '🟢', SHORT: '🔴', NEUTRAL: '⚪' };
     tip.innerHTML = `<b>${dt.toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</b>` +
-      ` ${E[sl.phases[i]] || ''}<br>` +
+      `<br>рынок ${E[sl.phases[i]] || '—'} · монета ${E[(sl.cphases || [])[i]] || '—'}<br>` +
       `O ${fpPrice(b.o)} · H ${fpPrice(b.h)}<br>L ${fpPrice(b.l)} · C ${fpPrice(b.c)}<br>` +
       `Vol ${fpNum(b.v)} · <span style="color:${b.d >= 0 ? 'var(--buy)' : 'var(--sell)'};">Δ ${b.d >= 0 ? '+' : ''}${fpNum(b.d)}</span>`;
     if (_fpAnomCache && _fpAnomCache.notes[i]) {

@@ -4559,9 +4559,53 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
                 phases.append(ph)
         except Exception:
             phases = [None] * len(out_bars)
+        # 🧭 фаза МОНЕТЫ по бару (14.11, юзер: «делай полосу фазы монеты на кластерах»).
+        # Определение проверено на 81k сигналов (coin_phase.py): цена относительно EMA200
+        # на 2h + цвет MSO на 4h. Оба «за рост» → LONG, оба «за падение» → SHORT, иначе
+        # NEUTRAL. Берём состояние, известное к закрытию бара графика (у текущего бара —
+        # к «сейчас»), только по ЗАКРЫТЫМ 2h/4h-свечам. Нет прогрева — None (пусто).
+        cphases = [None] * len(out_bars)
+        coin_now = None
+        try:
+            import numpy as _npc
+            from exchange import get_klines_any as _gka
+            from mso_retest import mso_series as _mso_s
+            _now_ms = int(_time.time() * 1000)
+            _pr = sym[:-4] + "/USDT"
+            _k2 = [b for b in (_gka(_pr, "2h", 1000) or []) if b["t"] + 7_200_000 <= _now_ms]
+            _k4 = [b for b in (_gka(_pr, "4h", 1000) or []) if b["t"] + 14_400_000 <= _now_ms]
+            if len(_k2) > 210 and len(_k4) > 130:
+                _c2 = [float(b["c"]) for b in _k2]
+                _ema, _e = [], _c2[0]
+                for _x in _c2:
+                    _e += (2.0 / 201.0) * (_x - _e)
+                    _ema.append(_e)
+                _t2 = _npc.array([b["t"] + 7_200_000 for b in _k2])
+                _osc = _mso_s(_k4)
+                _t4 = _npc.array([b["t"] + 14_400_000 for b in _k4])
+                _tfms = TFMS[tf]
+
+                def _cph(tcut):
+                    i2 = int(_npc.searchsorted(_t2, tcut, side="right")) - 1
+                    i4 = int(_npc.searchsorted(_t4, tcut, side="right")) - 1
+                    if i2 < 200 or i4 < 120:
+                        return None, None, None
+                    m = _osc[i4]
+                    if m is None or m != m:
+                        return None, None, None
+                    e2 = (_c2[i2] / _ema[i2] - 1) * 100
+                    ph = ("LONG" if (e2 > 0 and m > 50)
+                          else "SHORT" if (e2 <= 0 and m <= 50) else "NEUTRAL")
+                    return ph, round(e2, 1), round(float(m), 1)
+                cphases = [_cph(min(b_["t"] + _tfms, _now_ms))[0] for b_ in out_bars]
+                _pn = _cph(_now_ms)
+                if _pn[0]:
+                    coin_now = {"phase": _pn[0], "e2": _pn[1], "m4": _pn[2]}
+        except Exception as _cpe:
+            logging.getLogger(__name__).debug(f"[footprint] coin phase fail {sym}: {_cpe}")
         return {"ok": True, "pair": sym, "tf": tf, "p_min": p_min,
                 "tick": tick, "n_lv": n_lv, "bars": out_bars,
-                "phases": phases}
+                "phases": phases, "cphases": cphases, "coin_now": coin_now}
 
     _res = await asyncio.to_thread(_sync)
     if isinstance(_res, dict) and _res.get("ok"):
