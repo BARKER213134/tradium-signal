@@ -57,6 +57,146 @@ def m12_bin(v):
         return None
 
 
+# 🧭 СОСТОЯНИЕ МОНЕТЫ (14.11, юзер: «как отбирать монеты — они катились, а
+# сигналы приходят» → «добавь эти индикаторы в журнал и в таблицу»).
+# Аудит coin_select.py (43.5k лонгов, +5/−15/14д, обе половины): выше EMA200
+# на 2h 71.4% / +0.20 против ниже 65.0% / −0.79 (лучше у 9 источников из 19,
+# хуже ни у одного); у 30-дневного минимума 57.6% / −0.95; MSO 12h красный
+# 10+ баров −0.59 против +0.06. Шортам зеркально, НО дневной ST вниз дольше
+# 30 дней шорту вредит (−0.42 против +0.33) — «лежит», движение выдохлось.
+CS_LABEL = {"A": "выше EMA200", "B": "ниже EMA200", "L": "у 30-дневного минимума"}
+CS_LOW_PCT = 5.0      # не выше стольких % от 30-дневного минимума = «у минимума»
+
+
+def cs_bin(e2, u30):
+    try:
+        if e2 is None:
+            return None
+        if u30 is not None and float(u30) <= CS_LOW_PCT:
+            return "L"
+        return "A" if float(e2) > 0 else "B"
+    except Exception:
+        return None
+
+
+def coin_state(closed):
+    """closed — закрытые 2h-бары. → {e2: % от EMA200, u30: % от 30д-минимума,
+    d30: % от 30д-максимума, r30: рост за 30 дней %, k30: дрейф 30д-канала}."""
+    try:
+        if not closed or len(closed) < 210:
+            return {}
+        c = np.array([b["c"] for b in closed], dtype=float)
+        h = np.array([b["h"] for b in closed], dtype=float)
+        l = np.array([b["l"] for b in closed], dtype=float)
+        px = float(c[-1])
+        if not px > 0:
+            return {}
+        a = 2.0 / 201.0
+        ema = float(c[0])
+        for x in c[1:]:
+            ema += a * (float(x) - ema)
+        out = {"e2": round((px / ema - 1) * 100, 1)}
+        if len(c) >= 300:
+            n30 = min(360, len(c))
+            out["u30"] = round((px / float(l[-n30:].min()) - 1) * 100, 1)
+            out["d30"] = round((px / float(h[-n30:].max()) - 1) * 100, 1)
+        if len(c) > 360:
+            out["r30"] = round((px / float(c[-361]) - 1) * 100, 1)
+            k = channel(c, h, l, n=360)
+            if k:
+                out["k30"] = k["mv"]
+        return out
+    except Exception:
+        return {}
+
+
+def _mso_streak(osc):
+    """длина текущей серии цвета MSO: + зелёная, − красная"""
+    s = 0
+    for v in reversed(osc):
+        if v is None or v != v:
+            break
+        side = 1 if v > 50 else -1
+        if s == 0:
+            s = side
+        elif (s > 0) == (side > 0):
+            s += side
+        else:
+            break
+    return s
+
+
+def _st_daily(bars12):
+    """Дневной SuperTrend (10, 3.0) из закрытых 12h-баров → (направление ±1,
+    сколько дней без переворота) или (0, 0), если истории мало."""
+    try:
+        days = {}
+        for b in bars12:
+            d = int(b["t"] // 86_400_000)
+            x = days.get(d)
+            if x is None:
+                days[d] = [b["h"], b["l"], b["c"], 1]
+            else:
+                x[0] = max(x[0], b["h"])
+                x[1] = min(x[1], b["l"])
+                x[2] = b["c"]
+                x[3] += 1
+        rows = [days[d] for d in sorted(days) if days[d][3] == 2]
+        if len(rows) < 25:
+            return 0, 0
+        dr = 1
+        since = 0
+        ub = lb = a = None
+        pc = None
+        for i, (hh, ll, cc, _) in enumerate(rows):
+            tr = hh - ll if pc is None else max(hh - ll, abs(hh - pc), abs(ll - pc))
+            a = tr if a is None else (a * 9 + tr) / 10
+            mid = (hh + ll) / 2
+            u = mid + 3 * a
+            lo = mid - 3 * a
+            if i == 0:
+                ub, lb = u, lo
+            else:
+                ub = u if (u < ub or pc > ub) else ub
+                lb = lo if (lo > lb or pc < lb) else lb
+                nd = 1 if cc > ub else (-1 if cc < lb else dr)
+                since = 0 if nd != dr else since + 1
+                dr = nd
+            pc = cc
+        return int(dr), int(since)
+    except Exception:
+        return 0, 0
+
+
+def coin_state_map(db):
+    """Состояние монет для журнала: {SYM: {cs, e2, u30, d30, r30, rk30, k30,
+    m4, m4s, m12, m12s, d1, d1a}} по карте (записи не старше 3 баров)."""
+    out = {}
+    try:
+        bar = _bar_now()
+        mp = (db.market_state.find_one({"_id": MAP_ID}, {"map": 1}) or {}).get("map") or {}
+        for s, v in mp.items():
+            if not v or v.get("e2") is None or (v.get("b") or 0) < bar - MAP_MAX_AGE_BARS:
+                continue
+            out[s] = {"cs": cs_bin(v.get("e2"), v.get("u30")),
+                      "e2": v.get("e2"), "u30": v.get("u30"), "d30": v.get("d30"),
+                      "r30": v.get("r30"), "k30": v.get("k30"),
+                      "m4": v.get("m4"), "m4s": v.get("m4s"),
+                      "m12": v.get("m12"), "m12s": v.get("m12s"),
+                      "d1": v.get("d1"), "d1a": v.get("d1a")}
+        rs = sorted(x["r30"] for x in out.values() if x.get("r30") is not None)
+        if len(rs) >= 50:
+            import bisect
+            for x in out.values():
+                if x.get("r30") is not None:
+                    x["rk30"] = round(bisect.bisect_left(rs, x["r30"]) / (len(rs) - 1), 2)
+            for x in out.values():
+                x["n30"] = len(rs)
+    except Exception:
+        pass
+    return out
+
+
 def mso_htf_now(pair, klines_fn, now_ms, prev=None):
     """MSO на последнем ЗАКРЫТОМ баре 4h и 12h → {m4, m4b, m12, m12b}.
     prev — прошлая запись карты: если старший бар тот же, свечи не качаем."""
@@ -65,8 +205,10 @@ def mso_htf_now(pair, klines_fn, now_ms, prev=None):
     for tf, ms, lim, key in (("4h", M4_MS, M4_BARS, "m4"), ("12h", M12_MS, M12_BARS, "m12")):
         try:
             cb = int(now_ms // ms) - 1
-            if prev.get(key) is not None and prev.get(key + "b") == cb:
-                out[key] = prev[key]
+            if (prev.get(key) is not None and prev.get(key + "b") == cb
+                    and (key + "s") in prev and (key != "m12" or "d1" in prev)):
+                for _k in (key, key + "s") + (("d1", "d1a") if key == "m12" else ()):
+                    out[_k] = prev.get(_k)
                 out[key + "b"] = cb
                 continue
             kd = klines_fn(pair, tf, lim)
@@ -74,11 +216,15 @@ def mso_htf_now(pair, klines_fn, now_ms, prev=None):
             if len(closed) < M_MIN_BARS:
                 continue
             from mso_retest import mso_series
-            v = mso_series(closed)[-1]
+            osc = mso_series(closed)
+            v = osc[-1]
             if v is None or v != v:
                 continue
             out[key] = round(float(v), 1)
+            out[key + "s"] = _mso_streak(osc)
             out[key + "b"] = int(closed[-1]["t"] // ms)
+            if key == "m12":      # дневной SuperTrend — из тех же 12h-свечей
+                out["d1"], out["d1a"] = _st_daily(closed)
         except Exception:
             continue
     return out
@@ -267,6 +413,7 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                 bt = None
                 rs = None
                 mh = {}
+                cs = {}
                 try:
                     pair = sym[:-4] + "/USDT"
                     kd = klines_fn(pair, "2h", 520)     # 500 закрытых — окно графика
@@ -277,6 +424,8 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                         # 🟢🔴 MSO 4h/12h для осей школы (свечи старших ТФ —
                         # только когда закрылся новый старший бар)
                         mh = mso_htf_now(pair, klines_fn, now_ms, mp.get(sym))
+                        # 🧭 состояние монеты для журнала (EMA200, 30д-минимум, 30д-канал)
+                        cs = coin_state(closed)
                         # сигнал — только если последний закрытый бар свежий
                         if closed[-1]["t"] + 2 * _BAR_MS > now_ms:
                             import new_setups as _ns
@@ -295,7 +444,7 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                         k = channel_from_1h(kd1) if kd1 and len(kd1) >= 245 else None
                 except Exception:
                     pass
-                return sym, k, found, px, lev, bt, rs, mh
+                return sym, k, found, px, lev, bt, rs, mh, cs
 
             ex = ThreadPoolExecutor(max_workers=workers)
             futs = [ex.submit(_one, s) for s in todo]
@@ -303,7 +452,7 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
             ex.shutdown(wait=False)
             for f in done:
                 try:
-                    sym, k, _found, _px, _lev, _bt, _rs, _mh = f.result()
+                    sym, k, _found, _px, _lev, _bt, _rs, _mh, _cs = f.result()
                 except Exception:
                     continue
                 if _lev and _px and _bt:
@@ -322,7 +471,8 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                 # нет свечей (делист/короткая история) — помечаем бар, чтобы
                 # не долбить биржу каждый цикл; ch=None → штампа нет
                 sets["map." + sym] = (dict({"ch": k["ch"], "mv": k["mv"], "pos": k["pos"],
-                                            "kp": k["kp"], "b": bar, "rsi": _rs}, **(_mh or {}))
+                                            "kp": k["kp"], "b": bar, "rsi": _rs},
+                                           **dict(_mh or {}, **(_cs or {})))
                                       if k else {"ch": None, "b": bar})
             # 🚿 доля перепроданных монет (RSI 2h < 30) по карте → источник
             # flush_climax (new_setups): кульминация объёма в момент смыва рынка

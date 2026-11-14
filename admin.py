@@ -12409,6 +12409,24 @@ def _compute_journal_sync(_fast_only: bool = False):
     except Exception as _lje:
         logging.getLogger(__name__).warning(f"[journal] line_signals fail: {_lje}")
 
+    # 🧭 СОСТОЯНИЕ МОНЕТЫ СЕЙЧАС (14.11, юзер: «добавь эти индикаторы в журнал
+    # … и в таблицу»): выше/ниже EMA200 2h, у 30-дневного минимума, 30-дневный
+    # канал, MSO 4h/12h с длиной серии, дневной SuperTrend, место по росту за
+    # 30 дней. Из карты структуры (обновляется раз в 2h-бар), до FAST EXIT —
+    # есть и в быстром, и в полном журнале.
+    try:
+        import structure_engine as _sen_cs
+        from database import _get_db as _gdb_cs
+        _csm = _sen_cs.coin_state_map(_gdb_cs())
+        if _csm:
+            for it in items:
+                _sy = (it.get("symbol") or "").upper().replace("/", "")
+                _c = _csm.get(_sy) or _csm.get((it.get("pair") or "").upper().replace("/", ""))
+                if _c:
+                    it["coin"] = _c
+    except Exception as _cse2:
+        logging.getLogger(__name__).warning(f"[journal] coin state fail: {_cse2}")
+
     # ⚡ FAST EXIT: для /api/journal/fast endpoint — UI получает данные мгновенно,
     # все enrichments ниже (squeeze/divergence/rsi4h/rsi12h/top_movers/delta/rsi/trend)
     # выполняются только в полном compute через /api/journal.
