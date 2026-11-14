@@ -12456,10 +12456,15 @@ def _compute_journal_sync(_fast_only: bool = False):
                  "$or": [{"strategy": {"$in": sorted(_AO_J.keys())}}, {"mb_block": True}]},
                 {"strategy": 1, "pair": 1, "symbol": 1, "direction": 1, "entry": 1, "tp": 1,
                  "sl": 1, "created_at": 1, "state": 1, "mb_block": 1, "validator_ok": 1,
-                 "mso_streak2h": 1, "svetofor": 1, "trend_ok": 1, "hot": 1}
+                 "mso_streak2h": 1, "svetofor": 1, "trend_ok": 1, "hot": 1, "rep_seq": 1,
+                 "indicators.pullback": 1, "indicators.bulltrap": 1, "indicators.absorb": 1,
+                 "indicators.mom24": 1, "indicators.rsi1d_state": 1, "indicators.phase": 1}
                 ).sort("created_at", -1).limit(3000):
             at_dt = n.get("created_at")
             strat = n.get("strategy") or "?"
+            # метки вкладок-подборок — теми же правилами, что у обычных строк журнала
+            _ia = n.get("indicators") or {}
+            _rsa = n.get("rep_seq") or 1
             _why = ("шорт при рынке у дна — запрет шортов" if n.get("mb_block")
                     else "источник выключен для журнала (аудит 13.11)")
             _lj.append({
@@ -12477,6 +12482,14 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "mso_streak2h": n.get("mso_streak2h"),
                 "svetofor": n.get("svetofor"), "trend_ok": n.get("trend_ok"),
                 "hot": bool(n.get("hot")),
+                "rep_seq": n.get("rep_seq"),
+                "rep_hot": ((strat == "thin_pump" and _rsa >= 2)
+                            or (strat == "blowoff" and _rsa >= 3)),
+                "ten_plus": strat == "blowoff" and (_ia.get("mom24") or 0) > 15,
+                "elite_1d": (strat == "blowoff" and _ia.get("rsi1d_state") == "bear"
+                             and (_ia.get("phase") or "?") != "NEUTRAL" and _rsa <= 4),
+                "pullback": bool(_ia.get("pullback")), "bulltrap": bool(_ia.get("bulltrap")),
+                "absorb": bool(_ia.get("absorb")),
                 "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
                 "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
             })
