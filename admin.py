@@ -11399,16 +11399,28 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int, academy: int = 0) ->
             })
         # 🚿 СМЫВ: на графиках из Академии он уже есть (academy_signals) — добавляем остальным
         if not academy:
+            # 14.11: + сигналы, ушедшие «только в Академию» (ACADEMY_ONLY / запрет шортов) —
+            # в журнале они снова видны под своим источником, значит и на графике нужны
+            try:
+                from config import ACADEMY_ONLY as _AO_C
+            except Exception:
+                _AO_C = {}
             for n in _gdb_ln().academy_signals.find(
-                    {"strategy": "flush_climax", "symbol": sym_clean, "created_at": {"$gte": since}},
-                    {"direction": 1, "entry": 1, "tp": 1, "sl": 1, "created_at": 1, "note": 1}
-                    ).sort("created_at", -1).limit(30):
+                    {"symbol": sym_clean, "created_at": {"$gte": since}, "backfill": {"$ne": True},
+                     "$or": [{"strategy": "flush_climax"},
+                             {"strategy": {"$in": sorted(_AO_C.keys())}}, {"mb_block": True}]},
+                    {"strategy": 1, "direction": 1, "entry": 1, "tp": 1, "sl": 1,
+                     "created_at": 1, "note": 1}
+                    ).sort("created_at", -1).limit(60):
                 at_dt = n.get("created_at")
+                _st_c = n.get("strategy") or "flush_climax"
                 _line_items.append({
-                    "source": "flush_climax", "symbol": sym_clean, "pair": pair_slash,
+                    "source": _st_c, "symbol": sym_clean, "pair": pair_slash,
                     "direction": n.get("direction", "LONG"),
                     "entry": n.get("entry"), "tp1": n.get("tp"), "sl": n.get("sl"),
-                    "pattern": n.get("note") or "🚿 СМЫВ", "score": 0, "academy_only": True,
+                    "pattern": (n.get("note") or "🚿 СМЫВ") if _st_c == "flush_climax"
+                    else f"🎓 {_st_c} · только Академия",
+                    "score": 0, "academy_only": True,
                     "at": at_dt.isoformat() if at_dt else None,
                     "at_ts": int(at_dt.timestamp()) if at_dt else 0,
                 })
@@ -12426,6 +12438,45 @@ def _compute_journal_sync(_fast_only: bool = False):
                 "is_top_pick": False, "top_pick_confirmations_count": 0,
                 "ns_strategy": "flush_climax", "ns_state": "WAITING",
                 "stack_count": 0, "stack_distinct": 0,
+                "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
+                "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
+            })
+        # 🎓 14.11 (юзер: «просмотри каждую вкладку в журнале, нету сигналов по ним»).
+        # С 13.11 десять источников пишутся только в academy_signals (config.ACADEMY_ONLY),
+        # а при рынке у дна туда же уходят ВСЕ шорты (mb_block) — вкладки этих источников
+        # в журнале застыли на вчерашнем дне. Возвращаем их в журнал с пометкой acad:
+        # фронт показывает такие строки ТОЛЬКО при явном выборе источника или поиске по
+        # монете — общая лента, Telegram и стеки остаются без них, как решено 13.11.
+        try:
+            from config import ACADEMY_ONLY as _AO_J
+        except Exception:
+            _AO_J = {}
+        for n in _gdb_lj().academy_signals.find(
+                {"created_at": {"$gte": since_14d}, "backfill": {"$ne": True},
+                 "$or": [{"strategy": {"$in": sorted(_AO_J.keys())}}, {"mb_block": True}]},
+                {"strategy": 1, "pair": 1, "symbol": 1, "direction": 1, "entry": 1, "tp": 1,
+                 "sl": 1, "created_at": 1, "state": 1, "mb_block": 1, "validator_ok": 1,
+                 "mso_streak2h": 1, "svetofor": 1, "trend_ok": 1, "hot": 1}
+                ).sort("created_at", -1).limit(3000):
+            at_dt = n.get("created_at")
+            strat = n.get("strategy") or "?"
+            _why = ("шорт при рынке у дна — запрет шортов" if n.get("mb_block")
+                    else "источник выключен для журнала (аудит 13.11)")
+            _lj.append({
+                "source": strat,
+                "symbol": n.get("symbol") or (n.get("pair") or "").replace("/", ""),
+                "pair": n.get("pair") or "",
+                "direction": n.get("direction", ""),
+                "entry": n.get("entry"), "tp1": n.get("tp"), "sl": n.get("sl"),
+                "pattern": f"🎓 только Академия · {_why}",
+                "score": 0, "st_passed": None, "pump_score": 0,
+                "is_top_pick": False, "top_pick_confirmations_count": 0,
+                "ns_strategy": strat, "ns_state": n.get("state") or "WAITING",
+                "stack_count": 0, "stack_distinct": 0, "acad": True,
+                "validator_ok": n.get("validator_ok"),
+                "mso_streak2h": n.get("mso_streak2h"),
+                "svetofor": n.get("svetofor"), "trend_ok": n.get("trend_ok"),
+                "hot": bool(n.get("hot")),
                 "at": at_dt.isoformat() if hasattr(at_dt, "isoformat") else str(at_dt or ""),
                 "at_ts": int(at_dt.timestamp()) if hasattr(at_dt, "timestamp") else 0,
             })

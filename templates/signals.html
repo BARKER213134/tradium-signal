@@ -10988,6 +10988,9 @@ function filterJournal() {
     // ДА; остальные видны при явном фильтре источника или поиске по монете
     if (!src && !pairQ && s.source === 'confluence'
         && (s.svetofor || s.pro_verdict) !== 'ДА') return false;
+    // 🎓 14.11: сигналы «только для Академии» (ACADEMY_ONLY / запрет шортов у дна) видны
+    // лишь при явном выборе источника или поиске по монете — в общей ленте их нет
+    if (!src && !pairQ && s.acad) return false;
     // Time filter: применяем ТОЛЬКО если источник/монета НЕ выбраны явно.
     // Юзер: "когда выбираешь CV — не все сигналы внутри" — потому что
     // default time = 24h отрезал старые. Явный выбор источника = "хочу всё
@@ -11028,7 +11031,8 @@ function filterJournal() {
     } else if (src === 'lt_absorb') {
       // 💪 level_touch + дельта в сторону отскока (+0.8..1.0R WR71-82)
       if (!(s.source === 'level_touch' && s.absorb)) return false;
-    } else if (src && s.source !== src) return false;
+    } else if (src && s.source !== src
+               && !(s.source === 'stack' && (s.stack_members || []).some(m => m.source === src))) return false;
     // 🟩 Только ВХОД — оценка A (EV >= +0.75%/сделку под цель +10%)
     if (window._gradeOnlyOn && s.trade_grade !== 'A') return false;
     // ⚡ Войти сейчас: серверный список (цена ещё актуальна для входа),
