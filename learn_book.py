@@ -38,6 +38,17 @@ BOOK_SHORT = {"shark", "volume_surge", "triple_confluence", "supertrend_daily",
 # low_break — шорт у 30-дневного минимума — берём и при рынке глубоко внизу:
 # это отдельная гипотеза, иначе трека по ней не накопить.
 SHORT_BLOCK_EXEMPT = {"low_break"}
+# 🚿 14.11 (юзер: «делай отдельную квоту смыва в книге»): источники со СВОЕЙ квотой.
+# Смыв приходит пачкой (29 монет в одном 2h-баре) и редко (17 эпизодов в год) — общий
+# лимит 10 лонгов в день к его приходу уже выбран (14.11: лимит кончился в 14:16 UTC,
+# смыв пришёл в 16:28), а слот монеты занимала vol_climax, из которой он и создаётся.
+# Школа сама его тоже не откроет: порог «40 сделок + две половины» кучный источник не
+# проходит. Чтобы план +5/−15/14д вообще имел трек, такие источники:
+#   • не считаются в лимитах направления и сами их не занимают;
+#   • берутся все (одна сделка на монету в день по ЭТОМУ источнику), потолки — только
+#     предохранитель от сбоя детектора;
+#   • в сводке книги идут отдельной строкой (own), общую статистику не трогают.
+OWN_QUOTA = {"flush_climax": {"day": 200, "conc": 400}}
 
 
 def _plan(src):
@@ -68,10 +79,15 @@ def _open(db, now):
     day0 = datetime(now.year, now.month, now.day)
     slot0 = datetime(now.year, now.month, now.day, (now.hour // SLOT_H) * SLOT_H)
     cnt = {}
+    _own = sorted(OWN_QUOTA)
+    _main = {"src": {"$nin": _own}}          # лимиты направления — без «своих квот»
     for d in ("LONG", "SHORT"):
-        cnt[d] = [db.academy_book.count_documents({"dir": d, "opened_at": {"$gte": day0}}),
-                  db.academy_book.count_documents({"dir": d, "opened_at": {"$gte": slot0}}),
-                  db.academy_book.count_documents({"dir": d, "state": "OPEN"})]
+        cnt[d] = [db.academy_book.count_documents(dict(_main, dir=d, opened_at={"$gte": day0})),
+                  db.academy_book.count_documents(dict(_main, dir=d, opened_at={"$gte": slot0})),
+                  db.academy_book.count_documents(dict(_main, dir=d, state="OPEN"))]
+    cnt_own = {s_: [db.academy_book.count_documents({"src": s_, "opened_at": {"$gte": day0}}),
+                    db.academy_book.count_documents({"src": s_, "state": "OPEN"})]
+               for s_ in _own}
     opened = 0
     # 🚫 13.11: шорты при рынке глубоко внизу книга не берёт (config.MB_SHORT_BLOCK)
     try:
@@ -85,13 +101,21 @@ def _open(db, now):
             continue
         if d == "SHORT" and _no_short and src not in SHORT_BLOCK_EXEMPT:
             continue
-        n_day, n_slot, n_open = cnt[d]
-        if n_day >= DAY_CAP or n_slot >= SLOT_CAP or n_open >= CONC_CAP:
-            continue
+        _q = OWN_QUOTA.get(src)
+        if _q:
+            if cnt_own[src][0] >= _q["day"] or cnt_own[src][1] >= _q["conc"]:
+                continue
+        else:
+            n_day, n_slot, n_open = cnt[d]
+            if n_day >= DAY_CAP or n_slot >= SLOT_CAP or n_open >= CONC_CAP:
+                continue
         if db.academy_book.find_one({"_id": key}, {"_id": 1}):
             continue
-        if db.academy_book.find_one({"sym": sym, "dir": d, "opened_at": {"$gte": day0}},
-                                    {"_id": 1}):
+        # одна сделка на монету в день: у «своей квоты» — по своему источнику,
+        # у остальных — по направлению, не считая «своих квот»
+        _dq = ({"sym": sym, "src": src, "opened_at": {"$gte": day0}} if _q
+               else dict(_main, sym=sym, dir=d, opened_at={"$gte": day0}))
+        if db.academy_book.find_one(_dq, {"_id": 1}):
             continue
         px = lp._last_close(pair or (sym[:-4] + "/USDT"))
         if not px:
@@ -101,9 +125,13 @@ def _open(db, now):
             "_id": key, "sym": sym, "pair": pair, "dir": d, "src": src,
             "entry": px, "state": "OPEN", "sig_at": c["at"], "opened_at": now,
             "tp_pct": _tpp, "sl_pct": _slp, "hz_h": _hz})
-        cnt[d][0] += 1
-        cnt[d][1] += 1
-        cnt[d][2] += 1
+        if _q:
+            cnt_own[src][0] += 1
+            cnt_own[src][1] += 1
+        else:
+            cnt[d][0] += 1
+            cnt[d][1] += 1
+            cnt[d][2] += 1
         opened += 1
     return opened
 
@@ -189,9 +217,10 @@ def stats(db):
                 "avg": round(sum(v) / len(v), 2), "sum": round(sum(v), 1)}
     out = {}
     try:
-        cl = list(db.academy_book.find(
-            {"state": {"$in": ["TP", "SL", "TIMEOUT"]}, "r": {"$ne": None}},
-            {"r": 1, "dir": 1, "closed_at": 1}))
+        _own = sorted(OWN_QUOTA)
+        _clq = {"state": {"$in": ["TP", "SL", "TIMEOUT"]}, "r": {"$ne": None}}
+        cl = list(db.academy_book.find(dict(_clq, src={"$nin": _own}),
+                                       {"r": 1, "dir": 1, "closed_at": 1}))
         lo = [d["r"] for d in cl if d["dir"] == "LONG"]
         sh = [d["r"] for d in cl if d["dir"] == "SHORT"]
         out["long"], out["short"], out["all"] = _st(lo), _st(sh), _st(lo + sh)
@@ -201,8 +230,16 @@ def stats(db):
             days[k] = days.get(k, 0.0) + d["r"]
         out["days"] = len(days)
         out["days_pos"] = sum(1 for v in days.values() if v > 0)
-        out["open_long"] = db.academy_book.count_documents({"dir": "LONG", "state": "OPEN"})
-        out["open_short"] = db.academy_book.count_documents({"dir": "SHORT", "state": "OPEN"})
+        out["open_long"] = db.academy_book.count_documents(
+            {"dir": "LONG", "state": "OPEN", "src": {"$nin": _own}})
+        out["open_short"] = db.academy_book.count_documents(
+            {"dir": "SHORT", "state": "OPEN", "src": {"$nin": _own}})
+        # 🚿 источники со своей квотой — отдельной строкой, в общую сводку не входят
+        out["own"] = {}
+        for s_ in _own:
+            _r = [d["r"] for d in db.academy_book.find(dict(_clq, src=s_), {"r": 1})]
+            out["own"][s_] = {"st": _st(_r),
+                              "open": db.academy_book.count_documents({"src": s_, "state": "OPEN"})}
         first = db.academy_book.find_one(sort=[("opened_at", 1)])
         out["since"] = first["opened_at"].isoformat() if first else None
     except Exception:

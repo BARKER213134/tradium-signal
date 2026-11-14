@@ -7185,7 +7185,15 @@ async function lvLoad() {
       ? `<b style="color:${bk.all.sum > 0 ? '#00e5a0' : '#ff5e9c'};">${bSgn(bk.all.sum)}</b> · WR ${bk.all.wr}% · ${bSgn(bk.all.avg)} · n ${bk.all.n}`
       : 'копим закрытия…') +
       `<br><span style="font-size:10px;color:var(--muted);">${bLeg(bk.long, 'лонги')} · ${bLeg(bk.short, 'шорты')} · открыто ${bk.open_long == null ? '—' : bk.open_long}▲ / ${bk.open_short == null ? '—' : bk.open_short}▼` +
-      (bk.days ? ` · дней в плюсе ${bk.days_pos}/${bk.days}` : '') + `</span>`;
+      (bk.days ? ` · дней в плюсе ${bk.days_pos}/${bk.days}` : '') + `</span>` +
+      // 🚿 14.11: смыв — своя квота и свой план (+5/−15/14д), в общую сводку книги не входит
+      (function() {
+        const f = (bk.own || {}).flush_climax;
+        if (!f || (!f.open && !(f.st && f.st.n))) return '';
+        return `<br><span style="font-size:10px;color:var(--muted);" title="🚿 СМЫВ в книге: своя квота вне лимита 10 лонгов в день, план +5% / −15% / 14 дней. В общую сводку книги не входит.">🚿 смыв: ` +
+          (f.st && f.st.n ? `${bSgn(f.st.sum)} · WR ${f.st.wr}% · ${bSgn(f.st.avg)} · n ${f.st.n}` : 'закрытий пока нет') +
+          ` · открыто ${f.open}</span>`;
+      })();
   }
   // 🩳 тень шортов (13.11): свой срез, в лайв не входит
   const lvsSt = d.stats_s || null;
