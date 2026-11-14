@@ -8699,11 +8699,6 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="">🧭 Монета: все</option>
     <option value="star">⭐ рабочее для шорта (бэктест: WR 82%)</option>
     <option value="starL">⭐ рабочее для лонга (бэктест: +0.9% против −0.2%)</option>
-    <option value="phFit">🧭 сделка ПО фазе монеты</option>
-    <option value="phAnti">🧭 сделка ПРОТИВ фазы монеты</option>
-    <option value="phL">▲ фаза монеты LONG</option>
-    <option value="phS">▼ фаза монеты SHORT</option>
-    <option value="phN">◆ фаза монеты: без стороны</option>
     <option value="fit">✅ состояние за сделку</option>
     <option value="anti">❌ состояние против сделки</option>
     <option value="A">🟢 выше EMA200</option>
@@ -8712,6 +8707,15 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="lie">💤 лежит больше месяца</option>
     <option value="m12g">MSO 12h 🟢</option>
     <option value="m12r">MSO 12h 🔴</option>
+  </select>
+  <select id="jPhaseFilter" onchange="window._phaseSave(this.value)" title="🧭 Отбор по ФАЗЕ МОНЕТЫ сейчас (колонка «Фаза»): ▲ LONG — цена выше EMA200 на 2h и MSO 4h зелёный · ▼ SHORT — ниже и красный · ◆ без стороны — расходятся. ✓ по фазе — направление сделки совпадает с фазой монеты, ✗ против — не совпадает. Проверка на 81 тыс. сигналов: по фазе +0.23% (лонги) и +0.41% (шорты) на сделку, против −0.76% и −0.41%." style="background:var(--dark);color:var(--text);border:1px solid rgba(0,229,160,0.35);border-radius:6px;padding:4px 8px;font-size:11px;font-family:var(--font-mono);">
+    <option value="">🧭 Фаза: все</option>
+    <option value="fit">✓ сделка по фазе</option>
+    <option value="anti">✗ сделка против фазы</option>
+    <option value="notanti">✓◆ всё, кроме «против фазы»</option>
+    <option value="L">▲ фаза LONG</option>
+    <option value="S">▼ фаза SHORT</option>
+    <option value="N">◆ без стороны</option>
   </select>
   <script>
   window._starOnlyOn = false;
@@ -8734,6 +8738,11 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     if (c.e2 <= 0 && c.m4 <= 50) return 'SHORT';
     return 'NEUTRAL';
   };
+  // 🧭 отдельный отбор по фазе монеты (14.11, юзер: «переделай фильтр по фазе») — липкий
+  window._phaseSave = function(v) {
+    try { localStorage.setItem('j_phase_filter', v || ''); } catch (e) {}
+    if (typeof filterJournal === 'function') filterJournal(); else renderJournalPage();
+  };
   window._coinSave = function(v) {
     try { localStorage.setItem('j_coin_filter', v || ''); } catch (e) {}
     // отбор живёт в filterJournal() — renderJournalPage() только перерисовал бы страницу
@@ -8754,6 +8763,11 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     const _cv = localStorage.getItem('j_coin_filter') || '';
     const _ce = document.getElementById('jCoinFilter');
     if (_ce && _cv) _ce.value = _cv;
+    // старые значения «ph…» из списка «Монета» (до переноса фазы в свой список) — сбросить
+    if (_ce && _cv && _ce.value !== _cv) { _ce.value = ''; localStorage.setItem('j_coin_filter', ''); }
+    const _pv = localStorage.getItem('j_phase_filter') || '';
+    const _pe = document.getElementById('jPhaseFilter');
+    if (_pe && _pv) _pe.value = _pv;
     if (localStorage.getItem('j_valid_only') === '1'
         && !window._validOnlyOn) window._toggleValidOnly();
   } catch (e) {}
@@ -8941,7 +8955,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   // с состоянием), липкие фильтры стираются из localStorage. На кнопке — сколько включено.
   window._jFilterIds = ['jFilterVerdict', 'jFilterPair', 'jFilterSrc', 'jFilterDir', 'jFilterTrend',
     'jFilterRsiTf', 'jFilterRsiZone', 'jFilterScore', 'jFilterSma', 'jFilterKC', 'jFilterPump',
-    'jFilterTime', 'jStreakFilter', 'jCoinFilter'];
+    'jFilterTime', 'jStreakFilter', 'jCoinFilter', 'jPhaseFilter'];
   // [включён ли, как выключить]
   window._jToggleList = function() {
     const g = (n) => (typeof window[n] === 'function' ? window[n] : null);
@@ -9012,6 +9026,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
       try {
         localStorage.setItem('j_streak_filter', '');
         localStorage.setItem('j_coin_filter', '');
+        localStorage.setItem('j_phase_filter', '');
         localStorage.setItem('j_valid_only', '');
       } catch (e) {}
     } finally {
@@ -11111,21 +11126,25 @@ function filterJournal() {
       const _cFit2 = _cc.cs === 'A' ? s.direction === 'LONG' : (s.direction === 'SHORT' && !_cLie2);
       if (_cf === 'starL' && !(s.direction === 'LONG' && _cLie2 && _cc.rk30 != null && _cc.rk30 >= 0.5)) return false;
       if (_cf === 'star' && !(s.direction === 'SHORT' && _cc.m4s != null && _cc.m4s <= -1 && _cc.m4s >= -6 && _cc.d1 === -1 && _cc.k30 != null && _cc.k30 < -0.75)) return false;
-      if (_cf.slice(0, 2) === 'ph') {
-        const _ph = window._coinPhase(_cc);
-        if (!_ph) return false;
-        if (_cf === 'phL' && _ph !== 'LONG') return false;
-        if (_cf === 'phS' && _ph !== 'SHORT') return false;
-        if (_cf === 'phN' && _ph !== 'NEUTRAL') return false;
-        if (_cf === 'phFit' && _ph !== s.direction) return false;
-        if (_cf === 'phAnti' && (_ph === 'NEUTRAL' || _ph === s.direction)) return false;
-      }
       if (_cf === 'fit' && !_cFit2) return false;
       if (_cf === 'anti' && _cFit2) return false;
       if ((_cf === 'A' || _cf === 'B' || _cf === 'L') && _cc.cs !== _cf) return false;
       if (_cf === 'lie' && !_cLie2) return false;
       if (_cf === 'm12g' && !(_cc.m12 > 50)) return false;
       if (_cf === 'm12r' && !(_cc.m12 != null && _cc.m12 <= 50)) return false;
+    }
+    // 🧭 отбор по фазе монеты (свой список рядом с «Монетой»)
+    const _pfEl = document.getElementById('jPhaseFilter');
+    if (_pfEl && _pfEl.value) {
+      const _ph = window._coinPhase ? window._coinPhase(s.coin) : null;
+      if (!_ph) return false;
+      const _pf = _pfEl.value;
+      if (_pf === 'L' && _ph !== 'LONG') return false;
+      if (_pf === 'S' && _ph !== 'SHORT') return false;
+      if (_pf === 'N' && _ph !== 'NEUTRAL') return false;
+      if (_pf === 'fit' && _ph !== s.direction) return false;
+      if (_pf === 'anti' && (_ph === 'NEUTRAL' || _ph === s.direction)) return false;
+      if (_pf === 'notanti' && _ph !== 'NEUTRAL' && _ph !== s.direction) return false;
     }
     if (window._trendOkOn && s.trend_ok !== true) return false;
     if (dir && s.direction !== dir) return false;
