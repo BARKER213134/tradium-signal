@@ -8687,12 +8687,28 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="r1-26">🔴 1-26 (красная)</option>
     <option value="r27+">🔴 27+ (дно-зона лонгов)</option>
   </select>
+  <select id="jCoinFilter" onchange="window._coinSave(this.value)" title="🧭 Отбор по состоянию монеты СЕЙЧАС (колонка «Монета»). Аудит 43.5k сигналов: лонги выше EMA200 на 2h +0.20% против −0.79% ниже; у 30-дневного минимума −0.95%; шортам зеркально, но шорты по монетам, лежащим больше месяца, хуже обычного. «За сделку» — лонг выше EMA200 или шорт ниже неё (кроме лежащих)." style="background:rgba(0,229,160,0.06);border:1px solid rgba(0,229,160,0.35);color:var(--text);border-radius:8px;padding:6px 8px;font-size:11px;font-family:var(--font-mono);cursor:pointer;">
+    <option value="">🧭 Монета: все</option>
+    <option value="fit">✅ состояние за сделку</option>
+    <option value="anti">❌ состояние против сделки</option>
+    <option value="A">🟢 выше EMA200</option>
+    <option value="B">🔻 ниже EMA200</option>
+    <option value="L">⛔ у 30-дневного минимума</option>
+    <option value="lie">💤 лежит больше месяца</option>
+    <option value="m12g">MSO 12h 🟢</option>
+    <option value="m12r">MSO 12h 🔴</option>
+  </select>
   <script>
   window._starOnlyOn = false;
   window._validOnlyOn = false;
   // ⏳ клик по ячейке серии — быстрый отбор корзины (повтор — сброс)
   window._streakSave = function(v) {
     try { localStorage.setItem('j_streak_filter', v || ''); } catch (e) {}
+    renderJournalPage();
+  };
+  // 🧭 отбор по состоянию монеты (14.11) — липкий, как серия
+  window._coinSave = function(v) {
+    try { localStorage.setItem('j_coin_filter', v || ''); } catch (e) {}
     renderJournalPage();
   };
   window._streakPick = function(bk) {
@@ -8707,6 +8723,9 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     const _sv = localStorage.getItem('j_streak_filter') || '';
     const _se = document.getElementById('jStreakFilter');
     if (_se && _sv) _se.value = _sv;
+    const _cv = localStorage.getItem('j_coin_filter') || '';
+    const _ce = document.getElementById('jCoinFilter');
+    if (_ce && _cv) _ce.value = _cv;
     if (localStorage.getItem('j_valid_only') === '1'
         && !window._validOnlyOn) window._toggleValidOnly();
   } catch (e) {}
@@ -10950,6 +10969,21 @@ function filterJournal() {
       if (_f === '27+' && _v < 27) return false;
       if (_f === 'r1-26' && !(_v <= -1 && _v >= -26)) return false;
       if (_f === 'r27+' && _v > -27) return false;
+    }
+    // 🧭 отбор по состоянию монеты сейчас (та же логика, что цвет ячейки «Монета»)
+    const _cfEl = document.getElementById('jCoinFilter');
+    if (_cfEl && _cfEl.value) {
+      const _cc = s.coin;
+      if (!_cc || _cc.e2 == null) return false;
+      const _cf = _cfEl.value;
+      const _cLie2 = _cc.d1 === -1 && (_cc.d1a || 0) > 30;
+      const _cFit2 = _cc.cs === 'A' ? s.direction === 'LONG' : (s.direction === 'SHORT' && !_cLie2);
+      if (_cf === 'fit' && !_cFit2) return false;
+      if (_cf === 'anti' && _cFit2) return false;
+      if ((_cf === 'A' || _cf === 'B' || _cf === 'L') && _cc.cs !== _cf) return false;
+      if (_cf === 'lie' && !_cLie2) return false;
+      if (_cf === 'm12g' && !(_cc.m12 > 50)) return false;
+      if (_cf === 'm12r' && !(_cc.m12 != null && _cc.m12 <= 50)) return false;
     }
     if (window._trendOkOn && s.trend_ok !== true) return false;
     if (dir && s.direction !== dir) return false;

@@ -523,7 +523,10 @@ def load_map(db, tmrows=None):
             if v and v.get("ch") and (v.get("b") or 0) >= bar - MAP_MAX_AGE_BARS:
                 out[s] = {"ch": v["ch"], "mv": v.get("mv"), "pos": v.get("pos"), "kp": v.get("kp"),
                           "m4": m4_bin(v.get("m4")), "m12": m12_bin(v.get("m12")),
-                          "m4v": v.get("m4"), "m12v": v.get("m12")}
+                          "m4v": v.get("m4"), "m12v": v.get("m12"),
+                          # 🧭 состояние монеты (ось школы, 14.11)
+                          "cs": cs_bin(v.get("e2"), v.get("u30")),
+                          "e2": v.get("e2"), "u30": v.get("u30")}
     except Exception:
         pass
     return out

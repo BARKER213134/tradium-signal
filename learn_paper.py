@@ -438,7 +438,8 @@ def _open_new(db, model, now):
                                        frb=le.fr_bin((_dmap.get(c["sym"]) or {}).get("fr")),
                                        kch=(_kmap.get(c["sym"]) or {}).get("ch"),
                                        m4=(_kmap.get(c["sym"]) or {}).get("m4"),
-                                       m12=(_kmap.get(c["sym"]) or {}).get("m12"))
+                                       m12=(_kmap.get(c["sym"]) or {}).get("m12"),
+                                       cs=(_kmap.get(c["sym"]) or {}).get("cs"))
         probe = False
         if status != "ACTIVE_SHOW":
             # 🔬 разведка боем: живо-выключенное правило продолжаем
@@ -621,6 +622,10 @@ def _open_new(db, model, now):
             "m12_open": (_kmap.get(c["sym"]) or {}).get("m12"),
             "m4v_open": (_kmap.get(c["sym"]) or {}).get("m4v"),
             "m12v_open": (_kmap.get(c["sym"]) or {}).get("m12v"),
+            # 🧭 состояние монеты на входе (14.11): бин, % от EMA200, % от 30д-минимума
+            "cs_open": (_kmap.get(c["sym"]) or {}).get("cs"),
+            "e2_open": (_kmap.get(c["sym"]) or {}).get("e2"),
+            "u30_open": (_kmap.get(c["sym"]) or {}).get("u30"),
         }}, upsert=True)
         opened += 1
     return opened

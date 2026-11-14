@@ -452,6 +452,39 @@ def _last_closed(t_arr, ts_ms, tf_ms):
 
 
 _MH_WARM = 60      # минимум старших баров до сигнала, иначе штампа MSO нет
+_CS_WARM = 399     # баров 2h до сигнала: EMA200 сошлась (остаток <2%) и есть 30 дней
+
+
+def _cs_pack(pair, klines_fn, t2, h2, l2, c2):
+    """🧭 Состояние монеты по барам 2h для строк школы → {t, e2, u30}:
+    e2 — % цены от EMA200, u30 — % от 30-дневного минимума (360 баров).
+    Берём родные 2h-свечи (1000 баров = 83 дня): в 1h-пакете всего 750 баров
+    2h, и у строк старше ~29 дней EMA200 ещё не сошлась бы. При подменённых
+    свечах (klines_fn) считаем из пакета — ранние строки останутся без штампа."""
+    from numpy.lib.stride_tricks import sliding_window_view as _sw
+    T, L, C = t2, l2, c2
+    if klines_fn is None:
+        try:
+            from exchange import get_klines_any
+            kd = get_klines_any(pair, "2h", 1000)
+            if kd and len(kd) > len(c2):
+                T = np.array([b["t"] for b in kd], dtype=np.int64)
+                L = np.array([b["l"] for b in kd], dtype=float)
+                C = np.array([b["c"] for b in kd], dtype=float)
+        except Exception:
+            pass
+    n = len(C)
+    if n < _CS_WARM + 5:
+        return None
+    a = 2.0 / 201.0
+    ema = np.empty(n)
+    e = float(C[0])
+    for i in range(n):
+        e = float(C[i]) if i == 0 else e + a * (float(C[i]) - e)
+        ema[i] = e
+    u30 = np.full(n, np.nan)
+    u30[359:] = (C[359:] / _sw(np.asarray(L, dtype=float), 360).min(axis=1) - 1) * 100
+    return {"t": np.asarray(T, dtype=np.int64), "e2": (np.asarray(C, dtype=float) / ema - 1) * 100, "u30": u30}
 
 
 def _mso_htf_pack(pair, days, klines_fn, b4, b12):
@@ -775,6 +808,11 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                 "t12": t12,
                 "st12": compute_st_series(b12, 10, 3.0) if len(b12) >= 20 else None,
             }
+            # 🧭 состояние монеты (14.11): % от EMA200 2h и от 30-дневного минимума
+            try:
+                packs[pair]["cs"] = _cs_pack(pair, klines_fn, t2, h2, l2, c2)
+            except Exception:
+                packs[pair]["cs"] = None
             # 🟢🔴 MSO 4h/12h (14.11): родные свечи старших ТФ с прогревом
             try:
                 packs[pair]["mh"] = _mso_htf_pack(pair, days, klines_fn, b4, b12)
@@ -980,7 +1018,18 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                         _m12 = _se.m12_bin(float(_mh["v12"][_j]))
             except Exception:
                 _m4 = _m12 = None
+        # 🧭 состояние монеты на последнем 2h-баре, закрытом до сигнала
+        _cs = None
+        _cp = p.get("cs")
+        if _cp:
+            try:
+                _j = _last_closed(_cp["t"], ts, 7_200_000)
+                if _CS_WARM <= _j < len(_cp["e2"]) and not math.isnan(_cp["u30"][_j]):
+                    _cs = _se.cs_bin(float(_cp["e2"][_j]), float(_cp["u30"][_j]))
+            except Exception:
+                _cs = None
         rows.append({
+            "cs": _cs,
             "m4": _m4, "m12": _m12,
             "kch": (_kc or {}).get("ch"), "kpos": (_kc or {}).get("kp"),
             "kmv": (_kc or {}).get("mv"), "kpv": (_kc or {}).get("pos"),
@@ -1086,7 +1135,7 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         # половины считаем ВНУТРИ режима, иначе «стабильность» по общей
         # медиане окна всегда ложно-отрицательная
         _tm = (float(np.median([x["ts"] for x in sel]))
-               if kind in ("regime", "school", "btcvol", "deriv", "struct", "mso") else tmid)
+               if kind in ("regime", "school", "btcvol", "deriv", "struct", "mso", "coin") else tmid)
         st = _stats(sel, _tm)
         if st["n"] < 15:
             return
@@ -1317,6 +1366,24 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         for (_src, _dl, _v), _sel in _cm.items():
             add_rule(f"c{_key}_{_src}_{_dl}_{_v}",
                      f"{_src} {_dl} · {_lab[_v]}", _sel, "mso")
+    # 🧭 СОСТОЯНИЕ МОНЕТЫ (14.11, юзер: «делай ось состояние монеты в школу»):
+    # выше EMA200 на 2h / ниже / у 30-дневного минимума на момент сигнала.
+    # Аудит coin_select.py: лонги выше EMA200 +0.20 против −0.79 ниже (лучше
+    # у 9 источников из 19, хуже ни у одного), у минимума −0.95; трендовым
+    # источникам на падающих монетах хуже всего, отбойным не мешает — поэтому
+    # решает клетка источник×направление×состояние (вето при ACTIVE_HIDE).
+    for _b in _se.CS_LABEL:
+        for _sg, _dl in ((1, "LONG"), (-1, "SHORT")):
+            add_rule(f"cs_{_b}_{_dl}", f"🧭 {_se.CS_LABEL[_b]} {_dl}",
+                     [x for x in rows if x.get("cs") == _b and x["sg"] == _sg], "coin")
+    _cc = {}
+    for x in rows:
+        if x.get("cs"):
+            _cc.setdefault((x["src"], "LONG" if x["sg"] > 0 else "SHORT",
+                            x["cs"]), []).append(x)
+    for (_src, _dl, _v), _sel in _cc.items():
+        add_rule(f"ccs_{_src}_{_dl}_{_v}",
+                 f"{_src} {_dl} · 🧭 {_se.CS_LABEL[_v]}", _sel, "coin")
     add_rule("sc_fresh", "🆕 LONG первое касание 7д (лонг-корзины)",
              [x for x in rows if x["fresh"]
               and (x["gold"] or x["silver"] or x["dawn"])], "super")
@@ -1821,6 +1888,11 @@ def recompute(days=WINDOW_DAYS, progress=None):
             "n_mso_active": sum(1 for r in rules if r.get("kind") == "mso"
                                 and r["status"].startswith("ACTIVE")),
             "mso_rows": sum(1 for x in rows if x.get("m4") or x.get("m12")),
+            # 🧭 состояние монеты (14.11)
+            "n_coin": sum(1 for r in rules if r.get("kind") == "coin"),
+            "n_coin_active": sum(1 for r in rules if r.get("kind") == "coin"
+                                 and r["status"].startswith("ACTIVE")),
+            "coin_rows": sum(1 for x in rows if x.get("cs")),
             "degraded": [r["id"] for r in rules
                          if r.get("degraded") is not None],
             # ₿ режим: текущий + долгая память (переносится, пересобирается ниже)
@@ -1875,7 +1947,7 @@ def recompute(days=WINDOW_DAYS, progress=None):
 
 def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None,
                  bvb=None, tst=None, sv=None, dob=None, frb=None, kch=None,
-                 m4=None, m12=None):
+                 m4=None, m12=None, cs=None):
     """Вердикт по штампам сигнала: (status, rule) или (None, None).
     rg — текущий режим BTC (btc_regime_now()[1]). Если рынок НЕ у максимума
     (dip/corr/capit), первыми смотрим клетки источник×направление×режим:
@@ -1921,7 +1993,9 @@ def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None,
                  (f"ckc_{src}_{sgl}_{kch}" if kch else None),
                  # 🟢🔴 MSO старших ТФ (14.11): источник×направление×цвет
                  (f"cm4_{src}_{sgl}_{m4}" if m4 else None),
-                 (f"cm12_{src}_{sgl}_{m12}" if m12 else None)):
+                 (f"cm12_{src}_{sgl}_{m12}" if m12 else None),
+                 # 🧭 состояние монеты (14.11): источник×направление×состояние
+                 (f"ccs_{src}_{sgl}_{cs}" if cs else None)):
         if not _rid:
             continue
         _ar = rules.get(_rid)
