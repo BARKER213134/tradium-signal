@@ -16,6 +16,21 @@ paper закрылся (TP/SL ставятся на бирже сразу при
     «не листинг/safety/размер» — пропуск сразу (x_skip);
   • выход по школе: TP по exit_open (base +10 / tp15 / tp20 / hold = без TP),
     SL −5, таймаут 96ч — как у paper-двойника.
+
+14.11.26 (аудит лайва, юзер: «делай пункт 3»):
+  • ПРОВЕРКА УХОДА ЦЕНЫ: перед ордером берём текущую цену; если она ушла от входа
+    бумаги больше max_dev_pct (1%) в любую сторону — не открываем, пробуем на следующем
+    тике, пока сделка свежая (fresh_min). Раньше исполнитель вошёл бы по рынку при любом
+    уходе, с тейком/стопом от старой цены (стоп в 2% вместо 5%).
+  • ТЕЙК И СТОП ОТ ТЕКУЩЕЙ ЦЕНЫ, а не от входа бумаги: соотношение +10/−5 у живой сделки
+    всегда как в плане.
+  • СТОП НЕ ВСТАЛ → ПОЗИЦИЯ СРАЗУ ЗАКРЫВАЕТСЯ. live_trader при ошибке стоп-ордера лишь
+    пишет sl_error и оставляет позицию без защиты.
+  • ПРОБНЫЙ РЕЖИМ dry=True: исполнитель проходит весь путь до ордера (отбор, свежесть,
+    лимит позиций, проверка цены, расчёт тейка/стопа), но на биржу НЕ ходит и в Telegram
+    не пишет — оставляет на бумажной сделке отметку x_dry. Счёт не нужен.
+  • flag: какой срез зеркалить — "live" (💎, по умолчанию) или "live_d" (тень «по
+    направлению школы»). Переключение — только словом юзера.
 Статус: system_config.academy_live_status (каждый тик), /api/live.exec,
 /api/academy/exec (GET/POST), компонент здоровья academy_live.
 """
@@ -30,7 +45,9 @@ logger = logging.getLogger(__name__)
 CFG_ID = "academy_live"
 STATUS_ID = "academy_live_status"
 DEFAULTS = {"enabled": False, "margin_usd": 10.0, "leverage": 2,
-            "max_open": 15, "fresh_min": 120, "max_try": 3}
+            "max_open": 15, "fresh_min": 45, "max_try": 3,
+            "max_dev_pct": 1.0, "dry": False, "flag": "live"}
+FLAGS = ("live", "live_d")
 TP_PCT = {"base": 0.10, "tp15": 0.15, "tp20": 0.20, "hold": None}
 SL_PCT = 0.05
 HORIZON_H = 96
@@ -64,8 +81,13 @@ def set_cfg(db=None, **kw) -> dict:
     for k, v in kw.items():
         if k not in DEFAULTS or v is None:
             continue
-        if k == "enabled":
+        if k in ("enabled", "dry"):
             upd[k] = bool(v)
+        elif k == "flag":
+            if v in FLAGS:
+                upd[k] = v
+        elif k == "max_dev_pct":
+            upd[k] = max(0.2, min(float(v), 5.0))
         elif k == "margin_usd":
             upd[k] = max(1.0, min(float(v), 500.0))
         elif k in ("leverage", "max_open", "fresh_min", "max_try"):
@@ -107,6 +129,9 @@ def status(db=None) -> dict:
     return {
         "enabled": bool(cfg.get("enabled")), "margin_usd": cfg.get("margin_usd"),
         "leverage": cfg.get("leverage"), "max_open": cfg.get("max_open"),
+        "dry": bool(cfg.get("dry")), "flag": cfg.get("flag") or "live",
+        "max_dev_pct": cfg.get("max_dev_pct"), "fresh_min": cfg.get("fresh_min"),
+        "dry_n": db.academy_paper.count_documents({"x_dry": {"$exists": True}}),
         "accounts": [{"id": a["_id"], "enabled": bool(a.get("enabled")),
                       "kill": bool(a.get("kill_switch")), "mode": a.get("mode"),
                       "exchange": a.get("exchange"), "balance": a.get("balance"),
@@ -116,7 +141,8 @@ def status(db=None) -> dict:
         "closed_n": len(closed),
         "closed_pnl_usdt": round(sum(float(t.get("pnl_usdt") or 0) for t in closed), 2),
         "last_tick": st.get("at").isoformat() if hasattr(st.get("at"), "isoformat") else st.get("at"),
-        "last": {k: st.get(k) for k in ("opened", "closed", "errors", "last_err")},
+        "last": {k: st.get(k) for k in ("opened", "closed", "errors", "last_err",
+                                        "price_skips", "last_skip")},
     }
 
 
@@ -135,16 +161,23 @@ async def tick() -> dict:
     now = _now()
     cfg = await asyncio.to_thread(get_cfg, db)
     accs = await asyncio.to_thread(accounts, db)
+    dry = bool(cfg.get("dry"))
+    flag = cfg.get("flag") if cfg.get("flag") in FLAGS else "live"
+    max_dev = float(cfg.get("max_dev_pct") or 1.0)
+    if dry:
+        accs = [{"_id": "dry"}]     # пробный режим: биржа и счёт не нужны
     stats = {"at": now, "enabled": bool(cfg["enabled"]), "accounts": [a["_id"] for a in accs],
-             "opened": 0, "closed": 0, "errors": 0, "last_err": None}
+             "opened": 0, "closed": 0, "errors": 0, "last_err": None,
+             "dry": dry, "flag": flag, "price_skips": 0, "last_skip": None}
     if not cfg["enabled"] or not accs:
         await asyncio.to_thread(db.system_config.update_one, {"_id": STATUS_ID},
                                 {"$set": stats}, True)
         return stats
     import live_trader as lt
+    import learn_paper as _lpp
 
     # 1) реконсиляция: TP/SL, исполненные биржей → закрыть документы
-    for acc in accs:
+    for acc in ([] if dry else accs):
         try:
             await asyncio.wait_for(lt.sync_positions_for_account(acc), timeout=25.0)
         except Exception as e:
@@ -153,23 +186,29 @@ async def tick() -> dict:
     # 2) открытие: свежие live-paper без зеркала
     since = now - timedelta(minutes=int(cfg["fresh_min"]))
     cands = await asyncio.to_thread(lambda: list(db.academy_paper.find(
-        {"live": True, "state": "OPEN", "probe": {"$ne": True},
+        {flag: True, "state": "OPEN", "probe": {"$ne": True},
          "opened_at": {"$gte": since}, "x_skip": {"$exists": False}}
     ).sort("opened_at", 1)))
     for acc in accs:
         aid = acc["_id"]
-        open_n = await asyncio.to_thread(
-            db.live_trades.count_documents,
-            {"account_id": aid, "status": "OPEN", "source": "academy"})
+        if dry:
+            open_n = await asyncio.to_thread(
+                db.academy_paper.count_documents,
+                {"x_dry": {"$exists": True}, "state": "OPEN"})
+        else:
+            open_n = await asyncio.to_thread(
+                db.live_trades.count_documents,
+                {"account_id": aid, "status": "OPEN", "source": "academy"})
         for t in cands:
             if open_n >= int(cfg["max_open"]):
                 break
             key = str(t["_id"])
-            exists = await asyncio.to_thread(
-                db.live_trades.find_one,
-                {"paper_trade_id": key, "account_id": aid}, {"_id": 1})
-            if exists:
-                continue
+            if not dry:
+                exists = await asyncio.to_thread(
+                    db.live_trades.find_one,
+                    {"paper_trade_id": key, "account_id": aid}, {"_id": 1})
+                if exists:
+                    continue
             claimed = await asyncio.to_thread(
                 db.academy_paper.update_one,
                 {"_id": t["_id"], f"x_claim.{aid}": {"$exists": False}},
@@ -182,11 +221,40 @@ async def tick() -> dict:
                 continue
             sg = 1 if t["dir"] == "LONG" else -1
             tpp = tp_pct_for(t.get("exit_open"))
-            tp1 = round(entry * (1 + sg * tpp), 10) if tpp else None
-            sl = round(entry * (1 - sg * SL_PCT), 10)
             pair = t.get("pair") or (t["sym"][:-4] + "/USDT")
+            # 🎯 14.11: текущая цена — проверка ухода от входа бумаги и база для тейка/стопа
+            try:
+                px_now = await asyncio.wait_for(
+                    asyncio.to_thread(_lpp._last_close, pair), timeout=20.0)
+                px_now = float(px_now) if px_now else None
+            except Exception:
+                px_now = None
+            dev = ((px_now / entry - 1) * 100) if (px_now and entry > 0) else None
+            if dev is None or abs(dev) > max_dev:
+                # цена недоступна или ушла — не открываем, вернём сделку в очередь
+                stats["price_skips"] += 1
+                stats["last_skip"] = (f"{t['sym']}: " + ("нет цены" if dev is None else
+                                      f"цена ушла на {dev:+.2f}% от входа бумаги (порог {max_dev}%)"))
+                _first_skip = "x_dev" not in t
+                upd = {"$unset": {f"x_claim.{aid}": ""},
+                       "$set": {"x_dev": None if dev is None else round(dev, 2)}}
+                await asyncio.to_thread(db.academy_paper.update_one, {"_id": t["_id"]}, upd)
+                if _first_skip and not dry:
+                    _alert(f"⏸ <b>LIVE ждёт цену</b> [{aid}] {t['sym']} {t['dir']}: "
+                           + stats["last_skip"].split(": ", 1)[1])
+                continue
+            tp1 = round(px_now * (1 + sg * tpp), 10) if tpp else None
+            sl = round(px_now * (1 - sg * SL_PCT), 10)
+            if dry:
+                await asyncio.to_thread(
+                    db.academy_paper.update_one, {"_id": t["_id"]},
+                    {"$set": {"x_dry": {"at": now, "px": px_now, "dev": round(dev, 2),
+                                        "tp1": tp1, "sl": sl, "flag": flag}}})
+                open_n += 1
+                stats["opened"] += 1
+                continue
             signal = {"symbol": t["sym"], "pair": pair, "direction": t["dir"],
-                      "entry": entry, "tp1": tp1, "sl": sl, "source": "academy",
+                      "entry": px_now, "tp1": tp1, "sl": sl, "source": "academy",
                       "paper_trade_id": key,
                       # размер = фикс. маржа: balance×size_pct/100 при size_pct=100
                       "_paper_balance_for_sizing": float(cfg["margin_usd"])}
@@ -200,7 +268,29 @@ async def tick() -> dict:
             except Exception as e:
                 res = {"ok": False, "error": f"{type(e).__name__}: {e}"[:300]}
             res = res or {"ok": False, "error": "no result"}
-            if res.get("ok"):
+            if res.get("ok") and not (res.get("trade") or {}).get("sl_order_id"):
+                # 🛑 14.11: стоп не встал — позицию без защиты не держим
+                tr = res.get("trade") or {}
+                try:
+                    lpos = await asyncio.to_thread(
+                        db.live_trades.find_one,
+                        {"trade_id": tr.get("trade_id"), "account_id": aid})
+                    cres = (await asyncio.wait_for(
+                        lt.mirror_full_close_for_account(lpos, "NO_SL", acc), timeout=60.0)
+                        if lpos else {"ok": False, "error": "trade doc not found"})
+                except Exception as e:
+                    cres = {"ok": False, "error": f"{type(e).__name__}: {e}"[:300]}
+                stats["errors"] += 1
+                stats["last_err"] = f"{t['sym']}: стоп не встал ({tr.get('sl_error')})"[:300]
+                await asyncio.to_thread(
+                    db.academy_paper.update_one, {"_id": t["_id"]},
+                    {"$set": {"x_skip": now, "x_err": stats["last_err"]}})
+                _alert(f"🛑 <b>LIVE: стоп не встал</b> [{aid}] {t['sym']} {t['dir']} — "
+                       + ("позиция закрыта сразу" if (cres or {}).get("ok")
+                          else f"ЗАКРЫТЬ ВРУЧНУЮ, авто-закрытие не прошло: {(cres or {}).get('error')}")
+                       + f"\nошибка стопа: {str(tr.get('sl_error'))[:200]}")
+                logger.error(f"[academy-live] NO SL {aid} {t['sym']} close={cres}")
+            elif res.get("ok"):
                 tr = res.get("trade") or {}
                 open_n += 1
                 stats["opened"] += 1
@@ -208,7 +298,7 @@ async def tick() -> dict:
                     db.academy_paper.update_one, {"_id": t["_id"]},
                     {"$set": {f"x_live.{aid}": {
                         "trade_id": tr.get("trade_id"), "entry": tr.get("entry"),
-                        "at": now, "tp1": tp1, "sl": sl,
+                        "at": now, "tp1": tp1, "sl": sl, "px": px_now, "dev": round(dev, 2),
                         "tp_order": tr.get("tp_order_id"), "sl_order": tr.get("sl_order_id")}}})
                 _alert(f"💵 <b>LIVE ОТКРЫТ</b> [{aid}] {t['sym']} {t['dir']} ×{cfg['leverage']} "
                        f"${cfg['margin_usd']} · вход {tr.get('entry')} · "
@@ -234,7 +324,7 @@ async def tick() -> dict:
                            + (" — пропускаю" if final else " — повторю"))
 
     # 3) закрытие: paper закрылся или 96ч
-    for acc in accs:
+    for acc in ([] if dry else accs):
         aid = acc["_id"]
         lts = await asyncio.to_thread(lambda: list(db.live_trades.find(
             {"account_id": aid, "status": "OPEN", "source": "academy"})))

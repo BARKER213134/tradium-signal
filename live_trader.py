@@ -1137,6 +1137,9 @@ def _humanize_error(error: str, symbol: str, mode: str = "real") -> str:
 
 async def _send_live_open_alert(trade: dict, account: dict) -> None:
     """Алерт при открытии live позиции — синхронизирован с paper (показывает slippage)."""
+    # 14.11: сделки Академии оповещает сам исполнитель (academy_live -> бот Академии)
+    if (trade or {}).get("source") == "academy":
+        return
     try:
         from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
         if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
@@ -1893,6 +1896,9 @@ async def _send_live_close_alert(
     trade: dict, reason: str, exit_price, pnl_pct: float, pnl_usdt: float, account: dict
 ) -> None:
     """Алерт при закрытии live позиции."""
+    # 14.11: сделки Академии оповещает сам исполнитель (academy_live -> бот Академии)
+    if (trade or {}).get("source") == "academy":
+        return
     try:
         from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
         if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
@@ -1949,6 +1955,9 @@ async def _send_live_partial_alert(
     live_pos: dict, reason: str, fraction: float, pnl_usdt: float, account: dict
 ) -> None:
     """Алерт при partial close (TP1_PARTIAL, TP2_PARTIAL, etc.)"""
+    # 14.11: сделки Академии оповещает сам исполнитель (academy_live -> бот Академии)
+    if (live_pos or {}).get("source") == "academy":
+        return
     try:
         from config import BOT6_BOT_TOKEN, ADMIN_CHAT_ID
         if not BOT6_BOT_TOKEN or not ADMIN_CHAT_ID:
