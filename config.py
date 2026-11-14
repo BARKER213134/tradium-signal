@@ -76,11 +76,21 @@ AUTO_ENTRY_ALARMS = False
 # Значение: None — оба направления, "LONG"/"SHORT" — только это направление.
 # Вернуть источник в журнал = убрать из словаря. vol_anomaly/vol_anomaly4h
 # 13.08 были оставлены по решению юзера; 13.11 юзер: «делай все три пункта».
+# ⚠ 14.11.26 — ПЕРЕСЧЁТ НА ЧЕСТНОМ ВХОДЕ (юзер: «делай пересчёт списков»). Ревизия 13.11
+# считалась расчётом, который входил по закрытию часа ДО сигнала (см. learn_engine, 895c3ac).
+# На честном входе (rows_honest.py, sig_alpha2.py; те же 112.5k сигналов, тот же отбор по первой
+# половине с проверкой на второй) отрицательная альфа подтвердилась только у четырёх:
+#   flip_retest LONG  −0.41 → −0.84 · rev_candle LONG −0.48 → −0.28 ·
+#   st_break4h SHORT  −1.25 → −1.01 · vol_anomaly SHORT −0.36 → −0.18.
+# Остальные из прежнего списка оказались нейтральными (st_touch, vol_anomaly4h, delta_series,
+# blowoff, rev_candle SHORT, vol_anomaly LONG) либо «плохими» только в первой половине
+# (level_touch SHORT, fade SHORT — во второй +0.30 / +0.14, вживую у школы +1.52 / +3.79) —
+# возвращены в журнал. Прежний список (13.11): vol_anomaly, vol_anomaly4h, delta_series,
+# st_touch, rev_candle, level_touch — оба направления; flip_retest LONG; fade, blowoff,
+# st_break4h — SHORT.
 ACADEMY_ONLY = {
-    "vol_anomaly": None, "vol_anomaly4h": None, "delta_series": None,
-    "st_touch": None, "rev_candle": None, "level_touch": None,
-    "flip_retest": "LONG", "fade": "SHORT", "blowoff": "SHORT",
-    "st_break4h": "SHORT",
+    "flip_retest": "LONG", "rev_candle": "LONG",
+    "st_break4h": "SHORT", "vol_anomaly": "SHORT",
 }
 
 

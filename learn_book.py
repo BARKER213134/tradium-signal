@@ -24,13 +24,26 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 
 BOOK_ENABLED = True
-BOOK_LONG = {"whale", "volume_surge", "volcano", "supertrend_mtf", "ten", "combo",
+# ⚠ 14.11.26 — ПЕРЕСЧЁТ НА ЧЕСТНОМ ВХОДЕ (юзер: «делай пересчёт списков»). Списки 13.11
+# получены расчётом, входившим по закрытию часа ДО сигнала: он завышал источники,
+# стреляющие в середине часа (volume_surge LONG +2.07 → −0.54, volcano +2.71 → +0.22,
+# supertrend_mtf +1.54 → +0.44, ten +1.45 → −0.47; SHORT: volume_surge +2.98 → +0.56,
+# supertrend_daily +1.79 → +0.60, supertrend_vip +1.15 → +0.11). Новые списки — тот же отбор
+# (альфа первой половины > +0.3, вторая не опровергает) на честном входе (sig_alpha2.py).
+# ЧЕСТНО О КНИГЕ: на честном входе её идея НЕ подтвердилась — «хорошие лонги + хорошие шорты»
+# во второй половине дали +0.18 / −0.91 / −0.12 по месяцам (было +1.13 / +1.18 / +1.84),
+# хорошие лонги вне выборки −0.16 против +0.32 у средних. Книга остаётся бумажной проверкой
+# вперёд, выводов из неё без новых данных не делать. rsi_cross_12h и verified_go добавлены
+# 13.11 по тому же завышенному расчёту и на честном входе не перепроверены.
+# Было 13.11: LONG whale, volume_surge, volcano, supertrend_mtf, ten, combo;
+#             SHORT shark, volume_surge, triple_confluence, supertrend_daily, supertrend_vip,
+#             second_flip.
+BOOK_LONG = {"whale", "combo", "floor_buy", "delta_series",
              "rsi_cross_12h", "verified_go",       # 13.11, аудит
              "range_bottom",                       # 13.11, годовой поиск входов
              "vol_climax",                         # 13.11, поиск «80%»: +5/−15/30д
              "flush_climax"}                       # 13.11, 🚿 смыв: +5/−15/14д
-BOOK_SHORT = {"shark", "volume_surge", "triple_confluence", "supertrend_daily",
-              "supertrend_vip", "second_flip",
+BOOK_SHORT = {"shark", "triple_confluence", "thin_pump", "combo", "second_flip",
               "rsi_cross_12h", "verified_go",
               "low_break"}                         # 13.11, годовой поиск входов
 # Свой план сделки у новых источников (new_setups.PLAN): +10% / −15% / 14 дней —
