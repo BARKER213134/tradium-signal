@@ -94,6 +94,12 @@ ACADEMY_ONLY = {
 }
 
 
+# Источники, которые когда-либо писались в academy_signals по этому списку (13–14.11):
+# журнал и графики показывают их сигналы оттуда и после возврата источника в журнал.
+ACADEMY_ONLY_SEEN = {"vol_anomaly", "vol_anomaly4h", "delta_series", "st_touch", "rev_candle",
+                     "level_touch", "flip_retest", "fade", "blowoff", "st_break4h"}
+
+
 def academy_only(strategy, direction=None) -> bool:
     """True — сигнал этого источника/направления идёт только в Академию."""
     if strategy not in ACADEMY_ONLY:

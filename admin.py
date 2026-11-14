@@ -11450,12 +11450,14 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int, academy: int = 0) ->
             # в журнале они снова видны под своим источником, значит и на графике нужны
             try:
                 from config import ACADEMY_ONLY as _AO_C
+            from config import ACADEMY_ONLY_SEEN as _AO_SEEN
             except Exception:
                 _AO_C = {}
+            _AO_SEEN = set()
             for n in _gdb_ln().academy_signals.find(
                     {"symbol": sym_clean, "created_at": {"$gte": since}, "backfill": {"$ne": True},
                      "$or": [{"strategy": "flush_climax"},
-                             {"strategy": {"$in": sorted(_AO_C.keys())}}, {"mb_block": True}]},
+                             {"strategy": {"$in": sorted(set(_AO_C.keys()) | _AO_SEEN)}}, {"mb_block": True}]},
                     {"strategy": 1, "direction": 1, "entry": 1, "tp": 1, "sl": 1,
                      "created_at": 1, "note": 1}
                     ).sort("created_at", -1).limit(60):
@@ -12496,11 +12498,13 @@ def _compute_journal_sync(_fast_only: bool = False):
         # монете — общая лента, Telegram и стеки остаются без них, как решено 13.11.
         try:
             from config import ACADEMY_ONLY as _AO_J
+            from config import ACADEMY_ONLY_SEEN as _AO_SEEN
         except Exception:
             _AO_J = {}
+            _AO_SEEN = set()
         for n in _gdb_lj().academy_signals.find(
                 {"created_at": {"$gte": since_14d}, "backfill": {"$ne": True},
-                 "$or": [{"strategy": {"$in": sorted(_AO_J.keys())}}, {"mb_block": True}]},
+                 "$or": [{"strategy": {"$in": sorted(set(_AO_J.keys()) | _AO_SEEN)}}, {"mb_block": True}]},
                 {"strategy": 1, "pair": 1, "symbol": 1, "direction": 1, "entry": 1, "tp": 1,
                  "sl": 1, "created_at": 1, "state": 1, "mb_block": 1, "validator_ok": 1,
                  "mso_streak2h": 1, "svetofor": 1, "trend_ok": 1, "hot": 1, "rep_seq": 1,
