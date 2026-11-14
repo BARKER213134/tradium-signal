@@ -8970,24 +8970,29 @@ async function _pollDeltaBackfill() {
 <div class="table-wrap">
   <table style="table-layout:fixed;width:100%;">
     <colgroup>
-      <col style="width:6%;">    <!-- Время -->
-      <col style="width:7%;">    <!-- Источник -->
+      <!-- 14.11: сетка приведена к 21 колонке (была на 17 — «Паттерн» сжимался до 4%,
+           12h / EMA Cross / Stack получали нулевую ширину). Сумма = 100%. -->
+      <col style="width:5%;">    <!-- Время -->
+      <col style="width:6%;">    <!-- Источник -->
       <col style="width:6%;">    <!-- Пара -->
       <col style="width:6%;">    <!-- 🧭 Монета: состояние сейчас (14.11) -->
-      <col style="width:5%;">    <!-- Напр. -->
-      <col style="width:5%;">    <!-- 🎓 Вход? (оценка сделки) -->
-      <col style="width:6%;">    <!-- 🎩 PRO (контекст трейдера) -->
-      <col style="width:6%;">    <!-- Trend (рядом со светофором, 14.08) -->
-      <col style="width:4%;">    <!-- OI (после трендов, 15.08) -->
-      <col style="width:6%;">    <!-- Entry -->
-      <col style="width:12%;">   <!-- Паттерн -->
-      <col style="width:9%;">    <!-- RSI 4 TF -->
-      <col style="width:6%;">    <!-- SMA vs RSI -->
+      <col style="width:4%;">    <!-- Напр. -->
+      <col style="width:4%;">    <!-- 🎓 Вход? (оценка сделки) -->
+      <col style="width:5%;">    <!-- 🚦 Светофор -->
+      <col style="width:4%;">    <!-- Тренд -->
+      <col style="width:3%;">    <!-- 4h-тренд -->
+      <col style="width:4%;">    <!-- ⏳ серия MSO 2h -->
+      <col style="width:5%;">    <!-- Объём 24ч -->
+      <col style="width:4%;">    <!-- OI -->
+      <col style="width:5%;">    <!-- Entry -->
+      <col style="width:11%;">    <!-- Паттерн -->
+      <col style="width:6%;">    <!-- RSI 4 ТФ -->
+      <col style="width:5%;">    <!-- SMA vs RSI -->
       <col style="width:4%;">    <!-- Δ24ч фьюч. дельта -->
-      <col style="width:5%;">    <!-- 4h state -->
-      <col style="width:5%;">    <!-- 12h state -->
-      <col style="width:6%;">    <!-- EMA Cross 1h -->
-      <col style="width:4%;">    <!-- Stack -->
+      <col style="width:3%;">    <!-- 4h state -->
+      <col style="width:3%;">    <!-- 12h state -->
+      <col style="width:4%;">    <!-- EMA Cross 1h -->
+      <col style="width:3%;">    <!-- Stack -->
     </colgroup>
     <thead>
       <tr>
