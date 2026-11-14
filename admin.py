@@ -9920,11 +9920,14 @@ async def api_academy():
             _kk = _kmap.get(f["sym"]) or {}
             if _kk:
                 f["k"] = {"ch": _kk.get("ch"), "mv": _kk.get("mv"), "kp": _kk.get("kp")}
+                if _kk.get("m4") or _kk.get("m12"):
+                    f["mso"] = {"m4": _kk.get("m4"), "m12": _kk.get("m12"),
+                                "m4v": _kk.get("m4v"), "m12v": _kk.get("m12v")}
             status, rule = le.score_signal(
                 model, f["src"], f["dir"], f["val"], f["ms"], rg=_rg_now[1],
                 zb=f["zb"], bvb=_bvb_now, tst=le.tst_from_dirs(_tmx.get(f["sym"])),
                 sv=f.get("sv"), dob=le.do_bin(_dv.get("doi24")), frb=le.fr_bin(_dv.get("fr")),
-                kch=_kk.get("ch"))
+                kch=_kk.get("ch"), m4=_kk.get("m4"), m12=_kk.get("m12"))
             f["verdict"] = status
             if rule:
                 f["rule"] = {"label": rule["label"], "ev": rule.get("ev"),

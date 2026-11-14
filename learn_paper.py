@@ -436,7 +436,9 @@ def _open_new(db, model, now):
                                        sv=c.get("sv"),
                                        dob=le.do_bin((_dmap.get(c["sym"]) or {}).get("doi24")),
                                        frb=le.fr_bin((_dmap.get(c["sym"]) or {}).get("fr")),
-                                       kch=(_kmap.get(c["sym"]) or {}).get("ch"))
+                                       kch=(_kmap.get(c["sym"]) or {}).get("ch"),
+                                       m4=(_kmap.get(c["sym"]) or {}).get("m4"),
+                                       m12=(_kmap.get(c["sym"]) or {}).get("m12"))
         probe = False
         if status != "ACTIVE_SHOW":
             # 🔬 разведка боем: живо-выключенное правило продолжаем
@@ -614,6 +616,11 @@ def _open_new(db, model, now):
             "kch_open": (_kmap.get(c["sym"]) or {}).get("ch"),
             "kmv_open": (_kmap.get(c["sym"]) or {}).get("mv"),
             "kpos_open": (_kmap.get(c["sym"]) or {}).get("pos"),
+            # 🟢🔴 MSO 4h/12h на входе (14.11): цвет и значение
+            "m4_open": (_kmap.get(c["sym"]) or {}).get("m4"),
+            "m12_open": (_kmap.get(c["sym"]) or {}).get("m12"),
+            "m4v_open": (_kmap.get(c["sym"]) or {}).get("m4v"),
+            "m12v_open": (_kmap.get(c["sym"]) or {}).get("m12v"),
         }}, upsert=True)
         opened += 1
     return opened

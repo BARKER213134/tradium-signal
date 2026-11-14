@@ -451,6 +451,36 @@ def _last_closed(t_arr, ts_ms, tf_ms):
     return int(np.searchsorted(t_arr + tf_ms, ts_ms + 1) - 1)
 
 
+_MH_WARM = 60      # минимум старших баров до сигнала, иначе штампа MSO нет
+
+
+def _mso_htf_pack(pair, days, klines_fn, b4, b12):
+    """MSO по барам 4h и 12h для строк школы → {t4, v4, t12, v12}.
+    Берём РОДНЫЕ свечи старших ТФ с запасом прогрева (~270 баров до окна):
+    по пересчёту из 1h-пакета (62 дня) ранние строки имели бы 30–40 баров
+    прогрева на 12h, а цвет при этом расходится с графиком в ~10% случаев.
+    Если свечи подменены (klines_fn в бэктестах) — считаем из пакета."""
+    from mso_retest import mso_series
+    from exchange import get_klines_any
+    import structure_engine as _sen
+    out = {}
+    for tf, per_day, fb, key in (("4h", 6, b4, "4"), ("12h", 2, b12, "12")):
+        bars = None
+        if klines_fn is None:
+            try:
+                bars = get_klines_any(pair, tf, min(1000, int(days) * per_day + 270))
+            except Exception:
+                bars = None
+        if not bars or len(bars) < _sen.M_MIN_BARS:
+            bars = fb
+        if not bars or len(bars) < _MH_WARM + 5:
+            continue
+        osc = mso_series(bars)
+        out["t" + key] = np.array([b["t"] for b in bars], dtype=np.int64)
+        out["v" + key] = np.array([np.nan if x is None else float(x) for x in osc])
+    return out
+
+
 def _last_closed_idx(c1):
     """Индекс последнего ЗАКРЫТОГО 1h-бара (формирующийся не считаем)."""
     now_ms = int(time.time() * 1000)
@@ -745,6 +775,11 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                 "t12": t12,
                 "st12": compute_st_series(b12, 10, 3.0) if len(b12) >= 20 else None,
             }
+            # 🟢🔴 MSO 4h/12h (14.11): родные свечи старших ТФ с прогревом
+            try:
+                packs[pair]["mh"] = _mso_htf_pack(pair, days, klines_fn, b4, b12)
+            except Exception:
+                packs[pair]["mh"] = None
             # 📈 07.10: ST(10,3) 1h/2h для сетапа трендов (как trend_matrix)
             if trend_st:
                 try:
@@ -930,7 +965,23 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
                     p["c2"][:i2 + 1], p["h2"][:i2 + 1], p["l2"][:i2 + 1])
         except Exception:
             _kc = None
+        # 🟢🔴 MSO старших ТФ на последнем баре, ЗАКРЫТОМ до сигнала
+        _m4 = _m12 = None
+        _mh = p.get("mh")
+        if _mh:
+            try:
+                if "t4" in _mh:
+                    _j = _last_closed(_mh["t4"], ts, _se.M4_MS)
+                    if _MH_WARM <= _j < len(_mh["v4"]):
+                        _m4 = _se.m4_bin(float(_mh["v4"][_j]))
+                if "t12" in _mh:
+                    _j = _last_closed(_mh["t12"], ts, _se.M12_MS)
+                    if _MH_WARM <= _j < len(_mh["v12"]):
+                        _m12 = _se.m12_bin(float(_mh["v12"][_j]))
+            except Exception:
+                _m4 = _m12 = None
         rows.append({
+            "m4": _m4, "m12": _m12,
             "kch": (_kc or {}).get("ch"), "kpos": (_kc or {}).get("kp"),
             "kmv": (_kc or {}).get("mv"), "kpv": (_kc or {}).get("pos"),
             "doi24": _d24, "doi4": _d4, "fr8": _fr8,
@@ -1035,7 +1086,7 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
         # половины считаем ВНУТРИ режима, иначе «стабильность» по общей
         # медиане окна всегда ложно-отрицательная
         _tm = (float(np.median([x["ts"] for x in sel]))
-               if kind in ("regime", "school", "btcvol", "deriv", "struct") else tmid)
+               if kind in ("regime", "school", "btcvol", "deriv", "struct", "mso") else tmid)
         st = _stats(sel, _tm)
         if st["n"] < 15:
             return
@@ -1250,6 +1301,22 @@ def aggregate(rows, prev_rules=None, live_map=None, only_regime=False):
     for (_src, _dl, _v), _sel in _ck.items():
         add_rule(f"ckc_{_src}_{_dl}_{_v}",
                  f"{_src} {_dl} · {_se.KCH_LABEL[_v]}", _sel, "struct")
+    # 🟢🔴 MSO старших ТФ (14.11): цвет 4h и 12h (+перегрев 12h) на момент
+    # сигнала. Общие клетки — справка; клетки источник×направление×цвет
+    # участвуют в вердикте (вето при ACTIVE_HIDE), как структура.
+    for _key, _lab in (("m4", _se.M4_LABEL), ("m12", _se.M12_LABEL)):
+        for _b in _lab:
+            for _sg, _dl in ((1, "LONG"), (-1, "SHORT")):
+                add_rule(f"{_key}_{_b}_{_dl}", f"{_lab[_b]} {_dl}",
+                         [x for x in rows if x.get(_key) == _b and x["sg"] == _sg], "mso")
+        _cm = {}
+        for x in rows:
+            if x.get(_key):
+                _cm.setdefault((x["src"], "LONG" if x["sg"] > 0 else "SHORT",
+                                x[_key]), []).append(x)
+        for (_src, _dl, _v), _sel in _cm.items():
+            add_rule(f"c{_key}_{_src}_{_dl}_{_v}",
+                     f"{_src} {_dl} · {_lab[_v]}", _sel, "mso")
     add_rule("sc_fresh", "🆕 LONG первое касание 7д (лонг-корзины)",
              [x for x in rows if x["fresh"]
               and (x["gold"] or x["silver"] or x["dawn"])], "super")
@@ -1749,6 +1816,11 @@ def recompute(days=WINDOW_DAYS, progress=None):
             "n_struct_active": sum(1 for r in rules if r.get("kind") == "struct"
                                    and r["status"].startswith("ACTIVE")),
             "struct_rows": sum(1 for x in rows if x.get("kch")),
+            # 🟢🔴 MSO 4h/12h (14.11)
+            "n_mso": sum(1 for r in rules if r.get("kind") == "mso"),
+            "n_mso_active": sum(1 for r in rules if r.get("kind") == "mso"
+                                and r["status"].startswith("ACTIVE")),
+            "mso_rows": sum(1 for x in rows if x.get("m4") or x.get("m12")),
             "degraded": [r["id"] for r in rules
                          if r.get("degraded") is not None],
             # ₿ режим: текущий + долгая память (переносится, пересобирается ниже)
@@ -1802,7 +1874,8 @@ def recompute(days=WINDOW_DAYS, progress=None):
 # ────────────────────────── live-скоринг для вкладки ──────────────────────────
 
 def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None,
-                 bvb=None, tst=None, sv=None, dob=None, frb=None, kch=None):
+                 bvb=None, tst=None, sv=None, dob=None, frb=None, kch=None,
+                 m4=None, m12=None):
     """Вердикт по штампам сигнала: (status, rule) или (None, None).
     rg — текущий режим BTC (btc_regime_now()[1]). Если рынок НЕ у максимума
     (dip/corr/capit), первыми смотрим клетки источник×направление×режим:
@@ -1845,7 +1918,10 @@ def score_signal(model, src, direction, validator_ok, streak, rg=None, zb=None,
                  (f"cdo_{src}_{sgl}_{dob}" if dob else None),
                  (f"cfr_{src}_{sgl}_{frb}" if frb else None),
                  # 📐 структура (13.11): источник×направление×канал 2h
-                 (f"ckc_{src}_{sgl}_{kch}" if kch else None)):
+                 (f"ckc_{src}_{sgl}_{kch}" if kch else None),
+                 # 🟢🔴 MSO старших ТФ (14.11): источник×направление×цвет
+                 (f"cm4_{src}_{sgl}_{m4}" if m4 else None),
+                 (f"cm12_{src}_{sgl}_{m12}" if m12 else None)):
         if not _rid:
             continue
         _ar = rules.get(_rid)

@@ -24,6 +24,65 @@ MOVE_THR = 0.75    # порог дрейфа в ширинах канала
 KCH_LABEL = {"U": "📐 канал ▲", "R": "📐 диапазон", "D": "📐 канал ▼"}
 KPOS_LABEL = {"lo": "низ", "mid": "середина", "hi": "верх"}
 
+# 🟢🔴 MSO старших ТФ — оси школы (14.11, юзер: «добавь оси 4h и 12h в школу»).
+# Аудит 14.11 (mso_use.py): MSO — фильтр направления, не точка входа: шорт
+# при зелёном 12h ломает 7 источников из 16, лонг при зелёном 4h усиливает
+# 5 из 19. Правила выводит школа по клеткам источник×направление×цвет.
+# Свечи — РОДНЫЕ 4h/12h с запасом: на коротком окне цвет расходится с
+# графиком (12h: 86 баров → 95% совпадений, 250 → 99.4%).
+M4_LABEL = {"G": "MSO 4h 🟢", "R": "MSO 4h 🔴"}
+M12_LABEL = {"G": "MSO 12h 🟢", "R": "MSO 12h 🔴", "H": "MSO 12h 🌡 перегрев"}
+M4_MS, M12_MS = 14_400_000, 43_200_000
+M4_BARS, M12_BARS = 400, 300      # сколько старших свечей берёт живой расчёт
+M_MIN_BARS = 120                  # меньше — цвет ненадёжен, штампа нет
+M12_HOT = 85.0
+
+
+def m4_bin(v):
+    try:
+        if v is None or v != v:
+            return None
+        return "G" if float(v) > 50 else "R"
+    except Exception:
+        return None
+
+
+def m12_bin(v):
+    try:
+        if v is None or v != v:
+            return None
+        v = float(v)
+        return "H" if v >= M12_HOT else ("G" if v > 50 else "R")
+    except Exception:
+        return None
+
+
+def mso_htf_now(pair, klines_fn, now_ms, prev=None):
+    """MSO на последнем ЗАКРЫТОМ баре 4h и 12h → {m4, m4b, m12, m12b}.
+    prev — прошлая запись карты: если старший бар тот же, свечи не качаем."""
+    out = {}
+    prev = prev or {}
+    for tf, ms, lim, key in (("4h", M4_MS, M4_BARS, "m4"), ("12h", M12_MS, M12_BARS, "m12")):
+        try:
+            cb = int(now_ms // ms) - 1
+            if prev.get(key) is not None and prev.get(key + "b") == cb:
+                out[key] = prev[key]
+                out[key + "b"] = cb
+                continue
+            kd = klines_fn(pair, tf, lim)
+            closed = [b for b in (kd or []) if b["t"] + ms <= now_ms]
+            if len(closed) < M_MIN_BARS:
+                continue
+            from mso_retest import mso_series
+            v = mso_series(closed)[-1]
+            if v is None or v != v:
+                continue
+            out[key] = round(float(v), 1)
+            out[key + "b"] = int(closed[-1]["t"] // ms)
+        except Exception:
+            continue
+    return out
+
 _SX = {}
 
 
@@ -183,6 +242,7 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                 lev = []
                 bt = None
                 rs = None
+                mh = {}
                 try:
                     pair = sym[:-4] + "/USDT"
                     kd = klines_fn(pair, "2h", 520)     # 500 закрытых — окно графика
@@ -190,6 +250,9 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                     if len(closed) >= N:
                         k = channel([b["c"] for b in closed], [b["h"] for b in closed],
                                     [b["l"] for b in closed])
+                        # 🟢🔴 MSO 4h/12h для осей школы (свечи старших ТФ —
+                        # только когда закрылся новый старший бар)
+                        mh = mso_htf_now(pair, klines_fn, now_ms, mp.get(sym))
                         # сигнал — только если последний закрытый бар свежий
                         if closed[-1]["t"] + 2 * _BAR_MS > now_ms:
                             import new_setups as _ns
@@ -208,7 +271,7 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                         k = channel_from_1h(kd1) if kd1 and len(kd1) >= 245 else None
                 except Exception:
                     pass
-                return sym, k, found, px, lev, bt, rs
+                return sym, k, found, px, lev, bt, rs, mh
 
             ex = ThreadPoolExecutor(max_workers=workers)
             futs = [ex.submit(_one, s) for s in todo]
@@ -216,7 +279,7 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
             ex.shutdown(wait=False)
             for f in done:
                 try:
-                    sym, k, _found, _px, _lev, _bt, _rs = f.result()
+                    sym, k, _found, _px, _lev, _bt, _rs, _mh = f.result()
                 except Exception:
                     continue
                 if _lev and _px and _bt:
@@ -234,8 +297,8 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
                         pass
                 # нет свечей (делист/короткая история) — помечаем бар, чтобы
                 # не долбить биржу каждый цикл; ch=None → штампа нет
-                sets["map." + sym] = ({"ch": k["ch"], "mv": k["mv"], "pos": k["pos"],
-                                       "kp": k["kp"], "b": bar, "rsi": _rs}
+                sets["map." + sym] = (dict({"ch": k["ch"], "mv": k["mv"], "pos": k["pos"],
+                                            "kp": k["kp"], "b": bar, "rsi": _rs}, **(_mh or {}))
                                       if k else {"ch": None, "b": bar})
             # 🚿 доля перепроданных монет (RSI 2h < 30) по карте → источник
             # flush_climax (new_setups): кульминация объёма в момент смыва рынка
@@ -284,7 +347,9 @@ def load_map(db, tmrows=None):
         mp = (db.market_state.find_one({"_id": MAP_ID}, {"map": 1}) or {}).get("map") or {}
         for s, v in mp.items():
             if v and v.get("ch") and (v.get("b") or 0) >= bar - MAP_MAX_AGE_BARS:
-                out[s] = {"ch": v["ch"], "mv": v.get("mv"), "pos": v.get("pos"), "kp": v.get("kp")}
+                out[s] = {"ch": v["ch"], "mv": v.get("mv"), "pos": v.get("pos"), "kp": v.get("kp"),
+                          "m4": m4_bin(v.get("m4")), "m12": m12_bin(v.get("m12")),
+                          "m4v": v.get("m4"), "m12v": v.get("m12")}
     except Exception:
         pass
     return out
