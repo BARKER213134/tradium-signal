@@ -9547,7 +9547,8 @@ async def api_academy_exec_set(payload: dict | None = None):
     import academy_live as _al
     p = payload or {}
     kw = {k: p.get(k) for k in ("enabled", "margin_usd", "leverage", "max_open",
-                                "fresh_min", "max_try") if k in p}
+                                "fresh_min", "max_try", "max_dev_pct", "dry", "flag")
+          if k in p}
     cfg = await asyncio.to_thread(lambda: _al.set_cfg(None, **kw))
     return {"ok": True, "cfg": cfg}
 
