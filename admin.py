@@ -3097,8 +3097,31 @@ async def api_health():
                 note = f"реконнект жив, ошибка: {st_doc['last_error']}"
             if note:
                 comps[-1]["label"] += f" — {note}"
-        sig = db.new_strategy_signals.find_one(sort=[("created_at", -1)]) or {}
-        add("signals", "📡 Поток сигналов (любой источник)", age_min(sig.get("created_at")), 180, 480)
+        # 14.11 (юзер: «переделай health на любой источник сигналов»): раньше смотрели
+        # только new_strategy_signals — жёлтый значок горел, когда основная коллекция
+        # журнала молчала 3 часа, хотя Академия, линии и SuperTrend шли. Теперь берём
+        # самый свежий сигнал среди всех живых потоков; в подписи — какой именно.
+        # Где нет индекса по времени — идём по _id (он всегда есть); бэкфил не считаем.
+        _nobf = {"backfill": {"$ne": True}}
+        _flows = (
+            ("журнал", "new_strategy_signals", {}, "created_at", "created_at"),
+            ("Академия", "academy_signals", _nobf, "_id", "created_at"),
+            ("линии", "line_signals", _nobf, "created_at", "created_at"),
+            ("SuperTrend", "supertrend_signals", {}, "_id", "created_at"),
+            ("confluence", "confluence", {}, "detected_at", "detected_at"),
+            ("verified", "verified_signals", {}, "_id", "created_at"),
+        )
+        _best_age, _best_nm = None, None
+        for _nm, _coll, _flt, _srt, _fld in _flows:
+            try:
+                _d = db[_coll].find_one(_flt, {_fld: 1}, sort=[(_srt, -1)]) or {}
+                _a = age_min(_d.get(_fld))
+            except Exception:
+                _a = None
+            if _a is not None and (_best_age is None or _a < _best_age):
+                _best_age, _best_nm = _a, _nm
+        add("signals", "📡 Поток сигналов (любой источник)"
+            + (f" — свежий: {_best_nm}" if _best_nm else ""), _best_age, 180, 480)
         # бюджет fapi (защита от 418-банов): использование за минуту
         try:
             import fapi_budget
