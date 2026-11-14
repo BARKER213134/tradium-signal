@@ -8687,7 +8687,7 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     <option value="r1-26">🔴 1-26 (красная)</option>
     <option value="r27+">🔴 27+ (дно-зона лонгов)</option>
   </select>
-  <select id="jCoinFilter" onchange="window._coinSave(this.value)" title="🧭 Отбор по состоянию монеты СЕЙЧАС (колонка «Монета»). Аудит 43.5k сигналов: лонги выше EMA200 на 2h +0.20% против −0.79% ниже; у 30-дневного минимума −0.95%; шортам зеркально, но шорты по монетам, лежащим больше месяца, хуже обычного. «За сделку» — лонг выше EMA200 или шорт ниже неё (кроме лежащих)." style="background:rgba(0,229,160,0.06);border:1px solid rgba(0,229,160,0.35);color:var(--text);border-radius:8px;padding:6px 8px;font-size:11px;font-family:var(--font-mono);cursor:pointer;">
+  <select id="jCoinFilter" onchange="window._coinSave(this.value)" title="🧭 Отбор по состоянию монеты СЕЙЧАС (колонка «Монета»). Аудит 43.5k сигналов: лонги выше EMA200 на 2h +0.20% против −0.79% ниже; у 30-дневного минимума −0.95%; шортам зеркально, но шорты по монетам, лежащим больше месяца, хуже обычного. «За сделку» — лонг выше EMA200 или шорт ниже неё (кроме лежащих)." style="background:var(--dark);color:var(--text);border:1px solid rgba(0,229,160,0.35);border-radius:6px;padding:4px 8px;font-size:11px;font-family:var(--font-mono);">
     <option value="">🧭 Монета: все</option>
     <option value="fit">✅ состояние за сделку</option>
     <option value="anti">❌ состояние против сделки</option>
@@ -8709,7 +8709,8 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   // 🧭 отбор по состоянию монеты (14.11) — липкий, как серия
   window._coinSave = function(v) {
     try { localStorage.setItem('j_coin_filter', v || ''); } catch (e) {}
-    renderJournalPage();
+    // отбор живёт в filterJournal() — renderJournalPage() только перерисовал бы страницу
+    if (typeof filterJournal === 'function') filterJournal(); else renderJournalPage();
   };
   window._streakPick = function(bk) {
     const sel = document.getElementById('jStreakFilter');
