@@ -11450,10 +11450,10 @@ def _compute_journal_by_symbol_sync(symbol: str, days: int, academy: int = 0) ->
             # в журнале они снова видны под своим источником, значит и на графике нужны
             try:
                 from config import ACADEMY_ONLY as _AO_C
-            from config import ACADEMY_ONLY_SEEN as _AO_SEEN
+                from config import ACADEMY_ONLY_SEEN as _AO_SEEN
             except Exception:
                 _AO_C = {}
-            _AO_SEEN = set()
+                _AO_SEEN = set()
             for n in _gdb_ln().academy_signals.find(
                     {"symbol": sym_clean, "created_at": {"$gte": since}, "backfill": {"$ne": True},
                      "$or": [{"strategy": "flush_climax"},
