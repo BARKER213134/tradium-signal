@@ -947,11 +947,23 @@ def build_rows(days=WINDOW_DAYS, sleep_s=0.15, progress=None,
         dawn_f = bool(sg > 0 and val is not True and dawn and streak < 27)
         heat_f = bool(sg < 0 and streak >= 27)
         fresh = s.get("_prev") is None or (ts - s["_prev"]) > 7 * 86_400_000
-        vr, vres = (_outcome_variants(p["c1"], i1, sg, (grid, breadth))
+        # 🎯 14.11.26 — ЧЕСТНЫЙ ВХОД. Раньше исход считался от закрытия последнего часа ДО
+        # сигнала (i1): расчёт «входил» по цене, которой в момент сигнала уже не было, и
+        # засчитывал себе движение, которое сигнал и вызвало. Сверка 14.4k учебных сделок с
+        # их же расчётом: расчёт +2.17%, факт на бумаге +1.17%; разрыв растёт с минутой часа
+        # (0–5 мин: −0.5, 45–60 мин: −1.9), у volume_surge −3.5, у supertrend_mtf −1.6 —
+        # источники, стреляющие в середине часа, выглядели лучше, чем есть, и школа ставила
+        # им ×2. Теперь вход = закрытие часа, В КОТОРОМ пришёл сигнал (первая цена после
+        # сигнала на границе бара), исход — со следующего бара. Сигнал в первые 5 минут часа
+        # (детектор сработал на закрытии) — вход по только что закрытому бару, как раньше.
+        # Проверка на 3568 сделках (school_entry_fix_check.py): разрыв с фактом −0.72 → +0.17,
+        # совпадение исхода 89.6% → 93.0%. Признаки (серия, тренды, зоны) — по-прежнему по i1.
+        ie = i1 if (ts - (int(p["t1"][i1]) + 3_600_000)) <= 300_000 else i1 + 1
+        vr, vres = (_outcome_variants(p["c1"], ie, sg, (grid, breadth))
                     if (gold_f or silver_f or dawn_f or heat_f)
                     else (None, True))
-        _r, _res = _outcome(p["c1"], i1, sg)
-        _tsx = _outcome_exit(p["c1"], i1, sg) if _res else None
+        _r, _res = _outcome(p["c1"], ie, sg)
+        _tsx = _outcome_exit(p["c1"], ie, sg) if _res else None
         _age = ages.get(s["pair"])
         _fund = None
         fh = fund_hist.get(s["pair"])
