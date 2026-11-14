@@ -9681,6 +9681,8 @@ async def api_live():
             _mbi = None
         return {"ok": True, "stats": st.get("live"), "exec": _exec, "book": _book,
                 "market": _mbi,
+                "stats_d": st.get("live_d"), "open_d_n": st.get("live_d_open"),
+                "dirs_d": st.get("live_d_dirs"),
                 "stats_s": st.get("live_s"), "open_s_n": st.get("live_s_open"),
                 "today_s_n": st.get("live_s_today"), "open_s": shorts_open,
                 "throttle": {k: thr.get(k) for k in

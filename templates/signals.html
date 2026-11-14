@@ -7195,6 +7195,14 @@ async function lvLoad() {
           ` · открыто ${f.open}</span>`;
       })();
   }
+  // 🧭 тень «по направлению школы» (14.11): кандидат на отбор 💎, на бирже ничего не делает
+  if (lvbEl) {
+    const sd = d.stats_d || null, dd = d.dirs_d || {};
+    const dTxt = function(k, nm) { const x = dd[k]; return x ? `${nm} ${x.ok ? 'открыты' : 'закрыты'} (${x.avg == null ? '—' : (x.avg > 0 ? '+' : '') + x.avg}% за 7 дн., n${x.n})` : `${nm} —`; };
+    lvbEl.innerHTML += `<br><span style="font-size:10px;color:var(--muted);" title="🧭 Тень «по направлению школы»: оба направления; направление открыто, если учебные сделки школы по нему за 7 прошлых дней в плюсе; размер ×1 и ×2; лимиты как у 💎. Проверяется вперёд перед запуском лайва. На бирже ничего не делает.">🧭 тень по направлению: ` +
+      (sd && sd.n ? `${sd.sum_adj > 0 ? '+' : ''}${sd.sum_adj} · WR ${sd.wr}% · ${sd.avg_adj > 0 ? '+' : ''}${sd.avg_adj} · n ${sd.n}` + (sd.days ? ` · дней в плюсе ${sd.days_pos}/${sd.days}` : '') : 'закрытий пока нет') +
+      ` · открыто ${d.open_d_n == null ? '—' : d.open_d_n} · ${dTxt('LONG', 'лонги')} · ${dTxt('SHORT', 'шорты')}</span>`;
+  }
   // 🩳 тень шортов (13.11): свой срез, в лайв не входит
   const lvsSt = d.stats_s || null;
   const lvsEl = document.getElementById('lvS');

@@ -19,6 +19,21 @@ LIVE2_DAY_CAP = 10     # 🧪 тень (21.09): ×2+×1, ≤1 сделки/2ч-�
 LIVE2_SLOT_H = 2
 LIVE2_ENABLED = False  # 23.09: тень выключена — ответы получены (×1 нет, разнесение да)
 LIVE_S_ENABLED = True  # 🩳 13.11: тень шортов ×2 (флаг live_s) — свой трек, в 💎 не входит
+# 🧭 14.11.26: ТЕНЬ «по направлению школы» (флаг live_d) — кандидат на замену отбора 💎.
+# Аудит 22k учебных сделок (school_audit*.py, live_audit.py): срез «только LONG ×2» с теми же
+# лимитами дал −0.66% на сделку (2 недели из 7 в плюсе, 12 дней без единой сделки), потому что
+# (а) с 28.09 лонги школы в минусе каждую неделю, а шорты в плюсе; (б) ×2 — правила с самым
+# высоким расчётным ожиданием — вживую хуже ×1 (верхняя треть ожиданий +0.92 против +1.67 у
+# нижней). Правило тени: оба направления; направление открыто, если закрытые учебные сделки
+# школы по нему за 7 прошлых дней (известные к началу суток UTC) в плюсе, n ≥ 30; размер ×1 и
+# ×2; BingX; лимиты как у 💎 (10 в день, 3 в 2ч-слот, 1 монета в день, 15 позиций), счётчики
+# свои. На тех же сделках: +1.31% на сделку после доп. комиссии, обе половины в плюсе
+# (+1.02/+1.59), 28 дней из 47, t по дням 2.6. Вариант выбран задним числом из нескольких —
+# поэтому сначала тень. В лайв, исполнитель, тормоз и статистику 💎 НЕ входит.
+LIVE_D_ENABLED = True
+LIVE_D_LOOK_D = 7
+LIVE_D_MIN_N = 30
+_LIVE_D_CACHE = {"day": None, "ok": {}}
 LIVE_SLOT_H = 2        # 💎 23.09: разнесение входов лайва — ≤3 сделок в 2ч-слот
 LIVE_SLOT_CAP = 3      #   (пакет 9 сделок в 04:31 = один эпизод → 7 стопов из 8)
 LIVE_FEE_EXTRA = 0.1   # 💎 доп. штраф лайва к R (%): проскальзывание BingX
@@ -260,6 +275,33 @@ def live_throttle(db):
     except Exception:
         pass
     return st
+
+
+def live_d_dirs(db, now):
+    """🧭 Какие направления открыты для тени live_d: {dir: {ok, n, avg}}.
+    Считается раз в сутки UTC по сделкам, закрытым ДО начала суток."""
+    from datetime import datetime as _dtd
+    day0 = _dtd(now.year, now.month, now.day)
+    if _LIVE_D_CACHE["day"] == day0 and _LIVE_D_CACHE["ok"]:
+        return _LIVE_D_CACHE["ok"]
+    out = {}
+    for dr in ("LONG", "SHORT"):
+        rs = [d.get("r") for d in db.academy_paper.find(
+            {"dir": dr, "probe": {"$ne": True},
+             "state": {"$in": ["TP", "SL", "TIMEOUT"]},
+             "closed_at": {"$gte": day0 - timedelta(days=LIVE_D_LOOK_D), "$lt": day0}},
+            {"r": 1})]
+        rs = [r for r in rs if r is not None]
+        avg = (sum(rs) / len(rs)) if rs else None
+        out[dr] = {"ok": bool(len(rs) >= LIVE_D_MIN_N and avg is not None and avg > 0),
+                   "n": len(rs), "avg": round(avg, 2) if avg is not None else None}
+    _LIVE_D_CACHE["day"], _LIVE_D_CACHE["ok"] = day0, out
+    try:
+        db.system_config.update_one({"_id": "live_d_dirs"},
+                                    {"$set": {"at": now, "day": day0, "dirs": out}}, upsert=True)
+    except Exception:
+        pass
+    return out
 
 
 def bingx_set(db):
@@ -580,6 +622,29 @@ def _open_new(db, model, now):
                          "opened_at": {"$gte": _day0s}}) < 1)
         except Exception:
             pass
+        # 🧭 ТЕНЬ live_d (14.11): направление, где школа в плюсе за 7 дней; ×1 и ×2
+        live_d = False
+        try:
+            if (LIVE_D_ENABLED and not probe
+                    and le.size_tier(rule) in ("2x", "1x")
+                    and c["sym"] in bingx_set(db)
+                    and (live_d_dirs(db, now).get(c["dir"]) or {}).get("ok")):
+                from datetime import datetime as _dtd2
+                _day0d = _dtd2(now.year, now.month, now.day)
+                _slot0d = _dtd2(now.year, now.month, now.day,
+                                (now.hour // LIVE_SLOT_H) * LIVE_SLOT_H)
+                live_d = (
+                    db.academy_paper.count_documents(
+                        {"live_d": True, "opened_at": {"$gte": _day0d}}) < LIVE_DAY_CAP
+                    and db.academy_paper.count_documents(
+                        {"live_d": True, "state": "OPEN"}) < LIVE_CONC_CAP
+                    and db.academy_paper.count_documents(
+                        {"live_d": True, "opened_at": {"$gte": _slot0d}}) < LIVE_SLOT_CAP
+                    and db.academy_paper.count_documents(
+                        {"live_d": True, "sym": c["sym"],
+                         "opened_at": {"$gte": _day0d}}) < 1)
+        except Exception:
+            logger.debug("[paper] live_d fail", exc_info=True)
         # 🚪 выход по школе (03.10): корзина как в ленте → best из exits_table
         _bk2 = bucket   # gold / heat / None
         if _bk2 is None and c["dir"] == "LONG":
@@ -593,7 +658,8 @@ def _open_new(db, model, now):
         _exit_open = (_ex or {}).get("best") or "base"
         db.academy_paper.update_one({"_id": key}, {"$set": {
             "exit_open": _exit_open, "exit_bk": _bk2,
-            "live": live, "live2": live2, "live_s": live_s, "probe": probe,
+            "live": live, "live2": live2, "live_s": live_s, "live_d": live_d,
+            "probe": probe,
             "sym": c["sym"], "pair": pair, "dir": c["dir"], "src": c["src"],
             "rule": rule.get("label") if rule else None,
             "rule_id": rule.get("id") if rule else None,
@@ -720,7 +786,7 @@ def _close_open(db, now):
                            "closed_at": now}
                     if _exit_reason:
                         upd["exit_reason"] = _exit_reason
-                    if t.get("live") or t.get("live2") or t.get("live_s"):
+                    if t.get("live") or t.get("live2") or t.get("live_s") or t.get("live_d"):
                         fc = _funding_cost(t["sym"], t["opened_at"],
                                            now, t["dir"])
                         if fc is not None:
@@ -854,6 +920,29 @@ def stats(db):
         _n2 = utcnow()
         out["live2_today"] = db.academy_paper.count_documents(
             {"live2": True, "opened_at": {"$gte": _dt3(_n2.year, _n2.month, _n2.day)}})
+    except Exception:
+        pass
+    # 🧭 тень «по направлению школы» (live_d, 14.11): кандидат на отбор 💎
+    try:
+        ld = list(db.academy_paper.find(
+            {"live_d": True, "state": {"$in": ["TP", "SL", "TIMEOUT"]}},
+            {"r": 1, "fund_cost": 1, "dir": 1, "closed_at": 1}))
+        lvd = _st(ld)
+        if lvd:
+            netd = [d["r"] - LIVE_FEE_EXTRA - (d.get("fund_cost") or 0)
+                    for d in ld if d.get("r") is not None]
+            lvd["avg_adj"] = round(sum(netd) / len(netd), 2) if netd else None
+            lvd["sum_adj"] = round(sum(netd), 1) if netd else None
+            _dd = {}
+            for d in ld:
+                if d.get("r") is not None and d.get("closed_at"):
+                    _k = d["closed_at"].strftime("%m-%d")
+                    _dd[_k] = _dd.get(_k, 0.0) + d["r"]
+            lvd["days"], lvd["days_pos"] = len(_dd), sum(1 for v in _dd.values() if v > 0)
+        out["live_d"] = lvd
+        out["live_d_open"] = db.academy_paper.count_documents(
+            {"live_d": True, "state": "OPEN"})
+        out["live_d_dirs"] = (db.system_config.find_one({"_id": "live_d_dirs"}) or {}).get("dirs")
     except Exception:
         pass
     # 🩳 тень шортов (live_s, 13.11): свой срез, в лайв не входит
