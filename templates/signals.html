@@ -9106,12 +9106,14 @@ async function _pollDeltaBackfill() {
 <div class="table-wrap">
   <table style="table-layout:fixed;width:100%;">
     <colgroup>
-      <!-- 14.11: сетка приведена к 21 колонке (была на 17 — «Паттерн» сжимался до 4%,
-           12h / EMA Cross / Stack получали нулевую ширину). Сумма = 100%. -->
+      <!-- 14.11: сетка приведена к 22 колонкам (была на 17 — «Паттерн» сжимался до 4%,
+           12h / EMA Cross / Stack получали нулевую ширину). Сумма = 100%.
+           Новая колонка = новая строка <col> здесь + colspan у заглушек tbody. -->
       <col style="width:5%;">    <!-- Время -->
       <col style="width:6%;">    <!-- Источник -->
       <col style="width:6%;">    <!-- Пара -->
-      <col style="width:6%;">    <!-- 🧭 Монета: состояние сейчас (14.11) -->
+      <col style="width:5%;">    <!-- 🧭 Монета: состояние сейчас (14.11) -->
+      <col style="width:3%;">    <!-- 🧭 Фаза монеты (14.11) -->
       <col style="width:4%;">    <!-- Напр. -->
       <col style="width:4%;">    <!-- 🎓 Вход? (оценка сделки) -->
       <col style="width:5%;">    <!-- 🚦 Светофор -->
@@ -9121,7 +9123,7 @@ async function _pollDeltaBackfill() {
       <col style="width:5%;">    <!-- Объём 24ч -->
       <col style="width:4%;">    <!-- OI -->
       <col style="width:5%;">    <!-- Entry -->
-      <col style="width:11%;">    <!-- Паттерн -->
+      <col style="width:9%;">    <!-- Паттерн -->
       <col style="width:6%;">    <!-- RSI 4 ТФ -->
       <col style="width:5%;">    <!-- SMA vs RSI -->
       <col style="width:4%;">    <!-- Δ24ч фьюч. дельта -->
@@ -9135,7 +9137,8 @@ async function _pollDeltaBackfill() {
         <th class="sortable" onclick="jSort('at_ts')" id="jSortTime" style="text-align:center;padding:14px 8px;">Время ▼</th>
         <th class="sortable" onclick="jSort('source')" id="jSortSrc" style="text-align:center;padding:14px 8px;">Источник</th>
         <th class="sortable" onclick="jSort('symbol')" id="jSortPair" style="text-align:center;padding:14px 8px;">Пара</th>
-        <th title="🧭 Состояние монеты СЕЙЧАС (обновляется раз в 2 часа): ▲▼◆ фаза монеты (▲ выше EMA200 2h и MSO 4h зелёный · ▼ ниже и красный · ◆ расходятся) · 🟢 цена выше EMA200 на 2h · 🔻 ниже EMA200 · ⛔ у 30-дневного минимума · 💤 дневной SuperTrend вниз дольше 30 дней · ⭐ рабочее состояние: для шорта — MSO 4h только покраснел + дневной SuperTrend вниз + 30-дневный канал вниз (бэктест WR 82%); для лонга — монета лежит больше месяца, но держится лучше половины рынка за 30 дней (бэктест +0.9% против −0.2%). Число — насколько цена выше или ниже EMA200. Точка справа — цвет MSO 12h. Цвет ячейки: зелёный — состояние за сделку, розовый — против, жёлтый — шорт по монете, которая лежит больше месяца. Аудит 43.5k сигналов: лонги выше EMA200 +0.20% против −0.79% ниже; у 30-дневного минимума −0.95%; шортам зеркально. Подробности — в подсказке ячейки." style="text-align:center;padding:14px 6px;">Монета</th>
+        <th title="🧭 Состояние монеты СЕЙЧАС (обновляется раз в 2 часа): 🟢 цена выше EMA200 на 2h · 🔻 ниже EMA200 · ⛔ у 30-дневного минимума · 💤 дневной SuperTrend вниз дольше 30 дней · ⭐ рабочее состояние: для шорта — MSO 4h только покраснел + дневной SuperTrend вниз + 30-дневный канал вниз (бэктест WR 82%); для лонга — монета лежит больше месяца, но держится лучше половины рынка за 30 дней (бэктест +0.9% против −0.2%). Число — насколько цена выше или ниже EMA200. Точка справа — цвет MSO 12h. Цвет ячейки: зелёный — состояние за сделку, розовый — против, жёлтый — шорт по монете, которая лежит больше месяца. Аудит 43.5k сигналов: лонги выше EMA200 +0.20% против −0.79% ниже; у 30-дневного минимума −0.95%; шортам зеркально. Подробности — в подсказке ячейки." style="text-align:center;padding:14px 6px;">Монета</th>
+        <th class="sortable" onclick="jSort('coin_ph')" id="jSortPhase" title="🧭 ФАЗА МОНЕТЫ сейчас (обновляется раз в 2 часа): ▲ LONG — цена выше EMA200 на 2h и MSO 4h зелёный · ▼ SHORT — ниже и красный · ◆ без стороны — расходятся. ✓ — сделка по фазе монеты, ✗ — против. Проверка на 81 тыс. сигналов: по фазе +0.23% (лонги) и +0.41% (шорты) на сделку, против −0.76% и −0.41%. Помогает, когда рынок без стороны или в шорт-фазе; при рынке в лонг-фазе не помогает. Клик — сортировка: LONG → без стороны → SHORT." style="text-align:center;padding:14px 6px;">Фаза</th>
         <th class="sortable" onclick="jSort('direction')" id="jSortDir" style="text-align:center;padding:14px 6px;">Напр.</th>
         <th class="sortable" onclick="jSort('trade_ev')" id="jSortGrade" title="🎓 Оценка сделки под ЦЕЛЬ +10%: единый бэктест ВСЕХ сигналов базы (3 мес, ~48k, сетка LONG TP+10/SL−5 · SHORT TP−10/SL+5, горизонт 96ч) в разрезе источник × направление × фаза бейджа на момент сигнала. 🟩 EV ≥ +0.75%/сделку — ВХОД · 🟨 0…+0.75 — слабый плюс · 🟥 < 0 — скип. Число = EV %/сделку. В подсказке ячейки: WR, % доходов до +10%, готовые уровни. Клик — сортировка." style="text-align:center;padding:14px 6px;">Вход?</th>
         <th class="sortable" onclick="jSort('pro_score')" id="jSortPro" title="🚦 Светофор — «входить или нет» считается сервером для каждого свежего сигнала (<48ч), та же логика что модалка проверки входа. Жёсткие НЕТ: против фазы (кроме 💣-реверсала), догон >20%/24ч. Счёт: фаза + RS-сила 7д + RSI4h-зоны + триггер (🟩 +3 / 🟨 +1 / ST-флипы) − 4h ST против. ✅ ДА ≥5 · ⚠️ МОЖНО 2-4 · ⛔ НЕТ <2. Реплей 30д (13.7k сделок): ДА WR 43.1% (+9.8пп к БУ) · НЕТ 37.3%. Наведи на ячейку — слагаемые; клик по 🚦 у монеты — полный разбор. Клик — сортировка." style="text-align:center;padding:14px 6px;">🚦</th>
@@ -9159,7 +9162,7 @@ async function _pollDeltaBackfill() {
       </tr>
     </thead>
     <tbody id="jBody">
-      <tr><td colspan="21" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
+      <tr><td colspan="22" style="text-align:center;padding:60px;" class="text-muted">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
@@ -10844,7 +10847,7 @@ function _jFailRow(msg) {
   // показать причину ТОЛЬКО если таблица пуста — не затирать данные
   if (_journalData && _journalData.length) return;
   const tb = document.getElementById('jBody');
-  if (tb) tb.innerHTML = `<tr><td colspan="21" style="text-align:center;padding:36px;color:#ff5e9c;font-family:var(--font-mono);font-size:12px;">${msg}</td></tr>`;
+  if (tb) tb.innerHTML = `<tr><td colspan="22" style="text-align:center;padding:36px;color:#ff5e9c;font-family:var(--font-mono);font-size:12px;">${msg}</td></tr>`;
 }
 async function loadJournal() {
   try {
@@ -10988,8 +10991,14 @@ async function toggleHotPanel(btn) {
     if (p) p.style.display = 'none';
   }
 }
+// 🧭 число для сортировки по колонке «Фаза»: LONG 1 · без стороны 0 · SHORT −1 · нет данных — пусто
+function _jPhaseNum(x) {
+  const p = window._coinPhase ? window._coinPhase(x.coin) : null;
+  return p === 'LONG' ? 1 : (p === 'SHORT' ? -1 : (p === 'NEUTRAL' ? 0 : null));
+}
 function filterJournal() {
   if (window._jResetting) return;   // идёт общий сброс — отберём один раз в конце
+  if (_jSortField === 'coin_ph') _journalData.forEach(x => { x.coin_ph = _jPhaseNum(x); });
   const src = document.getElementById('jFilterSrc').value;
   const dir = document.getElementById('jFilterDir').value;
   const kc = document.getElementById('jFilterKC').value;
@@ -11301,7 +11310,7 @@ function filterJournal() {
     return true;
   });
   // Apply current sort
-  const _numFields = new Set(['at_ts','score','entry','pump_score','vol24','mso_streak2h']);
+  const _numFields = new Set(['at_ts','score','entry','pump_score','vol24','mso_streak2h','coin_ph']);
   filtered.sort((a, b) => {
     let va = a[_jSortField], vb = b[_jSortField];
     if (va == null || va === '') va = _numFields.has(_jSortField) ? -Infinity : '';
@@ -11736,7 +11745,7 @@ function renderJournal(items, startIdx) {
   startIdx = startIdx || 0;
   const tbody = document.getElementById('jBody');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="21" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="22" style="text-align:center;padding:40px;" class="text-muted">Нет сигналов</td></tr>';
     return;
   }
   tbody.innerHTML = items.map((s, i) => {
@@ -11929,6 +11938,21 @@ function renderJournal(items, startIdx) {
     if (s.trend_ok === false) rowStyle += 'opacity:0.55;';
     // 🧭 состояние монеты сейчас (14.11): EMA200 2h, 30-дневный минимум, MSO 12h, дневной ST
     let coinCell = '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    // 🧭 отдельная колонка «Фаза» (14.11, юзер: «делай отдельную колонку фаза с сортировкой»)
+    let phaseCell = '<td class="mono text-muted" style="text-align:center;font-size:11px;">—</td>';
+    {
+      const _ph = window._coinPhase ? window._coinPhase(s.coin) : null;
+      if (_ph) {
+        const _pc = _ph === 'LONG' ? '#00e5a0' : (_ph === 'SHORT' ? '#ff5e9c' : '#8a93a6');
+        const _pa = _ph === 'NEUTRAL' ? '' : (_ph === s.direction
+          ? ' <span style="color:#00e5a0;">✓</span>' : ' <span style="color:#ff5e9c;">✗</span>');
+        const _pt = 'Фаза монеты сейчас: ' + (_ph === 'LONG' ? 'LONG — выше EMA200 2h и MSO 4h зелёный'
+          : (_ph === 'SHORT' ? 'SHORT — ниже EMA200 2h и MSO 4h красный' : 'без стороны — EMA200 2h и MSO 4h расходятся'))
+          + ' (EMA200 2h ' + (s.coin.e2 > 0 ? '+' : '') + s.coin.e2 + '%, MSO 4h ' + Math.round(s.coin.m4) + ')'
+          + (_ph === 'NEUTRAL' ? '' : (_ph === s.direction ? '&#10;✓ сделка ПО фазе монеты' : '&#10;✗ сделка ПРОТИВ фазы монеты'));
+        phaseCell = `<td class="mono" style="text-align:center;font-size:12px;font-weight:800;color:${_pc};white-space:nowrap;" title="${_pt}">${_ph === 'LONG' ? '▲' : (_ph === 'SHORT' ? '▼' : '◆')}${_pa}</td>`;
+      }
+    }
     const _cn = s.coin;
     if (_cn && _cn.e2 != null) {
       const _cL = s.direction === 'LONG';
@@ -11964,15 +11988,15 @@ function renderJournal(items, startIdx) {
         'В месяцы роста рынка (апрель, август, сентябрь) всё равно в минусе.'] : []).concat(_cStarL ? ['⭐ РАБОЧЕЕ СОСТОЯНИЕ ДЛЯ ЛОНГА: монета лежит больше месяца (дневной SuperTrend вниз), но за 30 дней держится лучше половины рынка.',
         'Бэктест 7 месяцев, 4413 сигналов, план +5/−15/14д: в среднем +0.90% против −0.24% у всех лонгов (WR тот же, 69%); лучше среднего лонга во всех 6 месяцах с данными, у 14 источников из 19.',
         'С коротким планом +10/−5 прибавки почти нет.'] : []).join('&#10;');
-      const _cPhIc = _cPh == null ? '' : ('<span style="color:' + (_cPh === 'LONG' ? '#00e5a0' : (_cPh === 'SHORT' ? '#ff5e9c' : '#8a93a6')) + ';">' + (_cPh === 'LONG' ? '▲' : (_cPh === 'SHORT' ? '▼' : '◆')) + '</span>');
       const _cDot = _cn.m12 == null ? '' : (' <span style="font-size:8px;">' + (_cn.m12 > 50 ? '🟢' : '🔴') + '</span>');
-      coinCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:700;color:${_cCol};white-space:nowrap;overflow:hidden;" title="${_cTip}">${_cPhIc}${(_cStar || _cStarL) ? '⭐' : ''}${_cIc}${_cLie ? '💤' : ''} ${_cF(_cn.e2, 0)}%${_cDot}</td>`;
+      coinCell = `<td class="mono" style="text-align:center;font-size:11px;font-weight:700;color:${_cCol};white-space:nowrap;overflow:hidden;" title="${_cTip}">${(_cStar || _cStarL) ? '⭐' : ''}${_cIc}${_cLie ? '💤' : ''} ${_cF(_cn.e2, 0)}%${_cDot}</td>`;
     }
     return `<tr class="${rowCls}${newCls}" style="${rowStyle}" onclick="openJournalChart(${globalIdx})">
       <td class="mono text-muted" style="font-size:11px;">${time}</td>
       <td style="font-size:11px;">${srcBadge} ${srcName}</td>
       <td class="mono text-accent fw-700">${pairCell}</td>
       ${coinCell}
+      ${phaseCell}
       <td>${dir}</td>
       ${gradeCell}
       ${proCell}
@@ -13158,19 +13182,21 @@ function jSort(field) {
     _jSortAsc = field === 'symbol' || field === 'source' || field === 'direction'; // alpha = asc default
   }
   // Update header arrows
-  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',rsi4h_match:'jSort4h',rsi12h_match:'jSort12h',stack_distinct:'jSortStack',trade_ev:'jSortGrade',pro_score:'jSortPro',vol24:'jSortVol'};
-  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',rsi4h_match:'4h',rsi12h_match:'12h',stack_distinct:'Stack',trade_ev:'Вход?',pro_score:'🚦',vol24:'Объём'};
+  const cols = {at_ts:'jSortTime',source:'jSortSrc',symbol:'jSortPair',direction:'jSortDir',entry:'jSortEntry',score:'jSortScore',q_score:'jSortQScore',rsi_4h:'jSortRsi',rsi4h_match:'jSort4h',rsi12h_match:'jSort12h',stack_distinct:'jSortStack',trade_ev:'jSortGrade',pro_score:'jSortPro',vol24:'jSortVol',coin_ph:'jSortPhase'};
+  const labels = {at_ts:'Время',source:'Источник',symbol:'Пара',direction:'Напр.',entry:'Entry',score:'Паттерн',q_score:'Score',rsi_4h:'RSI',rsi4h_match:'4h',rsi12h_match:'12h',stack_distinct:'Stack',trade_ev:'Вход?',pro_score:'🚦',vol24:'Объём',coin_ph:'Фаза'};
   for (const [f, id] of Object.entries(cols)) {
     const el = document.getElementById(id);
     if (el) el.textContent = labels[f] + (f === _jSortField ? (_jSortAsc ? ' ▲' : ' ▼') : '');
   }
+  // 🧭 фаза монеты считается из s.coin — подцепляем перед сортировкой
+  if (field === 'coin_ph') _journalFiltered.forEach(x => { x.coin_ph = _jPhaseNum(x); });
   // 💵 vol24 живёт в карте, не в данных — подцепляем перед сортировкой
   if (field === 'vol24') {
     const _vm = window._vol24Map || {};
     _journalFiltered.forEach(x => { x.vol24 = _vm[(x.symbol || (x.pair || '').replace('/', '')).toUpperCase()] ?? null; });
   }
   // Sort filtered data
-  const _nf = new Set(['at_ts','score','entry','pump_score','trade_ev','pro_score','vol24']);
+  const _nf = new Set(['at_ts','score','entry','pump_score','trade_ev','pro_score','vol24','coin_ph']);
   _journalFiltered.sort((a, b) => {
     let va = a[field], vb = b[field];
     if (va == null || va === '') va = _nf.has(field) ? -Infinity : '';
