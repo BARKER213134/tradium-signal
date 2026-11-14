@@ -8910,6 +8910,94 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   window._refreshBtcSt4();
   setInterval(window._refreshBtcSt4, 600000);
   </script>
+  <button id="jResetBtn" onclick="window._jResetFilters()" title="Сбросить все фильтры журнала: монета, источник, направление, тренд, RSI, время (вернётся 24 часа), серия MSO, состояние монеты и все включённые кнопки отбора. Сортировка не меняется." style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--font-mono);font-weight:700;color:var(--muted);cursor:pointer;white-space:nowrap;">✖ Сбросить фильтры</button>
+  <script>
+  // 14.11 (юзер: «добавь кнопку в журнал скинуть фильтры»). Одна кнопка возвращает журнал
+  // к виду «как после открытия»: списки и поля — к значению по умолчанию, включённые
+  // кнопки отбора выключаются ИХ ЖЕ переключателями (чтобы подписи и цвета кнопок совпали
+  // с состоянием), липкие фильтры стираются из localStorage. На кнопке — сколько включено.
+  window._jFilterIds = ['jFilterVerdict', 'jFilterPair', 'jFilterSrc', 'jFilterDir', 'jFilterTrend',
+    'jFilterRsiTf', 'jFilterRsiZone', 'jFilterScore', 'jFilterSma', 'jFilterKC', 'jFilterPump',
+    'jFilterTime', 'jStreakFilter', 'jCoinFilter'];
+  // [включён ли, как выключить]
+  window._jToggleList = function() {
+    const g = (n) => (typeof window[n] === 'function' ? window[n] : null);
+    const call = (n, a) => () => { const f = g(n); if (f) f(a); };
+    let hot = false;
+    try { hot = !!_hotOn; } catch (e) {}
+    return [
+      [!!window._starOnlyOn, call('_toggleStarOnly')],
+      [!!window._validOnlyOn, call('_toggleValidOnly')],
+      [!!window._trendOkOn, call('_toggleTrendOk')],
+      [!!window._gradeOnlyOn, call('_toggleGradeOnly')],
+      [!!window._enterNowOn, call('_toggleEnterNow')],
+      [!!window._bestEntryOn, call('_toggleBestEntry')],
+      [!!window._bestShortOn, call('_toggleBestShort')],
+      [hot, () => { const f = g('toggleHotPanel'); if (f) f(document.getElementById('hotBtn')); }],
+      [!!window._journalStTier, call('_toggleStTier', window._journalStTier)],
+      [!!window._journalTopPickOnly, call('_toggleTopPicks')],
+      [!!window._journalStrongOnly, call('_toggleStrongOnly')],
+      [!!window._journalAllSpecial, call('_toggleAllSpecial')],
+      [!!window._journalHotOnly, call('_toggleHotOnly')],
+      [!!window._journalWorth, call('_toggleWorth')],
+      [!!window._journalHighScore, call('_toggleHighScore')],
+      [!!window._journal4hState, call('_toggle4hState')],
+      [!!window._journal12hState, call('_toggle12hState')],
+      [!!window._journalTopBest, call('_toggleTopBest')],
+      [!!window._journalWhaleOnly, call('_toggleSourceOnly', 'whale')],
+      [!!window._journalSharkOnly, call('_toggleSourceOnly', 'shark')],
+      [!!window._journalComboOnly, call('_toggleSourceOnly', 'combo')],
+      [!!window._journalBigBuyOnly, call('_toggleSourceOnly', 'bigbuy')],
+    ];
+  };
+  // значение по умолчанию: у списка — пункт с selected в разметке (иначе первый), у поля — пусто
+  window._jDefVal = function(el) {
+    if (el.tagName !== 'SELECT') return '';
+    const o = Array.from(el.options).find(x => x.defaultSelected) || el.options[0];
+    return o ? o.value : '';
+  };
+  window._jActiveCount = function() {
+    let n = 0;
+    for (const id of window._jFilterIds) {
+      const el = document.getElementById(id);
+      if (el && (el.value || '') !== window._jDefVal(el)) n++;
+    }
+    for (const t of window._jToggleList()) if (t[0]) n++;
+    return n;
+  };
+  window._jResetBtnUpdate = function() {
+    const b = document.getElementById('jResetBtn');
+    if (!b) return;
+    let n = 0;
+    try { n = window._jActiveCount(); } catch (e) {}
+    b.textContent = n ? ('✖ Сбросить фильтры · ' + n) : '✖ Сбросить фильтры';
+    b.style.color = n ? '#ffd23e' : 'var(--muted)';
+    b.style.borderColor = n ? 'rgba(255,210,62,0.7)' : 'var(--border)';
+    b.style.background = n ? 'rgba(255,210,62,0.12)' : 'none';
+  };
+  window._jResetFilters = function() {
+    const y = window.scrollY;
+    window._jResetting = true;          // переключатели зовут filterJournal() — отберём один раз в конце
+    try {
+      for (const t of window._jToggleList()) {
+        if (t[0]) { try { t[1](); } catch (e) {} }
+      }
+      for (const id of window._jFilterIds.concat(['jEnterNowDir'])) {
+        const el = document.getElementById(id);
+        if (el) el.value = window._jDefVal(el);
+      }
+      try {
+        localStorage.setItem('j_streak_filter', '');
+        localStorage.setItem('j_coin_filter', '');
+        localStorage.setItem('j_valid_only', '');
+      } catch (e) {}
+    } finally {
+      window._jResetting = false;
+    }
+    if (typeof filterJournal === 'function') filterJournal();
+    requestAnimationFrame(() => window.scrollTo({ top: y, behavior: 'instant' }));
+  };
+  </script>
   <!-- Скрыто по запросу юзера 2026-07-12: TOP-7, ±4h/12h state, WHALE/SHARK,
        звук, Δ Backfill. id/handlers сохранены для совместимости JS. -->
   <button id="jTopBestBtn" onclick="_toggleTopBest()" style="display:none;">🏆 TOP-7 · OFF</button>
@@ -10878,6 +10966,7 @@ async function toggleHotPanel(btn) {
   }
 }
 function filterJournal() {
+  if (window._jResetting) return;   // идёт общий сброс — отберём один раз в конце
   const src = document.getElementById('jFilterSrc').value;
   const dir = document.getElementById('jFilterDir').value;
   const kc = document.getElementById('jFilterKC').value;
@@ -11190,6 +11279,7 @@ function filterJournal() {
   _journalFiltered = filtered;
   _jPage = 1;
   document.getElementById('jStats').textContent = `${filtered.length} из ${_journalData.length}`;
+  try { if (window._jResetBtnUpdate) window._jResetBtnUpdate(); } catch (e) {}
 
   // Статистика по источникам
   const stats = {};
