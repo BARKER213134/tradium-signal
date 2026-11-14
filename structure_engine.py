@@ -166,6 +166,9 @@ def _sym_ok(s):
     return bool(s) and "." not in s and "$" not in s and s.endswith("USDT")
 
 
+_UNI_INFO = {}     # состав вселенной: свои монеты / фьючерсы Binance / добавлено
+
+
 def _universe(db, days=MAP_UNIVERSE_DAYS):
     from datetime import timedelta
     from database import utcnow
@@ -188,6 +191,19 @@ def _universe(db, days=MAP_UNIVERSE_DAYS):
                 out.add(d["sym"].upper())
     except Exception:
         pass
+    # 14.11 (юзер: «нет фьючерсных монет всех … добавь только те, что на
+    # Binance торгуются»): все USDT-фьючерсы Binance, даже без наших сигналов
+    # за 30 дней — на них идут линии, новые источники и MSO. Монеты только с
+    # BingX, акции и сырьё НЕ добавляем. Список недоступен → вселенная прежняя.
+    _UNI_INFO["own"] = len(out)
+    try:
+        from futures_data import get_all_futures_pairs
+        _bn = [str(x).upper() for x in (get_all_futures_pairs() or [])]
+        _UNI_INFO["bn_total"] = len(_bn)
+        _UNI_INFO["bn_new"] = len([x for x in _bn if _sym_ok(x) and x not in out])
+        out.update(x for x in _bn if _sym_ok(x))
+    except Exception:
+        _UNI_INFO["bn_total"] = None
     return sorted(s for s in out if _sym_ok(s))
 
 
@@ -205,10 +221,18 @@ def refresh_map(db, priority=None, budget=120, workers=6, deadline_s=25,
         mp = doc.get("map") or {}
         uni = doc.get("uni") or []
         sets = {}
-        if not only_missing and (doc.get("uni_b") != bar or not uni):
+        # пересобираем вселенную раз в бар; и сразу, если фьючерсы Binance в неё
+        # ещё не подмешивались (нет uni_info или список тогда был недоступен)
+        _ui = doc.get("uni_info") or {}
+        import time as _tu
+        _retry = (not _ui.get("bn_total")) and _tu.time() - _UNI_INFO.get("_try", 0) > 900
+        if not only_missing and (doc.get("uni_b") != bar or not uni or _retry):
+            _UNI_INFO["_try"] = _tu.time()
             uni = _universe(db)
             sets["uni"] = uni
             sets["uni_b"] = bar
+            sets["uni_info"] = {"own": _UNI_INFO.get("own"), "bn_total": _UNI_INFO.get("bn_total"),
+                                "bn_new": _UNI_INFO.get("bn_new"), "n": len(uni)}
         pri = [s.upper() for s in (priority or []) if _sym_ok((s or "").upper())]
         seen = set()
         order = []
