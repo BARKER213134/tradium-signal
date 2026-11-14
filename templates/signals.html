@@ -8704,7 +8704,9 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
   // ⏳ клик по ячейке серии — быстрый отбор корзины (повтор — сброс)
   window._streakSave = function(v) {
     try { localStorage.setItem('j_streak_filter', v || ''); } catch (e) {}
-    renderJournalPage();
+    // 14.11: отбор применяет filterJournal(); renderJournalPage() лишь перерисовывала
+    // уже отобранное — фильтр «Серия» молча не работал с 15.09 (55107fc)
+    if (typeof filterJournal === 'function') filterJournal(); else renderJournalPage();
   };
   // 🧭 отбор по состоянию монеты (14.11) — липкий, как серия
   window._coinSave = function(v) {
@@ -8737,7 +8739,8 @@ tr.j-new-row { animation: jNewGlow 3s ease-out; }
     b.textContent = window._validOnlyOn ? '🧿 Валидные · ON' : '🧿 Валидные · OFF';
     b.style.background = window._validOnlyOn ? 'rgba(123,92,255,0.45)' : 'rgba(123,92,255,0.12)';
     b.style.color = window._validOnlyOn ? '#fff' : '#b28bff';
-    renderJournalPage();
+    // 14.11: та же ошибка, что у «Серии» — отбор делает filterJournal()
+    if (typeof filterJournal === 'function') filterJournal(); else renderJournalPage();
   };
   window._toggleStarOnly = function() {
     window._starOnlyOn = !window._starOnlyOn;
