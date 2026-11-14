@@ -3755,7 +3755,7 @@ setTimeout(() => { try { window._kcEnsureLib(); } catch (e) {} }, 2000);
 // туда-обратно и навигация стрелками рендерятся мгновенно.
 window._kcBarsCache = window._kcBarsCache || new Map();
 // 14.11 (юзер: «больше свечей высчитывать для МА 200»): график грузит на столько свечей
-// больше, чем раньше, — MA 200 рисуется через всё прежнее окно, а не только по правой половине.
+// больше, чем раньше, — EMA 200 рисуется через всё прежнее окно, а не только по правой половине.
 // Авто-линии тренда считаются по прежнему окну (container._kcTlBars) — как у детектора касаний.
 window._kcMaExtra = 200;
 window._kcFetchBars = async function(sym, tf, limit) {
@@ -4818,12 +4818,13 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   // 20.08: пустая зона справа от последних свечей — бейджи ST/⏰ там,
   // а не поверх свечей («не видно последних свечей»)
   try { chart.setOffsetRightDistance(120); } catch (e) {}
-  chart.createIndicator('MA', true, { id: 'candle_pane' });
-  // 14.11 (юзер: «оставь только МА 200 для всех ТФ, выдели, чтобы было видно»): вместо
-  // трёх тонких MA 50/100/200 — одна жирная золотая MA 200 на любом таймфрейме.
+  chart.createIndicator('EMA', true, { id: 'candle_pane' });
+  // 14.11 (юзер: «оставь только МА 200 для всех ТФ, выдели, чтобы было видно», затем
+  // «переключи линию на ema 200»): вместо трёх тонких MA 50/100/200 — одна жирная золотая
+  // EMA 200 на любом таймфрейме. Та же EMA200, что в колонке «Монета» журнала и в оси школы.
   // ВАЖНО: стиль линии задавать ПОЛНОСТЬЮ (smooth, dashedValue) — на неполном объекте
   // klinecharts 9.8 падает в drawImp («reading '0'») и перестаёт рисовать ВСЕ линии панели.
-  chart.overrideIndicator({ name: 'MA', calcParams: [200],
+  chart.overrideIndicator({ name: 'EMA', calcParams: [200],
     styles: { lines: [{ color: '#ffd23e', size: 2.5, style: 'solid', smooth: false, dashedValue: [2, 2] }] } }, 'candle_pane');
   if (opts.st !== false) {
     chart.createIndicator('ST', true, { id: 'candle_pane' });
@@ -5679,7 +5680,7 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   }
   // ▦ FVG-гэпы всех ТФ — тумблер в тулбаре, localStorage kc_fvg
   container._kcBars = bars;
-  container._kcTlBars = bars.slice(-_kcBase);   // окно авто-линий — без добавочных свечей под MA 200
+  container._kcTlBars = bars.slice(-_kcBase);   // окно авто-линий — без добавочных свечей под EMA 200
   if (localStorage.getItem('kc_fvg') !== '0') {
     try { window._kcDrawFvg(chart, bars); } catch (e) {}
   }
