@@ -1293,15 +1293,18 @@
         const ema200 = candles.length >= 200 ? window._calcEMA(closes, 200) : [];
         if (!ema20.length || !ema50.length) return null;
         try {
+          // 14.11 (юзер: «оставь на графиках МА 200 только и сделай так, чтобы её было
+          // видно»): EMA20 и EMA50 считаются (на них метки пересечений и бейдж тренда),
+          // но линии скрыты; на графике остаётся одна жирная EMA200.
           const s20 = chart.addLineSeries({
-            color: '#00d4ff', lineWidth: 2,
+            color: '#00d4ff', lineWidth: 2, visible: false,
             priceLineVisible: false, lastValueVisible: false,
             crosshairMarkerVisible: false, title: 'EMA20',
           });
           s20.setData(ema20.map((v, i) =>
             v == null ? null : { time: candles[i].time, value: v }).filter(Boolean));
           const s50 = chart.addLineSeries({
-            color: '#ff6ec7', lineWidth: 2,
+            color: '#ff6ec7', lineWidth: 2, visible: false,
             priceLineVisible: false, lastValueVisible: false,
             crosshairMarkerVisible: false, title: 'EMA50',
           });
@@ -1312,7 +1315,7 @@
           let s200 = null;
           if (ema200.length) {
             s200 = chart.addLineSeries({
-              color: '#ffd23e', lineWidth: 2,
+              color: '#ffd23e', lineWidth: 3,
               priceLineVisible: false, lastValueVisible: false,
               crosshairMarkerVisible: false, title: 'EMA200',
             });
@@ -4811,7 +4814,12 @@ window.renderKChart = async function(container, symbol, tf, opts) {
   // а не поверх свечей («не видно последних свечей»)
   try { chart.setOffsetRightDistance(120); } catch (e) {}
   chart.createIndicator('MA', true, { id: 'candle_pane' });
-  chart.overrideIndicator({ name: 'MA', calcParams: [50, 100, 200] }, 'candle_pane');
+  // 14.11 (юзер: «оставь только МА 200 для всех ТФ, выдели, чтобы было видно»): вместо
+  // трёх тонких MA 50/100/200 — одна жирная золотая MA 200 на любом таймфрейме.
+  // ВАЖНО: стиль линии задавать ПОЛНОСТЬЮ (smooth, dashedValue) — на неполном объекте
+  // klinecharts 9.8 падает в drawImp («reading '0'») и перестаёт рисовать ВСЕ линии панели.
+  chart.overrideIndicator({ name: 'MA', calcParams: [200],
+    styles: { lines: [{ color: '#ffd23e', size: 2.5, style: 'solid', smooth: false, dashedValue: [2, 2] }] } }, 'candle_pane');
   if (opts.st !== false) {
     chart.createIndicator('ST', true, { id: 'candle_pane' });
     const stMap = { '5m': [7, 2], '15m': [7, 2], '30m': [7, 2.5], '1h': [10, 3], '2h': [10, 3],
