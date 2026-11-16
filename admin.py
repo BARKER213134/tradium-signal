@@ -9553,6 +9553,23 @@ async def api_academy_exec_set(payload: dict | None = None):
     return {"ok": True, "cfg": cfg}
 
 
+@app.get("/api/school-dirs")
+async def api_school_dirs():
+    """🎓 Сторона по школе (16.11): средний результат закрытых учебных сделок по направлению за
+    7 прошлых дней — док system_config.live_d_dirs, его раз в сутки пишет learn_paper.live_d_dirs.
+    Для подсказки в журнале: на честной проверке подтвердилась сторона, а не признаки монеты."""
+    def _g():
+        from database import _get_db
+        d = _get_db().system_config.find_one({"_id": "live_d_dirs"}) or {}
+        day = d.get("day")
+        return {"ok": True, "dirs": d.get("dirs") or {},
+                "day": day.isoformat() if hasattr(day, "isoformat") else None}
+    try:
+        return await asyncio.to_thread(_g)
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
 @app.get("/api/live")
 async def api_live():
     """💎 Лайв-симуляция: что реально торговали бы на BingX и как."""
