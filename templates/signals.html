@@ -2543,6 +2543,9 @@ async function loadVolAnoms() {
       NEUTRAL: '<span style="color:#9aa4b5;font-weight:700;">⚪</span>',
       SHORT: '<span style="color:var(--sell);font-weight:700;">🔴</span>',
     };
+    // 16.11 (юзер: «в аномалиях сделай переключение графика»): список для стрелок ◀▶ в окне
+    // графика — монеты в том же порядке, что в таблице (с учётом отбора «верх/низ»)
+    window._kcQmList = rows.slice(0, 200).map(x => (x.pair || '').replace('/USDT', '').toUpperCase() + 'USDT');
     tb.innerHTML = rows.slice(0, 200).map(x => {
       const t = x.at ? new Date(x.at).toLocaleString('ru', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
       const pair = (x.pair || '').replace('/USDT', '');
