@@ -7126,7 +7126,7 @@ window._lvRenderShadowD = function(d) {
   const sgn = function(v) { return (v > 0 ? '+' : '') + v; };
   const row = function(t, res, col) {
     return `<div style="display:flex;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(42,49,64,0.3);font-family:var(--font-mono);font-size:11.5px;">
-      <span style="color:var(--muted);width:78px;flex:none;">${tm(t.at)}</span>
+      <span style="color:var(--muted);width:92px;flex:none;white-space:nowrap;">${tm(t.at).replace(",", "")}</span>
       <span style="font-weight:800;width:92px;flex:none;overflow:hidden;text-overflow:ellipsis;">${(t.sym || '').replace('USDT', '')}</span>
       <span style="width:46px;flex:none;font-weight:800;color:${t.dir === 'LONG' ? '#00e5a0' : '#ff5e9c'};">${t.dir}</span>
       <span style="color:var(--muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.src || ''} · ${t.size || ''}">${t.src || ''} · ${t.size || ''}</span>
