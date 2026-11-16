@@ -141,9 +141,32 @@ async function loadFootprint() {
     _fpView = { cnt: Math.min(60, d.bars.length), off: 0 };
     fpLoadSigs(pair);
     fpLoadZones(pair, _fpTf);
+    fpLoadCoinPhase(pair);   // 🧭 полоса «Монета» — отдельным запросом, график её не ждёт
     fpRender();
     fpStatus();
   } catch (e) { st.textContent = '⛔ ' + e.message; }
+}
+async function fpLoadCoinPhase(pair) {
+  // 16.11: фаза монеты (EMA200 2h + MSO 4h) раньше считалась внутри /api/footprint и тормозила
+  // построение на 1–8 секунд. Теперь ряд приходит следом и раскладывается по барам графика:
+  // для каждого бара — состояние на последнем 2h-закрытии к его концу (у текущего — к «сейчас»).
+  try {
+    const d0 = _fpData;
+    const r = await fetch(`/api/footprint-phase?pair=${pair}`);
+    const p = await r.json();
+    if (!p.ok || !_fpData || _fpData !== d0 || !p.t || !p.t.length) return;
+    const TF = { '15m': 900000, '1h': 3600000, '2h': 7200000, '4h': 14400000, '1d': 86400000 }[_fpData.tf] || 3600000;
+    const now = Date.now(), t = p.t;
+    _fpData.cphases = _fpData.bars.map(b => {
+      const tc = Math.min(b.t + TF, now);
+      let lo = 0, hi = t.length - 1, k = -1;
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (t[mid] <= tc) { k = mid; lo = mid + 1; } else hi = mid - 1; }
+      return k < 0 ? null : p.ph[k];
+    });
+    _fpData.coin_now = p.now || null;
+    fpRender();
+    fpStatus();
+  } catch (e) {}
 }
 async function fpLoadZones(pair, tf) {
   // 📏 уровни-зоны — тот же билдер, что на KChart (base.html), плюс

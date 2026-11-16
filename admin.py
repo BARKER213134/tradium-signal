@@ -4362,6 +4362,66 @@ async def api_research_fapi(kind: str, symbol: str, limit: int = 500,
 _fp_fapi_down = 0.0   # предохранитель fapi для кластеров
 
 
+_FP_PHASE_CACHE: dict = {}
+
+
+@app.get("/api/footprint-phase")
+async def api_footprint_phase(pair: str):
+    """🧭 Фаза монеты по закрытиям 2h-баров — для полосы «Монета» на кластерах.
+    Определение (то же, что в журнале): цена относительно EMA200 на 2h + цвет MSO на 4h по
+    последнему закрытому 4h-бару. Оба «за рост» → LONG, оба «за падение» → SHORT, иначе NEUTRAL.
+    Кэш 15 минут на монету; страница сама раскладывает ряд по барам своего графика."""
+    sym = (pair or "").upper().replace("/", "").strip()
+    if not sym.endswith("USDT"):
+        sym += "USDT"
+    import time as _t_ph
+    _ce = _FP_PHASE_CACHE.get(sym)
+    if _ce and _t_ph.time() - _ce[0] < 900:
+        return _ce[1]
+
+    def _calc():
+        import numpy as _npc
+        from exchange import get_klines_any as _gka
+        from mso_retest import mso_series as _mso_s
+        _now_ms = int(_t_ph.time() * 1000)
+        _pr = sym[:-4] + "/USDT"
+        _k2 = [b for b in (_gka(_pr, "2h", 1000) or []) if b["t"] + 7_200_000 <= _now_ms]
+        _k4 = [b for b in (_gka(_pr, "4h", 1000) or []) if b["t"] + 14_400_000 <= _now_ms]
+        if len(_k2) <= 210 or len(_k4) <= 130:
+            return {"ok": False, "error": "мало истории"}
+        _c2 = [float(b["c"]) for b in _k2]
+        _ema, _e = [], _c2[0]
+        for _x in _c2:
+            _e += (2.0 / 201.0) * (_x - _e)
+            _ema.append(_e)
+        _osc = _mso_s(_k4)
+        _t4 = _npc.array([b["t"] + 14_400_000 for b in _k4])
+        ts, ph, last = [], [], None
+        for i2 in range(200, len(_k2)):
+            tc = _k2[i2]["t"] + 7_200_000
+            i4 = int(_npc.searchsorted(_t4, tc, side="right")) - 1
+            if i4 < 120:
+                continue
+            m = _osc[i4]
+            if m is None or m != m:
+                continue
+            e2 = (_c2[i2] / _ema[i2] - 1) * 100
+            v = "LONG" if (e2 > 0 and m > 50) else "SHORT" if (e2 <= 0 and m <= 50) else "NEUTRAL"
+            ts.append(int(tc)); ph.append(v)
+            last = {"phase": v, "e2": round(e2, 1), "m4": round(float(m), 1)}
+        return {"ok": True, "pair": sym, "t": ts, "ph": ph, "now": last}
+
+    try:
+        res = await asyncio.to_thread(_calc)
+    except Exception as e:
+        res = {"ok": False, "error": str(e)[:200]}
+    if res.get("ok"):
+        if len(_FP_PHASE_CACHE) > 300:
+            _FP_PHASE_CACHE.clear()
+        _FP_PHASE_CACHE[sym] = (_t_ph.time(), res)
+    return res
+
+
 @app.get("/api/footprint")
 async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
     """🧮 Кластерный график (замена resonance.vision): ячейки объёма по
@@ -4559,53 +4619,12 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
                 phases.append(ph)
         except Exception:
             phases = [None] * len(out_bars)
-        # 🧭 фаза МОНЕТЫ по бару (14.11, юзер: «делай полосу фазы монеты на кластерах»).
-        # Определение проверено на 81k сигналов (coin_phase.py): цена относительно EMA200
-        # на 2h + цвет MSO на 4h. Оба «за рост» → LONG, оба «за падение» → SHORT, иначе
-        # NEUTRAL. Берём состояние, известное к закрытию бара графика (у текущего бара —
-        # к «сейчас»), только по ЗАКРЫТЫМ 2h/4h-свечам. Нет прогрева — None (пусто).
-        cphases = [None] * len(out_bars)
-        coin_now = None
-        try:
-            import numpy as _npc
-            from exchange import get_klines_any as _gka
-            from mso_retest import mso_series as _mso_s
-            _now_ms = int(_time.time() * 1000)
-            _pr = sym[:-4] + "/USDT"
-            _k2 = [b for b in (_gka(_pr, "2h", 1000) or []) if b["t"] + 7_200_000 <= _now_ms]
-            _k4 = [b for b in (_gka(_pr, "4h", 1000) or []) if b["t"] + 14_400_000 <= _now_ms]
-            if len(_k2) > 210 and len(_k4) > 130:
-                _c2 = [float(b["c"]) for b in _k2]
-                _ema, _e = [], _c2[0]
-                for _x in _c2:
-                    _e += (2.0 / 201.0) * (_x - _e)
-                    _ema.append(_e)
-                _t2 = _npc.array([b["t"] + 7_200_000 for b in _k2])
-                _osc = _mso_s(_k4)
-                _t4 = _npc.array([b["t"] + 14_400_000 for b in _k4])
-                _tfms = TFMS[tf]
-
-                def _cph(tcut):
-                    i2 = int(_npc.searchsorted(_t2, tcut, side="right")) - 1
-                    i4 = int(_npc.searchsorted(_t4, tcut, side="right")) - 1
-                    if i2 < 200 or i4 < 120:
-                        return None, None, None
-                    m = _osc[i4]
-                    if m is None or m != m:
-                        return None, None, None
-                    e2 = (_c2[i2] / _ema[i2] - 1) * 100
-                    ph = ("LONG" if (e2 > 0 and m > 50)
-                          else "SHORT" if (e2 <= 0 and m <= 50) else "NEUTRAL")
-                    return ph, round(e2, 1), round(float(m), 1)
-                cphases = [_cph(min(b_["t"] + _tfms, _now_ms))[0] for b_ in out_bars]
-                _pn = _cph(_now_ms)
-                if _pn[0]:
-                    coin_now = {"phase": _pn[0], "e2": _pn[1], "m4": _pn[2]}
-        except Exception as _cpe:
-            logging.getLogger(__name__).debug(f"[footprint] coin phase fail {sym}: {_cpe}")
+        # 🧭 фаза монеты (16.11, юзер: «кластерные графики долго строятся»): её расчёт тянул ещё
+        # свечи 2h и 4h — +0.8…2с на обычной монете и до 8с на фьючерс-онли. Вынесен в отдельный
+        # запрос /api/footprint-phase: график строится сразу, полоса дорисовывается следом.
         return {"ok": True, "pair": sym, "tf": tf, "p_min": p_min,
                 "tick": tick, "n_lv": n_lv, "bars": out_bars,
-                "phases": phases, "cphases": cphases, "coin_now": coin_now}
+                "phases": phases}
 
     _res = await asyncio.to_thread(_sync)
     if isinstance(_res, dict) and _res.get("ok"):
