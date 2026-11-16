@@ -4552,6 +4552,26 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
                              float(x[5]) / mult, 0, 0, 0,
                              float(x[9]) / mult] for x in rows]
                 break
+        # 16.11 (юзер: «нет свечей по многим монетам»): монеты, которых нет на споте Binance, брались
+        # только с fapi, а он с Railway периодически отказывает (в тот момент 19 монет из 70 давали
+        # «нет свечей», второй источник OI с Binance тоже стоял). Запасной источник — BingX perpetual.
+        # В его свечах нет объёма покупок по рынку, поэтому дельта ОЦЕНОЧНАЯ: доля покупок берётся
+        # по положению закрытия в диапазоне свечи младшего ТФ. На графике это помечается.
+        approx_delta = False
+        if not rows:
+            try:
+                from exchange import get_bingx_klines as _gbx
+                _bx = _gbx(sym[:-4] + "/USDT", sub_tf, min(need, 1000))
+                if _bx and len(_bx) > 30:
+                    rows = []
+                    for _b in _bx:
+                        _rng = _b["h"] - _b["l"]
+                        _fr = (0.5 + 0.5 * (_b["c"] - _b["o"]) / _rng) if _rng > 0 else 0.5
+                        rows.append([_b["t"], _b["o"], _b["h"], _b["l"], _b["c"], _b["v"],
+                                     0, 0, 0, _b["v"] * _fr])
+                    approx_delta = True
+            except Exception as _bxe:
+                logging.getLogger(__name__).debug(f"[footprint] bingx fallback fail {sym}: {_bxe}")
         if not rows:
             return {"ok": False, "error": f"нет свечей по {sym}"}
         subs = [dict(t=int(x[0]), o=float(x[1]), h=float(x[2]), l=float(x[3]),
@@ -4624,7 +4644,7 @@ async def api_footprint(pair: str, tf: str = "1h", bars: int = 60):
         # запрос /api/footprint-phase: график строится сразу, полоса дорисовывается следом.
         return {"ok": True, "pair": sym, "tf": tf, "p_min": p_min,
                 "tick": tick, "n_lv": n_lv, "bars": out_bars,
-                "phases": phases}
+                "phases": phases, "approx_delta": approx_delta}
 
     _res = await asyncio.to_thread(_sync)
     if isinstance(_res, dict) and _res.get("ok"):

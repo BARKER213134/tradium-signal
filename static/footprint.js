@@ -279,6 +279,8 @@ function fpAnalyze() {
     if (PE) chips.push(fpChip(PE[0], PE[1]));
   }
   // 🧭 фаза МОНЕТЫ (14.11): EMA200 на 2h + цвет MSO на 4h — своя у каждой монеты
+  // 16.11: свечи пришли с BingX (фьючерсный Binance недоступен) — дельта там оценочная
+  if (_fpData && _fpData.approx_delta) chips.push(fpChip('⚠ свечи BingX — дельта оценочная (Binance futures сейчас недоступен)', 'warn'));
   const cph = (cphases || [])[n - 1];
   if (cph) {
     const cn = (_fpData && _fpData.coin_now) || null;
