@@ -9677,6 +9677,34 @@ async def api_live():
                              if mp and d.get("entry") else None)})
         except Exception:
             pass
+        # 🧭 тень «по направлению школы» (16.11, юзер: «в лайве нет сделок с 6-го числа»):
+        # 💎-срез пуст с 06.11 (берёт только лонги ×2, шорты сняты 02.11), а тестируется
+        # именно эта тень — показываем её сделки списком на вкладке «Лайв»
+        d_open, d_closed = [], []
+        try:
+            for d in db.academy_paper.find(
+                    {"live_d": True},
+                    {"sym": 1, "dir": 1, "src": 1, "size": 1, "entry": 1, "state": 1, "r": 1,
+                     "opened_at": 1, "closed_at": 1, "fund_cost": 1, "x_dry": 1, "x_dev": 1}
+                    ).sort("opened_at", -1).limit(200):
+                row = {"key": str(d["_id"]), "sym": d["sym"], "dir": d["dir"],
+                       "src": d.get("src"), "size": d.get("size"), "entry": d.get("entry"),
+                       "at": d["opened_at"].isoformat(),
+                       "exec": bool(d.get("x_dry")),
+                       "dev": (d.get("x_dry") or {}).get("dev", d.get("x_dev"))}
+                if d.get("state") == "OPEN":
+                    mp = marks.get(d["sym"])
+                    if mp and d.get("entry"):
+                        sgn = 1 if d["dir"] == "LONG" else -1
+                        row["upnl"] = round((mp / d["entry"] - 1) * 100 * sgn, 2)
+                    d_open.append(row)
+                elif d.get("r") is not None:
+                    row["state"] = d.get("state")
+                    row["r"] = round(d["r"] - lp.LIVE_FEE_EXTRA - (d.get("fund_cost") or 0), 2)
+                    row["closed"] = d["closed_at"].isoformat() if d.get("closed_at") else None
+                    d_closed.append(row)
+        except Exception:
+            pass
         try:
             import academy_live as _al
             _exec = _al.status()
@@ -9701,6 +9729,7 @@ async def api_live():
                 "market": _mbi,
                 "stats_d": st.get("live_d"), "open_d_n": st.get("live_d_open"),
                 "dirs_d": st.get("live_d_dirs"),
+                "open_d": d_open, "closed_d": d_closed,
                 "stats_s": st.get("live_s"), "open_s_n": st.get("live_s_open"),
                 "today_s_n": st.get("live_s_today"), "open_s": shorts_open,
                 "throttle": {k: thr.get(k) for k in
