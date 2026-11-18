@@ -373,6 +373,83 @@ def deriv_now_map():
     return out
 
 
+# 📏 размер открытого интереса на входе (18.11): ШТАМП, в отбор не входит.
+# Бэктест 18.11 (school_oi.py): на монетах с маленьким OI шорты хуже остальных
+# в 23 неделях из 27, лонги лучше в 19–21 из 30; на сделках школы не
+# подтверждено → копим. Часовой сборщик oi_hourly берёт только пары с оборотом
+# ≥$3M (≈70 монет) — мелкие, ради которых штамп, туда не попадают, поэтому
+# прямой запрос в момент открытия: BingX (OI сразу в USDT) и Binance (монеты ×
+# цена входа; fapi с Railway отвечает через раз → предохранитель).
+OIU_TTL = 1800           # кэш на монету, сек
+OIU_TIMEOUT = 5          # таймаут одного запроса, сек
+_OIU_CACHE = {}          # SYM → (t, {"bx": usd|None, "bn": монет|None})
+_OIU_BRK = {"bx": [0, 0.0, 3, 900], "bn": [0, 0.0, 1, 1800]}   # [отказов подряд, пауза до, порог, пауза сек]
+
+
+def _oiu_ok(k):
+    return time.time() >= _OIU_BRK[k][1]
+
+
+def _oiu_mark(k, ok):
+    b = _OIU_BRK[k]
+    if ok:
+        b[0] = 0
+        return
+    b[0] += 1
+    if b[0] >= b[2]:
+        b[0] = 0
+        b[1] = time.time() + b[3]
+
+
+def oi_size_now(sym, px=None, on_bingx=True):
+    """{'bx': OI BingX в $, 'bn': OI Binance в $, 'hit': из кэша}. Любой сбой →
+    None по этому источнику; сделку не задерживает дольше 2×OIU_TIMEOUT."""
+    c = _OIU_CACHE.get(sym)
+    if c and time.time() - c[0] < OIU_TTL:
+        raw, hit = c[1], True
+    else:
+        import requests
+        raw, hit = {"bx": None, "bn": None}, False
+        skipped = on_bingx and not _oiu_ok("bx")   # основной источник на паузе → в кэш не кладём
+        if on_bingx and _oiu_ok("bx"):
+            ok = False
+            try:
+                r = requests.get("https://open-api.bingx.com/openApi/swap/v2/quote/openInterest",
+                                 params={"symbol": sym[:-4] + "-USDT"}, timeout=OIU_TIMEOUT)
+                j = r.json() if r.status_code == 200 else None
+                ok = isinstance(j, dict)           # ответ получен (даже «нет такой пары»)
+                v = float(((j or {}).get("data") or {}).get("openInterest") or 0)
+                raw["bx"] = round(v, 0) if v > 0 else None
+            except Exception:
+                pass
+            _oiu_mark("bx", ok)
+        if _oiu_ok("bn"):
+            allowed = True
+            try:
+                from fapi_budget import allow
+                allowed = allow(tag="oi_stamp")
+            except Exception:
+                pass
+            if allowed:
+                ok = False
+                try:
+                    r = requests.get("https://fapi.binance.com/fapi/v1/openInterest",
+                                     params={"symbol": sym}, timeout=OIU_TIMEOUT)
+                    ok = r.status_code in (200, 400)   # 400 = нет такой пары, площадка жива
+                    if r.status_code == 200:
+                        v = float((r.json() or {}).get("openInterest") or 0)
+                        raw["bn"] = v if v > 0 else None
+                except Exception:
+                    pass
+                _oiu_mark("bn", ok)
+        if len(_OIU_CACHE) > 3000:
+            _OIU_CACHE.clear()
+        if not skipped:
+            _OIU_CACHE[sym] = (time.time(), raw)
+    bn = raw.get("bn")
+    return {"bx": raw.get("bx"), "bn": round(bn * px, 0) if bn and px else None, "hit": hit}
+
+
 BV_LABEL = {"lo": "₿ вола низкая", "mid": "₿ вола средняя", "hi": "₿ вола высокая"}
 _BV_CACHE = {"t": 0.0, "v": (None, None)}
 

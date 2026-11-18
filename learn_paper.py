@@ -343,6 +343,7 @@ def refresh_bingx(db):
         logger.debug("[live] bingx refresh fail", exc_info=True)
         return 0
 OPEN_BATCH = 12        # новых сделок за цикл
+OIU_PER_CYCLE = 12     # 📏 прямых запросов размера OI за цикл (18.11)
 CLOSE_BATCH = 150       # проверок закрытия за цикл (свечи 1 раз/монету)
 
 
@@ -462,6 +463,7 @@ def _open_new(db, model, now):
         _dmap = le.deriv_now_map()
     except Exception:
         _dmap = {}
+    _oiu_left = OIU_PER_CYCLE   # 📏 прямых запросов размера OI за цикл
     for key, pair, c in sorted(cands, key=lambda x: x[2]["at"], reverse=True):
         if opened >= OPEN_BATCH:
             break
@@ -656,6 +658,15 @@ def _open_new(db, model, now):
                 _bk2 = "dawn"
         _ex = _exits.get(_bk2) if _bk2 else None
         _exit_open = (_ex or {}).get("best") or "base"
+        # 📏 размер открытого интереса на входе (18.11): штамп, в отбор не входит
+        _oiu = {}
+        try:
+            if _oiu_left > 0:
+                _oiu = le.oi_size_now(c["sym"], px, on_bingx=c["sym"] in bingx_set(db))
+                if not _oiu.get("hit"):
+                    _oiu_left -= 1
+        except Exception:
+            logger.debug("[paper] oi size fail", exc_info=True)
         db.academy_paper.update_one({"_id": key}, {"$set": {
             "exit_open": _exit_open, "exit_bk": _bk2,
             "live": live, "live2": live2, "live_s": live_s, "live_d": live_d,
@@ -676,6 +687,9 @@ def _open_new(db, model, now):
             # 📡 деривативы на входе (09.10)
             "doi24_open": (_dmap.get(c["sym"]) or {}).get("doi24"),
             "fr_open": (_dmap.get(c["sym"]) or {}).get("fr"),
+            # 📏 размер OI на входе, $ (18.11): BingX и Binance (монеты × цена входа)
+            "oiu_open": _oiu.get("bx"),
+            "oiu_bn_open": _oiu.get("bn"),
             "zp_open": (_zrp or {}).get("pos_l"),
             "zres_open": (_zrp or {}).get("res"),
             "zsup_open": (_zrp or {}).get("sup"),
