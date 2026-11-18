@@ -4291,6 +4291,15 @@ async def start_watcher():
     except Exception:
         logger.exception("[deriv] failed to schedule")
 
+    # 🛰 Cryptovizor (18.11): лента смен тренда → тень «PF short в день падения рынка».
+    # Только чтение рынка; сигналы идут в academy_signals → книга ⚖ (своя квота), без TG.
+    try:
+        import cv_feed as _cvf
+        _cvf.schedule()
+        logger.info("[cv] trend feed loop scheduled")
+    except Exception:
+        logger.exception("[cv] failed to schedule")
+
     # ALPHA-CV Exit Monitor — каждые 3 мин проверяет открытые ALPHA-CV
     # позиции на 1h RSI < SMA(RSI) crossover. Закрывает momentum-loss signals.
     try:

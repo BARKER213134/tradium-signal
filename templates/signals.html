@@ -7326,6 +7326,21 @@ async function lvLoad() {
         return `<br><span style="font-size:10px;color:var(--muted);" title="🚿 СМЫВ в книге: своя квота вне лимита 10 лонгов в день, план +5% / −15% / 14 дней. В общую сводку книги не входит.">🚿 смыв: ` +
           (f.st && f.st.n ? `${bSgn(f.st.sum)} · WR ${f.st.wr}% · ${bSgn(f.st.avg)} · n ${f.st.n}` : 'закрытий пока нет') +
           ` · открыто ${f.open}</span>`;
+      })() +
+      // 🛰 18.11: тень Cryptovizor — Perfectly Fit short в первый день падения рынка (своя квота, канон)
+      (function() {
+        const cv = d.cv; if (!cv) return '';
+        const o = bk.own || {}, a1 = o.cv_pf_drop || {}, a2 = o.cv_pf_drop22 || {};
+        const leg = function(x, nm) { return nm + ': ' + (x.st && x.st.n ? `${bSgn(x.st.sum)} · WR ${x.st.wr}% · ${bSgn(x.st.avg)} · n ${x.st.n}` : 'закрытий нет') + ` · открыто ${x.open || 0}`; };
+        const thr = cv.thr || {};
+        let mk;
+        if (cv.err) mk = `<span style="color:#ff5e9c;">опрос не работает: ${cv.err}</span>`;
+        else if (cv.age_min != null && cv.age_min > 20) mk = `<span style="color:#ff5e9c;">опрос молчит ${Math.round(cv.age_min)} мин</span>`;
+        else if (cv.rk == null) mk = 'копим индекс рынка…';
+        else mk = `индекс рынка ${cv.rk > 0 ? '+' : ''}${cv.rk}` + (cv.drop24 == null ? ' · суточное изменение копится' : ` · за 24ч ${cv.drop24 > 0 ? '−' : '+'}${Math.abs(cv.drop24)}`) +
+          (cv.cond ? ` · <b style="color:#00e5a0;">условие выполнено</b>` : ' · условие не выполнено');
+        return `<br><span style="font-size:10px;color:var(--muted);" title="🛰 Тень Cryptovizor: шорт по сигналу Perfectly Fit (30m вверх, 1h–12h вниз) в день, когда индекс рынка упал за сутки на ${thr.soft || 22}+ пунктов и ещё не ниже ${thr.floor || -45}. Сильный порог — падение на ${thr.strict || 31}+. На двух годах истории: +2,1% и +1,2% на сделку по канону при сильном пороге, комками по месяцам. Бумага, своя квота в книге, в лайв не входит.">🛰 PF-шорт в день падения: ${mk} · PF за сутки ${cv.pf_24h == null ? '—' : cv.pf_24h}, по правилу ${cv.rule_24h == null ? '—' : cv.rule_24h}` +
+          `<br>&nbsp;&nbsp;${leg(a1, 'падение ' + (thr.strict || 31) + '+')} · ${leg(a2, (thr.soft || 22) + '…' + (thr.strict || 31))}</span>`;
       })();
   }
   // 🧭 тень «по направлению школы» (14.11): кандидат на отбор 💎, на бирже ничего не делает

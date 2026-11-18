@@ -9764,8 +9764,14 @@ async def api_live():
                     "shorts_blocked": bool(_mb is not None and _mb < _mbt)}
         except Exception:
             _mbi = None
+        # 🛰 тень Cryptovizor PF (18.11): состояние опроса и условие по рынку
+        try:
+            import cv_feed as _cvf
+            _cv = _cvf.status(db)
+        except Exception:
+            _cv = None
         return {"ok": True, "stats": st.get("live"), "exec": _exec, "book": _book,
-                "market": _mbi,
+                "market": _mbi, "cv": _cv,
                 "stats_d": st.get("live_d"), "open_d_n": st.get("live_d_open"),
                 "dirs_d": st.get("live_d_dirs"),
                 "open_d": d_open, "closed_d": d_closed,
